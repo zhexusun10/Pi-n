@@ -63,8 +63,8 @@
     "api:check": "node scripts/cargo.mjs run --manifest-path backend/Cargo.toml --example export_api -- --check"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.6.0",
-    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.1",
+    "@earendil-works/pi-coding-agent": "1.6.1",
     "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-autostart": "^2.7.0",
     "@tauri-apps/plugin-process": "^2.4.0",

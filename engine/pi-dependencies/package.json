@@ -1,6 +1,6 @@
 {
   "name": "pi-n-pi-dependencies",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "type": "module",
   "description": "Pinned dependencies for the unmodified Pi source runtime; no example workspaces or shelljs build chain.",
@@ -10,7 +10,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.129.0",
     "@aws-sdk/client-bedrock-runtime": "3.1127.0",
-    "@google/genai": "2.32.0",
+    "@aws-sdk/credential-provider-node": "3.972.82",
+    "@google/genai": "3.6.1",
     "@silvia-odwyer/photon": "0.3.3",
     "@silvia-odwyer/photon-node": "0.3.4",
     "@smithy/node-http-handler": "4.12.1",

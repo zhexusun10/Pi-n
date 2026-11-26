@@ -510,7 +510,7 @@ export function createEditToolDefinition(...args: Parameters<typeof piEditTool>)
 }
 
 export function assertCurrentPiSettings(settings: Record<string, any>) {
-  if (['queueMode', 'websockets', 'apiKeys'].some(key => key in settings) ||
+  if (['queueMode', 'websockets', 'apiKeys', 'showCacheMissNotices'].some(key => key in settings) ||
       (settings.skills !== null && typeof settings.skills === 'object' && !Array.isArray(settings.skills)) ||
       (settings.retry && typeof settings.retry === 'object' && 'maxDelayMs' in settings.retry)) {
     throw new Error('Unsupported Pi settings format; update settings explicitly before using Pi^n');

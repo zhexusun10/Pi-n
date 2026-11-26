@@ -59,8 +59,8 @@ test('retired Pi sessions are rejected before migration and current sessions ret
 });
 
 test('Pi settings and startup directories reject retired inputs without changing their bytes', () => {
-  for (const settings of [{ queueMode: 'all' }, { websockets: true }, { skills: { customDirectories: [] } },
-    { retry: { maxDelayMs: 1 } }, { apiKeys: { example: 'fixture' } }]) {
+  for (const settings of [{ queueMode: 'all' }, { websockets: true }, { showCacheMissNotices: true },
+    { skills: { customDirectories: [] } }, { retry: { maxDelayMs: 1 } }, { apiKeys: { example: 'fixture' } }]) {
     const before = structuredClone(settings);
     assert.throws(() => assertCurrentPiSettings(settings), /Unsupported Pi settings/);
     assert.throws(() => SettingsManager.inMemory(settings as any), /Unsupported Pi settings/);
@@ -752,6 +752,27 @@ test('refreshed catalog exposes reviewed API changes and does not resurrect reti
     for (const id of ['deepseek-v3.2', 'deepseek-v4-flash']) {
       assert.equal(runtime.getModel(provider, id), undefined, `${provider}/${id}: retired in Pi 1.6.0`);
     }
+  }
+  // Pi 1.6.1 enables xhigh thinking on Gemini 4 Hydrogen/Neon via @google/genai 3.6.1,
+  // switches Mistral's default off retired Devstral, and drops deprecated Groq/Mistral/OpenAI IDs.
+  for (const provider of ['google', 'google-vertex']) {
+    for (const id of ['gemini-4-hydrogen', 'gemini-4-neon']) {
+      const model = runtime.getModel(provider, id);
+      assert.ok(model, `${provider}/${id}`);
+      assert.ok(getModelThinkingCapabilities(model).thinkingLevels.includes('xhigh'), `${provider}/${id}: supports xhigh`);
+    }
+  }
+  assert.equal(runtime.getModel('mistral', 'mistral-medium-latest')?.api, 'mistral-conversations');
+  for (const [provider, id] of [
+    ['groq', 'llama-3.1-8b-instant'],
+    ['groq', 'llama-3.3-70b-versatile'],
+    ['groq', 'qwen/qwen3.6-27b'],
+    ['mistral', 'devstral-medium-latest'],
+    ['mistral', 'mistral-medium-3.5'],
+    ['openai', 'gpt-4'],
+    ['azure', 'gpt-4'],
+  ]) {
+    assert.equal(runtime.getModel(provider, id), undefined, `${provider}/${id}: retired in Pi 1.6.1`);
   }
 });
 
