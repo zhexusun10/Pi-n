@@ -55,7 +55,16 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
     // backfills from empty (such as upgrading a running summary projection to
     // full output) so the card never shrinks from shimmer to one line and grows
     // across seconds while expanding.
-    const smoothContent = useSmoothStreamText(rawContent, isStreaming, isExpanded, 160);
+    const smoothContent = useSmoothStreamText(rawContent, isStreaming, isExpanded, 160, item?.id);
+    // Sync continuous pulse keyframes to wall-clock phase on mount so remounting
+    // across collapse/expand card transitions never flashes the icon or dot back to 0%.
+    const [pulsePhase] = useState(() => {
+      const now = typeof performance !== "undefined" ? performance.now() : 0;
+      return {
+        glowDelay: `${-((now % 4000) / 1000).toFixed(3)}s`,
+        dotDelay: `${-((now % 1200) / 1000).toFixed(3)}s`,
+      };
+    });
     const [isCopied, setIsCopied] = useState(false);
     const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const mountedRef = useRef(true);
@@ -298,7 +307,10 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
               <span className="thinking-expand-icon">
                 <ChevronRight size={14} className={`thinking-expand-chevron ${isExpanded ? "open" : ""}`} />
               </span>
-              <div className={`thinking-icon-box ${isVisuallyStreaming ? "pulse" : ""}`}>
+              <div
+                className={`thinking-icon-box ${isVisuallyStreaming ? "pulse" : ""}`}
+                style={isVisuallyStreaming ? { animationDelay: pulsePhase.glowDelay } : undefined}
+              >
                 <span className="thinking-icon-glyph">
                   <Sparkles size={14} />
                 </span>
@@ -317,7 +329,7 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
                   >
-                    <span className="thinking-pulse-dot" />
+                    <span className="thinking-pulse-dot" style={{ animationDelay: pulsePhase.dotDelay }} />
                     <span>{t("思考中...")}</span>
                   </motion.span>
                 )}

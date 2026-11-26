@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_SPLIT_RATIO,
+  DEFAULT_CHANGES_SPLIT_RATIO,
   MIN_SPLIT_RATIO,
   MAX_SPLIT_RATIO,
   SPLIT_RATIO_STORAGE_KEY,
+  CHANGES_SPLIT_RATIO_STORAGE_KEY,
   getStoredRatio,
   persistRatio,
   clampSplitRatio,
@@ -120,4 +122,26 @@ test("storage exceptions do not throw and fall back to default", () => {
   };
   assert.equal(getStoredRatio(throwingStorage), DEFAULT_SPLIT_RATIO);
   assert.doesNotThrow(() => persistRatio(0.4, throwingStorage));
+});
+
+test("standalone changes pane defaults to minimum width and persists independently from graph split", () => {
+  const saved: Record<string, string> = { [SPLIT_RATIO_STORAGE_KEY]: "0.52" };
+  const mockStorage = {
+    getItem: (key: string) => saved[key] ?? null,
+    setItem: (key: string, value: string) => {
+      saved[key] = value;
+    },
+  };
+  assert.equal(DEFAULT_CHANGES_SPLIT_RATIO, MAX_SPLIT_RATIO);
+  assert.equal(
+    getStoredRatio(mockStorage, CHANGES_SPLIT_RATIO_STORAGE_KEY, DEFAULT_CHANGES_SPLIT_RATIO),
+    MAX_SPLIT_RATIO,
+  );
+  persistRatio(0.64, mockStorage, CHANGES_SPLIT_RATIO_STORAGE_KEY);
+  assert.equal(saved[SPLIT_RATIO_STORAGE_KEY], "0.52");
+  assert.equal(saved[CHANGES_SPLIT_RATIO_STORAGE_KEY], "0.64");
+  assert.equal(
+    getStoredRatio(mockStorage, CHANGES_SPLIT_RATIO_STORAGE_KEY, DEFAULT_CHANGES_SPLIT_RATIO),
+    0.64,
+  );
 });

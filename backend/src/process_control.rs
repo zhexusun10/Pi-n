@@ -10,6 +10,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock, Weak,
     },
+    time::{Duration, Instant},
 };
 
 #[cfg(unix)]
@@ -123,6 +124,47 @@ pub(crate) fn stop_owner(owner: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .insert(owner.into());
     terminate_owner(owner);
+    Ok(())
+}
+
+/// Stop an owner and wait up to `timeout` for its process groups to drain so
+/// subsequent filesystem/session mutations cannot race a dying Pi process.
+pub(crate) fn stop_owner_and_drain(owner: &str, timeout: Duration) -> Result<(), String> {
+    stopped_owners()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(owner.into());
+    let prefix = format!("{owner}:");
+    cancel_operations(|active| active == owner || active.starts_with(&prefix));
+    let trees = if let Ok(mut processes) = registry().lock() {
+        let mut trees = Vec::new();
+        processes.retain(|(active, weak)| {
+            if let Some(tree) = weak.upgrade() {
+                if active == owner || active.starts_with(&prefix) {
+                    trees.push(ProcessTree(tree));
+                }
+                true
+            } else {
+                false
+            }
+        });
+        trees
+    } else {
+        Vec::new()
+    };
+    for tree in &trees {
+        tree.terminate();
+    }
+    let deadline = Instant::now() + timeout;
+    let mut poll = Duration::from_millis(5);
+    while trees.iter().any(ProcessTree::has_live_members) {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(now)));
+        poll = (poll * 2).min(Duration::from_millis(50));
+    }
     Ok(())
 }
 pub(crate) fn clear_owner_stop(owner: &str) {
@@ -305,10 +347,13 @@ pub fn track(child: &Child) -> Result<ProcessTree, String> {
     }));
 
     let owner = OWNER.with(|owner| owner.borrow().clone());
-    registry()
-        .lock()
-        .map_err(|error| error.to_string())?
-        .push((owner.clone(), Arc::downgrade(&tree.0)));
+    {
+        let mut processes = registry().lock().map_err(|error| error.to_string())?;
+        // Reclaim dead Weak entries from normally-exited processes so the
+        // global registry does not grow unboundedly over long server runs.
+        processes.retain(|(_, weak)| weak.strong_count() > 0);
+        processes.push((owner.clone(), Arc::downgrade(&tree.0)));
+    }
     if let Err(error) = check_owner_stop(&owner) {
         tree.terminate();
         return Err(error);
@@ -492,6 +537,13 @@ fn linux_process_stat(bytes: &[u8]) -> std::io::Result<(u8, Option<u32>, u64)> {
 
 #[cfg(target_os = "linux")]
 fn linux_zombie_members(group: u32) -> std::io::Result<Option<BTreeSet<(u32, u64)>>> {
+    // Fast path: if the group leader is still alive and in this process group,
+    // no full `/proc` table scan is needed to know live members remain.
+    if let Some((state, pgid, _)) = linux_stat_at(&std::path::PathBuf::from(format!("/proc/{group}")))? {
+        if pgid == Some(group) && !matches!(state, b'Z' | b'X' | b'x') {
+            return Ok(None);
+        }
+    }
     let mut members = BTreeSet::new();
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
@@ -688,6 +740,8 @@ impl ProcessTree {
         // Keep polling even after terminate(): SIGKILL delivery is asynchronous,
         // and handoff must still wait for descendants that have not exited.
         let deadline = std::time::Instant::now() + budget;
+        let mut poll_delay = std::time::Duration::from_millis(10);
+        let max_delay = std::time::Duration::from_millis(100);
         loop {
             #[cfg(windows)]
             let active = unsafe {
@@ -710,15 +764,27 @@ impl ProcessTree {
             if !active {
                 return Ok(());
             }
-            if std::time::Instant::now() >= deadline {
+            let now = std::time::Instant::now();
+            if now >= deadline {
                 return Err("Managed background writers have not drained; refusing unsafe environment seal/handoff".into());
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            let remaining = deadline.saturating_duration_since(now);
+            std::thread::sleep(poll_delay.min(remaining));
+            poll_delay = (poll_delay * 2).min(max_delay);
         }
     }
 
     pub fn terminate(&self) {
         let _ = terminate_inner(&self.0); // Failures are retried and logged.
+    }
+
+    /// Mark an already-reaped process tree as terminated when no members remain
+    /// in its process group, preventing `Drop` from issuing `kill(-pid, SIGKILL)`
+    /// against a later OS-reused PID/PGID.
+    pub fn mark_reaped_if_empty(&self) {
+        if !self.has_live_members() {
+            self.0.terminated.store(true, Ordering::SeqCst);
+        }
     }
 
     /// Number of live owners of this boundary.

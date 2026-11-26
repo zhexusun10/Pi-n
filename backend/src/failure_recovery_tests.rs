@@ -814,6 +814,7 @@ fn production_continue_fails_closed_when_an_active_session_is_missing() {
     let retry = runtime.jobs().unwrap().remove(0);
     assert!(retry.continuation && !retry.initial_recovery);
     let error = crate::engine::execute(
+        &retry.run_id,
         &retry.config,
         &retry.execution,
         &retry.task,

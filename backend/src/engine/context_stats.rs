@@ -3,6 +3,8 @@
 use serde_json::{json, Value};
 use std::sync::mpsc;
 
+const CONTEXT_STATS_ID_PREFIX: &str = "pi-n-ctx-stats-";
+
 pub(super) struct ContextStats {
     enabled: bool,
     pending: Option<String>,
@@ -28,7 +30,7 @@ impl ContextStats {
             self.dirty = true;
             return;
         }
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = format!("{CONTEXT_STATS_ID_PREFIX}{}", uuid::Uuid::new_v4());
         let request = json!({"id": id, "type": "get_session_stats"}).to_string();
         if sender.is_some_and(|sender| sender.send(request).is_ok()) {
             self.pending = Some(id);
@@ -50,10 +52,15 @@ impl ContextStats {
         if event["type"] != "response" {
             return None;
         }
-        if event["id"].as_str() != self.pending.as_deref() || self.pending.is_none() {
-            // A late response from a previous parked Serial turn must not leak
-            // its full statistics into the next attempt's output log.
-            return (event["command"] == "get_session_stats").then_some(None);
+        let response_id = event["id"].as_str();
+        if response_id != self.pending.as_deref() || self.pending.is_none() {
+            // A late response from a previous parked Serial turn's own
+            // ContextStats request must not leak its full statistics into the
+            // next attempt's output log, while composer `/stats` and `/session`
+            // requests (which do not use our prefix) must reach `rpc_pending`.
+            return (event["command"] == "get_session_stats"
+                && response_id.is_some_and(|id| id.starts_with(CONTEXT_STATS_ID_PREFIX)))
+                .then_some(None);
         }
         self.pending = None;
         if event["success"] != true || event["command"] != "get_session_stats" {

@@ -9,7 +9,10 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -20,7 +23,6 @@ use std::process::Command;
 use std::{
     hash::{Hash, Hasher},
     process::Child,
-    sync::atomic::{AtomicBool, Ordering},
 };
 
 pub mod composer;
@@ -43,6 +45,8 @@ type NodeKey = (PathBuf, PathBuf, String, String, String, String);
 #[cfg(not(feature = "fixture"))]
 struct WarmNode {
     child: Child,
+    stdout: BufReader<std::process::ChildStdout>,
+    stderr: Option<prewarm::StderrForwarder>,
     tree: process_control::ProcessTree,
     startup_output: Vec<String>,
     ready_ms: u128,
@@ -59,6 +63,7 @@ impl Worker for WarmNode {
     fn retire(mut self) {
         self.tree.terminate();
         let _ = self.child.wait();
+        self.tree.mark_reaped_if_empty();
     }
 }
 
@@ -266,6 +271,20 @@ pub fn warm_node(config: Config, cwd: PathBuf, session_dir: PathBuf, session_id:
     if PREWARM_SHUTTING_DOWN.load(Ordering::SeqCst) {
         return;
     }
+    // A Serial conversation that just settled already has its live shell parked
+    // in LINGER_POOL. Spawning a second Node.js process for the same session
+    // would never be consumed and wastes memory/CPU.
+    if let Some(pool) = LINGER_POOL.get() {
+        if let Ok(repository) = crate::path_identity::actual_path(Path::new(&config.repository)) {
+            let key = lingering::SessionKey {
+                repository,
+                session_id: session_id.clone(),
+            };
+            if pool.has_live(&key) {
+                return;
+            }
+        }
+    }
     match node_key(&config, &cwd, &session_dir, &session_id) {
         Ok((key, hash)) => {
             WARM_NODE
@@ -346,11 +365,13 @@ fn prepare_warm_node(
     if PREWARM_SHUTTING_DOWN.load(Ordering::SeqCst) || ticket.cancelled() {
         return Err("Backend prewarm stopped".into());
     }
-    let (child, tree, startup_output, ready_ms) = process.commit();
+    let (child, stdout, stderr, tree, startup_output, ready_ms) = process.commit();
     Ok((
         (key, hash),
         WarmNode {
             child,
+            stdout,
+            stderr,
             tree,
             startup_output,
             ready_ms,
@@ -378,7 +399,28 @@ fn claim_warm_node(
     })
 }
 
-type PendingRpcReplies = Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>;
+pub(crate) struct PendingRpcReply {
+    tx: Option<mpsc::Sender<Result<Value, String>>>,
+    expires_at: Option<Instant>,
+}
+
+impl PendingRpcReply {
+    pub(crate) fn channel(tx: mpsc::Sender<Result<Value, String>>) -> Self {
+        Self {
+            tx: Some(tx),
+            expires_at: None,
+        }
+    }
+
+    fn tracked_until(deadline: Instant) -> Self {
+        Self {
+            tx: None,
+            expires_at: Some(deadline),
+        }
+    }
+}
+
+type PendingRpcReplies = Arc<Mutex<HashMap<String, PendingRpcReply>>>;
 
 #[derive(Clone)]
 struct NodeRpc {
@@ -490,29 +532,38 @@ fn send_steer(
     acknowledge: bool,
     request_id: Option<&str>,
 ) -> Result<(), String> {
-    let rpc = NODE_RPC
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|e| e.to_string())?
-        .get(execution_id)
-        .cloned()
-        .ok_or("Node execution is no longer accepting messages")?;
     let id = request_id
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    // Every asynchronous send keeps the handoff open until Pi responds. This
-    // also covers abort -> Node/Merger send, where the old turn is already idle
-    // and attachment/extension preflight may outlast the handoff window.
-    let tracked_async = !acknowledge;
-    let pending = if acknowledge || tracked_async {
-        let (tx, rx) = mpsc::channel();
-        rpc.pending
+    // Insert into `rpc.pending` while still holding `NODE_RPC` so `run_turn`'s
+    // exit check (which uses the same `NODE_RPC -> rpc.pending` lock order) can
+    // never unregister the session in between lookup and pending registration.
+    let (rpc, pending) = {
+        let map = NODE_RPC
+            .get_or_init(Default::default)
             .lock()
-            .map_err(|e| e.to_string())?
-            .insert(id.clone(), tx);
-        Some(rx)
-    } else {
-        None
+            .map_err(|e| e.to_string())?;
+        let rpc = map
+            .get(execution_id)
+            .cloned()
+            .ok_or("Node execution is no longer accepting messages")?;
+        // Every asynchronous send keeps the handoff open until Pi responds (bounded
+        // by a 10s deadline pruned in run_turn without spawning a waiter thread).
+        let pending = if acknowledge {
+            let (tx, rx) = mpsc::channel();
+            rpc.pending
+                .lock()
+                .map_err(|e| e.to_string())?
+                .insert(id.clone(), PendingRpcReply::channel(tx));
+            Some(rx)
+        } else {
+            rpc.pending.lock().map_err(|e| e.to_string())?.insert(
+                id.clone(),
+                PendingRpcReply::tracked_until(Instant::now() + Duration::from_secs(10)),
+            );
+            None
+        };
+        (rpc, pending)
     };
     let mut command_val = serde_json::json!({"id": id, "type": "prompt", "message": instruction, "streamingBehavior": "steer"});
     if let Some(imgs) = images {
@@ -522,24 +573,12 @@ fn send_steer(
     }
     let command = command_val.to_string();
     if rpc.sender.send(command).is_err() {
-        if pending.is_some() {
-            rpc.pending.lock().map_err(|e| e.to_string())?.remove(&id);
-        }
+        rpc.pending.lock().map_err(|e| e.to_string())?.remove(&id);
         return Err("Node RPC input closed".into());
     }
     let Some(rx) = pending else {
         return Ok(());
     };
-    if tracked_async {
-        let pending = rpc.pending.clone();
-        thread::spawn(move || {
-            let _ = rx.recv_timeout(Duration::from_secs(10));
-            if let Ok(mut pending) = pending.lock() {
-                pending.remove(&id);
-            }
-        });
-        return Ok(());
-    }
     let result = rx
         .recv_timeout(Duration::from_secs(10))
         .map_err(|_| "Node did not acknowledge the steer request".to_string());
@@ -554,9 +593,11 @@ impl Drop for NodeRpcGuard {
             if let Some(rpc) = map.remove(&self.0) {
                 if let Ok(mut pending) = rpc.pending.lock() {
                     for (_, reply) in pending.drain() {
-                        let _ = reply.send(Err(
-                            "Pi process ended before acknowledging the request".into(),
-                        ));
+                        if let Some(tx) = reply.tx {
+                            let _ = tx.send(Err(
+                                "Pi process ended before acknowledging the request".into(),
+                            ));
+                        }
                     }
                 }
             }
@@ -1105,8 +1146,8 @@ fn run_pi_with_timeout(
             .flatten();
         if let Some(run_id) = active_run {
             let db = data_root.join("events.sqlite");
-            let store = db
-                .is_file()
+            let needs_store = data_root.join(crate::attachment_inputs::BUCKET).is_dir() && db.is_file();
+            let store = needs_store
                 .then(|| crate::store::Store::open_reader(&db))
                 .transpose()?;
             crate::attachment_inputs::read_only_directories_for_run(
@@ -1238,8 +1279,10 @@ fn run_pi_with_timeout(
                 // Packaged/desktop distributions embed planner.ts in the binary
                 // when backend/resources is not shipped alongside resources.
                 let session_extension = request.session_dir.join("pi-n-planner.ts");
-                fs::write(&session_extension, include_str!("../resources/planner.ts"))
-                    .map_err(|error| error.to_string())?;
+                crate::path_safety::write_file_no_follow(
+                    &session_extension,
+                    include_str!("../resources/planner.ts").as_bytes(),
+                )?;
                 session_extension
             }
         };
@@ -1266,7 +1309,7 @@ fn run_pi_with_timeout(
             PathBuf::from(system_prompt)
         } else {
             let path = request.session_dir.join("system-prompt.md");
-            fs::write(&path, system_prompt).map_err(|error| error.to_string())?;
+            crate::path_safety::write_file_no_follow(&path, system_prompt.as_bytes())?;
             path
         };
         command
@@ -1483,8 +1526,14 @@ fn run_pi_with_timeout(
     let launch_preparation_ms = launch_started.elapsed().as_millis();
     #[cfg(not(feature = "fixture"))]
     let (prepared, task_binding_ms) = if let Some(process) = prepared {
-        let (process, elapsed) = process_prewarm::bind(process, request.role, &command)?;
-        (Some(process), Some(elapsed))
+        match process_prewarm::bind(process, request.role, &command) {
+            Ok((process, elapsed)) => (Some(process), Some(elapsed)),
+            Err(error) => {
+                process_control::check_current_owner_stop()?;
+                eprintln!("[Pi^n] Prewarm bind failed, falling back to cold launch: {error}");
+                (None, None::<u128>)
+            }
+        }
     } else {
         (None, None::<u128>)
     };
@@ -1516,11 +1565,11 @@ fn run_pi_with_timeout(
     #[cfg(not(feature = "fixture"))]
     let prewarmed = warm_node.is_some() || prepared.is_some();
     #[cfg(not(feature = "fixture"))]
-    let (mut child, process_tree) = if let Some(worker) = warm_node {
-        (worker.child, worker.tree)
+    let (mut child, stdout, prewarmed_stderr, process_tree) = if let Some(worker) = warm_node {
+        (worker.child, worker.stdout, worker.stderr, worker.tree)
     } else if let Some(process) = prepared {
-        let (child, tree, _, _) = process.commit();
-        (child, tree)
+        let (child, stdout, stderr, tree, _, _) = process.commit();
+        (child, stdout, stderr, tree)
     } else {
         let mut child = command
             .spawn()
@@ -1529,10 +1578,11 @@ fn run_pi_with_timeout(
             let _ = child.kill();
             let _ = child.wait();
         })?;
-        (child, tree)
+        let stdout = BufReader::new(child.stdout.take().ok_or("Pi stdout unavailable")?);
+        (child, stdout, None, tree)
     };
     #[cfg(feature = "fixture")]
-    let (mut child, process_tree) = {
+    let (mut child, stdout, prewarmed_stderr, process_tree) = {
         let mut child = command
             .spawn()
             .map_err(|error| format!("Cannot start Execution Instance Engine: {error}"))?;
@@ -1540,7 +1590,8 @@ fn run_pi_with_timeout(
             let _ = child.kill();
             let _ = child.wait();
         })?;
-        (child, tree)
+        let stdout = BufReader::new(child.stdout.take().ok_or("Pi stdout unavailable")?);
+        (child, stdout, None::<()>, tree)
     };
     let _guard = ProcessGuard(process_tree.clone());
     #[cfg(feature = "fixture")]
@@ -1650,19 +1701,42 @@ fn run_pi_with_timeout(
             let _ = input_sender.send(stdin.write_all(&task));
         });
     }
-    let stdout = child.stdout.take().ok_or("Pi stdout unavailable")?;
-    let stderr = child.stderr.take().ok_or("Pi stderr unavailable")?;
-    let receiver = process_output_channels(
-        stdout,
-        stderr,
-        source_role && request.role == PiRole::Planner,
-    );
+    let parked = Arc::new(AtomicBool::new(false));
+    #[cfg(not(feature = "fixture"))]
+    let receiver = if let Some(forwarder) = prewarmed_stderr {
+        process_output_channels_with_forwarder(
+            stdout,
+            forwarder,
+            Arc::clone(&parked),
+            source_role && request.role == PiRole::Planner,
+        )
+    } else {
+        let stderr = child.stderr.take().ok_or("Pi stderr unavailable")?;
+        process_output_channels(
+            stdout,
+            stderr,
+            Arc::clone(&parked),
+            source_role && request.role == PiRole::Planner,
+        )
+    };
+    #[cfg(feature = "fixture")]
+    let receiver = {
+        let _ = prewarmed_stderr;
+        let stderr = child.stderr.take().ok_or("Pi stderr unavailable")?;
+        process_output_channels(
+            stdout,
+            stderr,
+            Arc::clone(&parked),
+            source_role && request.role == PiRole::Planner,
+        )
+    };
     let mut channels = SessionChannels {
         receiver,
         input_receiver,
         rpc_sender,
         rpc_pending,
         rpc_ui,
+        parked,
     };
     let outcome = run_turn(
         request.role,
@@ -1675,6 +1749,7 @@ fn run_pi_with_timeout(
         &process_tree,
         &mut child,
         &mut channels,
+        &mut rpc_guard,
         &mut on_output,
     )?;
     let result = finish_turn(
@@ -1701,17 +1776,20 @@ fn run_pi_with_timeout(
 fn process_output_channels(
     stdout: impl Read + Send + 'static,
     stderr: impl Read + Send + 'static,
+    parked: Arc<AtomicBool>,
     keep_draining: bool,
 ) -> mpsc::Receiver<(bool, String)> {
     let (sender, receiver) = mpsc::channel();
     let error_sender = sender.clone();
+    let stdout_parked = Arc::clone(&parked);
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         for line in reader.by_ref().lines() {
-            if sender
-                .send((false, line.unwrap_or_else(|error| error.to_string())))
-                .is_err()
-            {
+            let text = line.unwrap_or_else(|error| error.to_string());
+            if stdout_parked.load(Ordering::Acquire) {
+                continue;
+            }
+            if sender.send((false, text)).is_err() {
                 break;
             }
         }
@@ -1724,10 +1802,38 @@ fn process_output_channels(
     thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
         for line in reader.by_ref().lines() {
-            if error_sender
-                .send((true, line.unwrap_or_else(|error| error.to_string())))
-                .is_err()
-            {
+            let text = line.unwrap_or_else(|error| error.to_string());
+            if parked.load(Ordering::Acquire) {
+                continue;
+            }
+            if error_sender.send((true, text)).is_err() {
+                break;
+            }
+        }
+        if keep_draining {
+            let _ = std::io::copy(&mut reader, &mut std::io::sink());
+        }
+    });
+    receiver
+}
+
+#[cfg(not(feature = "fixture"))]
+fn process_output_channels_with_forwarder(
+    stdout: impl Read + Send + 'static,
+    stderr: prewarm::StderrForwarder,
+    parked: Arc<AtomicBool>,
+    keep_draining: bool,
+) -> mpsc::Receiver<(bool, String)> {
+    let (sender, receiver) = mpsc::channel();
+    stderr.attach_live(sender.clone(), Arc::clone(&parked));
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        for line in reader.by_ref().lines() {
+            let text = line.unwrap_or_else(|error| error.to_string());
+            if parked.load(Ordering::Acquire) {
+                continue;
+            }
+            if sender.send((false, text)).is_err() {
                 break;
             }
         }
@@ -1744,6 +1850,8 @@ struct SessionChannels {
     rpc_sender: Option<mpsc::Sender<String>>,
     rpc_pending: Option<PendingRpcReplies>,
     rpc_ui: Arc<Mutex<composer::CommandUi>>,
+    #[cfg_attr(feature = "fixture", allow(dead_code))]
+    parked: Arc<AtomicBool>,
 }
 
 struct TurnOutcome {
@@ -1770,6 +1878,7 @@ fn run_turn(
     process_tree: &process_control::ProcessTree,
     child: &mut std::process::Child,
     channels: &mut SessionChannels,
+    rpc_guard: &mut Option<NodeRpcGuard>,
     on_output: &mut impl FnMut(String),
 ) -> Result<TurnOutcome, String> {
     let mut input_error = None;
@@ -1786,10 +1895,14 @@ fn run_turn(
     let mut output_buffer = output_buffer::OutputBuffer::default();
     let mut context_stats = context_stats::ContextStats::new(report_context);
     context_stats.changed(channels.rpc_sender.as_ref());
+    let mut last_ui_expire = Instant::now();
     loop {
         if let Some(sender) = &channels.rpc_sender {
-            if let Ok(mut ui) = channels.rpc_ui.lock() {
-                ui.expire(sender);
+            if last_ui_expire.elapsed() >= Duration::from_millis(100) {
+                last_ui_expire = Instant::now();
+                if let Ok(mut ui) = channels.rpc_ui.lock() {
+                    ui.expire(sender);
+                }
             }
         }
         output_buffer.flush_due(&mut *on_output)?;
@@ -1801,17 +1914,33 @@ fn run_turn(
             Duration::from_millis(500)
         };
         if rpc_agent && agent_ended.is_some_and(|t| t.elapsed() > handoff) {
-            let pending_empty = channels
-                .rpc_pending
-                .as_ref()
-                .is_some_and(|p| p.lock().is_ok_and(|p| p.is_empty()));
             // Allow the final Pi projection to arrive, but never let an
             // unsupported or stalled stats request hold a settled process.
-            if pending_empty
-                && (!context_stats.waiting()
-                    || agent_ended.is_some_and(|t| t.elapsed() > handoff + Duration::from_secs(1)))
-            {
-                break;
+            let stats_done = !context_stats.waiting()
+                || agent_ended.is_some_and(|t| t.elapsed() > handoff + Duration::from_secs(1));
+            if stats_done {
+                // Atomically check `rpc_pending` and unregister `NODE_RPC` under
+                // the `NODE_RPC` lock so no steer can be accepted after we decide
+                // to exit `run_turn`.
+                let mut rpc_map = NODE_RPC
+                    .get_or_init(Default::default)
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let pending_empty = channels.rpc_pending.as_ref().is_none_or(|p| {
+                    p.lock().is_ok_and(|mut p| {
+                        let now = Instant::now();
+                        p.retain(|_, entry| entry.expires_at.is_none_or(|deadline| now < deadline));
+                        p.is_empty()
+                    })
+                });
+                if pending_empty {
+                    if let Some(guard) = rpc_guard.take() {
+                        rpc_map.remove(&guard.0);
+                        std::mem::forget(guard);
+                    }
+                    drop(rpc_map);
+                    break;
+                }
             }
         }
         // Check even while output is arriving: a noisy child can also hang.
@@ -1849,6 +1978,9 @@ fn run_turn(
                     }
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
+                        if stderr_lines.len() >= 512 {
+                            stderr_lines.drain(..256);
+                        }
                         stderr_lines.push(trimmed.to_string());
                     }
                     stderr_tail = line.clone();
@@ -1861,6 +1993,9 @@ fn run_turn(
                 if event.is_none() {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
+                        if raw_stdout_lines.len() >= 512 {
+                            raw_stdout_lines.drain(..256);
+                        }
                         raw_stdout_lines.push(trimmed.to_string());
                     }
                 }
@@ -1939,7 +2074,9 @@ fn run_turn(
                                             // handoff window to drain it before unregistering RPC.
                                             agent_ended = Some(Instant::now());
                                         }
-                                        let _ = reply.send(result);
+                                        if let Some(tx) = reply.tx {
+                                            let _ = tx.send(result);
+                                        }
                                     }
                                 }
                             }
@@ -1971,19 +2108,50 @@ fn run_turn(
                             }
                         }
                         "turn_end" => {
-                            if agent_error.is_none() {
-                                if let Some(err) = event["message"]["errorMessage"].as_str() {
+                            if agent_error.is_none()
+                                && matches!(
+                                    event["message"]["stopReason"].as_str(),
+                                    Some("error" | "aborted") | None
+                                )
+                            {
+                                if let Some(err) = event["message"]["errorMessage"]
+                                    .as_str()
+                                    .filter(|s| !s.trim().is_empty())
+                                {
                                     agent_error = Some(err.to_string());
                                 }
                             }
                         }
                         "agent_end" => {
+                            // Only judge the final assistant message: earlier
+                            // messages may carry transient 429/5xx errors that
+                            // Pi already retried and recovered from.
                             if agent_error.is_none() {
-                                if let Some(messages) = event["messages"].as_array() {
-                                    for msg in messages.iter().rev() {
-                                        if let Some(err) = msg["errorMessage"].as_str() {
+                                if let Some(last_assistant) = event["messages"]
+                                    .as_array()
+                                    .and_then(|messages| {
+                                        messages
+                                            .iter()
+                                            .rev()
+                                            .find(|msg| msg["role"] == "assistant")
+                                    })
+                                {
+                                    let is_err_stop = matches!(
+                                        last_assistant["stopReason"].as_str(),
+                                        Some("error" | "aborted")
+                                    );
+                                    let err_msg = last_assistant["errorMessage"]
+                                        .as_str()
+                                        .filter(|s| !s.trim().is_empty());
+                                    if is_err_stop {
+                                        agent_error = Some(
+                                            err_msg
+                                                .unwrap_or("Pi assistant failed")
+                                                .to_string(),
+                                        );
+                                    } else if last_assistant["stopReason"].is_null() {
+                                        if let Some(err) = err_msg {
                                             agent_error = Some(err.to_string());
-                                            break;
                                         }
                                     }
                                 }
@@ -2128,6 +2296,7 @@ fn finish_turn(
         && request.role == PiRole::NodeAgent
         && request.session_id.is_some()
         && settled_response
+        && process_control::check_current_owner_stop().is_ok()
         && matches!(child.try_wait(), Ok(None))
     {
         if let Some(key) = serial_linger_key(request) {
@@ -2135,6 +2304,10 @@ fn finish_turn(
             let run_id = owner.split(":node:").next().unwrap_or(&owner).to_string();
             let linger_owner = format!("linger:{}:{}", config.repository, key.session_id);
             let _ = process_control::reassign_owner(&process_tree, &linger_owner);
+            // Drain stdout/stderr directly into the void while parked so long-
+            // lived background dev servers cannot grow the channel unboundedly.
+            channels.parked.store(true, Ordering::Release);
+            while channels.receiver.try_recv().is_ok() {}
             on_output(format!(
                 "{}\n",
                 serde_json::json!({"type":"pi_n_process_exited", "pid":child.id(), "code":null, "success":true, "timedOut":false, "parked":true, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
@@ -2158,10 +2331,22 @@ fn finish_turn(
             return Ok(outcome.final_text);
         }
     }
-    // Reclaim the node agent: close its input and wait for it to exit.
+    // Reclaim the node agent: close its input and wait (bounded) for it to exit
+    // so an extension/MCP ignoring stdin EOF cannot hang `finish_turn` forever.
     let _ = source_role;
     drop(channels.rpc_sender.take());
-    let status = child.wait().map_err(|error| error.to_string())?;
+    let wait_deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if Instant::now() >= wait_deadline {
+            process_tree.terminate();
+            let _ = child.kill();
+            break child.wait().map_err(|error| error.to_string())?;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
     let mut input_error = outcome.input_error;
     while let Ok(Err(error)) = channels.input_receiver.try_recv() {
         if input_error.is_none() {
@@ -2188,6 +2373,7 @@ fn finish_turn(
     if managed {
         process_tree.drain_for_handoff(drain_grace)?;
     }
+    process_tree.mark_reaped_if_empty();
     on_output(format!(
         "{}\n",
         serde_json::json!({"type":"pi_n_process_exited", "pid":child.id(), "code":status.code(), "success":status.success() && !outcome.timed_out && (input_error.is_none() || input_broken_pipe_on_success), "timedOut":outcome.timed_out, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
@@ -2256,6 +2442,7 @@ impl Worker for ParkedSerial {
     fn retire(mut self) {
         self.tree.terminate();
         let _ = self.child.wait();
+        self.tree.mark_reaped_if_empty();
     }
 }
 
@@ -2279,7 +2466,11 @@ impl Worker for PlannerServiceTree {
     }
 
     fn retire(self) {
-        self.tree.terminate();
+        if self.tree.has_live_members() {
+            self.tree.terminate();
+        } else {
+            self.tree.mark_reaped_if_empty();
+        }
     }
 }
 
@@ -2326,6 +2517,7 @@ pub(crate) fn park_test_shell(run_id: &str, session_id: &str) -> process_control
         rpc_sender: Some(rpc_tx),
         rpc_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
         rpc_ui: Arc::new(Mutex::new(composer::CommandUi::default())),
+        parked: Arc::new(AtomicBool::new(true)),
     };
     lingering_pool().park(
         lingering::SessionKey {
@@ -2508,7 +2700,7 @@ fn node_rpc_id(request: &PiRequest<'_>) -> Result<String, String> {
 fn begin_resumed_turn(
     host: &mut ParkedSerial,
     request: &PiRequest<'_>,
-) -> Result<(String, String), String> {
+) -> Result<(NodeRpcGuard, String), String> {
     let id = node_rpc_id(request)?;
     *host.channels.rpc_ui.lock().map_err(|e| e.to_string())? = composer::CommandUi::default();
     let pending = host
@@ -2536,6 +2728,9 @@ fn begin_resumed_turn(
                 run_id: None,
             },
         );
+    // Construct the guard immediately so a failed `sender.send()` cannot leak
+    // the `NODE_RPC` entry.
+    let rpc_guard = NodeRpcGuard(id);
     let initial_rpc_id = uuid::Uuid::new_v4().to_string();
     let mut initial_val =
         serde_json::json!({"id": initial_rpc_id, "type": "prompt", "message": request.task});
@@ -2547,7 +2742,7 @@ fn begin_resumed_turn(
     sender
         .send(initial_val.to_string())
         .map_err(|error| error.to_string())?;
-    Ok((id, initial_rpc_id))
+    Ok((rpc_guard, initial_rpc_id))
 }
 
 /// Reuse a parked Serial shell for a new turn of the same conversation.
@@ -2559,21 +2754,41 @@ fn run_resumed(
     timeout: Option<Duration>,
     launch_started: Instant,
 ) -> Result<String, String> {
-    let owner =
-        process_control::current_owner().ok_or("A resumed session requires an owning execution")?;
-    process_control::reassign_owner(&host.tree, &owner)?;
-    // Drop anything the settled turn left buffered: a stale agent_settled must
-    // not make the next turn exit immediately.
+    invalidate_warm_node();
+    let owner = match process_control::current_owner() {
+        Some(owner) => owner,
+        None => {
+            host.retire();
+            return Err("A resumed session requires an owning execution".into());
+        }
+    };
+    if let Err(error) = process_control::check_current_owner_stop() {
+        host.retire();
+        return Err(error);
+    }
+    if let Err(error) = process_control::reassign_owner(&host.tree, &owner) {
+        host.retire();
+        return Err(error);
+    }
+    // Drop anything the settled turn left buffered and resume forwarding before
+    // sending the new prompt.
     while host.channels.receiver.try_recv().is_ok() {}
     while host.channels.input_receiver.try_recv().is_ok() {}
-    let (id, initial_rpc_id) = begin_resumed_turn(&mut host, request)?;
+    host.channels.parked.store(false, Ordering::Release);
+    let (rpc_guard, initial_rpc_id) = match begin_resumed_turn(&mut host, request) {
+        Ok(pair) => pair,
+        Err(error) => {
+            host.retire();
+            return Err(error);
+        }
+    };
     on_output(format!(
         "{}\n",
         serde_json::json!({"type":"pi_n_session_resumed", "pid":host.child.id(), "sessionId":request.session_id, "cwd":request.cwd, "launchPreparationMs":launch_started.elapsed().as_millis(), "timestamp":crate::model::now()})
     ));
     let started = Instant::now();
-    let rpc_guard = Some(NodeRpcGuard(id));
-    let outcome = run_turn(
+    let mut rpc_guard = Some(rpc_guard);
+    let outcome = match run_turn(
         request.role,
         true,
         true,
@@ -2584,8 +2799,16 @@ fn run_resumed(
         &host.tree,
         &mut host.child,
         &mut host.channels,
+        &mut rpc_guard,
         &mut on_output,
-    )?;
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            drop(rpc_guard);
+            host.retire();
+            return Err(error);
+        }
+    };
     finish_turn(
         request,
         &mut on_output,
@@ -2647,6 +2870,7 @@ fn is_source_native_agent(request: &PiRequest<'_>) -> bool {
 /// shell. Keep them separate from Pi's shared NodeAgent model/settings role.
 #[allow(clippy::too_many_arguments)]
 pub fn execute(
+    run_id: &str,
     config: &Config,
     execution: &Execution,
     task: &str,
@@ -2718,14 +2942,20 @@ pub fn execute(
             tools: None,
             session_id: Some(&execution.session_id),
             extra_args,
-            environment: vec![
-                ("PI_N_MODE", "node".into()),
-                ("PI_N_AGENT_KIND", agent_kind.as_str().into()),
-                ("PI_N_NODE_EXECUTION_ID", execution.id.clone()),
-                ("PI_N_CONTINUE_INTERRUPTED", continuation.to_string()),
-                ("PI_N_FEEDBACK_SOURCE", feedback_source.to_string()),
-                ("PI_N_ENVIRONMENT_DATA", root.to_string_lossy().into()),
-            ],
+            environment: {
+                let mut env = vec![
+                    ("PI_N_MODE", "node".into()),
+                    ("PI_N_AGENT_KIND", agent_kind.as_str().into()),
+                    ("PI_N_NODE_EXECUTION_ID", execution.id.clone()),
+                    ("PI_N_CONTINUE_INTERRUPTED", continuation.to_string()),
+                    ("PI_N_FEEDBACK_SOURCE", feedback_source.to_string()),
+                    ("PI_N_ENVIRONMENT_DATA", root.to_string_lossy().into()),
+                ];
+                if !run_id.is_empty() {
+                    env.push(("PI_N_ACTIVE_RUN_ID", run_id.to_owned()));
+                }
+                env
+            },
             system_prompt: None,
             images,
         },
@@ -2756,6 +2986,7 @@ pub fn feedback(output: &str) -> Result<bool, String> {
 /// repairs propagate the original protocol error so completion still fails
 /// closed.
 pub fn repair_feedback_verdict(
+    run_id: &str,
     config: &Config,
     execution: &Execution,
     agent_kind: AgentKind,
@@ -2774,6 +3005,7 @@ pub fn repair_feedback_verdict(
             execution.node
         );
         output = execute(
+            run_id,
             config,
             execution,
             FEEDBACK_REPAIR_PROMPT,
@@ -2934,6 +3166,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
         let task = "Inspect the result";
         for feedback_source in [false, true] {
             let captured = execute(
+                "",
                 &config,
                 &execution,
                 task,
@@ -3292,6 +3525,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             rpc_sender: Some(rpc_tx),
             rpc_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
             rpc_ui: Arc::new(Mutex::new(composer::CommandUi::default())),
+            parked: Arc::new(AtomicBool::new(true)),
         };
         let session_dir = temp.path().join("session");
         let config = Config {
@@ -3445,9 +3679,11 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
         );
         fs::write(&release, "done").unwrap();
         let guard = ProcessGuard(tree.clone());
+        let parked = Arc::new(AtomicBool::new(false));
         let receiver = process_output_channels(
             child.stdout.take().unwrap(),
             child.stderr.take().unwrap(),
+            Arc::clone(&parked),
             true,
         );
         let (_input_tx, input_receiver) = mpsc::channel::<Result<(), std::io::Error>>();
@@ -3458,6 +3694,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             rpc_sender: Some(rpc_tx),
             rpc_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
             rpc_ui: Arc::new(Mutex::new(composer::CommandUi::default())),
+            parked,
         };
         let session_dir = temp.path().join("planner-session");
         let config = Config {

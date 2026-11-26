@@ -290,6 +290,10 @@ impl Files {
     }
 
     fn save_version(&self, version: &str, mut value: Version) -> Result<(), String> {
+        #[cfg(unix)]
+        fs::File::open(self.directory.join("blobs"))
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
         value.checksum = Some(value.checksum()?);
         let path = self.version_path(version)?;
         if self.exists(version) {
@@ -518,8 +522,9 @@ impl Files {
                 let Some(blob) = name.to_str() else {
                     continue;
                 };
-                // Skip in-flight temporary staging files.
-                if blob.contains(".tmp") || blob.starts_with('.') {
+                // Skip in-flight temporary staging files (`pending-<uuid>` from
+                // `save_blob` as well as dot/tmp files).
+                if blob.contains(".tmp") || blob.starts_with('.') || blob.starts_with("pending-") {
                     continue;
                 }
                 if !keep_blobs.contains(blob) {
@@ -583,38 +588,67 @@ impl Files {
             .join("blobs")
             .join(format!("pending-{}", Uuid::new_v4()));
         let result = (|| {
-            crate::native_copy::copy(source, &temporary)?;
+            // Stream-copy `source` -> `temporary` while computing its Git blob
+            // SHA-1 in the same pass, avoiding a second disk read of `temporary`.
+            use sha1_checked::{Digest, Sha1};
+            use std::io::{Read, Write};
+            let mut reader = fs::File::open(source).map_err(|e| e.to_string())?;
+            let expected_len = reader.metadata().map_err(|e| e.to_string())?.len();
+            let mut writer = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary)
+                .map_err(|e| e.to_string())?;
+            let mut hasher = Sha1::new();
+            hasher.update(format!("blob {expected_len}\0").as_bytes());
+            let mut buf = [0u8; 64 * 1024];
+            let mut copied = 0u64;
+            loop {
+                let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                copied = copied.saturating_add(n as u64);
+                hasher.update(&buf[..n]);
+                writer.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            }
+            let digest_result = hasher.try_finalize();
+            if digest_result.has_collision() {
+                return Err(format!(
+                    "SHA-1 collision detected while snapshotting: {}",
+                    source.display()
+                ));
+            }
+            let copied_hex = digest_result
+                .hash()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            if copied != expected_len || copied_hex != blob {
+                return Err(format!(
+                    "Workspace file changed while snapshotting: {}",
+                    source.display()
+                ));
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
+                writer
+                    .set_permissions(fs::Permissions::from_mode(0o600))
                     .map_err(|e| e.to_string())?;
             }
+            writer.sync_data().map_err(|error| error.to_string())?;
+            drop(writer);
             #[cfg(windows)]
             {
                 let metadata = fs::metadata(&temporary).map_err(|e| e.to_string())?;
                 crate::workspace_cleanup::clear_readonly_attribute(&temporary, &metadata)
                     .map_err(|e| e.to_string())?;
             }
-            fs::OpenOptions::new()
-                .write(true)
-                .open(&temporary)
-                .and_then(|f| f.sync_all())
-                .map_err(|error| error.to_string())?;
-            if hash(&temporary)? != blob {
-                return Err(format!(
-                    "Workspace file changed while snapshotting: {}",
-                    source.display()
-                ));
-            }
             match fs::rename(&temporary, &destination) {
-                Ok(()) => {
-                    #[cfg(unix)]
-                    fs::File::open(self.directory.join("blobs"))
-                        .and_then(|f| f.sync_all())
-                        .map_err(|e| e.to_string())?;
-                    Ok(blob.clone())
-                }
+                // `save_version` syncs the `blobs/` directory once before
+                // publishing the version manifest, avoiding per-file dir fsyncs.
+                Ok(()) => Ok(blob.clone()),
                 Err(_)
                     if real_child_path(&self.directory, &destination, true)?.is_some()
                         && hash(&destination)? == blob =>
@@ -682,7 +716,7 @@ impl Files {
         }
         let name = path_name(name)?;
         relative(&name)?;
-        let entry = if metadata.file_type().is_symlink() {
+        let entry = if crate::workspace_symlinks::is_link(&metadata) {
             let Ok(target) = fs::read_link(path) else {
                 // Some Windows reparse points expose no readable link target.
                 // There is no content to inherit, so pass the live entry through
@@ -1232,8 +1266,47 @@ impl Files {
                 }
             }
         }
-        let mut remove: Vec<_> = current.keys().map(|name| root.join(name)).collect();
-        remove.extend(previous_paths);
+        // Reuse live entries that already match `desired` (same directory,
+        // verified file blob, or identical link) instead of deleting and
+        // recopying/rehashing the whole environment tree.
+        let reusable = |name: &str| -> bool {
+            match (current.get(name), desired.get(name)) {
+                (Some(Entry::Directory { .. }), Some(Entry::Directory { .. })) => true,
+                (Some(Entry::File { blob: a, .. }), Some(Entry::File { blob: b, .. }))
+                    if a == b =>
+                {
+                    true
+                }
+                (
+                    Some(Entry::Link {
+                        target: t1,
+                        internal: i1,
+                        directory: d1,
+                    }),
+                    Some(Entry::Link {
+                        target: t2,
+                        internal: i2,
+                        directory: d2,
+                    }),
+                ) if t1 == t2 && i1 == i2 && d1 == d2 => true,
+                _ => false,
+            }
+        };
+        let mut remove: Vec<_> = current
+            .keys()
+            .filter(|name| !reusable(name))
+            .map(|name| root.join(name))
+            .collect();
+        for prev_path in previous_paths {
+            let keep = prev_path
+                .strip_prefix(&root)
+                .ok()
+                .and_then(|rel| path_name(rel).ok())
+                .is_some_and(|name| reusable(&name));
+            if !keep {
+                remove.push(prev_path);
+            }
+        }
         remove.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         remove.dedup();
         for path in remove {
@@ -1297,10 +1370,47 @@ impl Files {
             }
             match entry {
                 Entry::Directory { .. } => {
-                    real_child_path(&root, &path, false)?;
-                    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+                    if !reusable(name) {
+                        real_child_path(&root, &path, false)?;
+                        fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+                    }
                 }
                 Entry::File { blob, mode } => {
+                    let already_matches = matches!(
+                        current.get(name),
+                        Some(Entry::File { blob: current_blob, .. }) if current_blob == blob
+                    );
+                    if already_matches {
+                        let same_mode = matches!(
+                            current.get(name),
+                            Some(Entry::File { mode: current_mode, .. }) if current_mode == mode
+                        );
+                        if !same_mode {
+                            #[cfg(target_os = "macos")]
+                            if let Ok(meta) = fs::symlink_metadata(&path) {
+                                crate::workspace_cleanup::clear_macos_immutable_flags(&path, &meta)
+                                    .map_err(|e| e.to_string())?;
+                            }
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                fs::set_permissions(&path, fs::Permissions::from_mode(*mode))
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            #[cfg(windows)]
+                            {
+                                let mut permissions = fs::metadata(&path)
+                                    .map_err(|e| e.to_string())?
+                                    .permissions();
+                                permissions.set_readonly(*mode != 0);
+                                fs::set_permissions(&path, permissions)
+                                    .map_err(|e| e.to_string())?;
+                            }
+                            #[cfg(not(any(unix, windows)))]
+                            let _ = mode;
+                        }
+                        continue;
+                    }
                     real_child_path(&root, &path, false)?;
                     let source = self.blob_path(blob)?;
                     let source = real_child_path(&self.directory, &source, true)?
@@ -1331,7 +1441,7 @@ impl Files {
         }
         // Link targets may be later in lexical order, so create links last.
         for (name, entry) in &desired {
-            if workspace::tracked_path_matches(Some(&root), &tracked, name) {
+            if workspace::tracked_path_matches(Some(&root), &tracked, name) || reusable(name) {
                 continue;
             }
             if let Entry::Link {

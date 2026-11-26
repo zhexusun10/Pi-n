@@ -363,6 +363,7 @@ pub(super) fn read_execution_output(
         .map_err(|e| e.to_string());
     }
 
+    const MAX_FULL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
     let max_limit = if projection.is_some() {
         2 * 1024 * 1024
     } else {
@@ -371,7 +372,7 @@ pub(super) fn read_execution_output(
     let limit = if settled
         && body.get("full").and_then(serde_json::Value::as_bool) == Some(true)
     {
-        usize::MAX
+        MAX_FULL_OUTPUT_BYTES
     } else {
         body.get("limit")
             .map(|_| argument::<usize>(body, "limit"))
@@ -383,6 +384,7 @@ pub(super) fn read_execution_output(
         if tail {
             let target_end = before.unwrap_or(end).min(end);
             let compact_limit = limit.clamp(4, 2 * 1024 * 1024);
+            let mut aligned_end: Option<usize> = None;
             let (content, start_offset) =
                 crate::compact_transcript::compact_tail_pages_with_options(
                     target_end,
@@ -396,15 +398,19 @@ pub(super) fn read_execution_output(
                             cursor,
                             raw_limit,
                         )?;
+                        if aligned_end.is_none() {
+                            aligned_end = Some(raw_page.next_offset);
+                        }
                         Ok((raw_page.start_offset, raw_page.content))
                     },
                 )?;
+            let next_offset = aligned_end.unwrap_or(target_end);
             crate::store::LogPage {
                 content,
                 start_offset,
-                next_offset: target_end,
+                next_offset,
                 total_bytes: end,
-                complete: target_end == end,
+                complete: next_offset == end,
             }
         } else {
             if offset > end {
@@ -419,13 +425,11 @@ pub(super) fn read_execution_output(
                 && raw_page.content.trim_start().starts_with('{')
             {
                 // A single JSONL line exceeded the 4 MiB forward ceiling.
-                // Advance to its terminating newline so the next poll does not
-                // start mid-line and emit the trailing base64/JSON tail as text.
+                // Stream forward in bounded chunks (O(1) RAM) until its
+                // terminating newline so the next poll never starts mid-line
+                // and leaks trailing JSON/base64 as plaintext.
                 let mut skip_cursor = raw_page.next_offset;
-                let mut scanned = raw_page.content.len();
-                while skip_cursor < end
-                    && scanned < crate::compact_transcript::MAX_COMPACT_RAW_SCAN_BYTES
-                {
+                while skip_cursor < end {
                     let step = crate::compact_transcript::COMPACT_RAW_CHUNK_BYTES
                         .min(end - skip_cursor);
                     let extra = store.execution_log_page(
@@ -437,9 +441,11 @@ pub(super) fn read_execution_output(
                     if extra.content.is_empty() {
                         break;
                     }
-                    scanned = scanned.saturating_add(extra.content.len());
                     if let Some(nl) = extra.content.find('\n') {
                         skip_cursor = extra.start_offset + nl + 1;
+                        break;
+                    }
+                    if extra.next_offset <= skip_cursor {
                         break;
                     }
                     skip_cursor = extra.next_offset;

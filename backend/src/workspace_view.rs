@@ -1460,7 +1460,19 @@ fn copy_project_git(
                 continue;
             }
             let destination = target.join(&name);
-            if item.file_type().map_err(|e| e.to_string())?.is_dir() {
+            let item_meta = fs::symlink_metadata(&item.path()).map_err(|e| e.to_string())?;
+            if crate::workspace_symlinks::is_link(&item_meta) {
+                if let Ok(meta) = fs::symlink_metadata(&destination) {
+                    if meta.is_dir() && !crate::workspace_symlinks::is_link(&meta) {
+                        crate::workspace_cleanup::remove_tree(&destination)
+                            .map_err(|e| e.to_string())?;
+                    } else {
+                        crate::workspace_symlinks::remove(&destination)?;
+                    }
+                }
+                let link = crate::workspace_symlinks::capture(&current, &item.path(), &item_meta)?;
+                crate::workspace_symlinks::materialize(target, &destination, &link)?;
+            } else if item_meta.is_dir() {
                 // Common logs/refs coexist with worktree-specific logs/HEAD;
                 // replacing the entire directory would lose user reflogs.
                 if let Ok(meta) = fs::symlink_metadata(&destination) {
@@ -1755,6 +1767,28 @@ impl<'a> ViewRecord<'a> {
 fn save(path: &Path, view: &View) -> Result<(), String> {
     ViewRecord::new(view)?.save(path)
 }
+/// Return all recorded symlink descriptors from the immutable `agent-views/<head>/view.json`
+/// record when present, preserving `project_absolute` and Windows `Kind::Junction`
+/// metadata that Git's raw `120000` blob cannot carry.
+pub(crate) fn recorded_links(
+    source: &Path,
+    head: &str,
+) -> BTreeMap<String, crate::workspace_symlinks::Link> {
+    let Ok(record) = record_path(source, head) else {
+        return BTreeMap::new();
+    };
+    let Ok(view) = load(&record) else {
+        return BTreeMap::new();
+    };
+    view.entries
+        .into_iter()
+        .filter_map(|(name, entry)| match entry {
+            Entry::Link { target, .. } => Some((name, target)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn load(path: &Path) -> Result<View, String> {
     let bytes = fs::read(path.join("view.json")).map_err(|e| format!("Missing complete project-view evidence: {e}; start a new Run (existing workspace retained)"))?;
     let expected = fs::read_to_string(path.join("checksum")).map_err(|e| e.to_string())?;
@@ -1819,6 +1853,7 @@ fn copy_git(
 
 /// Raw capture avoids clean/smudge/EOL filters changing the physical baseline.
 /// The index belongs to graph Git, never the source or visible project Git.
+#[cfg(test)]
 pub(crate) fn stage_project(path: &Path, metadata: &Path) -> Result<String, String> {
     stage_project_scoped(path, metadata, &[])
 }
@@ -1865,9 +1900,9 @@ pub(crate) fn stage_project_with_view(
 fn stage_project_entries(
     path: &Path,
     metadata: &Path,
-    entries: BTreeMap<String, Entry>,
+    entries: &BTreeMap<String, Entry>,
 ) -> Result<String, String> {
-    stage_project_entries_inner(path, metadata, &entries, true, None)
+    stage_project_entries_inner(path, metadata, entries, true, None)
 }
 
 fn stage_project_entries_inner(
@@ -2704,9 +2739,13 @@ fn install_git_scoped(owner: &Path, path: &Path, record: &Path, view: &View) -> 
                 return Err("Unsafe captured Git resource".into());
             }
         }
+        // Create the temporary config with owner-only permissions (0o600 on Unix)
+        // and Drop-guaranteed cleanup so credentials/tokens never leak on error.
         let short = std::env::temp_dir();
-        let pending = short.join(format!("pi-n-gitcfg-{}", uuid::Uuid::new_v4()));
-        fs::write(&pending, b"").map_err(|e| e.to_string())?;
+        let pending_guard = tempfile::NamedTempFile::new()
+            .map_err(|e| e.to_string())?
+            .into_temp_path();
+        let pending = pending_guard.to_path_buf();
         let worktree_str = crate::native::host_path(path)
             .to_string_lossy()
             .replace('\\', "/");
@@ -2827,10 +2866,13 @@ fn install_git_scoped(owner: &Path, path: &Path, record: &Path, view: &View) -> 
         let config_destination = git_dir.join("config");
         ensure_writable_target(&config_destination)?;
         fs::copy(&pending, &config_destination).map_err(|e| e.to_string())?;
-        let _ = fs::remove_file(&pending);
+        drop(pending_guard);
         let worktree_config = git_dir.join("config.worktree");
         if worktree_config.is_file() {
-            let scratch = short.join(format!("pi-n-gitwt-{}", uuid::Uuid::new_v4()));
+            let scratch_guard = tempfile::NamedTempFile::new()
+                .map_err(|e| e.to_string())?
+                .into_temp_path();
+            let scratch = scratch_guard.to_path_buf();
             fs::copy(&worktree_config, &scratch).map_err(|e| e.to_string())?;
             let updated_fast = (|| -> Result<bool, String> {
                 let mut cfg = git2::Config::open(&scratch).map_err(|e| e.to_string())?;
@@ -2870,7 +2912,7 @@ fn install_git_scoped(owner: &Path, path: &Path, record: &Path, view: &View) -> 
                     }
                 }
             }
-            let _ = fs::remove_file(&scratch);
+            drop(scratch_guard);
         }
         if let Some((mode, extra)) = &view.git_file_metadata {
             crate::workspace_metadata::restore_with_mode(&path.join(".git"), extra, *mode)?;
@@ -3037,6 +3079,38 @@ pub(crate) fn validate_ready(path: &Path, source: &Path) -> Result<(), String> {
     }
     validate_git_bindings(path)
 }
+fn save_ready_exclusions(path: &Path, exclusions: &[String]) -> Result<(), String> {
+    let Ok(root) = crate::workspace_state::root(path) else {
+        return Ok(());
+    };
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let file = root.join("project-exclusions");
+    crate::path_safety::real_child_path(&root, &file, true)?;
+    let bytes = serde_json::to_vec(exclusions).map_err(|e| e.to_string())?;
+    let pending = file.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
+    let result = fs::write(&pending, &bytes)
+        .and_then(|()| fs::rename(&pending, &file))
+        .map_err(|e| e.to_string());
+    if result.is_err() {
+        let _ = fs::remove_file(&pending);
+    }
+    result
+}
+
+fn load_ready_exclusions(path: &Path) -> Vec<String> {
+    let Ok(root) = crate::workspace_state::root(path) else {
+        return Vec::new();
+    };
+    let file = root.join("project-exclusions");
+    let Ok(Some(real)) = crate::path_safety::real_child_path(&root, &file, true) else {
+        return Vec::new();
+    };
+    fs::read(real)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+        .unwrap_or_default()
+}
+
 fn validate_git_bindings(path: &Path) -> Result<(), String> {
     if let Some((common, current, _, _)) = git_roots(path)? {
         let project = host_canonical(path)?;
@@ -3061,10 +3135,15 @@ fn validate_git_bindings(path: &Path) -> Result<(), String> {
             );
         }
     }
-    validate_nested_bindings(path, path)
+    let exclusions = load_ready_exclusions(path);
+    validate_nested_bindings(path, path, &exclusions)
 }
 
-fn validate_nested_bindings(owner: &Path, project: &Path) -> Result<(), String> {
+fn validate_nested_bindings(
+    owner: &Path,
+    project: &Path,
+    exclusions: &[String],
+) -> Result<(), String> {
     for item in fs::read_dir(project).map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
         if is_git_entry_name(project, &item.file_name())
@@ -3073,6 +3152,16 @@ fn validate_nested_bindings(owner: &Path, project: &Path) -> Result<(), String> 
             continue;
         }
         let path = item.path();
+        if !exclusions.is_empty() {
+            if let Ok(rel) = path.strip_prefix(owner) {
+                if exclusions
+                    .iter()
+                    .any(|scope| workspace::scope_contains_at(owner, rel, Path::new(scope)))
+                {
+                    continue;
+                }
+            }
+        }
         let metadata = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
         if !metadata.is_dir() || crate::workspace_symlinks::is_link(&metadata) {
             continue;
@@ -3108,7 +3197,7 @@ fn validate_nested_bindings(owner: &Path, project: &Path) -> Result<(), String> 
                 return Err("Nested Git worktree was redirected".into());
             }
         }
-        validate_nested_bindings(owner, &path)?;
+        validate_nested_bindings(owner, &path, exclusions)?;
     }
     Ok(())
 }
@@ -3730,6 +3819,7 @@ fn prepare_fresh_base_checkout(
     } else {
         None
     };
+    save_ready_exclusions(path, exclusions)?;
     mark_ready(path)?;
     Ok(observed)
 }
@@ -4299,6 +4389,7 @@ pub(crate) fn prepare(
     } else {
         assemble_view(path, source, &verified, &topology).ok()
     };
+    save_ready_exclusions(path, exclusions)?;
     mark_ready(path)?;
     Ok(observed)
 }
@@ -4493,6 +4584,17 @@ fn node_view(
     source: &Path,
     exclusions: &[String],
 ) -> Result<Option<(View, Option<PathBuf>)>, String> {
+    Ok(node_view_with_stats(path, source, exclusions, None, false)?
+        .map(|(view, inherited, _)| (view, inherited)))
+}
+
+fn node_view_with_stats(
+    path: &Path,
+    source: &Path,
+    exclusions: &[String],
+    reuse: Option<&SourceInspection>,
+    capture_stats: bool,
+) -> Result<Option<(View, Option<PathBuf>, Option<SourceStatSnapshot>)>, String> {
     if is_bound(path) {
         validate_bound(path, source)?;
         if path.join(".git").exists()
@@ -4500,9 +4602,18 @@ fn node_view(
         {
             return Err("Unresolved project Git conflicts remain".into());
         }
-        let mut view = inspect_scoped(path, path, exclusions)?;
+        let cutoff = capture_stats
+            .then(|| FileStatKey::safe_cutoff(std::time::SystemTime::now()))
+            .flatten();
+        let (mut view, stats) = inspect_scoped_with_stats(
+            path,
+            path,
+            exclusions,
+            reuse.map(|previous| (&previous.view, &previous.stats)),
+            cutoff,
+        )?;
         set_source_keys(&mut view, source);
-        return Ok(Some((view, None)));
+        return Ok(Some((view, None, capture_stats.then_some(stats))));
     }
     // Host-only public API/fixture checkouts have graph Git, not agent Git.
     // Carry the recorded source project Git, never that internal database.
@@ -4531,7 +4642,7 @@ fn node_view(
     // a host-only/fixture checkout can still advance its nested worktrees.
     view.repositories = nested_repository_views(path)?;
     set_source_keys(&mut view, source);
-    Ok(Some((view, Some(record))))
+    Ok(Some((view, Some(record), None)))
 }
 
 fn reject_undeliverable_special_changes(
@@ -4600,6 +4711,9 @@ pub(crate) fn seal_prepared_scoped(
         return Ok(head);
     };
     let record = ViewRecord::new(&view)?;
+    if is_bound(path) {
+        save_ready_exclusions(path, exclusions)?;
+    }
     if record_matches(source, &head, &record.identity)? {
         // Reusing immutable evidence still has to finish this slot's local
         // gate (a previous process may have stopped after publishing the view).
@@ -5014,6 +5128,7 @@ pub(crate) fn preparation_guard(path: &Path, exclusions: &[String]) -> Result<St
 pub(crate) struct StagedNodeSnapshot {
     pub(crate) identity: Option<String>,
     base_match: Option<(String, bool)>,
+    pub(crate) reuse: Option<SourceInspection>,
 }
 
 impl StagedNodeSnapshot {
@@ -5048,28 +5163,29 @@ pub(crate) fn stage_node_snapshot_with_record(
     source: &Path,
     exclusions: &[String],
 ) -> Result<StagedNodeSnapshot, String> {
-    let observed = match node_view(path, source, exclusions)? {
-        Some((view, _)) => {
+    let observed = match node_view_with_stats(path, source, exclusions, None, true)? {
+        Some((view, _, stats)) => {
             let identity = node_view_identity(&view)?;
             let base_match = reject_undeliverable_special_changes(path, source, &view, &identity)?;
-            // Only project entries become staging inputs. Drop native Git
-            // metadata and topology here, before building the graph index.
-            Some((identity, view.entries, base_match))
+            Some((identity, view, stats, base_match))
         }
         None => None,
     };
-    let Some((identity, entries, base_match)) = observed else {
+    let Some((identity, view, stats, base_match)) = observed else {
         workspace::stage_scoped_local(path, exclusions)?;
         return Ok(StagedNodeSnapshot {
             identity: None,
             base_match: None,
+            reuse: None,
         });
     };
     let metadata = workspace::private_git_dir(path).unwrap_or_else(|| path.join(".git"));
-    stage_project_entries(path, &metadata, entries)?;
+    stage_project_entries(path, &metadata, &view.entries)?;
+    let reuse = stats.map(|stats| SourceInspection { view, stats });
     Ok(StagedNodeSnapshot {
         identity: Some(identity),
         base_match,
+        reuse,
     })
 }
 
@@ -5117,7 +5233,19 @@ pub(crate) fn capture_node_scoped(
     exclusions: &[String],
     staged_identity: Option<&str>,
 ) -> Result<(), String> {
-    let Some((view, inherited)) = node_view(path, source, exclusions)? else {
+    capture_node_scoped_with_reuse(path, source, head, exclusions, staged_identity, None)
+}
+
+pub(crate) fn capture_node_scoped_with_reuse(
+    path: &Path,
+    source: &Path,
+    head: &str,
+    exclusions: &[String],
+    staged_identity: Option<&str>,
+    reuse: Option<&SourceInspection>,
+) -> Result<(), String> {
+    let Some((view, inherited, _)) = node_view_with_stats(path, source, exclusions, reuse, false)?
+    else {
         return if staged_identity.is_some() {
             Err(
                 "Node workspace view disappeared between staging and capture; retry snapshot"
@@ -5218,13 +5346,28 @@ fn plain_fingerprint(path: &Path) -> Result<(Option<String>, Option<u128>), Stri
     }
 }
 
+#[cfg(test)]
 pub(crate) fn import_resolution(path: &Path) -> Result<(), ResolutionError> {
-    accept_resolution_checked(path, false)
+    import_resolution_scoped(path, &[])
 }
-pub(crate) fn accept_resolution(path: &Path, explicit: bool) -> Result<(), String> {
-    accept_resolution_checked(path, explicit).map_err(|error| error.to_string())
+pub(crate) fn import_resolution_scoped(
+    path: &Path,
+    exclusions: &[String],
+) -> Result<(), ResolutionError> {
+    accept_resolution_checked(path, false, exclusions)
 }
-fn accept_resolution_checked(path: &Path, explicit: bool) -> Result<(), ResolutionError> {
+pub(crate) fn accept_resolution_scoped(
+    path: &Path,
+    explicit: bool,
+    exclusions: &[String],
+) -> Result<(), String> {
+    accept_resolution_checked(path, explicit, exclusions).map_err(|error| error.to_string())
+}
+fn accept_resolution_checked(
+    path: &Path,
+    explicit: bool,
+    exclusions: &[String],
+) -> Result<(), ResolutionError> {
     if !is_bound(path) {
         return Ok(());
     }
@@ -5280,7 +5423,7 @@ fn accept_resolution_checked(path: &Path, explicit: bool) -> Result<(), Resoluti
         }
     }
     let metadata = workspace::private_git_dir(path).ok_or("Missing private graph Git")?;
-    stage_project(path, &metadata)?;
+    stage_project_scoped(path, &metadata, exclusions)?;
     // Also reject explicitly staged markers or a mere touch of the original
     // conflict. Limit this check to the actual conflict paths, not unrelated
     // inherited files (which may legitimately contain fixture markers).
@@ -5294,7 +5437,16 @@ fn accept_resolution_checked(path: &Path, explicit: bool) -> Result<(), Resoluti
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_conflicts(source: &Path, path: &Path) -> Result<(), String> {
+    prepare_conflicts_scoped(source, path, &[])
+}
+
+pub(crate) fn prepare_conflicts_scoped(
+    source: &Path,
+    path: &Path,
+    exclusions: &[String],
+) -> Result<(), String> {
     let base = workspace::git(path, &["rev-parse", "refs/pi-n/base"])?;
     let parents = workspace::git(
         path,
@@ -5309,7 +5461,7 @@ pub(crate) fn prepare_conflicts(source: &Path, path: &Path) -> Result<(), String
         path,
         &base,
         &parents.lines().map(str::to_owned).collect::<Vec<_>>(),
-        &[],
+        exclusions,
         false,
     )?;
     if !path.join(".git").exists() {

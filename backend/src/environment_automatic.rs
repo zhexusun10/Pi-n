@@ -104,7 +104,7 @@ pub(crate) fn resolve(
 const [git,shell]=process.argv.slice(1);
 const probe=(exe,args)=>({path:exe,sha256:crypto.createHash('sha256').update(fs.readFileSync(exe)).digest('hex'),output:cp.execFileSync(exe,args,{encoding:'utf8',timeout:30000}).trim()});
 const directories=[];let directory='',quoted=false;for(const character of process.env.PATH){if(process.platform==='win32'&&character==='"')quoted=!quoted;else if(character===path.delimiter&&!quoted){directories.push(directory);directory='';}else directory+=character;}directories.push(directory);
-const tools=[];for(const directory of directories){for(const name of process.platform==='win32'?['python.exe','python3.exe','conda.exe']:['python3','python','conda']){const file=path.join(directory,name);if(fs.existsSync(file)&&fs.statSync(file).isFile())tools.push({path:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')});}}
+const tools=[];for(const directory of directories){for(const name of process.platform==='win32'?['python.exe','python3.exe','conda.exe']:['python3','python','conda']){const file=path.join(directory,name);try{if(fs.existsSync(file)&&fs.statSync(file).isFile())tools.push({path:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')});}catch{}}}
 console.log(JSON.stringify({node:probe(process.execPath,['-p','JSON.stringify(process.versions)']),git:probe(git,['--version']),shell:probe(shell,['--noprofile','--norc','--version']),tools}));"#;
     let mut caches = vec![".runtime-cache".to_string()];
     if cfg!(windows) {

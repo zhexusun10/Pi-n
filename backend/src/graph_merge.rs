@@ -197,7 +197,7 @@ pub(crate) fn finish_project_resolution(
     repository: &Path,
     exclusions: &[String],
 ) -> Result<(), String> {
-    crate::workspace_view::accept_resolution(repository, true)?;
+    crate::workspace_view::accept_resolution_scoped(repository, true, exclusions)?;
     if let Some(incoming) = pending(repository) {
         finish_merge_checked(
             repository,
@@ -375,13 +375,48 @@ pub(crate) fn resolve_with_merger_for_node(
     attempt: usize,
     node: &str,
     conflicts: MergerConflicts,
+    emit: impl FnMut(EventKind) -> Result<(), String>,
+) -> Result<(), String> {
+    resolve_with_merger_for_node_revision(
+        repository,
+        query,
+        config,
+        root,
+        1,
+        attempt,
+        node,
+        conflicts,
+        &config
+            .environment
+            .as_ref()
+            .map(|environment| environment.exclusions())
+            .unwrap_or_default(),
+        emit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_with_merger_for_node_revision(
+    repository: &Path,
+    query: &str,
+    config: &Config,
+    root: &Path,
+    revision: usize,
+    attempt: usize,
+    node: &str,
+    conflicts: MergerConflicts,
+    exclusions: &[String],
     mut emit: impl FnMut(EventKind) -> Result<(), String>,
 ) -> Result<(), String> {
     let _operation = crate::process_control::OperationControl::begin()?;
     let canonical = repository.canonicalize().map_err(|e| e.to_string())?;
     let repository = canonical.as_path();
     if !crate::path_identity::same_path(repository, Path::new(&config.repository)) {
-        crate::workspace_view::prepare_conflicts(Path::new(&config.repository), repository)?;
+        crate::workspace_view::prepare_conflicts_scoped(
+            Path::new(&config.repository),
+            repository,
+            exclusions,
+        )?;
     }
     let _git_view = if crate::path_identity::same_path(repository, Path::new(&config.repository)) {
         None
@@ -404,7 +439,7 @@ pub(crate) fn resolve_with_merger_for_node(
         execution: Execution {
             id: id.clone(),
             node: node.into(),
-            revision: 1,
+            revision,
             attempt,
             session_id: id.clone(),
             worktree: repository.to_string_lossy().into(),
@@ -497,16 +532,11 @@ pub(crate) fn resolve_with_merger_for_node(
             // exactly like publication does; otherwise Pi^n's own staging would
             // commit `.agent-home`/`.venv` and the next preparation would reject the
             // merge as a tracked-file conflict.
-            let exclusions = config
-                .environment
-                .as_ref()
-                .map(|environment| environment.exclusions())
-                .unwrap_or_default();
-            crate::workspace_view::import_resolution(repository)?;
+            crate::workspace_view::import_resolution_scoped(repository, exclusions)?;
             finish_merge_checked(
                 repository,
                 &incoming,
-                &exclusions,
+                exclusions,
                 true,
                 ResolutionIndex::Imported,
             )?;
@@ -514,7 +544,7 @@ pub(crate) fn resolve_with_merger_for_node(
                 crate::workspace_view::seal_prepared_scoped(
                     repository,
                     Path::new(&config.repository),
-                    &exclusions,
+                    exclusions,
                     None,
                 )?;
             }
@@ -581,7 +611,16 @@ pub fn continue_merger_for_node(
     if !crate::path_identity::same_path(repository, Path::new(&config.repository))
         && !crate::workspace_view::is_bound(repository)
     {
-        crate::workspace_view::prepare_conflicts(Path::new(&config.repository), repository)?;
+        let exclusions = config
+            .environment
+            .as_ref()
+            .map(|e| e.exclusions())
+            .unwrap_or_default();
+        crate::workspace_view::prepare_conflicts_scoped(
+            Path::new(&config.repository),
+            repository,
+            &exclusions,
+        )?;
     }
     let _git_view = if crate::path_identity::same_path(repository, Path::new(&config.repository)) {
         None
@@ -674,7 +713,7 @@ pub fn continue_merger_for_node(
                 .as_ref()
                 .map(|e| e.exclusions())
                 .unwrap_or_default();
-            crate::workspace_view::import_resolution(repository)?;
+            crate::workspace_view::import_resolution_scoped(repository, &exclusions)?;
             if let Some(head) = &incoming {
                 finish_merge_checked(
                     repository,

@@ -103,25 +103,40 @@ enum Mode {
     Freeze,
 }
 
-/// Run `work` on a helper thread and give up after `deadline`. A wedged Git
-/// process keeps running in the background until it ends, but the read returns.
+/// Backoff window after a baseline Git probe times out, avoiding piling up
+/// threads and Git subprocesses on a slow or wedged repository.
+const TIMEOUT_BACKOFF: Duration = Duration::from_secs(15);
+
+/// Run `work` on a helper thread with a dedicated `process_control` owner so
+/// any child Git subprocess is terminated if `deadline` elapses.
 fn within_deadline<T: Send + 'static>(
     deadline: Duration,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
+    let owner = format!("bash-verify:{}", uuid::Uuid::new_v4());
+    let worker_owner = owner.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("file-change-baseline".into())
         .spawn(move || {
-            let _ = sender.send(work());
+            let result = crate::process_control::with_owner(&worker_owner, work);
+            crate::process_control::clear_owner_stop(&worker_owner);
+            let _ = sender.send(result);
         })
         .ok()?;
-    receiver.recv_timeout(deadline).ok()
+    match receiver.recv_timeout(deadline) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            let _ = crate::process_control::stop_owner(&owner);
+            None
+        }
+    }
 }
 
 type LiveKey = (PathBuf, String, Option<String>, Vec<String>);
 type LiveEntries = Vec<(Instant, LiveKey, PathBaseline)>;
 static LIVE: OnceLock<Mutex<LiveEntries>> = OnceLock::new();
+static IN_FLIGHT_OR_BACKOFF: OnceLock<Mutex<HashMap<LiveKey, Instant>>> = OnceLock::new();
 
 fn live_cached(key: &LiveKey) -> Option<PathBaseline> {
     let mut entries = LIVE.get_or_init(Default::default).lock().ok()?;
@@ -154,12 +169,30 @@ fn baseline_for(target: &VerifyTarget, paths: &[String], mode: Mode) -> Baseline
         if let Some(baseline) = live_cached(&key) {
             return BaselineOutcome::Ready(baseline);
         }
+        // Deduplicate concurrent polls and apply backoff after a timeout.
+        if let Ok(mut guard) = IN_FLIGHT_OR_BACKOFF.get_or_init(Default::default).lock() {
+            let now = Instant::now();
+            guard.retain(|_, until| *until > now);
+            if guard.contains_key(&key) {
+                return BaselineOutcome::Failed;
+            }
+            guard.insert(key.clone(), now + BASELINE_DEADLINE + Duration::from_secs(1));
+        }
     }
     let owned = key.clone();
-    let outcome = within_deadline(BASELINE_DEADLINE, move || {
+    let timed_result = within_deadline(BASELINE_DEADLINE, move || {
         path_baseline(&owned.0, &owned.1, owned.2.as_deref(), &owned.3)
-    })
-    .unwrap_or(BaselineOutcome::Failed);
+    });
+    if mode == Mode::Live {
+        if let Ok(mut guard) = IN_FLIGHT_OR_BACKOFF.get_or_init(Default::default).lock() {
+            if timed_result.is_none() {
+                guard.insert(key.clone(), Instant::now() + TIMEOUT_BACKOFF);
+            } else {
+                guard.remove(&key);
+            }
+        }
+    }
+    let outcome = timed_result.unwrap_or(BaselineOutcome::Failed);
     if mode == Mode::Live {
         if let BaselineOutcome::Ready(baseline) = &outcome {
             live_store(key, baseline.clone());

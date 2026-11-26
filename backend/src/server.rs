@@ -128,32 +128,48 @@ static SOURCE_LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, Weak<Mute
 static CANCELLED_PLANNING: OnceLock<Mutex<std::collections::HashMap<String, bool>>> =
     OnceLock::new();
 
-struct PlanningCancellationGuard(String);
+struct PlanningCancellationGuard {
+    owner: String,
+    service: Arc<Service>,
+    finished: bool,
+}
 impl PlanningCancellationGuard {
-    fn clear_owner_stop(&self) {
-        crate::process_control::clear_owner_stop(&crate::process_control::planning_owner(&self.0));
+    fn new(owner: String, service: Arc<Service>) -> Self {
+        Self {
+            owner,
+            service,
+            finished: false,
+        }
     }
-    fn finish(&mut self, planning: &AtomicBool) {
+    fn clear_owner_stop(&self) {
+        crate::process_control::clear_owner_stop(&crate::process_control::planning_owner(
+            &self.owner,
+        ));
+    }
+    fn finish(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
         if let Ok(mut cancelled) = CANCELLED_PLANNING.get_or_init(Default::default).lock() {
-            planning.store(false, Ordering::SeqCst);
-            cancelled.remove(&self.0);
+            self.service.planning.store(false, Ordering::SeqCst);
+            cancelled.remove(&self.owner);
             // Keep the cancellation lock while retiring the late-registration
             // stop flag. A Stop request serializes on the same lock, so it can
             // never poison a subsequent Planner turn for this Run.
             self.clear_owner_stop();
-            self.0.clear();
+            self.owner.clear();
         } else {
-            planning.store(false, Ordering::SeqCst);
+            self.service.planning.store(false, Ordering::SeqCst);
             self.clear_owner_stop();
         }
     }
 }
 impl Drop for PlanningCancellationGuard {
     fn drop(&mut self) {
-        if let Ok(mut cancelled) = CANCELLED_PLANNING.get_or_init(Default::default).lock() {
-            cancelled.remove(&self.0);
-            self.clear_owner_stop();
-        }
+        // Always reset `service.planning = false` even on unwind panic so the
+        // Run never gets permanently wedged in `planning == true`.
+        self.finish();
     }
 }
 fn check_planning_cancelled(run_id: &str) -> Result<(), String> {
@@ -1144,13 +1160,21 @@ fn load_run(run_id: String, service: &Arc<Service>) -> Result<Snapshot, String> 
     if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
         return Err("Wait for the current operation to finish before switching runs".into());
     }
-    let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
-    #[cfg(not(feature = "fixture"))]
-    crate::engine::invalidate_warm_node();
-    let snapshot = runtime.load_run(&run_id)?;
-    crate::file_changes::warm_run_changes(&snapshot, &runtime.store, Some(&runtime.root));
-    #[cfg(not(feature = "fixture"))]
-    runtime.warm_completed_serial_node();
+    let (snapshot, root, fence) = {
+        let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+        #[cfg(not(feature = "fixture"))]
+        crate::engine::invalidate_warm_node();
+        let snapshot = runtime.load_run(&run_id)?;
+        #[cfg(not(feature = "fixture"))]
+        runtime.warm_completed_serial_node();
+        let fence = crate::file_changes::capture_warm_fence(&snapshot, None).ok();
+        (snapshot, runtime.root.clone(), fence)
+    };
+    if let Some(fence) = fence {
+        if let Ok(reader) = crate::store::Store::open_reader(&root.join("events.sqlite")) {
+            crate::file_changes::warm_scoped_changes(&snapshot, &reader, Some(&root), None, &fence);
+        }
+    }
     Ok(snapshot)
 }
 
@@ -1160,6 +1184,13 @@ fn compile_graph(graph: Graph) -> Result<Plan, Vec<compiler::Diagnostic>> {
 
 fn requires_workspace_size_check(config: &Config, route_plan_type: Option<&str>) -> bool {
     route_plan_type == Some("graph") && config.isolate_parallel_nodes
+}
+
+fn should_check_plan_goal_admission_size(
+    revision_run_id: Option<&str>,
+    continuation_initial: bool,
+) -> bool {
+    revision_run_id.is_none() || continuation_initial
 }
 
 fn validate_run_admission_with_size_check(
@@ -1444,6 +1475,13 @@ fn accumulate_planning_role_line(metrics: &mut PlanningRoleMetrics, line: &str) 
     let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
         return false;
     };
+    accumulate_planning_role_value(metrics, &value)
+}
+
+fn accumulate_planning_role_value(
+    metrics: &mut PlanningRoleMetrics,
+    value: &serde_json::Value,
+) -> bool {
     if let Some(ts) = value
         .get("piNReceivedAt")
         .or_else(|| value.get("timestamp"))
@@ -1548,14 +1586,7 @@ fn accumulate_planning_role_line(metrics: &mut PlanningRoleMetrics, line: &str) 
     }
 }
 
-pub fn parse_planning_role_metrics(model: &str, log: &str) -> PlanningRoleMetrics {
-    let mut metrics = PlanningRoleMetrics {
-        model: model.to_string(),
-        ..Default::default()
-    };
-    for line in log.lines() {
-        accumulate_planning_role_line(&mut metrics, line);
-    }
+fn finalize_planning_role_metrics(metrics: &mut PlanningRoleMetrics) {
     if metrics.duration_seconds == 0.0 {
         if let (Some(start), Some(end)) = (
             metrics
@@ -1570,6 +1601,17 @@ pub fn parse_planning_role_metrics(model: &str, log: &str) -> PlanningRoleMetric
             metrics.duration_seconds = end.saturating_sub(start) as f64 / 1000.0;
         }
     }
+}
+
+pub fn parse_planning_role_metrics(model: &str, log: &str) -> PlanningRoleMetrics {
+    let mut metrics = PlanningRoleMetrics {
+        model: model.to_string(),
+        ..Default::default()
+    };
+    for line in log.lines() {
+        accumulate_planning_role_line(&mut metrics, line);
+    }
+    finalize_planning_role_metrics(&mut metrics);
     metrics
 }
 
@@ -2480,7 +2522,7 @@ fn plan_goal_internal_with_options(
             return Err((error.to_string(), None));
         }
     };
-    let mut cancellation_guard = PlanningCancellationGuard(owner.clone());
+    let mut cancellation_guard = PlanningCancellationGuard::new(owner.clone(), cleanup.clone());
     let result = crate::process_control::with_owner(
         &crate::process_control::planning_owner(&owner),
         || {
@@ -2597,7 +2639,10 @@ fn plan_goal_internal_with_options(
                     .clone();
                 let repository = PathBuf::from(&config.repository);
                 let repo_str = repository.to_string_lossy().to_string();
-                if revision_run_id.is_none() {
+                if should_check_plan_goal_admission_size(
+                    revision_run_id.as_deref(),
+                    continuation_initial,
+                ) {
                     validate_run_admission_with_size_check(
                         &repository,
                         &config,
@@ -2964,8 +3009,10 @@ fn plan_goal_internal_with_options(
                             edges: Vec::new(),
                         },
                         "graph" => {
-                            if revision_run_id.is_none()
-                                && mode != Some("graph")
+                            if should_check_plan_goal_admission_size(
+                                revision_run_id.as_deref(),
+                                continuation_initial,
+                            ) && mode != Some("graph")
                                 && config.isolate_parallel_nodes
                             {
                                 crate::workspace::cached_check_workspace_size(&repository)?;
@@ -3208,7 +3255,10 @@ fn plan_goal_internal_with_options(
                                 .map_err(|e| e.to_string())?
                             };
                             fs::write(&graph_path, graph_bytes).map_err(|e| e.to_string())?;
-                            let mut log = String::new();
+                            let mut turn_metrics = PlanningRoleMetrics {
+                                model: planner_config.model.clone(),
+                                ..Default::default()
+                            };
                             // Runtime rejects removing a node whose result this run
                             // already published. Tell the Planner at the tool boundary
                             // so it reworks the task instead of losing the turn.
@@ -3296,49 +3346,72 @@ fn plan_goal_internal_with_options(
                                     else {
                                         return;
                                     };
+                                    let trimmed = text.trim();
+                                    let is_plain_delta = trimmed.contains("\"assistantMessageEvent\"")
+                                        && !trimmed.contains("\"timestamp\"")
+                                        && !trimmed.contains("\"piNReceivedAt\"")
+                                        && !trimmed.contains('\n');
+                                    let parsed_event = if !is_plain_delta
+                                        && !trimmed.is_empty()
+                                        && !trimmed.starts_with("[stderr]")
+                                        && trimmed.starts_with('{')
+                                        && !trimmed.contains('\n')
+                                    {
+                                        serde_json::from_str::<serde_json::Value>(trimmed).ok()
+                                    } else {
+                                        None
+                                    };
+                                    if parsed_event.is_none() && trimmed.contains('\n') {
+                                        for line in text.lines() {
+                                            accumulate_planning_role_line(&mut turn_metrics, line);
+                                        }
+                                    }
                                     match planner_log.write_all(text.as_bytes()) {
                                         Ok(()) => {
                                             // Commit the user row before recording consumption;
                                             // a crash must not hide an accepted message.
-                                            observe_planner_steer_line(
-                                                &service,
-                                                &owner,
-                                                &planning_id,
-                                                &text,
-                                            );
+                                            if let Some(event) = &parsed_event {
+                                                observe_planner_steer_value(
+                                                    &service,
+                                                    &owner,
+                                                    &planning_id,
+                                                    event,
+                                                );
+                                            }
                                             notify_planning_output(&owner, &planning_id);
                                         }
                                         Err(error) => log_error = Some(error.to_string()),
                                     }
-                                    log.push_str(&text);
-                                    crate::file_changes::update_planning_from_log_chunk(
-                                        &owner,
-                                        &planning_id,
-                                        &planning_worktree,
-                                        &repo_str,
-                                        &text,
-                                    );
+                                    if text.contains("\"tool") || text.contains("\"pi_n_process") {
+                                        crate::file_changes::update_planning_from_log_chunk(
+                                            &owner,
+                                            &planning_id,
+                                            &planning_worktree,
+                                            &repo_str,
+                                            &text,
+                                        );
+                                    }
                                     on_planner_line(&text);
                                     // Publish live Planner usage at assistant-message
                                     // and tool boundaries so the session token panel
                                     // does not wait for the committed turn summary.
-                                    let advanced =
-                                        running.roles.get_mut("planner").is_some_and(|role| {
-                                            accumulate_planning_role_line(role, &text)
-                                        });
-                                    if advanced {
-                                        if let Ok(mut runtime) = service.runtime.lock() {
-                                            if runtime.state.run_id == owner {
-                                                let _ =
-                                                    runtime.emit(EventKind::PlannerTurnProgress {
-                                                        planning: running.clone(),
-                                                    });
+                                    if let Some(event) = &parsed_event {
+                                        accumulate_planning_role_value(&mut turn_metrics, event);
+                                        let advanced =
+                                            running.roles.get_mut("planner").is_some_and(|role| {
+                                                accumulate_planning_role_value(role, event)
+                                            });
+                                        if advanced {
+                                            if let Ok(mut runtime) = service.runtime.lock() {
+                                                if runtime.state.run_id == owner {
+                                                    let _ = runtime.emit(
+                                                        EventKind::PlannerTurnProgress {
+                                                            planning: running.clone(),
+                                                        },
+                                                    );
+                                                }
                                             }
                                         }
-                                    }
-                                    if let Ok(event) =
-                                        serde_json::from_str::<serde_json::Value>(&text)
-                                    {
                                         if revision_run_id.is_some()
                                             && event["type"] == "tool_execution_start"
                                             && event["toolName"] == "edit_graph"
@@ -3443,14 +3516,15 @@ fn plan_goal_internal_with_options(
                                 let _ = fs::remove_file(path);
                             }
                             crate::file_changes::settle_planning(&owner, &planning_id);
-                            if let Ok(runtime) = service.runtime.lock() {
-                                let _ = crate::file_changes::persist_run(&runtime.root, &owner);
+                            if let Ok(root) = service_data_root(&service) {
+                                let _ = crate::file_changes::persist_run(&root, &owner);
                             }
                             let planner_wall_sec = planner_start.elapsed().as_secs_f64();
                             if let Some(error) = log_error {
                                 return Err(format!("Cannot persist planning output: {error}"));
                             }
-                            let mut m = parse_planning_role_metrics(&planner_config.model, &log);
+                            finalize_planning_role_metrics(&mut turn_metrics);
+                            let mut m = turn_metrics;
                             if m.duration_seconds == 0.0 {
                                 m.duration_seconds = planner_wall_sec;
                             }
@@ -3808,7 +3882,7 @@ fn plan_goal_internal_with_options(
     {
         drive(service.clone());
     }
-    cancellation_guard.finish(&cleanup.planning);
+    cancellation_guard.finish();
     // A temporary pause is already undone; return that state rather than the
     // snapshot captured while the affected workers were being drained.
     result.map(|snapshot| {
@@ -4132,35 +4206,41 @@ fn reclaim_source_snapshot(service: &Arc<Service>, repository: &std::path::Path)
     let result = (|| -> Result<(), String> {
         let lock = source_lock(repository)?;
         let _guard = lock.lock().map_err(|error| error.to_string())?;
-        let (reclaimable, prune_target) = {
+        let candidate = {
             let runtime = service.runtime.lock().map_err(|error| error.to_string())?;
-            if runtime.shadow_reclaimable(repository)? {
-                (true, None)
-            } else if !runtime.is_serial()
-                && runtime.state.phase == "completed"
-                && !runtime
-                    .store
-                    .shadow_repo_needed_by_other_run(&runtime.state.run_id, repository)?
-            {
-                let target = match crate::workspace::shadow_repo_if_exists(repository)? {
-                    Some(shadow) => {
-                        let protected =
-                            crate::cleanup::protected_shadow_objects(&runtime.store, "")?;
-                        Some((shadow, protected))
-                    }
-                    None => None,
-                };
-                (false, target)
+            if !runtime.is_serial() && runtime.state.phase == "completed" {
+                Some((
+                    runtime.root.clone(),
+                    runtime.state.run_id.clone(),
+                    runtime.state.published_head.is_some(),
+                ))
             } else {
-                (false, None)
+                None
             }
         };
-        if reclaimable {
+        let Some((root, run_id, has_published_head)) = candidate else {
+            return Ok(());
+        };
+        let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+        if reader.shadow_repo_needed_by_other_run(&run_id, repository)? {
+            return Ok(());
+        }
+        let Some(shadow) = crate::workspace::shadow_repo_if_exists(repository)? else {
+            return Ok(());
+        };
+        if has_published_head && !crate::workspace::is_standard_git(repository) {
             crate::workspace::remove_shadow_repo(repository)?;
-        } else if let Some((shadow, protected)) = prune_target {
-            let ref_lock = crate::workspace::host_ref_lock(repository)?;
-            let _ref_guard = ref_lock.lock().map_err(|error| error.to_string())?;
-            crate::workspace::prune_shadow_unreachable(&shadow, &protected)?;
+        } else {
+            let protected = crate::cleanup::protected_shadow_objects_for_repository(
+                &reader,
+                "",
+                Some(repository),
+            )?;
+            crate::workspace::prune_shadow_unreachable_for_source(
+                &shadow,
+                Some(repository),
+                &protected,
+            )?;
         }
         Ok(())
     })();
@@ -4448,19 +4528,77 @@ fn drive(service: Arc<Service>) {
                         Ok(completion) => {
                             drop(generation);
                             in_flight -= 1;
-                            match completion {
+                            let step_result: Result<(), String> = match completion {
                                 DriverCompletion::Node(execution, result) => {
-                                    service.runtime.lock().map_err(|e| e.to_string())?.finish(&execution, result)?;
+                                    let reclaim = {
+                                        let mut runtime =
+                                            service.runtime.lock().map_err(|e| e.to_string())?;
+                                        runtime
+                                            .finish_deferring_slot_reclaim(&execution, result)
+                                            .map(|(_, plan)| plan)
+                                    };
+                                    match reclaim {
+                                        Ok(Some(plan)) => {
+                                            if let Err(error) = plan.execute() {
+                                                eprintln!(
+                                                    "Cannot reclaim retired node workspaces: {error}"
+                                                );
+                                            }
+                                            Ok(())
+                                        }
+                                        Ok(None) => Ok(()),
+                                        Err(error) => Err(error),
+                                    }
                                 }
                                 DriverCompletion::Publication(Err(error)) => {
                                     publication_in_flight = false;
                                     eprintln!("[Pi^n] [Publication] Failed: {error}");
-                                    service.runtime.lock().map_err(|e| e.to_string())?
-                                        .emit(EventKind::PublicationFailed { error })?;
+                                    service
+                                        .runtime
+                                        .lock()
+                                        .map_err(|e| e.to_string())?
+                                        .emit(EventKind::PublicationFailed { error })
                                 }
                                 DriverCompletion::Publication(Ok(())) => {
                                     publication_in_flight = false;
+                                    Ok(())
                                 }
+                            };
+                            if let Err(error) = step_result {
+                                // Drain all remaining in-flight completions so their
+                                // terminal events are never lost by dropping completed_rx.
+                                while in_flight > 0 {
+                                    match completed_rx.recv() {
+                                        Ok(DriverCompletion::Node(exec, res)) => {
+                                            in_flight -= 1;
+                                            let reclaim = service
+                                                .runtime
+                                                .lock()
+                                                .ok()
+                                                .and_then(|mut rt| {
+                                                    rt.finish_deferring_slot_reclaim(&exec, res)
+                                                        .ok()
+                                                })
+                                                .and_then(|(_, plan)| plan);
+                                            if let Some(plan) = reclaim {
+                                                let _ = plan.execute();
+                                            }
+                                        }
+                                        Ok(DriverCompletion::Publication(Err(pub_err))) => {
+                                            in_flight -= 1;
+                                            if let Ok(mut rt) = service.runtime.lock() {
+                                                let _ = rt.emit(EventKind::PublicationFailed {
+                                                    error: pub_err,
+                                                });
+                                            }
+                                        }
+                                        Ok(DriverCompletion::Publication(Ok(()))) => {
+                                            in_flight -= 1;
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                                return Err(error);
                             }
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -4590,15 +4728,23 @@ fn expire_planner_steer_confirmation(
 /// Translate Pi's asynchronous RPC response and exact marked user turn into
 /// durable evidence. Repeated text and extension input transformations never
 /// manufacture a consumption acknowledgement.
+#[cfg(all(test, feature = "fixture"))]
 fn observe_planner_steer_line(service: &Arc<Service>, owner: &str, planning_id: &str, line: &str) {
-    // Text/thinking deltas dominate the log and can never acknowledge an RPC
-    // request or inject a user turn; skip a second JSON parse for them.
     if line.contains("\"assistantMessageEvent\"") {
         return;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
+    observe_planner_steer_value(service, owner, planning_id, &value);
+}
+
+fn observe_planner_steer_value(
+    service: &Arc<Service>,
+    owner: &str,
+    planning_id: &str,
+    value: &serde_json::Value,
+) {
     let (request_id, next, error) = match value["type"].as_str() {
         Some("response") if value["command"] == "prompt" => {
             let Some(id) = value["id"].as_str() else {
@@ -5759,34 +5905,37 @@ fn clear_history(service: &Arc<Service>) -> Result<(), String> {
     if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
         return Err("Wait for the current operation to finish".into());
     }
-    let root = service
-        .runtime
-        .lock()
-        .map_err(|e| e.to_string())?
-        .root
-        .clone();
-    let children: Vec<_> = if let Some(registry) = RUN_SERVICES.get() {
+    let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+    let root = runtime.root.clone();
+    // Collect child services while holding the primary runtime lock (preserving
+    // the primary-runtime -> RUN_SERVICES lock order), drop RUN_SERVICES, then
+    // hold all child runtime locks simultaneously across the active check and
+    // DB clear to eliminate TOCTOU races.
+    let mut children: Vec<Arc<Service>> = if let Some(registry) = RUN_SERVICES.get() {
         let registry = registry.lock().map_err(|e| e.to_string())?;
         registry
             .get(&root)
             .into_iter()
             .flat_map(|runs| runs.values())
             .filter_map(Weak::upgrade)
+            .filter(|child| !Arc::ptr_eq(child, service))
             .collect()
     } else {
         Vec::new()
     };
-    // Never wait on a runtime while holding the registry mutex: service lookup
-    // holds the primary runtime before acquiring the registry.
-    for child in children {
-        if child.driving.load(Ordering::SeqCst)
-            || child.planning.load(Ordering::SeqCst)
-            || child.runtime.lock().map_err(|e| e.to_string())?.active()
-        {
+    children.sort_by_key(|child| Arc::as_ptr(child) as usize);
+    children.dedup_by(|a, b| Arc::ptr_eq(a, b));
+    let mut child_guards = Vec::with_capacity(children.len());
+    for child in &children {
+        if child.driving.load(Ordering::SeqCst) || child.planning.load(Ordering::SeqCst) {
             return Err("Cannot clear history while another Run is active".into());
         }
+        let guard = child.runtime.lock().map_err(|e| e.to_string())?;
+        if guard.active() {
+            return Err("Cannot clear history while another Run is active".into());
+        }
+        child_guards.push(guard);
     }
-    let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
     #[cfg(not(feature = "fixture"))]
     crate::engine::invalidate_warm_node();
     let run_ids = runtime.store.runs()?;
@@ -5795,6 +5944,7 @@ fn clear_history(service: &Arc<Service>) -> Result<(), String> {
         crate::engine::stop_lingering_for_run(run_id);
         crate::engine::stop_planner_services_for_run(run_id);
     }
+    drop(child_guards);
     drop(runtime);
     invalidate_service_cache(&root, None);
     Ok(())
@@ -5826,17 +5976,7 @@ fn delete_workspace(repository: String, service: &Arc<Service>) -> Result<Vec<St
     }
     let (root, mut ids) = {
         let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
-        let mut ids = Vec::new();
-        for id in runtime.store.runs()? {
-            let state = runtime.store.load(&id)?;
-            if state
-                .config
-                .as_ref()
-                .is_some_and(|config| same_repository_binding(&config.repository, &repository))
-            {
-                ids.push(id);
-            }
-        }
+        let ids = runtime.store.runs_for_repository(&repository)?;
         (runtime.root.clone(), ids)
     };
     ids.sort();
@@ -5896,12 +6036,11 @@ fn service_is_active_graph_or_planning(service: &Service) -> bool {
     if service.planning.load(Ordering::SeqCst) {
         return true;
     }
-    if !service.driving.load(Ordering::SeqCst) {
-        return false;
-    }
+    let driving = service.driving.load(Ordering::SeqCst);
     match service.runtime.try_lock() {
-        Ok(runtime) => !runtime.is_serial(),
-        // Conservative when lock is contended: defer background shadow GC.
+        Ok(runtime) => !runtime.is_serial() && (driving || runtime.active()),
+        // Conservative when lock is contended (e.g. approve()/add_manual_node()
+        // transitioning a Run to active before driving=true): defer shadow GC.
         Err(_) => true,
     }
 }
@@ -5981,14 +6120,13 @@ fn retry_cleanup_tasks_with_gc(
         ) {
             eprintln!("[Pi^n] Orphaned attachment cleanup: {error}");
         }
-        if !any_active_graph_or_planning_service(service) {
-            if let Err(error) = crate::cleanup::prune_orphaned_shadow_repos(
-                &root,
-                &store,
-                std::time::Duration::from_secs(10 * 60),
-            ) {
-                eprintln!("[Pi^n] Orphaned shadow repository cleanup: {error}");
-            }
+        if let Err(error) = crate::cleanup::prune_orphaned_shadow_repos_with_guard(
+            &root,
+            &store,
+            std::time::Duration::from_secs(10 * 60),
+            || any_active_graph_or_planning_service(service),
+        ) {
+            eprintln!("[Pi^n] Orphaned shadow repository cleanup: {error}");
         }
         if let Err(error) = crate::cleanup::prune_orphaned_publication_dirs(
             &root,
@@ -6221,6 +6359,7 @@ fn get_planning_output_with_options(
         }
         if let Some(proj) = projection {
             let compact_limit = (limit as usize).clamp(4, 2 * 1024 * 1024);
+            let mut aligned_end: Option<u64> = None;
             let (content, start_offset) =
                 crate::compact_transcript::compact_tail_pages_with_options(
                     end as usize,
@@ -6241,27 +6380,49 @@ fn get_planning_output_with_options(
                             .count();
                         let aligned_start = s as usize + leading;
                         let valid = &raw_bytes[leading..];
-                        let length = match std::str::from_utf8(valid) {
+                        // Trim only an incomplete trailing multi-byte UTF-8
+                        // sequence at the chunk cut; decode interior invalid
+                        // bytes lossily so one bad byte never bricks the log.
+                        let end_trim = match std::str::from_utf8(valid) {
                             Ok(_) => valid.len(),
                             Err(error) if error.error_len().is_none() => error.valid_up_to(),
-                            Err(_) => return Err("Invalid planning output UTF-8 offset".into()),
+                            Err(_) => {
+                                // Check whether the very tail (last 1..3 bytes) is
+                                // an incomplete multi-byte prefix.
+                                let tail_start = valid.len().saturating_sub(3);
+                                let mut trim = valid.len();
+                                for i in tail_start..valid.len() {
+                                    if (valid[i] & 0xc0) != 0x80 {
+                                        if let Err(err) = std::str::from_utf8(&valid[i..]) {
+                                            if err.error_len().is_none() {
+                                                trim = i;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                                trim
+                            }
                         };
-                        let slice =
-                            std::str::from_utf8(&valid[..length]).map_err(|e| e.to_string())?;
-                        Ok((aligned_start, slice.to_string()))
+                        if aligned_end.is_none() {
+                            aligned_end = Some((aligned_start + end_trim) as u64);
+                        }
+                        let text = String::from_utf8_lossy(&valid[..end_trim]).into_owned();
+                        Ok((aligned_start, text))
                     },
                 )?;
+            let next_offset = aligned_end.unwrap_or(end);
             let total_bytes = total_bytes
                 .max(file.metadata().map(|meta| meta.len()).unwrap_or(0))
-                .max(end);
+                .max(next_offset);
             return serde_json::to_value(crate::api_contract::PlanningOutputPage {
                 planning_id,
                 role,
                 content,
                 start_offset: start_offset as u64,
-                next_offset: end,
+                next_offset,
                 total_bytes,
-                complete: end >= total_bytes,
+                complete: next_offset >= total_bytes,
                 running,
                 summary_only: summary_only.then_some(true),
                 projection: Some(proj.as_str().to_string()),
@@ -6510,22 +6671,48 @@ fn get_file_changes(
     let scope = execution_ids
         .clone()
         .or_else(|| execution_id.clone().map(|id| vec![id]));
-    let (state, root, fence) = {
+    let (in_memory_state, root) = {
         let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
         let state = if requested_run_id.is_empty() || runtime.state.run_id == requested_run_id {
-            runtime.state.clone()
+            // Clone only the lightweight metadata fields needed by file_changes
+            // instead of cloning events (base64 images), graphs, or live outputs.
+            let strip_exec = |exec: &crate::model::Execution| {
+                let mut cloned = exec.clone();
+                cloned.output_bytes = exec.output_bytes.max(exec.output.len());
+                cloned.output = String::new();
+                cloned
+            };
+            let lightweight = Snapshot {
+                run_id: runtime.state.run_id.clone(),
+                config: runtime.state.config.clone(),
+                planning_id: runtime.state.planning_id.clone(),
+                planning: runtime.state.planning.clone(),
+                base: runtime.state.base.clone(),
+                publication: runtime.state.publication.clone(),
+                superseded_execution_ids: runtime.state.superseded_execution_ids.clone(),
+                executions: runtime.state.executions.iter().map(strip_exec).collect(),
+                mergers: runtime.state.mergers.iter().map(strip_exec).collect(),
+                ..Snapshot::default()
+            };
+            let fence = crate::file_changes::capture_warm_fence(&lightweight, scope.as_deref())?;
+            Some((lightweight, fence))
         } else {
-            runtime.store.load(&requested_run_id)?
+            None
         };
-        // Pair freshness tokens with this snapshot before releasing its Run
-        // mutex. Sampling tokens only when cold I/O starts is already too late.
-        let fence = crate::file_changes::capture_warm_fence(&state, scope.as_deref())?;
-        (state, runtime.root.clone(), fence)
+        (state, runtime.root.clone())
     };
     // Cold sidecar/log parsing and Git diffs never hold the Run mutex. Use a
     // read-only connection, and warm only this request's execution scope.
     // Cache publication is fenced against concurrent live output/invalidation.
     let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+    let (state, fence) = match in_memory_state {
+        Some((state, fence)) => (state, fence),
+        None => {
+            let state = reader.load(&requested_run_id)?;
+            let fence = crate::file_changes::capture_warm_fence(&state, scope.as_deref())?;
+            (state, fence)
+        }
+    };
     crate::file_changes::warm_scoped_changes(
         &state,
         &reader,
@@ -6591,26 +6778,29 @@ fn get_merger_prompt(
     body: &serde_json::Value,
     service: &Arc<Service>,
 ) -> Result<serde_json::Value, String> {
+    const MAX_MERGER_PROMPT_BYTES: u64 = 2 * 1024 * 1024;
+
     let run_id: String = argument(body, "runId")?;
     let execution_id: String = argument(body, "executionId")?;
-    let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
-    if runtime.state.run_id != run_id {
-        return Err("Run does not match service".into());
+    if execution_id.is_empty()
+        || execution_id.contains('/')
+        || execution_id.contains('\\')
+        || execution_id == "."
+        || execution_id == ".."
+    {
+        return Err("Invalid merger execution ID".into());
     }
-    let prompt_path = runtime
-        .root
-        .join("mergers")
-        .join(&execution_id)
-        .join("system-prompt.md");
-    if prompt_path.is_file() {
-        let content = fs::read_to_string(&prompt_path).map_err(|e| e.to_string())?;
-        return Ok(serde_json::json!({
-            "runId": run_id,
-            "executionId": execution_id,
-            "prompt": content,
-        }));
-    }
-    if let Some(merger) = runtime.state.mergers.iter().find(|m| m.id == execution_id) {
+    let (mergers_root, fallback_prompt) = {
+        let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
+        if runtime.state.run_id != run_id {
+            return Err("Run does not match service".into());
+        }
+        let merger = runtime
+            .state
+            .mergers
+            .iter()
+            .find(|m| m.id == execution_id)
+            .ok_or_else(|| "Merger execution not found in run".to_string())?;
         let target_node_name = merger.node.strip_prefix("merge:").unwrap_or(&merger.node);
         let target_task = if merger.node == "merger" {
             publication_driver::merger_query_at_start(&runtime.state, &merger.id)
@@ -6624,17 +6814,54 @@ fn get_merger_prompt(
                 .map(|n| n.task.clone())
                 .unwrap_or_else(|| runtime.state.graph.original_goal.clone())
         };
-        let content = crate::graph_merge::merger_prompt(
+        let fallback = crate::graph_merge::merger_prompt(
             &target_task,
             crate::graph_merge::MergerConflicts::GIT,
         );
-        return Ok(serde_json::json!({
-            "runId": run_id,
-            "executionId": execution_id,
-            "prompt": content,
-        }));
+        (runtime.root.join("mergers"), fallback)
+    };
+    let prompt_path = mergers_root.join(&execution_id).join("system-prompt.md");
+    if mergers_root.is_dir() {
+        if let Some(real_path) =
+            crate::path_safety::real_child_path(&mergers_root, &prompt_path, true)?
+        {
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NOFOLLOW);
+            }
+            match options.open(&real_path) {
+                Ok(file) => {
+                    let metadata = file.metadata().map_err(|e| e.to_string())?;
+                    if metadata.is_file() {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        file.take(MAX_MERGER_PROMPT_BYTES + 1)
+                            .read_to_end(&mut buf)
+                            .map_err(|e| e.to_string())?;
+                        if buf.len() as u64 > MAX_MERGER_PROMPT_BYTES {
+                            return Err("Merger system prompt exceeds maximum allowed size".into());
+                        }
+                        let content = String::from_utf8(buf).map_err(|e| e.to_string())?;
+                        return Ok(serde_json::json!({
+                            "runId": run_id,
+                            "executionId": execution_id,
+                            "prompt": content,
+                        }));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
     }
-    Err("Merger execution not found in run".into())
+    Ok(serde_json::json!({
+        "runId": run_id,
+        "executionId": execution_id,
+        "prompt": fallback_prompt,
+    }))
 }
 
 pub fn dispatch(
@@ -6954,20 +7181,27 @@ pub fn dispatch(
         "get_planning_snapshot" => {
             let id: String = argument(&body, "planningId")?;
             let repository: String = argument(&body, "repository")?;
-            let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
-            let state = if runtime.state.planning_id.as_ref() == Some(&id) {
-                snapshot_metadata(&runtime.state)?
-            } else {
-                let run = runtime
-                    .store
-                    .runs()?
-                    .into_iter()
-                    .find_map(|run| {
-                        let state = runtime.store.load(&run).ok()?;
-                        (state.planning_id.as_ref() == Some(&id)).then_some(state)
-                    })
-                    .ok_or("Planning run not found")?;
-                snapshot_metadata(&run)?
+            let (in_memory, root) = {
+                let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
+                if runtime.state.planning_id.as_ref() == Some(&id) {
+                    (Some(snapshot_metadata(&runtime.state)?), runtime.root.clone())
+                } else {
+                    (None, runtime.root.clone())
+                }
+            };
+            let state = match in_memory {
+                Some(state) => state,
+                None => {
+                    let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+                    let run_id = reader
+                        .run_for_planning_id(&id)?
+                        .ok_or("Planning run not found")?;
+                    let run = reader.load(&run_id)?;
+                    if run.planning_id.as_ref() != Some(&id) {
+                        return Err("Planning run not found".into());
+                    }
+                    snapshot_metadata(&run)?
+                }
             };
             if !state["config"]["repository"]
                 .as_str()
@@ -7598,31 +7832,71 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
                 #[cfg(not(feature = "fixture"))]
                 crate::engine::stop_partition_prewarm();
                 crate::engine::stop_lingering();
-                if let Ok(mut runtime) = shutdown_service.runtime.lock() {
-                    if matches!(runtime.state.phase.as_str(), "publishing" | "merging") {
-                        let _ = runtime.emit(EventKind::PublicationFailed {
-                            error:
-                                "Backend stopped during publication; inspect and retry publication."
-                                    .into(),
-                        });
-                    } else if runtime.state.approved
-                        && (runtime.active() || runtime.state.phase == "running")
-                    {
-                        let _ = runtime.emit(EventKind::Paused { paused: true });
-                    }
-                }
+                // Terminate child processes FIRST so any thread holding a
+                // runtime lock while waiting on a subprocess unblocks promptly,
+                // and never block shutdown indefinitely on a wedged mutex.
                 crate::engine::terminate_all();
-                crate::native::shutdown_runtime();
-                crate::provider_auth::shutdown();
                 close_all_sse_subscribers();
                 terminal::shutdown();
+                // Collect primary and all active child Run services, then pause
+                // or fail in-flight publications with a bounded lock wait.
+                let mut services_to_pause: Vec<Arc<Service>> = vec![shutdown_service.clone()];
+                if let Some(registry) = RUN_SERVICES.get() {
+                    if let Ok(registry) = registry.lock() {
+                        for runs in registry.values() {
+                            for weak in runs.values() {
+                                if let Some(child) = weak.upgrade() {
+                                    if !services_to_pause
+                                        .iter()
+                                        .any(|existing| Arc::ptr_eq(existing, &child))
+                                    {
+                                        services_to_pause.push(child);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for svc in services_to_pause {
+                    let deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(300);
+                    loop {
+                        match svc.runtime.try_lock() {
+                            Ok(mut runtime) => {
+                                if matches!(
+                                    runtime.state.phase.as_str(),
+                                    "publishing" | "merging"
+                                ) {
+                                    let _ = runtime.emit(EventKind::PublicationFailed {
+                                        error: "Backend stopped during publication; inspect and retry publication."
+                                            .into(),
+                                    });
+                                } else if runtime.state.approved
+                                    && (runtime.active() || runtime.state.phase == "running")
+                                {
+                                    let _ = runtime.emit(EventKind::Paused { paused: true });
+                                }
+                                break;
+                            }
+                            Err(std::sync::TryLockError::WouldBlock) => {
+                                if std::time::Instant::now() >= deadline {
+                                    break;
+                                }
+                                thread::sleep(std::time::Duration::from_millis(10));
+                            }
+                            Err(std::sync::TryLockError::Poisoned(_)) => break,
+                        }
+                    }
+                }
+                crate::native::shutdown_runtime();
+                crate::provider_auth::shutdown();
                 shutdown_server.unblock();
             }
         })
         .map_err(|error| error.to_string())?;
     let web_root = crate::native::installation_root().join("dist");
-    // Bounded workers keep slow HTTP clients (including SSE streams) from
-    // creating an unbounded number of OS threads.
+    // Bounded workers keep slow HTTP clients from creating an unbounded number
+    // of OS threads; catch_unwind ensures a request panic never kills a worker.
     let (tx, rx) = std::sync::mpsc::sync_channel::<tiny_http::Request>(128);
     let rx = Arc::new(Mutex::new(rx));
     for _ in 0..32 {
@@ -7631,15 +7905,28 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
         let web_root = web_root.clone();
         let allow_desktop_origins = options.allow_desktop_origins;
         thread::spawn(move || loop {
-            let next = rx.lock().unwrap().recv();
+            let next = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
             match next {
-                Ok(request) => handle_http_request_with_options(
-                    request,
-                    &service,
-                    &web_root,
-                    bound_port,
-                    allow_desktop_origins,
-                ),
+                Ok(request) => {
+                    if let Err(payload) =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            handle_http_request_with_options(
+                                request,
+                                &service,
+                                &web_root,
+                                bound_port,
+                                allow_desktop_origins,
+                            )
+                        }))
+                    {
+                        let msg = payload
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                            .unwrap_or("unknown panic");
+                        eprintln!("[Pi^n] HTTP worker caught panic: {msg}");
+                    }
+                }
                 Err(_) => break,
             }
         });
@@ -7758,6 +8045,24 @@ fn respond_api_json(
     replayed: bool,
 ) {
     let payload = body.to_string();
+    respond_api_json_bytes(
+        request,
+        status,
+        payload.as_bytes(),
+        origin,
+        request_id,
+        replayed,
+    );
+}
+
+fn respond_api_json_bytes(
+    request: tiny_http::Request,
+    status: u16,
+    payload: &[u8],
+    origin: Option<&str>,
+    request_id: &str,
+    replayed: bool,
+) {
     let mut headers = vec![
         ("Cache-Control", "no-store"),
         ("Content-Type", "application/json"),
@@ -7773,7 +8078,7 @@ fn respond_api_json(
             "X-Pi-N-Events, X-Pi-N-Instance, X-Pi-N-Request-Id, X-Pi-N-Replayed",
         ));
     }
-    respond_closed(request, status, &headers, payload.as_bytes());
+    respond_closed(request, status, &headers, payload);
 }
 
 /// tiny_http 0.12's internal TaskPool checks `waiting_tasks == 0` without
@@ -7912,8 +8217,20 @@ fn handle_http_request_with_options(
                 );
                 return;
             }
+            // Run long-lived `/api/events` SSE off the 32-thread short-request
+            // pool (bounded by MAX_SSE_SUBSCRIBERS which evicts oldest clients)
+            // so open EventSource tabs can never starve `stop`/`snapshot`.
             let stream = subscribe_runtime_events();
-            let _ = respond_sse(request, stream, req_origin.as_deref(), false);
+            let origin = req_origin.clone();
+            if thread::Builder::new()
+                .name("pi-n-sse-client".into())
+                .spawn(move || {
+                    let _ = respond_sse(request, stream, origin.as_deref(), false);
+                })
+                .is_err()
+            {
+                eprintln!("[Pi^n] Failed to spawn SSE client thread");
+            }
             return;
         }
         // JSON-only POST + exact Host/Origin checks limit browser access.
@@ -8034,7 +8351,31 @@ fn handle_http_request_with_options(
             } else {
                 None
             };
-            let (tx, rx) = std::sync::mpsc::channel();
+            static ACTIVE_PLAN_STREAMS: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            const MAX_ACTIVE_PLAN_STREAMS: usize = 8;
+            struct PlanStreamSlot;
+            impl Drop for PlanStreamSlot {
+                fn drop(&mut self) {
+                    ACTIVE_PLAN_STREAMS.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            let acquired = ACTIVE_PLAN_STREAMS
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                    (current < MAX_ACTIVE_PLAN_STREAMS).then_some(current + 1)
+                })
+                .is_ok();
+            if !acquired {
+                respond_closed(
+                    request,
+                    503,
+                    &[("Content-Type", "text/plain; charset=utf-8")],
+                    b"Too many concurrent planning streams",
+                );
+                return;
+            }
+            let _plan_stream_slot = PlanStreamSlot;
+            let (tx, rx) = std::sync::mpsc::sync_channel(512);
             let service_clone = match revision_run_id.as_deref() {
                 Some(run_id) => service_for_run(service, run_id, false),
                 None => service_for_run(service, &Uuid::new_v4().to_string(), true),
@@ -8072,12 +8413,17 @@ fn handle_http_request_with_options(
                     false,
                     continue_planning_id.as_deref(),
                     |run_id| {
-                        send_sse_event(&tx, "run_started", &serde_json::json!({"runId": run_id}))
+                        send_sse_event(
+                            &tx,
+                            "run_started",
+                            &serde_json::json!({"runId": run_id}),
+                            false,
+                        )
                     },
                     |line| {
                         let frame = crate::api_contract::PlannerOutputFrame::from_line(line);
                         if let Ok(value) = serde_json::to_value(frame) {
-                            send_sse_event(&tx_part, "partitioner", &value);
+                            send_sse_event(&tx_part, "partitioner", &value, true);
                         }
                     },
                     |route| {
@@ -8085,12 +8431,13 @@ fn handle_http_request_with_options(
                             &tx_route,
                             "route_decision",
                             &serde_json::json!({ "planType": route.plan_type }),
+                            false,
                         );
                     },
                     |line| {
                         let frame = crate::api_contract::PlannerOutputFrame::from_line(line);
                         if let Ok(value) = serde_json::to_value(frame) {
-                            send_sse_event(&tx_plan, "planner", &value);
+                            send_sse_event(&tx_plan, "planner", &value, true);
                         }
                     },
                 );
@@ -8108,6 +8455,7 @@ fn handle_http_request_with_options(
                                 &tx,
                                 "complete",
                                 &serde_json::json!({ "snapshot": projected }),
+                                false,
                             );
                         }
                         Err(error) => {
@@ -8115,7 +8463,7 @@ fn handle_http_request_with_options(
                             if let Some(receipt) = stream_receipt {
                                 receipt.finish(status, &body);
                             }
-                            send_sse_event(&tx, "error", &body);
+                            send_sse_event(&tx, "error", &body, false);
                         }
                     },
                     Err((err, summary)) => {
@@ -8127,7 +8475,7 @@ fn handle_http_request_with_options(
                         if let Some(receipt) = stream_receipt {
                             receipt.finish(status, &body);
                         }
-                        send_sse_event(&tx, "error", &body);
+                        send_sse_event(&tx, "error", &body, false);
                     }
                 }
                 let _ = tx.send(Vec::new());
@@ -8138,8 +8486,19 @@ fn handle_http_request_with_options(
                 current: Vec::new(),
                 pos: 0,
                 subscriber_id: None,
+                closed: None,
             };
-            let _ = respond_sse(request, stream, req_origin.as_deref(), true);
+            let origin = req_origin.clone();
+            if thread::Builder::new()
+                .name("pi-n-plan-sse".into())
+                .spawn(move || {
+                    let _slot = _plan_stream_slot;
+                    let _ = respond_sse(request, stream, origin.as_deref(), true);
+                })
+                .is_err()
+            {
+                eprintln!("[Pi^n] Failed to spawn planning SSE thread");
+            }
             return;
         }
 
@@ -8220,13 +8579,14 @@ fn handle_http_request_with_options(
                 None => api_transport::classify(error, &request_id),
             },
         });
+        let payload = body.to_string();
         if let Some(receipt) = receipt {
-            receipt.finish(status, &body);
+            receipt.finish_with_size(status, &body, payload.len());
         }
-        respond_api_json(
+        respond_api_json_bytes(
             request,
             status,
-            &body,
+            payload.as_bytes(),
             req_origin.as_deref(),
             &request_id,
             replayed,

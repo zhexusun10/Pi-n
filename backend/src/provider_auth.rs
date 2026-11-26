@@ -5,7 +5,7 @@ use crate::engine::prewarm::{Pool, Ticket, Worker};
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Mutex, OnceLock,
@@ -19,7 +19,7 @@ static TRANSPORT: OnceLock<Transport> = OnceLock::new();
 struct Bridge {
     child: Child,
     process_tree: crate::process_control::ProcessTree,
-    input: ChildStdin,
+    input: mpsc::SyncSender<Vec<u8>>,
     output: mpsc::Receiver<String>,
     #[cfg(not(feature = "fixture"))]
     ready_ms: u128,
@@ -29,6 +29,7 @@ impl Drop for Bridge {
     fn drop(&mut self) {
         self.process_tree.terminate();
         let _ = self.child.wait();
+        self.process_tree.mark_reaped_if_empty();
     }
 }
 
@@ -67,7 +68,15 @@ impl Bridge {
                     let _ = child.kill();
                     let _ = child.wait();
                 })?;
-        let input = child.stdin.take().ok_or("Adapter input unavailable")?;
+        let mut stdin = child.stdin.take().ok_or("Adapter input unavailable")?;
+        let (input, input_rx) = mpsc::sync_channel::<Vec<u8>>(4);
+        thread::spawn(move || {
+            for payload in input_rx {
+                if stdin.write_all(&payload).is_err() || stdin.flush().is_err() {
+                    break;
+                }
+            }
+        });
         let stdout = child.stdout.take().ok_or("Adapter output unavailable")?;
         let stderr = child.stderr.take();
         if let Some(stderr) = stderr {
@@ -112,9 +121,8 @@ impl Bridge {
         }
         encoded.push(b'\n');
         self.input
-            .write_all(&encoded)
+            .try_send(encoded)
             .map_err(|_| "Adapter disconnected")?;
-        self.input.flush().map_err(|_| "Adapter disconnected")?;
         let deadline = Instant::now() + timeout;
         let line = loop {
             if cancelled() {
@@ -185,6 +193,7 @@ struct Transport {
     // backend too, so a second Settings opening does not re-enter the
     // single Provider/Auth IPC bridge while it is warming up.
     catalog_cache: Mutex<Option<Value>>,
+    catalog_singleflight: Mutex<()>,
     catalog_generation: AtomicU64,
     stopped: AtomicBool,
     #[cfg(not(feature = "fixture"))]
@@ -196,6 +205,7 @@ impl Transport {
         Self {
             active: Mutex::new(None),
             catalog_cache: Mutex::new(None),
+            catalog_singleflight: Mutex::new(()),
             catalog_generation: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
             #[cfg(not(feature = "fixture"))]
@@ -332,6 +342,25 @@ pub fn request(body: Value) -> Result<Value, String> {
                 return Ok(value.clone());
             }
         }
+        // Singleflight cold cacheable `catalog` requests so concurrent callers
+        // wait once and share the populated cache instead of invoking Node.js
+        // repeatedly.
+        let _singleflight = transport
+            .catalog_singleflight
+            .lock()
+            .map_err(|_| "Catalog lock unavailable")?;
+        if !transport.stopped.load(Ordering::SeqCst) {
+            if let Ok(cache) = transport.catalog_cache.lock() {
+                if let Some(value) = cache.as_ref() {
+                    return Ok(value.clone());
+                }
+            }
+        }
+        let catalog_generation = transport.catalog_generation.load(Ordering::SeqCst);
+        let result = transport.request(body)?;
+        transport.store_catalog_cache(catalog_generation, result.clone());
+        crate::model_window::remember_catalog(&result);
+        return Ok(result);
     }
     if operation == "logout" {
         transport.invalidate_catalog_cache();

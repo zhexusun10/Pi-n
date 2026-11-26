@@ -41,7 +41,10 @@ pub(crate) struct ExecutionMetadata<'a> {
     file_changes: Option<Value>,
 }
 
-fn execution_metadata(execution: &Execution) -> ExecutionMetadata<'_> {
+fn execution_metadata_with_status<'a>(
+    execution: &'a Execution,
+    status: &'a str,
+) -> ExecutionMetadata<'a> {
     ExecutionMetadata {
         id: &execution.id,
         node: &execution.node,
@@ -54,7 +57,7 @@ fn execution_metadata(execution: &Execution) -> ExecutionMetadata<'_> {
         workspace_lineage: &execution.workspace_lineage,
         input: &execution.input,
         result: &execution.result,
-        status: &execution.status,
+        status,
         started_at: execution.started_at,
         completed_at: execution.completed_at,
         output: "",
@@ -67,6 +70,112 @@ fn execution_metadata(execution: &Execution) -> ExecutionMetadata<'_> {
         metrics: &execution.metrics,
         file_changes: None,
     }
+}
+
+fn execution_metadata(execution: &Execution) -> ExecutionMetadata<'_> {
+    execution_metadata_with_status(execution, &execution.status)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanningSummaryView<'a> {
+    planning_id: &'a str,
+    roles: &'a std::collections::BTreeMap<String, crate::model::PlanningRoleMetrics>,
+    total_planning_duration: f64,
+    model_duration: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_execution_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    goal: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<&'a str>,
+}
+
+fn planning_summary_view<'a>(
+    summary: &'a crate::model::PlanningSummary,
+    include_goal: bool,
+) -> PlanningSummaryView<'a> {
+    PlanningSummaryView {
+        planning_id: &summary.planning_id,
+        roles: &summary.roles,
+        total_planning_duration: summary.total_planning_duration,
+        model_duration: summary.model_duration,
+        status: summary.status.as_deref(),
+        error: summary.error.as_deref(),
+        created_at: summary.created_at,
+        repository: summary.repository.as_deref(),
+        worktree: summary.worktree.as_deref(),
+        workspace_execution_id: summary.workspace_execution_id.as_deref(),
+        plan_type: summary.plan_type.as_deref(),
+        goal: include_goal.then(|| summary.goal.as_deref()).flatten(),
+        run_id: summary.run_id.as_deref(),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingNodeMessageView<'a> {
+    sequence: i64,
+    instruction: &'a str,
+    source_direct: bool,
+    shared_workspace: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FeedbackContinuationView<'a> {
+    anchor_execution_id: &'a str,
+    target: &'a str,
+    sender: bool,
+    instruction: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery_id: Option<&'a str>,
+    dispatched: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeStateView<'a> {
+    status: &'a str,
+    revision: usize,
+    head: Option<&'a str>,
+    instruction: &'a str,
+    pending_messages: Vec<PendingNodeMessageView<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edit_execution_id: Option<&'a str>,
+    human_instruction: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_config: Option<&'a crate::model::RoleModelConfig>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    model_override: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_retry: Option<bool>,
+    continuation: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    source_direct_recovery: bool,
+    shared_workspace: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    baseline_head: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feedback_workspace: Option<&'a crate::model::FeedbackWorkspace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feedback_continuation: Option<FeedbackContinuationView<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<&'a crate::environment::CompositeResult>,
+    error: Option<&'a str>,
+    can_resume: bool,
 }
 
 #[derive(Serialize)]
@@ -86,44 +195,255 @@ enum EventMetadata<'a> {
 /// The browser reads the projected `graph`/`executions` fields, never the
 /// durable graph, config or environment payloads embedded in a business event.
 /// Re-sending them on every metadata poll only inflates the first-screen
-/// response, so keep event identity, the Planner summary and the started
-/// Execution's identity, and drop the rest.
-fn metadata_event(event: &Event) -> Value {
-    // Recovery owns the full bound turn. Browser polls need only its identity,
-    // not another copy of the task, feedback notices and base64 image payloads.
-    if let EventKind::NodeInputBound { execution_id, .. } = &event.kind {
-        return json!({
+/// response, so project heavy variants directly without serializing dropped
+/// payloads (such as multi-MB graphs, base64 images, or execution transcripts).
+fn metadata_event(event: &Event, include_planning_goal: bool) -> Value {
+    let seq = event.sequence;
+    let ts = event.timestamp;
+    match &event.kind {
+        EventKind::NodeInputBound { execution_id, .. } => json!({
             "type": "node_input_bound", "execution_id": execution_id,
-            "sequence": event.sequence, "timestamp": event.timestamp,
-        });
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlanningStarted {
+            planning,
+            plan_type,
+            ..
+        } => json!({
+            "type": "planning_started",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "plan_type": plan_type,
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlanningFailed { planning } => json!({
+            "type": "planning_failed",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerWorkspaceSelected { planning } => json!({
+            "type": "planner_workspace_selected",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerReviewStarted { planning } => json!({
+            "type": "planner_review_started",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerTurnProgress { planning } => json!({
+            "type": "planner_turn_progress",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerReviewFinished {
+            planning,
+            approval_required,
+        } => json!({
+            "type": "planner_review_finished",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "approval_required": approval_required,
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerTurnAborted { planning } => json!({
+            "type": "planner_turn_aborted",
+            "planning": planning_summary_view(planning, include_planning_goal),
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerReviewProgress { .. } => json!({
+            "type": "planner_review_progress",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerPreviewProgress { .. } => json!({
+            "type": "planner_preview_progress",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::Created {
+            planning_id,
+            planning,
+            ..
+        } => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".into(), json!("created"));
+            if let Some(id) = planning_id {
+                obj.insert("planning_id".into(), json!(id));
+            }
+            if let Some(summary) = planning {
+                obj.insert(
+                    "planning".into(),
+                    json!(planning_summary_view(summary, include_planning_goal)),
+                );
+            }
+            obj.insert("sequence".into(), json!(seq));
+            obj.insert("timestamp".into(), json!(ts));
+            Value::Object(obj)
+        }
+        EventKind::DraftEdited { .. } => json!({
+            "type": "draft_edited",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::GraphRevised {
+            planning_id,
+            planning,
+            invalidated,
+            source_head,
+            ..
+        } => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".into(), json!("graph_revised"));
+            obj.insert("planning_id".into(), json!(planning_id));
+            obj.insert(
+                "planning".into(),
+                json!(planning_summary_view(planning, include_planning_goal)),
+            );
+            obj.insert("invalidated".into(), json!(invalidated));
+            if let Some(head) = source_head {
+                obj.insert("source_head".into(), json!(head));
+            }
+            obj.insert("sequence".into(), json!(seq));
+            obj.insert("timestamp".into(), json!(ts));
+            Value::Object(obj)
+        }
+        EventKind::ManualGraphRevised {
+            invalidated,
+            source_head,
+            ..
+        } => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".into(), json!("manual_graph_revised"));
+            obj.insert("invalidated".into(), json!(invalidated));
+            if let Some(head) = source_head {
+                obj.insert("source_head".into(), json!(head));
+            }
+            obj.insert("sequence".into(), json!(seq));
+            obj.insert("timestamp".into(), json!(ts));
+            Value::Object(obj)
+        }
+        EventKind::Started {
+            execution,
+            message_sequences,
+            fresh_restart,
+        } => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".into(), json!("started"));
+            obj.insert(
+                "execution".into(),
+                json!({ "id": execution.id, "node": execution.node }),
+            );
+            if let Some(seqs) = message_sequences {
+                obj.insert("message_sequences".into(), json!(seqs));
+            }
+            if *fresh_restart {
+                obj.insert("fresh_restart".into(), json!(true));
+            }
+            obj.insert("sequence".into(), json!(seq));
+            obj.insert("timestamp".into(), json!(ts));
+            Value::Object(obj)
+        }
+        EventKind::MergerStarted { execution } => json!({
+            "type": "merger_started",
+            "execution": { "id": execution.id, "node": execution.node },
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::QueueWithdrawalRecorded {
+            request_id, node, ..
+        } => json!({
+            "type": "queue_withdrawal_recorded",
+            "request_id": request_id,
+            "node": node,
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::EnvironmentInitialized { .. } => json!({
+            "type": "environment_initialized",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::ExecutionInputRecorded { execution_id, .. } => json!({
+            "type": "execution_input_recorded",
+            "execution_id": execution_id,
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::ExecutionResultRecorded { execution_id, .. } => json!({
+            "type": "execution_result_recorded",
+            "execution_id": execution_id,
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::ResultPublished { .. } => json!({
+            "type": "result_published",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::ResultExecutionStarted { args, .. } => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".into(), json!("result_execution_started"));
+            if !args.is_empty() {
+                obj.insert("args".into(), json!(args));
+            }
+            obj.insert("sequence".into(), json!(seq));
+            obj.insert("timestamp".into(), json!(ts));
+            Value::Object(obj)
+        }
+        EventKind::ResultExecutionPrepared { .. } => json!({
+            "type": "result_execution_prepared",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::ResultExecutionFinished { .. } => json!({
+            "type": "result_execution_finished",
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::PlannerWorkspaceSnapshotted {
+            execution_id,
+            head,
+            invalidated,
+            detached,
+            ..
+        } => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".into(), json!("planner_workspace_snapshotted"));
+            obj.insert("execution_id".into(), json!(execution_id));
+            obj.insert("head".into(), json!(head));
+            obj.insert("invalidated".into(), json!(invalidated));
+            if *detached {
+                obj.insert("detached".into(), json!(true));
+            }
+            obj.insert("sequence".into(), json!(seq));
+            obj.insert("timestamp".into(), json!(ts));
+            Value::Object(obj)
+        }
+        EventKind::NodeModelOverrideUpdated { node, .. } => json!({
+            "type": "node_model_override_updated",
+            "node": node,
+            "sequence": seq, "timestamp": ts,
+        }),
+        EventKind::ConversationModelsUpdated { nodes, .. } => json!({
+            "type": "conversation_models_updated",
+            "nodes": nodes,
+            "sequence": seq, "timestamp": ts,
+        }),
+        _ => {
+            let Ok(mut value) = serde_json::to_value(event) else {
+                return Value::Null;
+            };
+            let Some(object) = value.as_object_mut() else {
+                return value;
+            };
+            for key in [
+                "graph",
+                "config",
+                "goal",
+                "input",
+                "result",
+                "descriptor",
+                "files",
+                "settings",
+            ] {
+                object.remove(key);
+            }
+            if !include_planning_goal {
+                if let Some(planning) = object.get_mut("planning").and_then(Value::as_object_mut) {
+                    planning.remove("goal");
+                }
+            }
+            value
+        }
     }
-    let Ok(mut value) = serde_json::to_value(event) else {
-        return Value::Null;
-    };
-    let Some(object) = value.as_object_mut() else {
-        return value;
-    };
-    for key in [
-        "graph",
-        "config",
-        "goal",
-        "input",
-        "result",
-        "descriptor",
-        "files",
-        "settings",
-    ] {
-        object.remove(key);
-    }
-    // Recall receipts are fetched only by their originating request. Repeating
-    // their image payloads in every browser poll would duplicate durable input.
-    if matches!(&event.kind, EventKind::QueueWithdrawalRecorded { .. }) {
-        object.remove("messages");
-    }
-    if let Some(execution) = object.get_mut("execution").and_then(Value::as_object_mut) {
-        execution.retain(|key, _| matches!(key.as_str(), "id" | "node"));
-    }
-    value
 }
 
 /// Durable projection only: history stays in events, transcripts in execution_logs.
@@ -143,7 +463,7 @@ pub(crate) fn checkpoint_projection(state: &Snapshot) -> Value {
         "publication": state.publication, "events": [], "approved": state.approved,
         "paused": state.paused, "stopRequested": state.stop_requested,
         "executionStopRequests": state.execution_stop_requests,
-        "canResume": state.can_resume(), "phase": state.phase, "base": state.base,
+        "canResume": state.recovery_hints().0, "phase": state.phase, "base": state.base,
         "publishedHead": state.published_head,
         "publishedHeads": state.published_heads, "feedbackCounts": state.feedback_counts,
         "pendingFeedback": state.pending_feedback, "reviewGraph": state.review_graph,
@@ -225,6 +545,49 @@ pub(crate) struct SnapshotMetadata<'a> {
     stop_requested: Option<bool>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotProjection<'a> {
+    run_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'a str>,
+    isolated_workspaces: Option<bool>,
+    private_batch: Option<&'a Vec<String>>,
+    batch_handoff: Option<&'a crate::model::BatchHandoff>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    planning_id: Option<&'a str>,
+    planning: Option<&'a crate::model::PlanningSummary>,
+    graph: &'a crate::model::Graph,
+    config: &'a Option<crate::model::Config>,
+    model_config: Option<&'a crate::model::RunModelConfig>,
+    plan: Option<&'a crate::model::Plan>,
+    nodes: std::collections::BTreeMap<&'a str, NodeStateView<'a>>,
+    executions: Vec<ExecutionMetadata<'a>>,
+    mergers: Option<Vec<ExecutionMetadata<'a>>>,
+    superseded_execution_ids: Option<&'a Vec<String>>,
+    publication: Option<&'a crate::model::Publication>,
+    events: Vec<EventMetadata<'a>>,
+    approved: bool,
+    paused: bool,
+    can_resume: Option<bool>,
+    phase: &'a str,
+    base: &'a str,
+    feedback_counts: &'a std::collections::BTreeMap<String, usize>,
+    environment_policy: &'a Option<String>,
+    environment_baseline: &'a Option<crate::environment::CompositeResult>,
+    published_result: &'a Option<crate::environment::ResultDescriptor>,
+    result_execution: Option<&'a crate::model::ResultExecution>,
+    run_metrics: Option<&'a crate::model::RunMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_changes_omitted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_changes: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_requested: Option<bool>,
+}
+
 pub fn snapshot_metadata(state: &Snapshot) -> Result<Value, String> {
     let mut latest_planning_event_index: std::collections::HashMap<&str, usize> =
         std::collections::HashMap::new();
@@ -253,29 +616,134 @@ pub fn snapshot_metadata(state: &Snapshot) -> Result<Value, String> {
                 timestamp: event.timestamp,
             }),
             _ => {
-                let mut projected = metadata_event(event);
                 // When a later event for the same planning turn already carries
                 // its authoritative summary, drop the duplicated `planning.goal`
-                // from earlier events so large pasted prompts are not repeated.
-                if let Some(planning) = projected
-                    .get_mut("planning")
-                    .and_then(Value::as_object_mut)
-                {
-                    let is_superseded = planning
-                        .get("planningId")
-                        .and_then(Value::as_str)
-                        .and_then(|id| latest_planning_event_index.get(id))
-                        .is_some_and(|&latest| latest > index);
-                    if is_superseded {
-                        planning.remove("goal");
-                    }
-                }
-                Some(EventMetadata::Projected(projected))
+                // from earlier events so large pasted prompts are not serialized.
+                let is_superseded = event
+                    .planning_summary()
+                    .map(|summary| summary.planning_id.as_str())
+                    .and_then(|id| latest_planning_event_index.get(id))
+                    .is_some_and(|&latest| latest > index);
+                Some(EventMetadata::Projected(metadata_event(
+                    event,
+                    !is_superseded,
+                )))
             }
         })
         .collect::<Vec<_>>();
     let (can_resume, resumable) = state.recovery_hints();
-    let mut metadata = serde_json::to_value(SnapshotMetadata {
+    // Persist failure events as recorded; expose user interruptions as a
+    // distinct UI state. Ordinary provider errors stay failed.
+    let running_merge_targets: std::collections::BTreeSet<&str> = state
+        .mergers
+        .iter()
+        .filter(|merger| merger.status == "running")
+        .filter_map(|merger| merger.node.strip_prefix("merge:"))
+        .collect();
+    let interrupted: std::collections::BTreeSet<&str> = state
+        .events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::Failed {
+                execution_id: Some(id),
+                error,
+                ..
+            } if crate::model::is_interrupted_error(error) => Some(id.as_str()),
+            _ => None,
+        })
+        .chain(state.execution_stop_requests.iter().map(String::as_str))
+        .collect();
+    let nodes = state
+        .nodes
+        .iter()
+        .map(|(name, node)| {
+            let status = if node.is_user_paused() {
+                "paused"
+            } else if node.status == "running" && running_merge_targets.contains(name.as_str()) {
+                // While a node-composition merger is resolving conflicts for `name`,
+                // the node's own execution has not started yet; expose it as waiting
+                // until the merger settles and preparation advances to the node.
+                "waiting"
+            } else {
+                node.status.as_str()
+            };
+            let view = NodeStateView {
+                status,
+                revision: node.revision,
+                head: node.head.as_deref(),
+                instruction: &node.instruction,
+                // Browser projections read user images from events; omitting
+                // internal recovery/queue image copies avoids serializing large
+                // base64 payloads on every snapshot poll.
+                pending_messages: node
+                    .pending_messages
+                    .iter()
+                    .map(|msg| PendingNodeMessageView {
+                        sequence: msg.sequence,
+                        instruction: &msg.instruction,
+                        source_direct: msg.source_direct,
+                        shared_workspace: msg.shared_workspace,
+                    })
+                    .collect(),
+                edit_execution_id: node.edit_execution_id.as_deref(),
+                human_instruction: node.human_instruction,
+                model_config: node.model_config.as_ref(),
+                model_override: node.model_override,
+                model_retry: node.model_retry,
+                continuation: node.continuation,
+                source_direct_recovery: node.source_direct_recovery,
+                shared_workspace: node.shared_workspace,
+                baseline_head: node.baseline_head.as_deref(),
+                feedback_workspace: node.feedback_workspace.as_ref(),
+                feedback_continuation: node.feedback_continuation.as_ref().map(|fc| {
+                    FeedbackContinuationView {
+                        anchor_execution_id: &fc.anchor_execution_id,
+                        target: &fc.target,
+                        sender: fc.sender,
+                        instruction: fc.instruction.as_deref(),
+                        delivery_id: fc.delivery_id.as_deref(),
+                        dispatched: fc.dispatched,
+                    }
+                }),
+                result: node.result.as_ref(),
+                error: node.error.as_deref(),
+                can_resume: resumable.contains(name),
+            };
+            (name.as_str(), view)
+        })
+        .collect();
+    let executions = state
+        .executions
+        .iter()
+        .map(|execution| {
+            let status = if execution.status == "failed"
+                && interrupted.contains(execution.id.as_str())
+            {
+                "paused"
+            } else {
+                execution.status.as_str()
+            };
+            execution_metadata_with_status(execution, status)
+        })
+        .collect();
+    let compiled_override_plan: Option<crate::model::Plan>;
+    let (effective_graph, effective_plan) = if let Some(graph) = &state.review_graph {
+        compiled_override_plan = crate::compiler::compile(graph, false).ok();
+        (graph, compiled_override_plan.as_ref())
+    } else if let Some(graph) = state
+        .preview_graph
+        .as_ref()
+        .filter(|_| !state.has_live_work())
+    {
+        // The foreground Planner draft is display-only, so a reload rebuilds
+        // the incremental topology from the durable projection. Running work
+        // keeps the committed graph; a commit, failure or abort clears it.
+        compiled_override_plan = crate::compiler::compile(graph, false).ok();
+        (graph, compiled_override_plan.as_ref())
+    } else {
+        (&state.graph, state.plan.as_ref())
+    };
+    serde_json::to_value(SnapshotProjection {
         run_id: &state.run_id,
         title: state.title.as_deref(),
         isolated_workspaces: state.isolated_workspaces,
@@ -283,12 +751,12 @@ pub fn snapshot_metadata(state: &Snapshot) -> Result<Value, String> {
         batch_handoff: state.batch_handoff.as_ref(),
         planning_id: state.planning_id.as_deref(),
         planning: state.planning.as_ref(),
-        graph: &state.graph,
+        graph: effective_graph,
         config: &state.config,
         model_config: state.model_config.as_ref(),
-        plan: &state.plan,
-        nodes: &state.nodes,
-        executions: state.executions.iter().map(execution_metadata).collect(),
+        plan: effective_plan,
+        nodes,
+        executions,
         mergers: Some(state.mergers.iter().map(execution_metadata).collect()),
         superseded_execution_ids: Some(&state.superseded_execution_ids),
         publication: state.publication.as_ref(),
@@ -313,87 +781,7 @@ pub fn snapshot_metadata(state: &Snapshot) -> Result<Value, String> {
         file_changes: None,
         stop_requested: None,
     })
-    .map_err(|e| e.to_string())?;
-    // Persist failure events as recorded; expose user interruptions as a
-    // distinct UI state. Ordinary provider errors stay failed.
-    let running_merge_targets: std::collections::BTreeSet<_> = state
-        .mergers
-        .iter()
-        .filter(|merger| merger.status == "running")
-        .filter_map(|merger| merger.node.strip_prefix("merge:"))
-        .collect();
-    for (name, node) in &state.nodes {
-        if let Some(node_obj) = metadata["nodes"][name].as_object_mut() {
-            // Browser projections read user images from events; stripping
-            // internal recovery/queue image copies avoids duplicating large
-            // base64 payloads on every snapshot poll.
-            node_obj.remove("instructionImages");
-            if let Some(continuation) = node_obj
-                .get_mut("feedbackContinuation")
-                .and_then(Value::as_object_mut)
-            {
-                continuation.remove("images");
-            }
-            if let Some(pending) = node_obj
-                .get_mut("pendingMessages")
-                .and_then(Value::as_array_mut)
-            {
-                for message in pending {
-                    if let Some(msg_obj) = message.as_object_mut() {
-                        msg_obj.remove("images");
-                    }
-                }
-            }
-        }
-        metadata["nodes"][name]["canResume"] = json!(resumable.contains(name));
-        if node.is_user_paused() {
-            metadata["nodes"][name]["status"] = json!("paused");
-        } else if node.status == "running" && running_merge_targets.contains(name.as_str()) {
-            // While a node-composition merger is resolving conflicts for `name`,
-            // the node's own execution has not started yet; expose it as waiting
-            // until the merger settles and preparation advances to the node.
-            metadata["nodes"][name]["status"] = json!("waiting");
-        }
-    }
-    let interrupted: std::collections::BTreeSet<_> = state
-        .events
-        .iter()
-        .filter_map(|event| match &event.kind {
-            EventKind::Failed {
-                execution_id: Some(id),
-                error,
-                ..
-            } if crate::model::is_interrupted_error(error) => Some(id.as_str()),
-            _ => None,
-        })
-        .chain(state.execution_stop_requests.iter().map(String::as_str))
-        .collect();
-    if let Some(executions) = metadata["executions"].as_array_mut() {
-        for execution in executions {
-            if execution["status"] == "failed"
-                && execution["id"]
-                    .as_str()
-                    .is_some_and(|id| interrupted.contains(id))
-            {
-                execution["status"] = json!("paused");
-            }
-        }
-    }
-    if let Some(graph) = &state.review_graph {
-        metadata["graph"] = json!(graph);
-        metadata["plan"] = json!(crate::compiler::compile(graph, false).ok());
-    } else if let Some(graph) = state
-        .preview_graph
-        .as_ref()
-        .filter(|_| !state.has_live_work())
-    {
-        // The foreground Planner draft is display-only, so a reload rebuilds
-        // the incremental topology from the durable projection. Running work
-        // keeps the committed graph; a commit, failure or abort clears it.
-        metadata["graph"] = json!(graph);
-        metadata["plan"] = json!(crate::compiler::compile(graph, false).ok());
-    }
-    Ok(metadata)
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

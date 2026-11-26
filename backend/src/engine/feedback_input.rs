@@ -31,14 +31,25 @@ pub(crate) fn identifies(text: &str, delivery_id: &str) -> bool {
 }
 
 pub(crate) fn strip(text: &str) -> String {
-    let mut clean = String::new();
+    strip_cow(text).into_owned()
+}
+
+fn strip_cow(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(OPEN) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut iter = envelopes(text).peekable();
+    if iter.peek().is_none() {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut clean = String::with_capacity(text.len());
     let mut cursor = 0;
-    for (start, end, _) in envelopes(text) {
+    for (start, end, _) in iter {
         clean.push_str(&text[cursor..start]);
         cursor = end;
     }
     clean.push_str(&text[cursor..]);
-    clean
+    std::borrow::Cow::Owned(clean)
 }
 
 fn project_message(message: &mut Value) {
@@ -46,12 +57,16 @@ fn project_message(message: &mut Value) {
         return;
     }
     if let Some(text) = message["content"].as_str() {
-        message["content"] = strip(text).into();
+        if let std::borrow::Cow::Owned(stripped) = strip_cow(text) {
+            message["content"] = stripped.into();
+        }
     } else if let Some(parts) = message["content"].as_array_mut() {
         for part in parts {
             if part["type"] == "text" {
                 if let Some(text) = part["text"].as_str() {
-                    part["text"] = strip(text).into();
+                    if let std::borrow::Cow::Owned(stripped) = strip_cow(text) {
+                        part["text"] = stripped.into();
+                    }
                 }
             }
         }

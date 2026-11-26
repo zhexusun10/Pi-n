@@ -67,6 +67,28 @@ fn mount_boundaries(
             .then_with(|| a.cmp(b))
     });
     masks.dedup();
+    // Reclaim expired mask staging trees left behind by previous executions in
+    // the shared engine directory (once bwrap establishes its mount namespace,
+    // the kernel retains mount references independently of these empty paths).
+    if let Ok(entries) = fs::read_dir(engine) {
+        let cutoff = std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(60));
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !name.to_string_lossy().starts_with(".pi-n-masks-") {
+                continue;
+            }
+            let stale = cutoff.is_some_and(|cutoff| {
+                entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .is_ok_and(|mtime| mtime < cutoff)
+            });
+            if stale {
+                let _ = crate::native_runtime_storage::remove_dir_all_masked(&entry.path());
+            }
+        }
+    }
     let staging = engine.join(format!(".pi-n-masks-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     // The copied engine is read-only below, but dependency symlinks may
@@ -360,11 +382,12 @@ pub(crate) fn execution_command_scoped(
         ],
     )?))?;
     let mut borrowed_objects = Vec::new();
-    for alternate in std::iter::once(current.join(".git/objects/info/alternates")).chain(
-        extra
-            .iter()
-            .map(|path| path.join("objects/info/alternates")),
-    ) {
+    // Only trust alternates inside host-managed extra_binds (e.g. Merger graph
+    // metadata), never agent-writable `current/.git/objects/info/alternates`.
+    for alternate in extra
+        .iter()
+        .map(|path| path.join("objects/info/alternates"))
+    {
         if let Ok(value) = fs::read_to_string(&alternate) {
             let objects = canonical(Path::new(value.trim()))?;
             if objects != expected_objects {

@@ -2754,6 +2754,7 @@ test("opening the File changes pane locks conversation prose width to its split 
     const before = await page.evaluate(() => ({
       paneW: Math.round(document.querySelector(".conversation-pane").getBoundingClientRect().width),
       streamW: Math.round(document.querySelector(".chat-messages-stream").getBoundingClientRect().width),
+      streamLeft: Math.round(document.querySelector(".chat-messages-stream").getBoundingClientRect().left),
     }));
 
     await page.evaluate(() => {
@@ -2767,6 +2768,7 @@ test("opening the File changes pane locks conversation prose width to its split 
           window.__paneOpenSamples.push({
             paneW: Math.round(pane.getBoundingClientRect().width),
             streamW: Math.round(stream.getBoundingClientRect().width),
+            streamLeft: Math.round(stream.getBoundingClientRect().left),
             paraH: Math.round(para.getBoundingClientRect().height),
             split: pane.classList.contains("split"),
           });
@@ -2783,6 +2785,7 @@ test("opening the File changes pane locks conversation prose width to its split 
     const settled = samples.at(-1);
     const paneWidths = samples.map(s => s.paneW);
     const streamWidths = samples.map(s => s.streamW);
+    const streamLefts = samples.map(s => s.streamLeft);
     const paraHeights = samples.map(s => s.paraH);
 
     // Pane itself still slides smoothly through intermediate widths.
@@ -2795,6 +2798,17 @@ test("opening the File changes pane locks conversation prose width to its split 
       Math.max(...streamWidths) <= before.streamW,
       `stream widened above ${before.streamW}px during open: ${JSON.stringify(streamWidths)}`,
     );
+    // Text column must never jump rightward on frame 0 and must glide monotonically left.
+    assert.ok(
+      Math.max(...streamLefts) <= before.streamLeft + 1,
+      `stream jumped right above ${before.streamLeft}px during open: ${JSON.stringify(streamLefts)}`,
+    );
+    for (let i = 1; i < streamLefts.length; i++) {
+      assert.ok(
+        streamLefts[i] <= streamLefts[i - 1] + 1,
+        `streamLeft moved rightward at frame ${i}: ${JSON.stringify(streamLefts)}`,
+      );
+    }
     // Text column stays locked to its final split width across the entire open transition (zero per-frame reflow).
     assert.ok(
       Math.max(...streamWidths) - Math.min(...streamWidths) <= 2,
@@ -2804,6 +2818,129 @@ test("opening the File changes pane locks conversation prose width to its split 
       Math.max(...paraHeights) - Math.min(...paraHeights) <= 1,
       `expected zero per-frame paragraph reflow during open animation, got heights ${JSON.stringify(paraHeights)}`,
     );
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("opening the File changes pane while scrolled up in a tall virtualized conversation keeps the anchored row steady without double-scroll jumps", { timeout: 30_000 }, async () => {
+  const fullLog = Array.from({ length: 60 }, (_, i) => JSON.stringify({
+    type: "message",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: `Thinking step ${i}: reviewing layout changes.` },
+        { type: "text", text: `Paragraph ${i}: Opening the right-hand workspace changes pane while scrolled up in a virtualized transcript must not double-compensate scrollTop after locking the conversation width.` },
+      ],
+    },
+  })).join("\n") + "\n";
+  const logBytes = Buffer.from(fullLog);
+
+  const context = await browser.newContext({ viewport: { width: 1000, height: 850 }, locale: "en-US", reducedMotion: "no-preference" });
+  await context.addInitScript(() => {
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
+  });
+  const errors = [];
+  let page;
+  await context.route("**/api/*", async route => {
+    const command = new URL(route.request().url()).pathname.slice(5);
+    const body = route.request().postDataJSON() ?? {};
+    if (command === "get_execution_output") {
+      await route.fulfill({ json: { result: {
+        runId: body.runId, executionId: body.executionId,
+        content: fullLog, startOffset: 0, nextOffset: logBytes.length, totalBytes: logBytes.length,
+        complete: true, status: "completed",
+      } } });
+      return;
+    }
+    if (command === "get_file_changes") {
+      const summary = await page.evaluate(() => window.changesAudit.summary);
+      await route.fulfill({ json: { result: { runId: body.runId, executionId: null, executionIds: body.executionIds ?? null, summary } } });
+      return;
+    }
+    await route.fulfill({ json: { result: {} } });
+  });
+  page = await context.newPage();
+  page.on("pageerror", error => errors.push(String(error)));
+  try {
+    await page.goto(`${origin}/__changes?mode=serial&settled=1&bytes=${logBytes.length}`, { waitUntil: "domcontentloaded" });
+    await page.locator(".initial-query-scroll.conversation-ready").waitFor();
+    await page.mouse.move(400, 300);
+    await page.mouse.wheel(0, -200);
+    await page.waitForTimeout(200);
+
+    const before = await page.evaluate(() => {
+      const scroll = document.querySelector(".initial-query-scroll");
+      const stream = document.querySelector(".chat-messages-stream");
+      const sr = scroll.getBoundingClientRect();
+      const rows = [...scroll.querySelectorAll("[data-transcript-id]")];
+      const vis = rows.find(r => r.getBoundingClientRect().top >= sr.top - 4 && r.getBoundingClientRect().top < sr.bottom);
+      return {
+        streamLeft: Math.round(stream.getBoundingClientRect().left),
+        visId: vis?.getAttribute("data-transcript-id") ?? null,
+        visTop: vis ? Math.round(vis.getBoundingClientRect().top) : null,
+      };
+    });
+    assert.ok(before.visId && before.visTop !== null, `expected an anchored visible row, got ${JSON.stringify(before)}`);
+
+    await page.evaluate((visId) => {
+      window.__scrollOpenSamples = [];
+      const start = performance.now();
+      function tick(now) {
+        const pane = document.querySelector(".conversation-pane");
+        const stream = document.querySelector(".chat-messages-stream");
+        const vis = document.querySelector(`[data-transcript-id="${visId}"]`);
+        if (pane?.classList.contains("split") && stream) {
+          window.__scrollOpenSamples.push({
+            streamLeft: Math.round(stream.getBoundingClientRect().left),
+            visTop: vis ? Math.round(vis.getBoundingClientRect().top) : null,
+          });
+        }
+        if (now - start < 620) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }, before.visId);
+
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="workspace-changes-trigger"]')?.click();
+    });
+    await page.waitForTimeout(660);
+    await expect(page.getByTestId("workspace-changes-pane")).toBeVisible();
+
+    const samples = await page.evaluate(() => window.__scrollOpenSamples);
+    const visTops = samples.map(s => s.visTop);
+    const streamLefts = samples.map(s => s.streamLeft);
+
+    assert.ok(
+      Math.max(...streamLefts) <= before.streamLeft + 1,
+      `stream jumped right above ${before.streamLeft}px: ${JSON.stringify(streamLefts)}`,
+    );
+    assert.ok(
+      visTops.every(top => top !== null && Math.abs(top - before.visTop) <= 4),
+      `anchored row drifted from ${before.visTop}px across open animation: ${JSON.stringify(visTops)}`,
+    );
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("standalone File changes pane defaults to its minimum width, resizes independently, and resets to minimum on double-click", { timeout: 30_000 }, async () => {
+  const { page, context, errors } = await fixture("serial", { width: 1280, height: 850 });
+  try {
+    await page.getByTestId("workspace-changes-trigger").click();
+    await expect(page.getByTestId("workspace-changes-pane")).toBeVisible();
+
+    const paneWidth = () => page.locator(".graph-pane").evaluate(el => Math.round(el.getBoundingClientRect().width));
+    assert.equal(await paneWidth(), 320, "standalone File changes opens at its 320px minimum width by default");
+
+    const splitter = page.getByRole("separator", { name: "Resize file changes panel", exact: true });
+    await splitter.focus();
+    await splitter.press("ArrowLeft");
+    assert.ok((await paneWidth()) > 320, "first ArrowLeft from minimum width immediately widens the changes pane");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_workbench_split_ratio")), null, "resizing File changes does not overwrite the graph split ratio");
+    assert.ok(await page.evaluate(() => localStorage.getItem("pi_n_changes_split_ratio")) !== null, "resizing File changes persists its own split ratio");
+
+    await splitter.dblclick();
+    assert.equal(await paneWidth(), 320, "double-clicking the resizer restores the minimum width");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

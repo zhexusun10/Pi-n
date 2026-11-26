@@ -54,16 +54,30 @@ pub(super) fn append_chunks(
     if text.is_empty() {
         return Ok(());
     }
-    let last = db.query_row(
-        "SELECT offset,bytes FROM execution_logs WHERE execution_id=?1 AND run_id=?2 ORDER BY offset DESC LIMIT 1",
-        params![id, run], |row| Ok((row.get::<_, usize>(0)?, row.get::<_, usize>(1)?)),
-    ).optional().map_err(|e| e.to_string())?;
+    let last = {
+        let mut stmt = db
+            .prepare_cached(
+                "SELECT offset,bytes FROM execution_logs WHERE execution_id=?1 AND run_id=?2 ORDER BY offset DESC LIMIT 1",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.query_row(params![id, run], |row| {
+            Ok((row.get::<_, usize>(0)?, row.get::<_, usize>(1)?))
+        })
+        .optional()
+        .map_err(|e| e.to_string())?
+    };
     if let Some((offset, bytes)) = last {
         if bytes < CHUNK_BYTES && offset.checked_add(bytes) == Some(start) {
             let end = floor_boundary(text, CHUNK_BYTES - bytes);
             if end > 0 {
-                db.execute("UPDATE execution_logs SET bytes=bytes+?1,text=text||?2 WHERE execution_id=?3 AND run_id=?4 AND offset=?5",
-                    params![end, &text[..end], id, run, offset]).map_err(|e| e.to_string())?;
+                let mut update = db
+                    .prepare_cached(
+                        "UPDATE execution_logs SET bytes=bytes+?1,text=text||?2 WHERE execution_id=?3 AND run_id=?4 AND offset=?5",
+                    )
+                    .map_err(|e| e.to_string())?;
+                update
+                    .execute(params![end, &text[..end], id, run, offset])
+                    .map_err(|e| e.to_string())?;
                 start += end;
                 text = &text[end..];
             }
@@ -83,39 +97,42 @@ pub struct LogPage {
 }
 
 /// Update live output and derived changes only after its transaction commits.
-pub(super) fn apply_output(state: &mut Snapshot, id: &str, text: &str, bytes: usize) {
+/// Returns `true` if the chunk changed the execution's live metrics.
+pub(super) fn apply_output(state: &mut Snapshot, id: &str, text: &str, bytes: usize) -> bool {
     let repo = state
         .config
         .as_ref()
         .map(|c| c.repository.as_str())
         .unwrap_or_default();
-    if let Some(execution) = state
+    let Some(execution) = state
         .executions
         .iter_mut()
         .chain(state.mergers.iter_mut())
         .find(|e| e.id == id)
-    {
-        append_live_output(execution, text);
-        execution.output_bytes = bytes;
-        if text.contains("\"tool") || text.contains("\"pi_n_process") {
-            crate::file_changes::update_from_log_chunk(
-                &state.run_id,
-                &execution.id,
-                &execution.node,
-                &execution.worktree,
-                repo,
-                text,
-                execution.status == "running",
-            );
-        } else {
-            crate::file_changes::note_read_only_log_append(
-                &state.run_id,
-                &execution.id,
-                execution.output_bytes,
-                execution.status == "running",
-            );
-        }
+    else {
+        return false;
+    };
+    let metrics_changed = append_live_output(execution, text);
+    execution.output_bytes = bytes;
+    if text.contains("\"tool") || text.contains("\"pi_n_process") {
+        crate::file_changes::update_from_log_chunk(
+            &state.run_id,
+            &execution.id,
+            &execution.node,
+            &execution.worktree,
+            repo,
+            text,
+            execution.status == "running",
+        );
+    } else {
+        crate::file_changes::note_read_only_log_append(
+            &state.run_id,
+            &execution.id,
+            execution.output_bytes,
+            execution.status == "running",
+        );
     }
+    metrics_changed
 }
 
 impl Store {
@@ -133,16 +150,42 @@ impl Store {
             .ok_or_else(|| "Corrupt execution log byte range".into())
     }
 
+    pub(super) fn all_log_bytes(&self, run: &str) -> Result<HashMap<String, usize>, String> {
+        let mut stmt = self
+            .connection
+            .prepare_cached(
+                "SELECT execution_id, MAX(offset), bytes FROM execution_logs WHERE run_id=?1 GROUP BY execution_id",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([run], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, usize>(1)?,
+                    row.get::<_, usize>(2)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        let mut totals = HashMap::new();
+        for row in rows {
+            let (id, offset, bytes) = row.map_err(|error| error.to_string())?;
+            let end = offset
+                .checked_add(bytes)
+                .filter(|end| i64::try_from(*end).is_ok())
+                .ok_or_else(|| "Corrupt execution log byte range".to_string())?;
+            totals.insert(id, end);
+        }
+        Ok(totals)
+    }
+
     pub(super) fn append_logs(
         &self,
         state: &mut Snapshot,
         kinds: Vec<EventKind>,
-    ) -> Result<(), String> {
-        let _write_guard = store_write_guard()?;
+    ) -> Result<bool, String> {
         if kinds.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
-        self.ensure_not_deleted(&state.run_id)?;
         let count = kinds.len();
         // Coalesce tiny stdout packets within the bounded writer batch; one
         // character per event must not become one database row per character.
@@ -153,31 +196,41 @@ impl Store {
             };
             texts.entry(execution_id).or_default().push_str(&text);
         }
-        let tx = self
-            .connection
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
-        let mut offsets = HashMap::new();
-        for (execution_id, text) in &texts {
-            let cached = self.execution_offsets.borrow().get(execution_id).copied();
-            let offset = match cached {
-                Some(offset) => offset,
-                None => self.log_bytes(&state.run_id, execution_id)?,
-            };
-            append_chunks(&tx, &state.run_id, execution_id, offset, text)?;
-            offsets.insert(execution_id.clone(), offset + text.len());
+        let mut offsets = HashMap::with_capacity(texts.len());
+        {
+            let _write_guard = store_write_guard()?;
+            self.ensure_not_deleted(&state.run_id)?;
+            let tx = self
+                .connection
+                .unchecked_transaction()
+                .map_err(|e| e.to_string())?;
+            for (execution_id, text) in &texts {
+                let cached = self.execution_offsets.borrow().get(execution_id).copied();
+                let offset = match cached {
+                    Some(offset) => offset,
+                    None => self.log_bytes(&state.run_id, execution_id)?,
+                };
+                append_chunks(&tx, &state.run_id, execution_id, offset, text)?;
+                offsets.insert(execution_id.clone(), offset + text.len());
+            }
+            tx.commit().map_err(|e| e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
-        // Neither cursors nor the live projection advance before COMMIT.
+        // Neither cursors nor the live projection advance before COMMIT, and
+        // derived projection/file-change/metrics work never holds STORE_WRITE_LOCK.
+        let mut metrics_changed = false;
         for (execution_id, text) in texts {
-            apply_output(state, &execution_id, &text, offsets[&execution_id]);
+            if apply_output(state, &execution_id, &text, offsets[&execution_id]) {
+                metrics_changed = true;
+            }
         }
         // Live output folds usage into the running attempt's metrics, so the
         // session totals must reflect it before the terminal event arrives.
-        state.run_metrics = Some(state.compute_run_metrics());
+        if metrics_changed {
+            state.run_metrics = Some(state.compute_run_metrics());
+        }
         self.execution_offsets.borrow_mut().extend(offsets);
-        self.note_appended(state, count);
-        Ok(())
+        self.note_appended(state, count, false);
+        Ok(metrics_changed)
     }
 
     pub fn forget_log_cursor(&self, id: &str) {
@@ -191,7 +244,17 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> Result<LogPage, String> {
-        let total = self.log_bytes(run, id)?;
+        let tx = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let total: usize = tx
+            .query_row(
+                "SELECT COALESCE(MAX(offset + bytes), 0) FROM execution_logs WHERE execution_id=?1 AND run_id=?2",
+                params![id, run],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|e| e.to_string())?;
         if offset > total {
             return Err("Invalid output offset".into());
         }
@@ -204,12 +267,12 @@ impl Store {
                 complete: true,
             });
         }
-        let start: usize = self.connection.query_row(
+        let start: usize = tx.query_row(
             "SELECT offset FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset<=?3 ORDER BY offset DESC LIMIT 1",
             params![id, run, offset as i64], |r| r.get(0),
         ).map_err(|e| e.to_string())?;
         let end = offset.saturating_add(limit).min(total);
-        let mut stmt = self.connection.prepare(
+        let mut stmt = tx.prepare(
             "SELECT offset,bytes,text FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset>=?3 AND offset<?4 ORDER BY offset",
         ).map_err(|e| e.to_string())?;
         let mut rows = stmt
@@ -269,7 +332,17 @@ impl Store {
         before: usize,
         limit: usize,
     ) -> Result<LogPage, String> {
-        let total = self.log_bytes(run, id)?;
+        let tx = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let total: usize = tx
+            .query_row(
+                "SELECT COALESCE(MAX(offset + bytes), 0) FROM execution_logs WHERE execution_id=?1 AND run_id=?2",
+                params![id, run],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|e| e.to_string())?;
         let end = before.min(total);
         if end == 0 {
             return Ok(LogPage {
@@ -281,15 +354,15 @@ impl Store {
             });
         }
         let candidate = end.saturating_sub(limit);
-        let chunk_start: usize = self.connection.query_row(
+        let chunk_start: usize = tx.query_row(
             "SELECT offset FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset<=?3 ORDER BY offset DESC LIMIT 1",
             params![id, run, candidate as i64], |r| r.get::<_, usize>(0),
         ).map_err(|e| e.to_string())?;
-        let start: usize = self.connection.query_row(
+        let start: usize = tx.query_row(
             "SELECT offset FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset<?3 ORDER BY offset DESC LIMIT 1",
             params![id, run, chunk_start as i64], |r| r.get::<_, usize>(0),
         ).optional().map_err(|e| e.to_string())?.unwrap_or(chunk_start);
-        let mut stmt = self.connection.prepare(
+        let mut stmt = tx.prepare(
             "SELECT offset,bytes,text FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset>=?3 AND offset<?4 ORDER BY offset",
         ).map_err(|e| e.to_string())?;
         let mut rows = stmt
@@ -364,13 +437,18 @@ impl Store {
         if end_offset == 0 || from_offset >= end_offset {
             return Ok(offsets);
         }
+        // Look back up to MAX_LINE_BYTES (64 KiB) behind `from_offset` so a
+        // steer JSONL line that started in an earlier 32 KiB chunk and was
+        // still incomplete at `from_offset` is always re-discovered once its
+        // terminating newline arrives.
+        let lookback_anchor = from_offset.saturating_sub(64 * 1024 + 1);
         let scan_start: usize = if from_offset == 0 {
             0
         } else {
             self.connection
                 .query_row(
                     "SELECT offset FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset<=?3 ORDER BY offset DESC LIMIT 1",
-                    params![id, run, from_offset.saturating_sub(1) as i64],
+                    params![id, run, lookback_anchor as i64],
                     |row| row.get::<_, usize>(0),
                 )
                 .optional()

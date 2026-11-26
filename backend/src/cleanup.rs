@@ -461,16 +461,39 @@ pub(crate) fn validate(root: &Path, run_id: &str, manifest: &Manifest) -> Result
 /// Commits that another live Run may still resolve while its node results are
 /// prepared. They keep their `refs/pi-n/heads/*` pins during a deleted Run's
 /// object reclamation even if no current ref points at them yet.
-pub(crate) fn protected_shadow_objects(
+pub(crate) fn protected_shadow_objects_for_repository(
     store: &Store,
     excluded: &str,
+    repository: Option<&Path>,
 ) -> Result<BTreeSet<String>, String> {
+    let target_shadow = repository.and_then(|repo| crate::workspace::shadow_repo_dir(repo).ok());
     let mut protected = BTreeSet::new();
     for id in store.runs()? {
         if id == excluded {
             continue;
         }
         let state: Snapshot = store.load(&id)?;
+        if let Some(target_repo) = repository {
+            let run_repo = state
+                .config
+                .as_ref()
+                .map(|c| Path::new(&c.repository))
+                .filter(|p| !p.as_os_str().is_empty());
+            let same_repo = match run_repo {
+                Some(run_repo) => {
+                    crate::path_identity::same_path(run_repo, target_repo)
+                        || target_shadow.as_ref().is_some_and(|expected| {
+                            crate::workspace::shadow_repo_dir(run_repo)
+                                .ok()
+                                .is_some_and(|actual| actual == *expected)
+                        })
+                }
+                None => false,
+            };
+            if !same_repo {
+                continue;
+            }
+        }
         let mut add = |head: &str| {
             if !head.is_empty() {
                 protected.insert(head.to_string());
@@ -676,11 +699,6 @@ fn execute_inner(root: &Path, store: &Store, task: &Task, detach: bool) -> Resul
     validate(root, &task.run_id, &manifest)?;
     manifest.protected_sources.extend(store.cleanup_sources()?);
     let deleting = task.manifest.sequence.is_none();
-    let protected = if deleting {
-        protected_shadow_objects(store, &task.run_id)?
-    } else {
-        BTreeSet::new()
-    };
     let mut paths = Vec::new();
     let mut detached_targets = Vec::new();
     for target in &manifest.targets {
@@ -688,24 +706,18 @@ fn execute_inner(root: &Path, store: &Store, task: &Task, detach: bool) -> Resul
         if shared && deleting {
             if let Target::Shadow { source, .. } = target {
                 if let Some(path) = target.resolve(root, &task.run_id)? {
-                    if let Some(source) = source {
-                        let lock = crate::workspace::host_ref_lock(source)?;
-                        let _guard = lock.lock().map_err(|error| error.to_string())?;
-                        crate::workspace::prune_shadow_run_refs(
-                            &path,
-                            &task.run_id,
-                            &protected,
-                            true,
-                        )?;
-                    } else {
-                        // Without a source lock, defer object GC to offline cleanup.
-                        crate::workspace::prune_shadow_run_refs(
-                            &path,
-                            &task.run_id,
-                            &protected,
-                            false,
-                        )?;
-                    }
+                    let protected = protected_shadow_objects_for_repository(
+                        store,
+                        &task.run_id,
+                        source.as_deref(),
+                    )?;
+                    crate::workspace::prune_shadow_run_refs_for_source(
+                        &path,
+                        source.as_deref(),
+                        &task.run_id,
+                        &protected,
+                        source.is_some(),
+                    )?;
                 }
             }
         }
@@ -773,11 +785,19 @@ fn path_older_than(path: &Path, min_age: std::time::Duration) -> bool {
         .is_ok_and(|age| age >= min_age)
 }
 
+fn marker_exists_or_unreadable(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => meta.is_file(),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 /// True when a `.publication` journal directory has no unsettled attempt
 /// (no attempt with `prepared.json`, `input.json`, or `applying` lacking `installed`).
 pub(crate) fn publication_journal_settled(journal_root: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(journal_root) else {
-        return true;
+    let entries = match fs::read_dir(journal_root) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
     };
     for entry in entries {
         let Ok(entry) = entry else {
@@ -790,9 +810,9 @@ pub(crate) fn publication_journal_settled(journal_root: &Path) -> bool {
             continue;
         }
         let attempt = entry.path();
-        let has_state = attempt.join("prepared.json").is_file()
-            || attempt.join("input.json").is_file()
-            || attempt.join("applying").is_file();
+        let has_state = marker_exists_or_unreadable(&attempt.join("prepared.json"))
+            || marker_exists_or_unreadable(&attempt.join("input.json"))
+            || marker_exists_or_unreadable(&attempt.join("applying"));
         if has_state && !attempt.join("installed").is_file() {
             return false;
         }
@@ -859,35 +879,102 @@ pub(crate) fn is_settled_orphan_publication_dir(path: &Path, min_age: std::time:
     saw_publication_entry
 }
 
-fn shadow_repo_idle(path: &Path, min_age: std::time::Duration) -> bool {
+fn dir_children_older_than(dir: &Path, min_age: std::time::Duration, recursive: bool) -> bool {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let child = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&child) else {
+            return false;
+        };
+        if !path_older_than(&child, min_age) {
+            return false;
+        }
+        if recursive
+            && meta.is_dir()
+            && !crate::workspace_symlinks::is_link(&meta)
+            && !dir_children_older_than(&child, min_age, true)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn shadow_repo_idle(path: &Path, min_age: std::time::Duration) -> bool {
+    if min_age.is_zero() {
+        return true;
+    }
     if !path_older_than(path, min_age) {
         return false;
     }
-    ![
+    for leaf in [
         "HEAD",
+        "HEAD.lock",
         "index",
+        "index.lock",
+        "packed-refs",
+        "packed-refs.lock",
         "logs",
         "logs/HEAD",
         "refs",
         "refs/heads",
+        "refs/pi-n",
         "refs/pi-n/heads",
         "refs/pi-n/inputs",
+        "refs/pi-n/runs",
+        "refs/pi-n/published",
         "agent-views",
         "objects",
         "objects/pack",
-    ]
-    .into_iter()
-    .map(|leaf| path.join(leaf))
-    .any(|probe| fs::symlink_metadata(&probe).is_ok() && !path_older_than(&probe, min_age))
+        "worktrees",
+    ] {
+        let probe = path.join(leaf);
+        match fs::symlink_metadata(&probe) {
+            Ok(_) => {
+                if !path_older_than(&probe, min_age) {
+                    return false;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return false,
+        }
+    }
+    dir_children_older_than(&path.join("objects"), min_age, false)
+        && dir_children_older_than(&path.join("worktrees"), min_age, true)
+        && dir_children_older_than(&path.join("agent-views"), min_age, false)
+        && dir_children_older_than(&path.join("refs"), min_age, true)
+        && dir_children_older_than(&path.join("logs"), min_age, true)
 }
 
 /// Reclaim shadow repositories under `<root>/shadow_repos` that have no
 /// referencing Run in `store` and have been idle for at least `min_age`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn prune_orphaned_shadow_repos(
     root: &Path,
     store: &Store,
     min_age: std::time::Duration,
 ) -> Result<usize, String> {
+    prune_orphaned_shadow_repos_with_guard(root, store, min_age, || false)
+}
+
+/// Reclaim shadow repositories under `<root>/shadow_repos`, acquiring each
+/// shadow repository's lifecycle lock non-blockingly and re-checking
+/// `should_abort`, idle state, and store references immediately before removal.
+pub(crate) fn prune_orphaned_shadow_repos_with_guard(
+    root: &Path,
+    store: &Store,
+    min_age: std::time::Duration,
+    should_abort: impl Fn() -> bool,
+) -> Result<usize, String> {
+    if should_abort() {
+        return Ok(0);
+    }
     let Some(shadow_root) = real_child_path(root, &root.join("shadow_repos"), false)? else {
         return Ok(0);
     };
@@ -907,18 +994,34 @@ pub(crate) fn prune_orphaned_shadow_repos(
             candidates.push(path);
         }
     }
-    if candidates.is_empty() {
+    if candidates.is_empty() || should_abort() {
         return Ok(0);
     }
+    let watermark = store.shadow_reference_watermark()?;
     let referenced = store.referenced_shadow_repos()?;
     let mut removed = 0usize;
     for path in candidates {
+        if should_abort() {
+            break;
+        }
         if referenced.contains(&crate::path_identity::path_key(&path)) {
             continue;
         }
-        // Re-verify idle state immediately before deletion to narrow any race
-        // with a concurrent snapshot initialization.
+        let shadow_lock = crate::workspace::shadow_use_lock(&path)?;
+        let Ok(_shadow_guard) = shadow_lock.try_write() else {
+            continue;
+        };
+        if should_abort() {
+            break;
+        }
+        // Re-verify idle state and database references under the exclusive
+        // shadow lock before deleting to close any race with a new Run.
         if !shadow_repo_idle(&path, min_age) {
+            continue;
+        }
+        if store.shadow_reference_watermark()? != watermark
+            && store.is_shadow_repo_referenced(&path)?
+        {
             continue;
         }
         crate::workspace_cleanup::remove_tree(&path).map_err(|error| error.to_string())?;

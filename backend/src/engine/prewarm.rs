@@ -5,7 +5,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     process::{Child, Command},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Condvar, Mutex,
     },
     thread,
@@ -308,9 +308,98 @@ impl<K: Clone + Eq + Send + 'static, W: Worker> Pool<K, W> {
     }
 }
 
+enum StderrSink {
+    Diagnostics(Vec<u8>),
+    Live {
+        sender: mpsc::Sender<(bool, String)>,
+        parked: Arc<AtomicBool>,
+    },
+}
+
+/// Continuously drains a prewarmed child's stderr pipe so OS pipe buffers
+/// (4-64 KiB) can never fill and deadlock startup/idle wait. Diagnostics are
+/// retained up to 16 KiB until `attach_live` hands the stream to `run_turn`.
+pub(super) struct StderrForwarder {
+    sink: Arc<Mutex<StderrSink>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
+}
+
+impl StderrForwarder {
+    fn spawn(stderr: std::process::ChildStderr) -> Self {
+        let sink = Arc::new(Mutex::new(StderrSink::Diagnostics(Vec::new())));
+        let reader_sink = Arc::clone(&sink);
+        let reader_thread = thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            for line in reader.by_ref().lines() {
+                let text = line.unwrap_or_else(|error| error.to_string());
+                let keep_draining = {
+                    let Ok(mut guard) = reader_sink.lock() else {
+                        break;
+                    };
+                    match &mut *guard {
+                        StderrSink::Diagnostics(buf) => {
+                            if buf.len() < 16 * 1024 {
+                                let remaining = (16usize * 1024).saturating_sub(buf.len());
+                                let bytes = text.as_bytes();
+                                let take = bytes.len().min(remaining);
+                                buf.extend_from_slice(&bytes[..take]);
+                                if buf.len() < 16 * 1024 {
+                                    buf.push(b'\n');
+                                }
+                            }
+                            true
+                        }
+                        StderrSink::Live { sender, parked } => {
+                            if parked.load(Ordering::Acquire) {
+                                true
+                            } else {
+                                sender.send((true, text)).is_ok()
+                            }
+                        }
+                    }
+                };
+                if !keep_draining {
+                    let _ = std::io::copy(&mut reader, &mut std::io::sink());
+                    break;
+                }
+            }
+        });
+        Self {
+            sink,
+            reader_thread: Some(reader_thread),
+        }
+    }
+
+    pub(super) fn attach_live(
+        &self,
+        sender: mpsc::Sender<(bool, String)>,
+        parked: Arc<AtomicBool>,
+    ) {
+        if let Ok(mut guard) = self.sink.lock() {
+            *guard = StderrSink::Live { sender, parked };
+        }
+    }
+
+    fn diagnostics_after_exit(&mut self) -> String {
+        if let Some(handle) = self.reader_thread.take() {
+            let _ = handle.join();
+        }
+        self.sink
+            .lock()
+            .ok()
+            .map(|guard| match &*guard {
+                StderrSink::Diagnostics(buf) => String::from_utf8_lossy(buf).into_owned(),
+                StderrSink::Live { .. } => String::new(),
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// Own an uncommitted process through every failure/cancellation path.
 pub(super) struct ReadyProcess {
     child: Option<Child>,
+    stdout: Option<BufReader<std::process::ChildStdout>>,
+    stderr: Option<StderrForwarder>,
     tree: process_control::ProcessTree,
     pub startup_output: Vec<String>,
     pub ready_ms: u128,
@@ -346,15 +435,23 @@ impl ReadyProcess {
             let _ = child.kill();
             let _ = child.wait();
         })?;
+        let stdout = child.stdout.take().map(BufReader::new);
+        let stderr = child.stderr.take().map(StderrForwarder::spawn);
         let mut process = Self {
             child: Some(child),
+            stdout,
+            stderr,
             tree,
             startup_output: Vec::new(),
             ready_ms: 0,
         };
-        match probe(process.child.as_mut().unwrap(), message, timeout, || {
-            ticket.cancelled()
-        }) {
+        match probe(
+            process.child.as_mut().unwrap(),
+            &mut process.stdout,
+            message,
+            timeout,
+            || ticket.cancelled(),
+        ) {
             Ok(output) => process.startup_output = output,
             Err(error) => {
                 return Err(process.failure(error));
@@ -368,10 +465,12 @@ impl ReadyProcess {
         self.tree.terminate();
         let child = self.child.as_mut().unwrap();
         let _ = child.wait();
-        let mut diagnostics = String::new();
-        if let Some(stderr) = child.stderr.take() {
-            let _ = stderr.take(16 * 1024).read_to_string(&mut diagnostics);
-        }
+        self.tree.mark_reaped_if_empty();
+        let diagnostics = self
+            .stderr
+            .as_mut()
+            .map(StderrForwarder::diagnostics_after_exit)
+            .unwrap_or_default();
         format!("{error}: {}", diagnostics.trim())
     }
 
@@ -380,7 +479,13 @@ impl ReadyProcess {
     }
 
     pub fn exchange(&mut self, message: Value, timeout: Duration) -> Result<(), String> {
-        match probe(self.child.as_mut().unwrap(), message, timeout, || false) {
+        match probe(
+            self.child.as_mut().unwrap(),
+            &mut self.stdout,
+            message,
+            timeout,
+            || false,
+        ) {
             Ok(output) => {
                 self.startup_output.extend(output);
                 Ok(())
@@ -389,9 +494,20 @@ impl ReadyProcess {
         }
     }
 
-    pub fn commit(mut self) -> (Child, process_control::ProcessTree, Vec<String>, u128) {
+    pub fn commit(
+        mut self,
+    ) -> (
+        Child,
+        BufReader<std::process::ChildStdout>,
+        Option<StderrForwarder>,
+        process_control::ProcessTree,
+        Vec<String>,
+        u128,
+    ) {
         (
             self.child.take().unwrap(),
+            self.stdout.take().unwrap(),
+            self.stderr.take(),
             self.tree.clone(),
             std::mem::take(&mut self.startup_output),
             self.ready_ms,
@@ -418,12 +534,14 @@ impl Drop for ReadyProcess {
         if let Some(child) = self.child.as_mut() {
             self.tree.terminate();
             let _ = child.wait();
+            self.tree.mark_reaped_if_empty();
         }
     }
 }
 
 fn probe(
     child: &mut Child,
+    stdout_slot: &mut Option<BufReader<std::process::ChildStdout>>,
     mut message: Value,
     timeout: Duration,
     cancelled: impl Fn() -> bool,
@@ -438,11 +556,11 @@ fn probe(
         .ok_or("Missing readiness command type")?
         .to_owned();
     let probe_id = id.clone();
-    let stdout = child.stdout.take().ok_or("Prewarm stdout unavailable")?;
+    let mut reader = stdout_slot.take().ok_or("Prewarm stdout unavailable")?;
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        // A one-byte buffer leaves all post-probe bytes in the original pipe.
-        let mut reader = BufReader::with_capacity(1, stdout);
+        // Keep the 8 KiB BufReader intact across probe and commit so post-probe
+        // bytes buffered in userspace are never lost and reads avoid 1-byte syscalls.
         let result = (|| -> Result<Vec<String>, String> {
             let mut output = Vec::new();
             let mut bytes = 0;
@@ -471,7 +589,7 @@ fn probe(
                 output.push(line);
             }
         })();
-        let _ = tx.send((reader.into_inner(), result));
+        let _ = tx.send((reader, result));
     });
     let stdin = child.stdin.as_mut().ok_or("Prewarm stdin unavailable")?;
     writeln!(stdin, "{}", message)
@@ -486,8 +604,8 @@ fn probe(
             .checked_sub(started.elapsed())
             .ok_or("Prewarm RPC readiness timed out")?;
         match rx.recv_timeout(remaining.min(Duration::from_millis(25))) {
-            Ok((stdout, result)) => {
-                child.stdout = Some(stdout);
+            Ok((reader, result)) => {
+                *stdout_slot = Some(reader);
                 return result;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -667,8 +785,7 @@ mod tests {
             .stderr(std::process::Stdio::piped());
         let process = ReadyProcess::start(&mut command, &ticket, Duration::from_secs(5)).unwrap();
         assert!(process.startup_output[0].contains("startup"));
-        let (mut child, tree, _, _) = process.commit();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let (mut child, mut stdout, _stderr, tree, _, _) = process.commit();
         let mut line = String::new();
         stdout.read_line(&mut line).unwrap();
         assert!(line.contains("after_probe"));

@@ -253,6 +253,24 @@ impl PlannerRevisionContext {
     }
 }
 
+pub(crate) struct SlotReclaimPlan {
+    canonical_root: PathBuf,
+    /// `(original_slot_path, parked_or_original_path)` pairs.
+    retired: Vec<(PathBuf, PathBuf)>,
+}
+
+impl SlotReclaimPlan {
+    pub(crate) fn execute(self) -> Result<(), String> {
+        for (original, parked) in self.retired {
+            crate::workspace::remove_private_git(&original)?;
+            crate::workspace_state::reclaim(&original)?;
+            crate::workspace_cleanup::remove_tree(&parked).map_err(|error| error.to_string())?;
+        }
+        crate::workspace::reclaim_orphan_git_metadata(&self.canonical_root)?;
+        Ok(())
+    }
+}
+
 pub struct Runtime {
     pub store: Store,
     pub state: Snapshot,
@@ -532,17 +550,6 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    /// Clone the running attempt's live metrics so an append can tell whether
-    /// it actually moved usage, context, model or tool counters.
-    fn live_metrics(&self, execution_id: &str) -> Option<ExecutionMetrics> {
-        self.state
-            .executions
-            .iter()
-            .chain(&self.state.mergers)
-            .find(|execution| execution.id == execution_id)
-            .and_then(|execution| execution.metrics.clone())
-    }
-
     /// Persist the per-Run file-change summary after durable terminal
     /// events, so reopening a conversation never replays its logs for counts.
     fn persist_file_changes_if(&self, terminal: bool) {
@@ -668,14 +675,10 @@ impl Runtime {
         // Snapshot watchers must refresh when a streamed record actually moves
         // the live metrics projection (usage, context, model or tool counters),
         // so session token details do not wait for the bounded watchdog poll.
-        // Capture the metrics before the append so a text delta that merely
-        // mentions a marker string cannot trigger a refresh.
         let output_target = match &kind {
-            EventKind::Output { execution_id, .. } => Some((
-                execution_id.clone(),
-                self.execution_bytes(execution_id),
-                self.live_metrics(execution_id),
-            )),
+            EventKind::Output { execution_id, .. } => {
+                Some((execution_id.clone(), self.execution_bytes(execution_id)))
+            }
             _ => None,
         };
         let terminal_target = match &kind {
@@ -699,13 +702,13 @@ impl Runtime {
                 | EventKind::MergerFailed { .. }
                 | EventKind::PublicationCompleted { .. }
         );
-        self.store.append(&mut self.state, kind)?;
+        let metrics_changed = self
+            .store
+            .append_reporting_metrics(&mut self.state, kind)?;
         self.persist_file_changes_if(persist_changes);
-        if let Some((execution_id, before_bytes, metrics_before)) = output_target {
+        if let Some((execution_id, before_bytes)) = output_target {
             let after_bytes = self.execution_bytes(&execution_id);
-            if (before_bytes == 0 && after_bytes > 0)
-                || self.live_metrics(&execution_id) != metrics_before
-            {
+            if (before_bytes == 0 && after_bytes > 0) || metrics_changed {
                 self.touch();
             } else {
                 self.revision = self.revision.wrapping_add(1);
@@ -753,10 +756,6 @@ impl Runtime {
         let mut has_non_output = false;
         let mut targets: std::collections::BTreeMap<String, (usize, bool)> =
             std::collections::BTreeMap::new();
-        // Metrics before this batch, so the notification below can tell a real
-        // usage/model/tool update from a text delta that mentions a marker.
-        let mut metrics_before: std::collections::BTreeMap<String, Option<ExecutionMetrics>> =
-            std::collections::BTreeMap::new();
         for kind in &events {
             match kind {
                 EventKind::Output { execution_id, .. } => {
@@ -764,9 +763,6 @@ impl Runtime {
                     targets
                         .entry(execution_id.clone())
                         .or_insert((before, false));
-                    metrics_before
-                        .entry(execution_id.clone())
-                        .or_insert_with(|| self.live_metrics(execution_id));
                 }
                 EventKind::Finished { execution_id, .. }
                 | EventKind::Failed {
@@ -800,7 +796,9 @@ impl Runtime {
                     | EventKind::PublicationCompleted { .. }
             )
         });
-        self.store.append_batch(&mut self.state, events)?;
+        let metrics_changed = self
+            .store
+            .append_batch_reporting_metrics(&mut self.state, events)?;
         self.persist_file_changes_if(persist_changes);
         let mut crossed_zero = false;
         let mut notifications = Vec::with_capacity(targets.len());
@@ -811,12 +809,7 @@ impl Runtime {
             }
             notifications.push((execution_id, after_bytes, settled));
         }
-        if has_non_output
-            || crossed_zero
-            || metrics_before
-                .iter()
-                .any(|(execution_id, before)| self.live_metrics(execution_id) != *before)
-        {
+        if has_non_output || crossed_zero || metrics_changed {
             self.touch();
         } else {
             self.revision = self.revision.wrapping_add(1);
@@ -1195,7 +1188,9 @@ impl Runtime {
     /// Prune obsolete environment snapshots (`versions/`, `blobs/`, `launches/`)
     /// after a Graph Run settles. Recorded inputs/results remain roots even
     /// when a later batch supersedes them; only unreferenced captures are garbage.
-    pub(crate) fn prune_stale_environment_snapshots(&self) -> Result<usize, String> {
+    pub(crate) fn plan_stale_environment_snapshot_prune(
+        &self,
+    ) -> Option<(crate::environment::Environments, BTreeSet<String>, BTreeSet<String>)> {
         if !self.batch_workspaces()
             || self.state.phase != "completed"
             || self.active()
@@ -1211,25 +1206,19 @@ impl Runtime {
                 .as_ref()
                 .is_some_and(|execution| matches!(execution.status.as_str(), "running" | "failed"))
         {
-            return Ok(0);
+            return None;
         }
-        let Some(policy) = self
+        let policy = self
             .state
             .config
             .as_ref()
-            .and_then(|config| config.environment.as_ref())
-        else {
-            return Ok(0);
-        };
+            .and_then(|config| config.environment.as_ref())?;
         let env_dir = self.root.join("environments").join(&self.state.run_id);
         if !env_dir.is_dir() {
-            return Ok(0);
+            return None;
         }
-        let Ok(store) =
-            crate::environment::Environments::new(&self.root, &self.state.run_id, policy)
-        else {
-            return Ok(0);
-        };
+        let store =
+            crate::environment::Environments::new(&self.root, &self.state.run_id, policy).ok()?;
         let mut retained_env_refs = BTreeSet::new();
         let mut retained_launch_refs = BTreeSet::new();
         let mut results = Vec::new();
@@ -1295,6 +1284,15 @@ impl Runtime {
                 }
             }
         }
+        Some((store, retained_env_refs, retained_launch_refs))
+    }
+
+    pub(crate) fn prune_stale_environment_snapshots(&self) -> Result<usize, String> {
+        let Some((store, retained_env_refs, retained_launch_refs)) =
+            self.plan_stale_environment_snapshot_prune()
+        else {
+            return Ok(0);
+        };
         store.prune_unreferenced_snapshots(&retained_env_refs, &retained_launch_refs)
     }
 
@@ -1514,18 +1512,13 @@ impl Runtime {
             job.execution.before.is_empty() || job.execution.before == job.expected_source_head;
         job.expected_source_head = head.to_string();
         // A history edit or feedback repair pins its own base (the anchor or the
-        // feedback source). The freshly collected source snapshot must not
-        // replace that pinned base; only a source-based dispatch adopts `head`.
-        let pinned = self
-            .state
-            .nodes
-            .get(&job.execution.node)
-            .is_some_and(|node| {
-                node.edit_execution_id.is_some() || node.feedback_workspace.is_some()
-            });
+        // feedback source). `Started` clears `node.edit_execution_id` during
+        // dispatch, so consult the immutable Job flags instead.
+        let pinned = job.history_edit || job.feedback_workspace.is_some();
         if (!pinned && source_based) || job.execution.before.is_empty() {
             job.execution.before = head.to_string();
         }
+        job.materialize_source = false;
         Ok(())
     }
 
@@ -1694,12 +1687,21 @@ impl Runtime {
             self.emit(EventKind::Failed {
                 node: execution.node,
                 execution_id: Some(execution.id),
-                error: "Execution was interrupted. Inspect and rerun.".into(),
+                error: "Application stopped during this execution. Its result is not trusted; inspect and rerun with a fresh Execution Instance.".into(),
                 output_bytes: 0,
                 metrics: None,
             })?;
         }
+        self.sync_failed_node_models(None)?;
         self.recover_publication()?;
+        if self.state.approved
+            && !matches!(
+                self.state.phase.as_str(),
+                "completed" | "needs_attention" | "publication_failed" | "paused"
+            )
+        {
+            self.emit(EventKind::Paused { paused: true })?;
+        }
         Ok(self.state.clone())
     }
 
@@ -3849,13 +3851,18 @@ impl Runtime {
             from_event_sequence
         };
         // No mutation or process interruption occurs until the exact user turn
-        // has been validated. Stop the sole writer only before committing.
+        // has been validated. Stop the sole writer and wait for its process
+        // group to drain before committing the `.jsonl` session branch so a
+        // dying Pi process cannot race and corrupt or revert the leaf entry.
         for (_, stopped_execution) in self.request_execution_stop(Some(node))? {
-            crate::process_control::stop_owner(&crate::process_control::execution_owner(
-                &self.state.run_id,
-                node,
-                &stopped_execution,
-            ))?;
+            crate::process_control::stop_owner_and_drain(
+                &crate::process_control::execution_owner(
+                    &self.state.run_id,
+                    node,
+                    &stopped_execution,
+                ),
+                std::time::Duration::from_secs(2),
+            )?;
         }
         self.sync_failed_node_models(Some(&[node.to_string()]))?;
         let branch = pending.map(|branch| branch.commit()).transpose()?;
@@ -4604,8 +4611,7 @@ impl Runtime {
                                 .as_ref()
                                 .is_some_and(|input| {
                                     input.anchor_execution_id == execution.id
-                                        && (execution.pid.is_some()
-                                            || execution.output_bytes > 0
+                                        && (self.execution_has_session_activity(execution)
                                             || !session_missing(execution))
                                 }))
                 })
@@ -6068,10 +6074,15 @@ impl Runtime {
     /// Keep only live worker workspaces and the just-completed handoff workspace.
     /// Git refs and commits are durable; a physical slot is still retained
     /// while it is needed by an active writer, feedback request, or recovery.
-    fn reclaim_workspace_slots(&self, completed: &Execution) -> Result<(), String> {
+    /// Atomically parks stale slots under `.reclaim-*` so heavy tree deletion
+    /// can run after releasing the runtime mutex.
+    fn plan_reclaim_workspace_slots(
+        &self,
+        completed: &Execution,
+    ) -> Result<Option<SlotReclaimPlan>, String> {
         // Batch delivery/retry still owns completed and failed partial slots.
         if self.batch_workspaces() {
-            return Ok(());
+            return Ok(None);
         }
         // Fixed native layouts and failed partial views are result dependencies,
         // not expendable allocator caches. Do not reclaim them opportunistically.
@@ -6082,11 +6093,11 @@ impl Runtime {
             .and_then(|c| c.environment.as_ref())
             .is_some()
         {
-            return Ok(());
+            return Ok(None);
         }
         let root = self.run_workspace_root();
         let Ok(metadata) = fs::symlink_metadata(&root) else {
-            return Ok(());
+            return Ok(None);
         };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err("Refusing linked Run workspace root".into());
@@ -6177,6 +6188,7 @@ impl Runtime {
                 }
             }
         }
+        let mut retired = Vec::new();
         for entry in fs::read_dir(&canonical_root).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
             if !entry
@@ -6187,13 +6199,13 @@ impl Runtime {
                 continue;
             }
             let path = entry.path();
-            if entry.file_name() == ".files"
-                || entry.file_name() == ".pi-n-git"
-                || entry.file_name() == ".pi-n-state"
-                || entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("publication-")
+            let file_name = entry.file_name();
+            let name_lossy = file_name.to_string_lossy();
+            if file_name == ".files"
+                || file_name == ".pi-n-git"
+                || file_name == ".pi-n-state"
+                || name_lossy.starts_with("publication-")
+                || name_lossy.starts_with(".reclaim-")
             {
                 continue;
             }
@@ -6202,13 +6214,17 @@ impl Runtime {
                 continue;
             };
             if !keep.contains(&crate::path_identity::path_key(&path)) {
-                crate::workspace::remove_private_git(&path)?;
-                crate::workspace_state::reclaim(&path)?;
-                crate::workspace_cleanup::remove_tree(&path).map_err(|error| error.to_string())?;
+                let parked = canonical_root.join(format!(".reclaim-{}", Uuid::new_v4()));
+                match fs::rename(&path, &parked) {
+                    Ok(()) => retired.push((path, parked)),
+                    Err(_) => retired.push((path.clone(), path)),
+                }
             }
         }
-        crate::workspace::reclaim_orphan_git_metadata(&canonical_root)?;
-        Ok(())
+        Ok(Some(SlotReclaimPlan {
+            canonical_root,
+            retired,
+        }))
     }
 
     pub fn finish(
@@ -6216,6 +6232,20 @@ impl Runtime {
         execution: &Execution,
         result: Result<(String, String), String>,
     ) -> Result<Option<(String, String)>, String> {
+        let (outcome, reclaim) = self.finish_deferring_slot_reclaim(execution, result)?;
+        if let Some(plan) = reclaim {
+            if let Err(error) = plan.execute() {
+                eprintln!("Cannot reclaim retired node workspaces: {error}");
+            }
+        }
+        Ok(outcome)
+    }
+
+    pub(crate) fn finish_deferring_slot_reclaim(
+        &mut self,
+        execution: &Execution,
+        result: Result<(String, String), String>,
+    ) -> Result<(Option<(String, String)>, Option<SlotReclaimPlan>), String> {
         crate::process_control::clear_owner_stop(&crate::process_control::execution_owner(
             &self.state.run_id,
             &execution.node,
@@ -6267,7 +6297,9 @@ impl Runtime {
                     })();
                     match evidence {
                         Ok(records) => composite = Some(records),
-                        Err(error) => return self.finish(execution, Err(error)),
+                        Err(error) => {
+                            return self.finish_deferring_slot_reclaim(execution, Err(error))
+                        }
                     }
                 }
                 let feedback_source = self
@@ -6286,7 +6318,7 @@ impl Runtime {
                             metrics: None,
                         })?;
                         self.sync_failed_node_models(Some(std::slice::from_ref(&execution.node)))?;
-                        return Ok(None);
+                        return Ok((None, None));
                     }
                 }
                 // The driver has already awaited the writer's Flush. Commit
@@ -6384,9 +6416,13 @@ impl Runtime {
                 // Tail bytes, completion and the pending verdict either all
                 // commit or all roll back, including their projection/cursors.
                 self.emit_outputs(terminal)?;
-                if let Err(error) = self.reclaim_workspace_slots(execution) {
-                    eprintln!("Cannot reclaim retired node workspaces: {error}");
-                }
+                let reclaim = match self.plan_reclaim_workspace_slots(execution) {
+                    Ok(plan) => plan,
+                    Err(error) => {
+                        eprintln!("Cannot reclaim retired node workspaces: {error}");
+                        None
+                    }
+                };
                 #[cfg(not(feature = "fixture"))]
                 self.warm_completed_serial_node();
                 if let Some(exec) = self
@@ -6408,11 +6444,14 @@ impl Runtime {
                         );
                     }
                 }
-                Ok(if feedback_source {
-                    Some((execution.node.clone(), output))
-                } else {
-                    None
-                })
+                Ok((
+                    if feedback_source {
+                        Some((execution.node.clone(), output))
+                    } else {
+                        None
+                    },
+                    reclaim,
+                ))
             }
             Err(error) => {
                 // Stop kills Pi's process tree; its nonzero exit code is a
@@ -6445,7 +6484,7 @@ impl Runtime {
                     })?;
                 }
                 self.sync_failed_node_models(Some(std::slice::from_ref(&execution.node)))?;
-                Ok(None)
+                Ok((None, None))
             }
         }
     }
@@ -7807,12 +7846,17 @@ fn perform_with_merger_inner(
     let expected_source_head = materialized_base
         .as_deref()
         .unwrap_or(&job.expected_source_head);
+    let source_based =
+        job.execution.before.is_empty() || job.execution.before == job.expected_source_head;
+    let pinned = job.history_edit || job.feedback_workspace.is_some();
     let execution_before = if let Some(adopted) = &adopted_feedback_head {
         adopted.as_str()
-    } else {
+    } else if (!pinned && source_based) || job.execution.before.is_empty() {
         materialized_base
             .as_deref()
             .unwrap_or(&job.execution.before)
+    } else {
+        job.execution.before.as_str()
     };
     let parent_refs = if job.parent_heads.is_empty() && !job.batch_workspaces {
         parents
@@ -7928,14 +7972,16 @@ fn perform_with_merger_inner(
                 // take far longer than the merge itself; report it distinctly so
                 // the browser does not keep showing a routine preparation label.
                 crate::server::set_prepare_phase(&job.run_id, &job.execution.id, "conflict");
-                crate::graph_merge::resolve_with_merger_for_node(
+                crate::graph_merge::resolve_with_merger_for_node_revision(
                     path,
                     &job.task,
                     &job.config,
                     root,
+                    job.execution.revision,
                     job.execution.attempt,
                     &format!("merge:{}", job.execution.node),
                     crate::graph_merge::MergerConflicts::GIT,
+                    &exclusions,
                     &mut on_merger_event,
                 )?;
                 Ok(())
@@ -7996,6 +8042,7 @@ fn perform_with_merger_inner(
     let mut on_output = on_output;
     let prompt = engine::feedback_input::prompt(&job.task, job.feedback_delivery_id.as_deref());
     let output = engine::execute(
+        &job.run_id,
         &job.config,
         &execution_view,
         &prompt,
@@ -8014,6 +8061,7 @@ fn perform_with_merger_inner(
     // closed with the protocol error inside finish.
     let output = if job.feedback_source {
         engine::repair_feedback_verdict(
+            &job.run_id,
             &job.config,
             &execution_view,
             job.agent_kind,

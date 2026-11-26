@@ -2363,10 +2363,8 @@ fn line_advances_live_metrics(line: &str) -> bool {
 /// log and replaces these values, so this projection never becomes
 /// authoritative. Engine output is line-delimited, so a partial record simply
 /// fails to parse and is ignored.
-fn accumulate_live_metrics(execution: &mut Execution, text: &str) {
-    let metrics = execution
-        .metrics
-        .get_or_insert_with(ExecutionMetrics::default);
+fn accumulate_live_metrics(execution: &mut Execution, text: &str) -> bool {
+    let mut before: Option<Option<ExecutionMetrics>> = None;
     for line in text.lines() {
         if !line_advances_live_metrics(line) {
             continue;
@@ -2374,29 +2372,51 @@ fn accumulate_live_metrics(execution: &mut Execution, text: &str) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
+        if before.is_none() {
+            before = Some(execution.metrics.clone());
+        }
+        let metrics = execution
+            .metrics
+            .get_or_insert_with(ExecutionMetrics::default);
         fold_execution_metric_event(metrics, None, &value);
+    }
+    match before {
+        Some(prev) => execution.metrics != prev,
+        None => false,
     }
 }
 
-pub fn append_live_output(execution: &mut Execution, text: &str) {
+pub fn append_live_output(execution: &mut Execution, text: &str) -> bool {
     execution.output.push_str(text);
     execution.output_bytes = execution.output.len();
-    accumulate_live_metrics(execution, text);
-    if execution.pid.is_none() {
-        // The lifecycle record may itself span multiple output messages.
-        if let Some(line) = execution.output.split_once('\n').map(|(line, _)| line) {
+    let metrics_changed = accumulate_live_metrics(execution, text);
+    if execution.pid.is_none() && execution.output.contains('\n') {
+        // The lifecycle record may span multiple output messages or follow
+        // earlier status lines; bound the scan to the leading lines.
+        for line in execution.output.lines().take(16) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
                 if value["type"] == "pi_n_process_started"
                     || value["type"] == "pi_n_session_resumed"
                 {
                     execution.pid = value["pid"].as_u64();
+                    break;
                 }
             }
         }
     }
+    metrics_changed
 }
 
 pub fn apply(state: &mut Snapshot, event: &Event) {
+    if apply_without_metrics(state, event) {
+        state.run_metrics = Some(state.compute_run_metrics());
+    }
+}
+
+/// Apply one event to `state` without recomputing `state.run_metrics`.
+/// Returns `true` when `state.run_metrics` may have changed and should be
+/// recomputed once at the end of a batch or replay.
+pub fn apply_without_metrics(state: &mut Snapshot, event: &Event) -> bool {
     if let Some(planning) = event.planning_summary() {
         state.record_planning_turn(planning);
     }
@@ -2669,6 +2689,7 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
                 // A changed task must not resurrect the discarded session through
                 // pending recovery, nor attach to a superseded shared workspace.
                 node.continuation = false;
+                node.source_direct_recovery = false;
                 node.shared_workspace = false;
                 if node.status == "dirty" {
                     node.revision += 1;
@@ -2778,7 +2799,7 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
                 if !matches!(node.status.as_str(), "failed" | "blocked") {
                     continue;
                 }
-                let continuation = !pending_followup
+                let mut continuation = !pending_followup
                     && continuation_nodes.contains(name)
                     && (*resume_failed
                         || node.model_config.is_some()
@@ -2800,7 +2821,7 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
                         .is_some_and(|input| !input.additional_sources.is_empty())
                 {
                     node.pending_messages.clear();
-                    node.continuation = true;
+                    continuation = true;
                 }
                 let has_previous_result = node.head.is_some()
                     || state.executions.iter().any(|execution| {
@@ -3044,18 +3065,15 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
             }
         }
         EventKind::Output { execution_id, text } => {
-            if let Some(execution) = state
+            let changed = state
                 .executions
                 .iter_mut()
                 .chain(state.mergers.iter_mut())
                 .find(|item| item.id == *execution_id)
-            {
-                append_live_output(execution, text);
-            }
-            state.run_metrics = Some(state.compute_run_metrics());
+                .is_some_and(|execution| append_live_output(execution, text));
             // Streaming logs are not business events and must not accumulate
             // a second, unbounded copy in state.events.
-            return;
+            return changed;
         }
         EventKind::Prepared { execution_id, head } => {
             if let Some(execution) = state
@@ -3303,8 +3321,7 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
                         node.revision += 1;
                     }
                     state.events.push(event.clone());
-                    state.run_metrics = Some(state.compute_run_metrics());
-                    return;
+                    return true;
                 }
             }
             if *source_direct {
@@ -3329,8 +3346,7 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
                 node.feedback_workspace = None;
                 state.phase = if state.paused { "paused" } else { "followup" }.into();
                 state.events.push(event.clone());
-                state.run_metrics = Some(state.compute_run_metrics());
-                return;
+                return true;
             }
             // Runtime admits only a disjoint retained private writer during
             // publication. Its message must not cancel the in-flight handoff
@@ -3407,17 +3423,20 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
             ..
         } => {
             state.stop_requested = false;
-            let anchor = state
+            let anchor_index = state
                 .executions
                 .iter()
-                .find(|execution| execution.id == *from_execution_id)
-                .expect("validated edit anchor")
-                .clone();
+                .position(|execution| execution.id == *from_execution_id)
+                .expect("validated edit anchor");
+            let anchor = state.executions[anchor_index].clone();
             // A node history branch still belongs to its held private batch.
             // Keep unpublished peers behind the same delivery barrier.
-            for execution in &state.executions {
-                if nodes.contains(&execution.node)
-                    && execution.started_at >= anchor.started_at
+            // Use append order (`executions` index) rather than wall-clock
+            // timestamps so same-millisecond executions or clock skew cannot
+            // mis-classify executions around the edit anchor.
+            for (index, execution) in state.executions.iter().enumerate() {
+                if index >= anchor_index
+                    && nodes.contains(&execution.node)
                     && !state.superseded_execution_ids.contains(&execution.id)
                 {
                     state.superseded_execution_ids.push(execution.id.clone());
@@ -3439,6 +3458,10 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
                 node.revision += 1;
                 node.feedback_workspace = None;
                 node.feedback_continuation = None;
+                node.continuation = false;
+                node.source_direct_recovery = false;
+                node.shared_workspace = false;
+                node.pending_messages.clear();
                 if name == target {
                     node.baseline_head = node.head.clone();
                     node.head = Some(anchor.before.clone());
@@ -3633,29 +3656,36 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
             output_bytes,
             metrics,
         } => {
-            let target_node_name =
-                if let Some(execution) = state.mergers.iter_mut().find(|e| e.id == *execution_id) {
-                    // Runtime persists the annotation before this terminal event.
-                    // Replay restores byte counts from the log table, not text.
-                    let _ = error;
-                    execution.settle_terminal(
-                        "failed",
-                        None,
-                        event.timestamp,
-                        None,
-                        *output_bytes,
-                        metrics.clone(),
-                    );
-                    execution.node.strip_prefix("merge:").map(|s| s.to_string())
-                } else {
-                    None
-                };
-            if let Some(target_name) = target_node_name {
+            let failed_target = state
+                .mergers
+                .iter()
+                .find(|e| e.id == *execution_id && e.status == "running")
+                .and_then(|e| {
+                    e.node
+                        .strip_prefix("merge:")
+                        .map(|s| (s.to_string(), e.revision))
+                });
+            if let Some(execution) = state.mergers.iter_mut().find(|e| e.id == *execution_id) {
+                // Runtime persists the annotation before this terminal event.
+                // Replay restores byte counts from the log table, not text.
+                let _ = error;
+                execution.settle_terminal(
+                    "failed",
+                    None,
+                    event.timestamp,
+                    None,
+                    *output_bytes,
+                    metrics.clone(),
+                );
+            }
+            if let Some((target_name, revision)) = failed_target {
                 if let Some(node) = state.nodes.get_mut(&target_name) {
-                    node.status = "blocked".into();
-                    node.error = Some(format!(
-                        "Workspace composition blocked: Merger failed: {error}"
-                    ));
+                    if (revision == 0 || node.revision == revision) && node.status != "completed" {
+                        node.status = "blocked".into();
+                        node.error = Some(format!(
+                            "Workspace composition blocked: Merger failed: {error}"
+                        ));
+                    }
                 }
             }
         }
@@ -3669,7 +3699,7 @@ pub fn apply(state: &mut Snapshot, event: &Event) {
         }
     }
     state.events.push(event.clone());
-    state.run_metrics = Some(state.compute_run_metrics());
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

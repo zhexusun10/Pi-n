@@ -128,7 +128,7 @@
   border-radius: var(--radius-surface, 16px);
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
-  box-shadow: var(--surface-card-shadow);
+  box-shadow: var(--shell-card-shadow);
   overflow: hidden;
 }
 

@@ -5827,3 +5827,61 @@ fn fresh_workspace_path_uses_short_node_name_and_avoids_collisions() {
         Some(repo_name.as_str())
     );
 }
+
+#[test]
+fn record_job_source_preserves_history_edit_base_and_clears_materialize_source() {
+    let (_temp, source, mut runtime) = setup(
+        false,
+        Graph {
+            original_goal: "test".into(),
+            nodes: vec![Node {
+                id: "worker".into(),
+                task: "do work".into(),
+            }],
+            edges: vec![],
+        },
+    );
+    workspace::remove_shadow_repo(&source).unwrap();
+    runtime.approve().unwrap();
+    let mut job = runtime.jobs().unwrap().remove(0);
+
+    // Simulate a history-edit job whose anchor base happened to match
+    // `expected_source_head`. `EventKind::Started` already cleared
+    // `node.edit_execution_id` during dispatch, so `record_job_source` must
+    // consult `job.history_edit` rather than the cleared node field.
+    assert!(runtime.state.nodes["worker"].edit_execution_id.is_none());
+    let pinned_base = "1111111111111111111111111111111111111111";
+    let refreshed_head = "2222222222222222222222222222222222222222";
+    job.history_edit = true;
+    job.materialize_source = true;
+    job.execution.before = pinned_base.into();
+    job.expected_source_head = pinned_base.into();
+
+    runtime
+        .record_job_source(&mut job, &source, refreshed_head)
+        .unwrap();
+    assert_eq!(
+        job.execution.before, pinned_base,
+        "history-edit job must keep its pinned anchor base"
+    );
+    assert_eq!(job.expected_source_head, refreshed_head);
+    assert!(
+        !job.materialize_source,
+        "record_job_source must clear materialize_source so perform() does not re-collect outside source_lock"
+    );
+
+    // A non-pinned source-based job adopts the refreshed source snapshot and
+    // also clears materialize_source.
+    let mut source_job = job.clone();
+    source_job.history_edit = false;
+    source_job.feedback_workspace = None;
+    source_job.materialize_source = true;
+    source_job.execution.before = pinned_base.into();
+    source_job.expected_source_head = pinned_base.into();
+    runtime
+        .record_job_source(&mut source_job, &source, refreshed_head)
+        .unwrap();
+    assert_eq!(source_job.execution.before, refreshed_head);
+    assert_eq!(source_job.expected_source_head, refreshed_head);
+    assert!(!source_job.materialize_source);
+}

@@ -11,7 +11,7 @@ impl Store {
         &self,
         state: &mut Snapshot,
         kinds: Vec<EventKind>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if kinds
             .iter()
             .all(|kind| matches!(kind, EventKind::Output { .. }))
@@ -37,67 +37,74 @@ impl Store {
             }
         }
         let count = kinds.len();
-        let _guard = store_write_guard()?;
-        self.ensure_not_deleted(&state.run_id)?;
-        let tx = self
-            .connection
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
         let mut changes = Vec::with_capacity(count);
         let mut offsets = HashMap::new();
-        for kind in kinds {
-            let timestamp = now();
-            if let EventKind::Output { execution_id, text } = &kind {
-                let offset = match offsets
-                    .get(execution_id)
-                    .copied()
-                    .or_else(|| self.execution_offsets.borrow().get(execution_id).copied())
-                {
-                    Some(offset) => offset,
-                    None => self.log_bytes(&state.run_id, execution_id)?,
-                };
-                logs::append_chunks(&tx, &state.run_id, execution_id, offset, text)?;
-                offsets.insert(execution_id.clone(), offset + text.len());
+        {
+            let _guard = store_write_guard()?;
+            self.ensure_not_deleted(&state.run_id)?;
+            let tx = self
+                .connection
+                .unchecked_transaction()
+                .map_err(|e| e.to_string())?;
+            for kind in kinds {
+                let timestamp = now();
+                if let EventKind::Output { execution_id, text } = &kind {
+                    let offset = match offsets
+                        .get(execution_id)
+                        .copied()
+                        .or_else(|| self.execution_offsets.borrow().get(execution_id).copied())
+                    {
+                        Some(offset) => offset,
+                        None => self.log_bytes(&state.run_id, execution_id)?,
+                    };
+                    logs::append_chunks(&tx, &state.run_id, execution_id, offset, text)?;
+                    offsets.insert(execution_id.clone(), offset + text.len());
+                    changes.push(PendingChange {
+                        output_bytes: offset + text.len(),
+                        event: Event {
+                            sequence: 0,
+                            timestamp,
+                            kind,
+                        },
+                    });
+                    continue;
+                }
+                let payload = serde_json::to_string(&kind).map_err(|e| e.to_string())?;
+                let (direct, nested) = created_planning_ids(&kind);
+                tx.execute(
+                    "INSERT INTO events(run_id,timestamp,payload,planning_id,nested_planning_id,kind,execution_id) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                    params![state.run_id, timestamp, payload, direct, nested, event_kind_name(&kind), event_execution_id(&kind)],
+                ).map_err(|e| e.to_string())?;
                 changes.push(PendingChange {
-                    output_bytes: offset + text.len(),
                     event: Event {
-                        sequence: 0,
+                        sequence: tx.last_insert_rowid(),
                         timestamp,
                         kind,
                     },
+                    output_bytes: 0,
                 });
-                continue;
             }
-            let payload = serde_json::to_string(&kind).map_err(|e| e.to_string())?;
-            let (direct, nested) = created_planning_ids(&kind);
-            tx.execute(
-                "INSERT INTO events(run_id,timestamp,payload,planning_id,nested_planning_id,kind,execution_id) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                params![state.run_id, timestamp, payload, direct, nested, event_kind_name(&kind), event_execution_id(&kind)],
-            ).map_err(|e| e.to_string())?;
-            changes.push(PendingChange {
-                event: Event {
-                    sequence: tx.last_insert_rowid(),
-                    timestamp,
-                    kind,
-                },
-                output_bytes: 0,
-            });
+            tx.commit().map_err(|e| e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
-        // No projection or cache mutation precedes the durable commit.
-        let output_changed = !offsets.is_empty();
+        // No projection or cache mutation precedes the durable commit, and
+        // derived projection/file-change/metrics work never holds STORE_WRITE_LOCK.
         self.execution_offsets.borrow_mut().extend(offsets);
         let mut terminal = false;
+        let mut metrics_changed = false;
+        let mut has_business_event = false;
         for PendingChange {
             event,
             output_bytes,
         } in changes
         {
             if let EventKind::Output { execution_id, text } = &event.kind {
-                logs::apply_output(state, execution_id, text, output_bytes);
+                if logs::apply_output(state, execution_id, text, output_bytes) {
+                    metrics_changed = true;
+                }
                 continue;
             }
-            apply(state, &event);
+            has_business_event = true;
+            crate::model::apply_without_metrics(state, &event);
             if matches!(
                 event.kind,
                 EventKind::Finished { .. }
@@ -112,15 +119,15 @@ impl Store {
                 }
             }
         }
-        if output_changed {
+        if has_business_event || metrics_changed {
             state.run_metrics = Some(state.compute_run_metrics());
         }
         if terminal {
             self.appended_since_checkpoint.set(0);
-            self.save_checkpoint(state);
+            self.save_checkpoint(state, has_business_event);
         } else {
-            self.note_appended(state, count);
+            self.note_appended(state, count, has_business_event);
         }
-        Ok(())
+        Ok(metrics_changed)
     }
 }

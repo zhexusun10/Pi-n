@@ -19,6 +19,33 @@ fn lookup(id: &str, instance: Option<&str>) -> Result<NodeRpc, String> {
     Ok(rpc)
 }
 
+/// Atomically look up an active RPC session and register a pending request
+/// while holding `NODE_RPC`, matching `run_turn`'s `NODE_RPC -> rpc.pending`
+/// exit-lock order so no request can slip in after `run_turn` unregisters.
+fn lookup_and_reserve(
+    id: &str,
+    instance: Option<&str>,
+    request_id: String,
+    reply: super::PendingRpcReply,
+) -> Result<NodeRpc, String> {
+    let map = NODE_RPC
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let rpc = map
+        .get(id)
+        .cloned()
+        .ok_or("Pi session is not active; start or continue this conversation first")?;
+    if instance.is_some_and(|instance| instance != rpc.instance) {
+        return Err("Pi session changed; reopen the command menu".into());
+    }
+    rpc.pending
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(request_id, reply);
+    Ok(rpc)
+}
+
 pub fn planner_id(run: &str) -> Result<String, String> {
     planner_for_run(run)
 }
@@ -68,15 +95,16 @@ pub fn start_request(
     instance: &str,
     mut command: Value,
 ) -> Result<PendingRequest, String> {
-    let rpc = lookup(id, Some(instance))?;
     let request_id = uuid::Uuid::new_v4().to_string();
     command["id"] = Value::String(request_id.clone());
     let timeout = request_timeout(&command);
     let (tx, response) = mpsc::channel();
-    rpc.pending
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(request_id.clone(), tx);
+    let rpc = lookup_and_reserve(
+        id,
+        Some(instance),
+        request_id.clone(),
+        super::PendingRpcReply::channel(tx),
+    )?;
     let pending = PendingRequest {
         rpc,
         id: request_id,
@@ -104,46 +132,50 @@ pub fn execute_owned(
     command_id: &str,
     mut command: Value,
 ) -> Result<Value, String> {
-    let rpc = lookup(id, Some(instance))?;
     let request_id = uuid::Uuid::new_v4().to_string();
     command["id"] = Value::String(request_id.clone());
+    let (tx, response) = mpsc::channel();
+    // Reserve the pending slot under `NODE_RPC` BEFORE acquiring `rpc.ui` so
+    // `run_turn` cannot unregister the session in between and no lock nesting
+    // occurs between `NODE_RPC` and `rpc.ui`.
+    let rpc = lookup_and_reserve(
+        id,
+        Some(instance),
+        request_id.clone(),
+        super::PendingRpcReply::channel(tx),
+    )?;
+    let pending = PendingRequest {
+        rpc: rpc.clone(),
+        id: request_id.clone(),
+        response,
+        timeout: request_timeout(&command),
+    };
     let mut ui = rpc.ui.lock().map_err(|error| error.to_string())?;
     ui.begin(command_id, &request_id, &rpc.sender)?;
-    let result = (|| {
-        let (tx, response) = mpsc::channel();
-        rpc.pending
-            .lock()
-            .map_err(|error| error.to_string())?
-            .insert(request_id.clone(), tx);
-        let pending = PendingRequest {
-            rpc: rpc.clone(),
-            id: request_id.clone(),
-            response,
-            timeout: request_timeout(&command),
-        };
-        rpc.sender
-            .send(command.to_string())
-            .map_err(|_| "Pi RPC input closed".to_string())?;
-        Ok::<_, String>(pending)
-    })();
-    if result.is_err() {
+    let send_res = rpc
+        .sender
+        .send(command.to_string())
+        .map_err(|_| "Pi RPC input closed".to_string());
+    if send_res.is_err() {
         ui.completed(&request_id);
     }
     drop(ui);
-    result?.wait()
+    send_res?;
+    pending.wait()
 }
 
 // A synthetic waiter pins the same process across abort -> durable send. It
 // never reaches Pi and is removed on every success/error path.
 pub fn interrupt_then<T>(id: &str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    let rpc = lookup(id, None)?;
-    let instance = rpc.instance.clone();
     let lease_id = uuid::Uuid::new_v4().to_string();
     let (tx, response) = mpsc::channel();
-    rpc.pending
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(lease_id.clone(), tx);
+    let rpc = lookup_and_reserve(
+        id,
+        None,
+        lease_id.clone(),
+        super::PendingRpcReply::channel(tx),
+    )?;
+    let instance = rpc.instance.clone();
     let _lease = PendingRequest {
         rpc,
         id: lease_id,
@@ -232,7 +264,10 @@ mod tests {
         let id = uuid::Uuid::new_v4().to_string();
         let (sender, _receiver) = mpsc::channel();
         let (reply, response) = mpsc::channel();
-        let pending = Arc::new(Mutex::new(HashMap::from([("request".into(), reply)])));
+        let pending = Arc::new(Mutex::new(HashMap::from([(
+            "request".into(),
+            super::super::PendingRpcReply::channel(reply),
+        )])));
         NODE_RPC
             .get_or_init(Default::default)
             .lock()
@@ -285,6 +320,8 @@ mod tests {
                     .lock()
                     .unwrap()
                     .remove(command["id"].as_str().unwrap())
+                    .unwrap()
+                    .tx
                     .unwrap()
                     .send(Err("abort rejected".into()))
                     .unwrap();

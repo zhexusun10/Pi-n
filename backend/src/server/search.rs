@@ -1316,11 +1316,19 @@ fn load_run_search_data(
         });
     }
     for merger in &state.mergers {
+        let end_offset = if superseded.contains(merger.id.as_str()) {
+            match retained_prefixes.get(&merger.id).copied() {
+                Some(offset) => Some(offset),
+                None => continue,
+            }
+        } else {
+            None
+        };
         executions.push(ExecSearchTarget {
             execution_id: merger.id.clone(),
             source_kind: "merger",
             node: Some(merger.node.clone()),
-            end_offset: None,
+            end_offset,
             timestamp: merger.completed_at.or(Some(merger.started_at)),
         });
     }
@@ -1624,12 +1632,13 @@ impl AssistantTextExtractor {
         }
 
         // Fast pre-filter: skip tool calls, tool results, thinking deltas,
-        // compaction, and lifecycle frames without JSON parsing.
+        // compaction, turn_end, agent_end, and lifecycle frames without JSON parsing.
         let maybe_relevant = trimmed.contains("\"message_end\"")
             || trimmed.contains("\"message_start\"")
             || trimmed.contains("\"text_delta\"")
             || trimmed.contains("\"pi_n_planning_source\"")
-            || (trimmed.contains("\"message\"") && trimmed.contains("\"assistant\""));
+            || trimmed.contains("\"type\":\"message\"")
+            || trimmed.contains("\"type\": \"message\"");
         if !maybe_relevant {
             return;
         }

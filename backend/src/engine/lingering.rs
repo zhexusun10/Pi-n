@@ -78,6 +78,29 @@ impl<W: Worker> Lingering<W> {
         }
     }
 
+    /// Return whether a live parked shell already exists for this conversation.
+    /// Dead entries are pruned and retired immediately.
+    pub(crate) fn has_live(&self, key: &SessionKey) -> bool {
+        let mut dead = None;
+        let alive = {
+            let mut entries = self.lock();
+            if let Some(index) = entries.iter().position(|entry| &entry.key == key) {
+                if entries[index].worker.alive() {
+                    true
+                } else {
+                    dead = Some(entries.remove(index).worker);
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if let Some(worker) = dead {
+            worker.retire();
+        }
+        alive
+    }
+
     /// Take the parked shell for this conversation. A dead entry is retired and
     /// reported as a miss, so the caller cold-launches instead of resuming a
     /// corpse. A live entry never expires.

@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import { TRANSCRIPT_SCROLL_ADJUSTED_EVENT } from "../services/transcriptScroll";
 import {
@@ -655,17 +655,39 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
   const isGlobalTransition = !reduceMotion && (transitionPhase === "collapsing" || transitionPhase === "expanding");
   const isCollapsingTransition = transitionPhase === "collapsing";
   const keepBodyExpanded = !reduceMotion && transitionPhase === "expanding" && isExpanded;
+  // Read the previous commit's value during render but only advance it in a
+  // layout effect: mutating a ref while rendering makes React StrictMode's
+  // second render see `wasGlobalTransition === false`, so the settled body
+  // would replay its own collapse animation after the global one finished.
+  const prevGlobalTransitionRef = useRef(isGlobalTransition);
+  const wasGlobalTransition = prevGlobalTransitionRef.current;
+  useLayoutEffect(() => {
+    prevGlobalTransitionRef.current = isGlobalTransition;
+  });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (transitionPhase === "collapsing") setLocalExpanded(false);
   }, [transitionPhase]);
 
   useLayoutEffect(() => {
-    if (!isGlobalTransition) return;
     const headerTrack = headerTrackRef.current;
     const headerInner = headerInnerRef.current;
     const bodyTrack = bodyTrackRef.current;
     const bodyInner = bodyInnerRef.current;
+    if (!isGlobalTransition) {
+      if (headerTrack) {
+        headerTrack.style.height = "";
+        headerTrack.style.opacity = "";
+      }
+      if (bodyTrack) {
+        bodyTrack.style.height = "";
+        bodyTrack.style.opacity = "";
+        bodyTrack.style.display = "";
+        bodyTrack.style.flexDirection = "";
+        bodyTrack.style.justifyContent = "";
+      }
+      return;
+    }
     if (!headerTrack || !headerInner || !bodyTrack || !bodyInner) return;
 
     return registerCardsTransitionRow({
@@ -742,43 +764,42 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
       data-testid="activity-summary-row"
       data-transition={transitionPhase !== "idle" ? transitionPhase : undefined}
     >
-      {isGlobalTransition ? (
-        <>
-          <div
-            ref={headerTrackRef}
-            className="activity-summary-header-track"
-            style={{ width: "100%", minWidth: 0, overflow: "hidden", contain: "layout style", pointerEvents: "none" }}
-          >
-            <div
-              ref={headerInnerRef}
-              style={{
-                width: "100%",
-                minWidth: 0,
-                display: "flex",
-                ...(keepBodyExpanded ? { paddingBottom: 8 } : {}),
-              }}
-            >
-              {headerButton}
-            </div>
-          </div>
-          <div
-            ref={bodyTrackRef}
-            className="activity-summary-body-track"
-            style={{ width: "100%", minWidth: 0, overflow: "hidden", contain: "layout style" }}
-          >
-            <div ref={bodyInnerRef} style={{ width: "100%", minWidth: 0, flexShrink: 0 }}>
-              {cardsList}
-            </div>
-          </div>
-        </>
-      ) : (
-        <>
+      <div
+        ref={headerTrackRef}
+        className={isGlobalTransition ? "activity-summary-header-track" : undefined}
+        style={isGlobalTransition
+          ? { width: "100%", minWidth: 0, overflow: "hidden", contain: "layout style", pointerEvents: "none" }
+          : { width: "100%", minWidth: 0 }}
+      >
+        <div
+          ref={headerInnerRef}
+          style={{
+            width: "100%",
+            minWidth: 0,
+            display: "flex",
+            ...(keepBodyExpanded ? { paddingBottom: 8 } : {}),
+          }}
+        >
           {headerButton}
-          <CollapsibleCardBody expanded={isExpanded} durationMs={CARDS_TRANSITION_DURATION_MS} clampToViewport={true}>
+        </div>
+      </div>
+      <div
+        ref={bodyTrackRef}
+        className={isGlobalTransition ? "activity-summary-body-track" : undefined}
+        style={isGlobalTransition
+          ? { width: "100%", minWidth: 0, overflow: "hidden", contain: "layout style" }
+          : { width: "100%", minWidth: 0 }}
+      >
+        <div ref={bodyInnerRef} style={{ width: "100%", minWidth: 0, flexShrink: 0 }}>
+          <CollapsibleCardBody
+            expanded={isGlobalTransition ? true : isExpanded}
+            durationMs={isGlobalTransition || wasGlobalTransition ? 0 : CARDS_TRANSITION_DURATION_MS}
+            clampToViewport={true}
+          >
             {() => cardsList}
           </CollapsibleCardBody>
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 });

@@ -63,6 +63,7 @@ fn build_diff_context(state: &Snapshot, store_root: PathBuf) -> FileDiffContext 
         .and_then(|planning| planning.worktree.as_ref())
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
+    let has_store_db = store_root.join("events.sqlite").is_file();
     FileDiffContext {
         run_id: state.run_id.clone(),
         base: state.base.clone(),
@@ -83,12 +84,14 @@ fn build_diff_context(state: &Snapshot, store_root: PathBuf) -> FileDiffContext 
                 status: exec.status.clone(),
                 started_at: exec.started_at,
                 superseded: state.superseded_execution_ids.contains(&exec.id),
-                output: if exec.output.len() <= MAX_INLINE_OUTPUT_BYTES {
+                // Avoid cloning multi-MiB transcripts under the Run mutex when
+                // events.sqlite is available for on-demand transcript fallback.
+                output: if !has_store_db && exec.output.len() <= MAX_INLINE_OUTPUT_BYTES {
                     exec.output.clone()
                 } else {
                     String::new()
                 },
-                output_bytes: exec.output_bytes,
+                output_bytes: exec.output_bytes.max(exec.output.len()),
             })
             .collect(),
         open_file: open_file_context(state),

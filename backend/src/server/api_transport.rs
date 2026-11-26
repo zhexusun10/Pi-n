@@ -92,6 +92,7 @@ struct Receipts {
     entries: HashMap<String, Receipt>,
     result_bytes: usize,
     retired_through: Option<u64>,
+    last_sweep_ms: u64,
 }
 
 fn token_time(token: &str) -> Option<u64> {
@@ -116,8 +117,12 @@ pub(super) struct ReceiptGuard {
     finished: bool,
 }
 impl ReceiptGuard {
-    pub(super) fn finish(mut self, status: u16, body: &Value) {
+    pub(super) fn finish(self, status: u16, body: &Value) {
         let bytes = body.to_string().len();
+        self.finish_with_size(status, body, bytes);
+    }
+
+    pub(super) fn finish_with_size(mut self, status: u16, body: &Value, bytes: usize) {
         if let Ok(mut receipts) = RECEIPTS.get_or_init(Default::default).lock() {
             receipts.finish(&self.token, status, body, bytes);
         }
@@ -188,16 +193,30 @@ impl Receipts {
         now: u64,
         request_id: &str,
     ) -> Result<(), (u16, Value)> {
-        let mut retained_bytes = 0;
-        self.entries.retain(|_, receipt| {
-            let retain = matches!(receipt.state, ReceiptState::Pending)
-                || now.saturating_sub(receipt.created) < RETENTION_MS;
-            if retain {
-                retained_bytes += receipt.cached_bytes;
+        // Sweep expired receipts periodically or under capacity pressure rather
+        // than scanning all entries (up to 4096) on every mutating request.
+        if self.entries.len() >= MAX_RECEIPTS || now.saturating_sub(self.last_sweep_ms) >= 60_000 {
+            let mut retained_bytes = 0;
+            self.entries.retain(|_, receipt| {
+                let retain = matches!(receipt.state, ReceiptState::Pending)
+                    || now.saturating_sub(receipt.created) < RETENTION_MS;
+                if retain {
+                    retained_bytes += receipt.cached_bytes;
+                }
+                retain
+            });
+            self.result_bytes = retained_bytes;
+            self.last_sweep_ms = now;
+        }
+        if let Some(receipt) = self.entries.get(token) {
+            if !matches!(receipt.state, ReceiptState::Pending)
+                && now.saturating_sub(receipt.created) >= RETENTION_MS
+            {
+                if let Some(expired) = self.entries.remove(token) {
+                    self.result_bytes = self.result_bytes.saturating_sub(expired.cached_bytes);
+                }
             }
-            retain
-        });
-        self.result_bytes = retained_bytes;
+        }
         if let Some(receipt) = self.entries.get(token) {
             let (status, body) = if receipt.fingerprint != &fingerprint[..] {
                 error(
@@ -236,7 +255,7 @@ impl Receipts {
             return Err(retired());
         }
         if self.entries.len() >= MAX_RECEIPTS {
-            self.retire_completed();
+            self.retire_completed(now);
             if self.retired_through.is_some_and(|cutoff| created <= cutoff) {
                 return Err(retired());
             }
@@ -262,12 +281,12 @@ impl Receipts {
         Ok(())
     }
 
-    fn retire_completed(&mut self) {
+    fn retire_completed(&mut self, now: u64) {
         let mut times: Vec<_> = self
             .entries
             .values()
             .filter(|receipt| !matches!(receipt.state, ReceiptState::Pending))
-            .map(|receipt| receipt.created)
+            .map(|receipt| receipt.created.min(now))
             .collect();
         if times.is_empty() {
             return;
@@ -276,11 +295,13 @@ impl Receipts {
         let cutoff = times[(MAX_RECEIPTS / 4).min(times.len()) - 1];
         // Once a receipt is forgotten, missing tokens through this issuance
         // time must remain unknown, never look like brand new operations.
+        // Clamp cutoff to server `now` so future-skewed client timestamps
+        // cannot push `retired_through` into the future and reject valid requests.
         // Keep pending receipts even below the watermark, and resolve retained
         // entries before consulting it so a late completion remains replayable.
         self.retired_through = Some(self.retired_through.unwrap_or(0).max(cutoff));
         self.entries.retain(|_, receipt| {
-            matches!(receipt.state, ReceiptState::Pending) || receipt.created > cutoff
+            matches!(receipt.state, ReceiptState::Pending) || receipt.created.min(now) > cutoff
         });
         self.result_bytes = self
             .entries

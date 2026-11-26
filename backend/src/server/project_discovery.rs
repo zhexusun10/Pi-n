@@ -240,23 +240,28 @@ pub(super) fn collect_files_from_dir(dir: &Path) -> Vec<String> {
     }
 
     if files.is_empty() {
+        const MAX_WALK_DEPTH: usize = 32;
+        const MAX_WALK_DIRS: usize = 10_000;
         fn walk(
             walk_dir: &Path,
             base: &Path,
             files: &mut Vec<String>,
             limit: usize,
+            depth: usize,
+            visited_dirs: &mut usize,
             ancestors: &mut HashSet<String>,
         ) {
-            if files.len() >= limit {
+            if files.len() >= limit || depth > MAX_WALK_DEPTH || *visited_dirs >= MAX_WALK_DIRS {
                 return;
             }
             let identity = crate::path_identity::path_key(walk_dir);
             if !ancestors.insert(identity.clone()) {
                 return;
             }
+            *visited_dirs += 1;
             if let Ok(entries) = fs::read_dir(walk_dir) {
                 for entry in entries.flatten() {
-                    if files.len() >= limit {
+                    if files.len() >= limit || *visited_dirs >= MAX_WALK_DIRS {
                         break;
                     }
                     let path = entry.path();
@@ -267,7 +272,15 @@ pub(super) fn collect_files_from_dir(dir: &Path) -> Vec<String> {
                         }
                     }
                     if path.is_dir() {
-                        walk(&path, base, files, limit, ancestors);
+                        walk(
+                            &path,
+                            base,
+                            files,
+                            limit,
+                            depth + 1,
+                            visited_dirs,
+                            ancestors,
+                        );
                     } else if path.is_file() {
                         if let Ok(rel) = path.strip_prefix(base) {
                             let rel_str = rel.to_string_lossy().replace('\\', "/");
@@ -279,10 +292,11 @@ pub(super) fn collect_files_from_dir(dir: &Path) -> Vec<String> {
                 }
             }
             // Track only this branch, not every visited directory: two
-            // noncyclic aliases must both remain available as project paths.
+            // noncyclic aliases must both remain available as project paths,
+            // while depth and total-dir bounds prevent O(2^d) diamond blowup.
             ancestors.remove(&identity);
         }
-        walk(dir, dir, &mut files, 3000, &mut HashSet::new());
+        walk(dir, dir, &mut files, 3000, 0, &mut 0, &mut HashSet::new());
     }
     files
 }
@@ -342,22 +356,37 @@ pub(super) fn list_skills(
     let mut skills = Vec::new();
     let mut seen_names = std::collections::HashSet::new();
 
+    const MAX_SKILL_DEPTH: usize = 8;
+    const MAX_SKILL_DIRS: usize = 2_000;
+    const MAX_SKILLS: usize = 500;
+
     fn scan_skills_dir(
         dir: &Path,
         scope: &str,
         skills: &mut Vec<SkillItem>,
         seen_names: &mut std::collections::HashSet<String>,
+        depth: usize,
+        visited_dirs: &mut usize,
         ancestors: &mut HashSet<String>,
     ) {
-        if !dir.exists() || !dir.is_dir() {
+        if !dir.exists()
+            || !dir.is_dir()
+            || depth > MAX_SKILL_DEPTH
+            || *visited_dirs >= MAX_SKILL_DIRS
+            || skills.len() >= MAX_SKILLS
+        {
             return;
         }
         let identity = crate::path_identity::path_key(dir);
         if !ancestors.insert(identity.clone()) {
             return;
         }
+        *visited_dirs += 1;
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
+                if *visited_dirs >= MAX_SKILL_DIRS || skills.len() >= MAX_SKILLS {
+                    break;
+                }
                 let path = entry.path();
                 if path.is_dir() {
                     let skill_md = path.join("SKILL.md");
@@ -375,7 +404,15 @@ pub(super) fn list_skills(
                         }
                     } else {
                         // 深入子分组目录扫描
-                        scan_skills_dir(&path, scope, skills, seen_names, ancestors);
+                        scan_skills_dir(
+                            &path,
+                            scope,
+                            skills,
+                            seen_names,
+                            depth + 1,
+                            visited_dirs,
+                            ancestors,
+                        );
                     }
                 } else if path.is_file() {
                     // Pi 规范：~/.pi/agent/skills 与 ~/.pi/skills 支持直接根级单文件技能
@@ -402,12 +439,15 @@ pub(super) fn list_skills(
         ancestors.remove(&identity);
     }
 
+    let mut visited_skill_dirs = 0usize;
     for (dir, scope) in &search_dirs {
         scan_skills_dir(
             dir,
             scope,
             &mut skills,
             &mut seen_names,
+            0,
+            &mut visited_skill_dirs,
             &mut HashSet::new(),
         );
     }

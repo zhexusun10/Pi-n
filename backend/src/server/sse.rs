@@ -2,8 +2,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock,
     },
     thread,
 };
@@ -26,7 +26,7 @@ enum RuntimeSignal {
 }
 
 const MAX_SSE_SUBSCRIBERS: usize = 8;
-type SseSubscriber = (u64, std::sync::mpsc::SyncSender<Vec<u8>>);
+type SseSubscriber = (u64, std::sync::mpsc::SyncSender<Vec<u8>>, Arc<AtomicBool>);
 static ACTIVE_SSE_CLIENTS: AtomicUsize = AtomicUsize::new(0);
 static NEXT_SSE_SUBSCRIBER_ID: AtomicU64 = AtomicU64::new(1);
 static SSE_SUBSCRIBERS: OnceLock<Mutex<Vec<SseSubscriber>>> = OnceLock::new();
@@ -149,13 +149,21 @@ fn broadcast_sse_bytes(bytes: &[u8]) {
     let Ok(mut subscribers) = sse_subscribers().lock() else {
         return;
     };
-    subscribers.retain(|(_, tx)| match tx.try_send(bytes.to_vec()) {
-        Ok(()) => true,
-        // A full queue already missed this frame, which may be the only terminal
-        // notification for a Run. Drop the subscriber so the browser reconnects
-        // and re-reads durable state instead of silently staying stale.
-        Err(std::sync::mpsc::TrySendError::Full(_))
-        | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
+    subscribers.retain(|(_, tx, closed)| {
+        if closed.load(Ordering::Acquire) {
+            return false;
+        }
+        match tx.try_send(bytes.to_vec()) {
+            Ok(()) => true,
+            // A full queue already missed this frame, which may be the only terminal
+            // notification for a Run. Drop the subscriber and mark it closed so the
+            // reader exits immediately and the browser reconnects.
+            Err(std::sync::mpsc::TrySendError::Full(_))
+            | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                closed.store(true, Ordering::Release);
+                false
+            }
+        }
     });
     ACTIVE_SSE_CLIENTS.store(subscribers.len(), Ordering::SeqCst);
 }
@@ -191,13 +199,15 @@ pub(super) fn subscribe_runtime_events() -> SseStreamReceiver {
     let _ = sse_signal_sender();
     let id = NEXT_SSE_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(256);
+    let closed = Arc::new(AtomicBool::new(false));
     let _ = tx.try_send(b": connected\n\n".to_vec());
     if let Ok(mut subscribers) = sse_subscribers().lock() {
         while subscribers.len() >= MAX_SSE_SUBSCRIBERS {
-            let (_, oldest_tx) = subscribers.remove(0);
+            let (_, oldest_tx, oldest_closed) = subscribers.remove(0);
+            oldest_closed.store(true, Ordering::Release);
             let _ = oldest_tx.try_send(Vec::new());
         }
-        subscribers.push((id, tx));
+        subscribers.push((id, tx, Arc::clone(&closed)));
         ACTIVE_SSE_CLIENTS.store(subscribers.len(), Ordering::SeqCst);
     }
     SseStreamReceiver {
@@ -205,12 +215,14 @@ pub(super) fn subscribe_runtime_events() -> SseStreamReceiver {
         current: Vec::new(),
         pos: 0,
         subscriber_id: Some(id),
+        closed: Some(closed),
     }
 }
 
 pub(super) fn close_all_sse_subscribers() {
     if let Ok(mut subscribers) = sse_subscribers().lock() {
-        for (_, tx) in subscribers.drain(..) {
+        for (_, tx, closed) in subscribers.drain(..) {
+            closed.store(true, Ordering::Release);
             let _ = tx.try_send(Vec::new());
         }
         ACTIVE_SSE_CLIENTS.store(0, Ordering::SeqCst);
@@ -222,13 +234,14 @@ pub(super) struct SseStreamReceiver {
     pub(super) current: Vec<u8>,
     pub(super) pos: usize,
     pub(super) subscriber_id: Option<u64>,
+    pub(super) closed: Option<Arc<AtomicBool>>,
 }
 
 impl Drop for SseStreamReceiver {
     fn drop(&mut self) {
         if let Some(id) = self.subscriber_id {
             if let Ok(mut subscribers) = sse_subscribers().lock() {
-                subscribers.retain(|(sub_id, _)| *sub_id != id);
+                subscribers.retain(|(sub_id, _, _)| *sub_id != id);
                 ACTIVE_SSE_CLIENTS.store(subscribers.len(), Ordering::SeqCst);
             }
         }
@@ -237,6 +250,13 @@ impl Drop for SseStreamReceiver {
 
 impl Read for SseStreamReceiver {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self
+            .closed
+            .as_ref()
+            .is_some_and(|closed| closed.load(Ordering::Acquire))
+        {
+            return Ok(0);
+        }
         if self.pos < self.current.len() {
             let n = (self.current.len() - self.pos).min(buf.len());
             buf[..n].copy_from_slice(&self.current[self.pos..self.pos + n]);
@@ -245,12 +265,26 @@ impl Read for SseStreamReceiver {
         }
         let next = match self.rx.recv_timeout(std::time::Duration::from_secs(15)) {
             Ok(bytes) => {
-                if bytes.is_empty() {
+                if bytes.is_empty()
+                    || self
+                        .closed
+                        .as_ref()
+                        .is_some_and(|closed| closed.load(Ordering::Acquire))
+                {
                     return Ok(0);
                 }
                 bytes
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => b": keep-alive\n\n".to_vec(),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if self
+                    .closed
+                    .as_ref()
+                    .is_some_and(|closed| closed.load(Ordering::Acquire))
+                {
+                    return Ok(0);
+                }
+                b": keep-alive\n\n".to_vec()
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
         };
         let n = next.len().min(buf.len());
@@ -338,10 +372,29 @@ pub(super) fn respond_sse(
 }
 
 pub(super) fn send_sse_event(
-    tx: &std::sync::mpsc::Sender<Vec<u8>>,
+    tx: &std::sync::mpsc::SyncSender<Vec<u8>>,
     event: &str,
     data: &serde_json::Value,
+    drop_if_full: bool,
 ) {
-    let payload = format!("event: {event}\ndata: {}\n\n", data);
-    let _ = tx.send(payload.into_bytes());
+    let mut payload = format!("event: {event}\ndata: {}\n\n", data).into_bytes();
+    if drop_if_full {
+        let _ = tx.try_send(payload);
+        return;
+    }
+    // Bound blocking wait for control/terminal frames so a permanently stalled
+    // TCP client can never hang a planning producer thread forever.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match tx.try_send(payload) {
+            Ok(()) | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return,
+            Err(std::sync::mpsc::TrySendError::Full(unsent)) => {
+                if std::time::Instant::now() >= deadline {
+                    return;
+                }
+                payload = unsent;
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
 }

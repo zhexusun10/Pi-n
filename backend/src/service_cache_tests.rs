@@ -407,3 +407,35 @@ fn startup_recovers_historical_deleted_owners_without_cleanup_tasks() {
         "published source"
     );
 }
+
+#[test]
+fn plan_goal_initial_continuation_and_active_service_guards() {
+    // New runs and retries of failed initial planning turns (which replace
+    // `state.config` and can toggle `isolate_parallel_nodes` from off -> on
+    // or retry an auto-routed size failure) must enforce the admission size check.
+    assert!(should_check_plan_goal_admission_size(None, false));
+    assert!(should_check_plan_goal_admission_size(Some("run-1"), true));
+    assert!(!should_check_plan_goal_admission_size(Some("run-1"), false));
+
+    // A non-driving service whose runtime lock is held (e.g. inside approve()
+    // or add_manual_node()) or whose graph phase is active must defer shadow GC.
+    let (_temp, _source, primary, _ids) = workspace_deletion_fixture();
+    primary.planning.store(false, Ordering::SeqCst);
+    primary.driving.store(false, Ordering::SeqCst);
+    {
+        let mut runtime = primary.runtime.lock().unwrap();
+        runtime.state.plan_type = Some("graph".into());
+        runtime.state.phase = "completed".into();
+        // While runtime lock is held, `service_is_active_graph_or_planning`
+        // must conservatively treat the service as active.
+        assert!(service_is_active_graph_or_planning(&primary));
+    }
+    assert!(!service_is_active_graph_or_planning(&primary));
+    {
+        let mut runtime = primary.runtime.lock().unwrap();
+        runtime.state.phase = "publishing".into();
+    }
+    assert!(service_is_active_graph_or_planning(&primary));
+    let root = primary.runtime.lock().unwrap().root.clone();
+    invalidate_service_cache(&root, None);
+}

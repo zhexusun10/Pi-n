@@ -826,8 +826,8 @@ for (const [mode, language] of [["graph", "en"], ["serial", "zh-CN"], ["planner"
           window.audit.finish();
         });
         const name = language === "en"
-          ? (mode === "planner" ? "Planning session details" : "Workspace and session details")
-          : (mode === "planner" ? "规划会话信息" : "工作区与会话信息");
+          ? (mode === "planner" ? "Planning session details" : mode === "serial" ? "Session details" : "Workspace and session details")
+          : (mode === "planner" ? "规划会话信息" : mode === "serial" ? "会话信息" : "工作区与会话信息");
         await page.getByRole("button", { name, exact: true }).click();
         const details = page.locator(".workspace-details-body");
         await details.getByText("Current context: —", { exact: true }).waitFor();
@@ -1171,7 +1171,7 @@ for (const mode of ["serial", "planner", "merger"]) {
       await page.goto(`${origin}/__workspace-footer?mode=${mode}`, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(() => !!window.audit?.startExecution);
       if (mode !== "planner") await page.evaluate(() => { window.audit.startExecution(); window.audit.finish(); });
-      await page.getByRole("button", { name: mode === "planner" ? "Planning session details" : "Workspace and session details", exact: true }).click();
+      await page.getByRole("button", { name: mode === "planner" ? "Planning session details" : mode === "serial" ? "Session details" : "Workspace and session details", exact: true }).click();
       const details = page.locator(".workspace-details-body");
       const labels = ["Cumulative tokens", "Input", "Output", "Cache read", "Cache write", "Reasoning", "Context window", "Current context"];
       for (const label of labels) await details.getByText(`${label}: —`, { exact: true }).waitFor();
@@ -1256,7 +1256,7 @@ test("a resumed session keeps earlier attempts in the session token totals", { t
         input: 3_000, output: 200, cacheRead: 15_000, cacheWrite: 0, reasoning: 40, totalTokens: 18_200, consumedTokens: 3_200,
       }, 19_000));
     });
-    await page.getByRole("button", { name: "Workspace and session details", exact: true }).click();
+    await page.getByRole("button", { name: "Session details", exact: true }).click();
     const details = page.locator(".workspace-details-body");
     for (const text of [
       "Cumulative tokens: 17.2k", "Input: 15k", "Output: 2k", "Cache read: 19k",
@@ -1388,7 +1388,7 @@ test("a resumed node session keeps its first start and accumulates time took", {
       window.audit.setExecutionMetrics(metrics(60), "previous");
       window.audit.setExecutionMetrics(metrics(30), "current");
     }, { firstStart, secondStart });
-    await page.getByRole("button", { name: "Workspace and session details", exact: true }).click();
+    await page.getByRole("button", { name: "Session details", exact: true }).click();
     const details = page.locator(".workspace-details-body");
     await details.getByText(`Start time: ${sessionStamp(firstStart)}`, { exact: true }).waitFor();
     await details.getByText("Time took: 1m 30s", { exact: true }).waitFor();
@@ -1516,7 +1516,7 @@ for (const [mode, turn] of [
     try {
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await page.goto(`${origin}/__workspace-footer?mode=${mode}&turn=${turn}`, { waitUntil: "domcontentloaded" });
-      const trigger = page.getByRole("button", { name: "Workspace and session details", exact: true });
+      const trigger = page.getByRole("button", { name: mode === "serial" ? "Session details" : "Workspace and session details", exact: true });
       await trigger.waitFor();
       await page.waitForTimeout(250);
       if (turn === "follow-up") {

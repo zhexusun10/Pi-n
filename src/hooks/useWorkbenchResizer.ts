@@ -4,16 +4,22 @@ import { useStableCallback } from "./useStableCallback";
 export const DEFAULT_SPLIT_RATIO = 0.6;
 export const MIN_SPLIT_RATIO = 0.15;
 export const MAX_SPLIT_RATIO = 0.85;
+export const DEFAULT_CHANGES_SPLIT_RATIO = MAX_SPLIT_RATIO;
 export const GRAPH_COLLAPSE_OVERSHOOT_PX = 48;
 const MIN_GRAPH_PANE_WIDTH = 320;
 
 export const SPLIT_RATIO_STORAGE_KEY = "pi_n_workbench_split_ratio";
+export const CHANGES_SPLIT_RATIO_STORAGE_KEY = "pi_n_changes_split_ratio";
 
-export function getStoredRatio(storage?: Pick<Storage, "getItem">): number {
+export function getStoredRatio(
+  storage?: Pick<Storage, "getItem">,
+  storageKey: string = SPLIT_RATIO_STORAGE_KEY,
+  defaultRatio: number = DEFAULT_SPLIT_RATIO,
+): number {
   try {
     const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
-    if (!store) return DEFAULT_SPLIT_RATIO;
-    const savedRatio = store.getItem(SPLIT_RATIO_STORAGE_KEY);
+    if (!store) return defaultRatio;
+    const savedRatio = store.getItem(storageKey);
     if (savedRatio !== null) {
       const parsed = parseFloat(savedRatio);
       if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) {
@@ -23,14 +29,18 @@ export function getStoredRatio(storage?: Pick<Storage, "getItem">): number {
   } catch {
     // ignore storage access errors
   }
-  return DEFAULT_SPLIT_RATIO;
+  return defaultRatio;
 }
 
-export function persistRatio(ratio: number, storage?: Pick<Storage, "setItem">): void {
+export function persistRatio(
+  ratio: number,
+  storage?: Pick<Storage, "setItem">,
+  storageKey: string = SPLIT_RATIO_STORAGE_KEY,
+): void {
   try {
     const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
     if (!store) return;
-    store.setItem(SPLIT_RATIO_STORAGE_KEY, String(ratio));
+    store.setItem(storageKey, String(ratio));
   } catch {
     // ignore storage access errors
   }
@@ -57,21 +67,42 @@ export function shouldCollapseGraphPane(pointerX: number, containerWidth: number
 }
 
 /** Resize via CSS variable percentage so dragging does not trigger React re-renders, while maintaining split ratio across container resizing. */
-export function useWorkbenchResizer({ onCollapse, collapsed = false }: { onCollapse?: () => void; collapsed?: boolean } = {}) {
+export function useWorkbenchResizer({
+  onCollapse,
+  collapsed = false,
+  storageKey = SPLIT_RATIO_STORAGE_KEY,
+  defaultRatio = DEFAULT_SPLIT_RATIO,
+}: {
+  onCollapse?: () => void;
+  collapsed?: boolean;
+  storageKey?: string;
+  defaultRatio?: number;
+} = {}) {
   const collapse = useStableCallback(() => onCollapse?.());
   const workbenchRef = useRef<HTMLDivElement>(null);
-  const [splitRatio, setSplitRatio] = useState<number>(getStoredRatio);
+  const [ratiosByKey, setRatiosByKey] = useState<Record<string, number>>(() => ({
+    [storageKey]: getStoredRatio(undefined, storageKey, defaultRatio),
+  }));
+  const splitRatio = ratiosByKey[storageKey] ?? getStoredRatio(undefined, storageKey, defaultRatio);
   const currentRatioRef = useRef(splitRatio);
+  const activeKeyRef = useRef(storageKey);
   const [isResizing, setIsResizing] = useState(false);
   const removeDragListenersRef = useRef<(() => void) | null>(null);
 
+  if (activeKeyRef.current !== storageKey) {
+    activeKeyRef.current = storageKey;
+    currentRatioRef.current = splitRatio;
+  }
+
   useLayoutEffect(() => {
+    currentRatioRef.current = splitRatio;
     if (workbenchRef.current) {
-      workbenchRef.current.style.setProperty("--workbench-split-ratio", String(currentRatioRef.current));
-      workbenchRef.current.style.setProperty("--workbench-left-width", `${currentRatioRef.current * 100}%`);
+      workbenchRef.current.style.setProperty("--workbench-split-ratio", String(splitRatio));
+      workbenchRef.current.style.setProperty("--workbench-left-width", `${splitRatio * 100}%`);
     }
-    return () => removeDragListenersRef.current?.();
-  }, []);
+  }, [storageKey, splitRatio]);
+
+  useLayoutEffect(() => () => removeDragListenersRef.current?.(), []);
 
   const applyRatio = useCallback((ratio: number) => {
     currentRatioRef.current = ratio;
@@ -90,6 +121,7 @@ export function useWorkbenchResizer({ onCollapse, collapsed = false }: { onColla
     if (e.button !== 0 || !e.isPrimary) return;
     e.preventDefault();
     removeDragListenersRef.current?.();
+    const dragStorageKey = storageKey;
     const startRatio = currentRatioRef.current;
     const pointerId = e.pointerId;
     setIsResizing(true);
@@ -104,8 +136,8 @@ export function useWorkbenchResizer({ onCollapse, collapsed = false }: { onColla
         else applyRatio(startRatio);
       }
       const finalRatio = currentRatioRef.current;
-      setSplitRatio(finalRatio);
-      if (!restore) persistRatio(finalRatio);
+      setRatiosByKey(prev => (prev[dragStorageKey] === finalRatio ? prev : { ...prev, [dragStorageKey]: finalRatio }));
+      if (!restore) persistRatio(finalRatio, undefined, dragStorageKey);
     };
     const onPointerMove = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId || !workbenchRef.current) return;
@@ -139,7 +171,7 @@ export function useWorkbenchResizer({ onCollapse, collapsed = false }: { onColla
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerCancel);
     window.addEventListener("blur", onBlur);
-  }, [applyRatio, collapse, onCollapse]);
+  }, [applyRatio, collapse, onCollapse, storageKey]);
 
   const handleResizeKeyDown = useCallback((event: ReactKeyboardEvent) => {
     const width = workbenchRef.current?.getBoundingClientRect().width;
@@ -151,23 +183,24 @@ export function useWorkbenchResizer({ onCollapse, collapsed = false }: { onColla
     }
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
+    const baseRatio = clampSplitRatio(currentRatioRef.current, width);
     const ratio = event.key === "Home" ? 0 : event.key === "End" ? 1
-      : currentRatioRef.current + (event.key === "ArrowRight" ? 24 : -24) / width;
+      : baseRatio + (event.key === "ArrowRight" ? 24 : -24) / width;
     const next = clampSplitRatio(ratio, width);
     applyRatio(next);
-    setSplitRatio(next);
-    persistRatio(next);
-  }, [applyRatio, collapse, onCollapse]);
+    setRatiosByKey(prev => ({ ...prev, [storageKey]: next }));
+    persistRatio(next, undefined, storageKey);
+  }, [applyRatio, collapse, onCollapse, storageKey]);
 
   const handleResetResizer = useCallback(() => {
-    currentRatioRef.current = DEFAULT_SPLIT_RATIO;
-    setSplitRatio(DEFAULT_SPLIT_RATIO);
+    currentRatioRef.current = defaultRatio;
+    setRatiosByKey(prev => ({ ...prev, [storageKey]: defaultRatio }));
     if (workbenchRef.current) {
-      workbenchRef.current.style.setProperty("--workbench-split-ratio", String(DEFAULT_SPLIT_RATIO));
-      workbenchRef.current.style.setProperty("--workbench-left-width", `${DEFAULT_SPLIT_RATIO * 100}%`);
+      workbenchRef.current.style.setProperty("--workbench-split-ratio", String(defaultRatio));
+      workbenchRef.current.style.setProperty("--workbench-left-width", `${defaultRatio * 100}%`);
     }
-    persistRatio(DEFAULT_SPLIT_RATIO);
-  }, []);
+    persistRatio(defaultRatio, undefined, storageKey);
+  }, [defaultRatio, storageKey]);
 
   return {
     workbenchRef,

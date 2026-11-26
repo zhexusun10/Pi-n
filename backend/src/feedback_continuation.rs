@@ -130,17 +130,16 @@ impl Runtime {
                             && self.execution_has_session_activity(execution)
                     });
                 let previous = if unstarted {
-                    self.state
-                        .executions
-                        .iter()
-                        .rev()
-                        .find(|execution| {
-                            execution.node == node
-                                && execution.completed_at.is_some()
-                                && !self.state.superseded_execution_ids.contains(&execution.id)
-                                && !self.node_session_missing(execution)
-                        })
-                        .unwrap_or(previous)
+                    // Never queue a continuation pointing at a startup-killed
+                    // execution whose session file was never created: if no
+                    // earlier execution has a valid session, let the node start
+                    // fresh instead of failing forever in `fork_session`.
+                    self.state.executions.iter().rev().find(|execution| {
+                        execution.node == node
+                            && execution.completed_at.is_some()
+                            && !self.state.superseded_execution_ids.contains(&execution.id)
+                            && !self.node_session_missing(execution)
+                    })?
                 } else {
                     previous
                 };

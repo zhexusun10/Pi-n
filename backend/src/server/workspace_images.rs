@@ -293,28 +293,51 @@ fn is_safe_svg(target: &Path, bytes: &[u8]) -> bool {
     };
     let mut rest = text.trim_start_matches('\u{feff}').trim_start();
     // Skip leading XML prolog, comments, and DOCTYPE declarations.
+    // Use byte-slice prefix checks so multi-byte UTF-8 characters can never
+    // trigger a char-boundary slice panic.
     loop {
         if let Some(after) = rest.strip_prefix("<?") {
             let Some(end) = after.find("?>") else {
                 return false;
             };
+            // Only allow standard `<?xml ...?>` declarations in the prolog;
+            // reject processing instructions such as `<?xml-stylesheet ...?>`.
+            let pi = &after[..end];
+            if !(pi
+                .as_bytes()
+                .get(..3)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"xml"))
+                && pi.as_bytes().get(3).is_some_and(u8::is_ascii_whitespace))
+            {
+                return false;
+            }
             rest = after[end + 2..].trim_start();
         } else if let Some(after) = rest.strip_prefix("<!--") {
             let Some(end) = after.find("-->") else {
                 return false;
             };
             rest = after[end + 3..].trim_start();
-        } else if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+        } else if rest
+            .as_bytes()
+            .get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"<!doctype"))
+        {
+            // Reject DOCTYPE declarations that contain internal subsets/entities.
             let Some(end) = rest.find('>') else {
                 return false;
             };
+            if rest[..end].contains('[') {
+                return false;
+            }
             rest = rest[end + 1..].trim_start();
         } else {
             break;
         }
     }
-    if !(rest.len() >= 4
-        && rest[..4].eq_ignore_ascii_case("<svg")
+    if !(rest
+        .as_bytes()
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"<svg"))
         && rest
             .as_bytes()
             .get(4)
@@ -323,22 +346,64 @@ fn is_safe_svg(target: &Path, bytes: &[u8]) -> bool {
         return false;
     }
     let lower = rest.to_ascii_lowercase();
+    // Reject processing instructions inside the SVG body (e.g. <?xml-stylesheet?>),
+    // entity declarations, script/embedded/SMIL animation tags (including
+    // namespace-prefixed forms like `<svg:script>` or `<x:foreignobject>`), and
+    // dangerous URI/CSS directives.
+    if lower.contains("<?") || lower.contains("<!entity") || lower.contains("<!element") {
+        return false;
+    }
     for forbidden in [
-        "<script",
-        "</script",
-        "<foreignobject",
-        "<iframe",
-        "<object",
-        "<embed",
-        "<applet",
-        "<meta",
-        "<link",
         "javascript:",
         "vbscript:",
         "data:text/html",
         "data:image/svg",
+        "@import",
+        "expression(",
     ] {
         if lower.contains(forbidden) {
+            return false;
+        }
+    }
+    let bytes_lower = lower.as_bytes();
+    for (idx, &b) in bytes_lower.iter().enumerate() {
+        if b != b'<' {
+            continue;
+        }
+        let mut start = idx + 1;
+        if bytes_lower.get(start) == Some(&b'/') {
+            start += 1;
+        }
+        let mut end = start;
+        while end < bytes_lower.len()
+            && (bytes_lower[end].is_ascii_alphanumeric()
+                || bytes_lower[end] == b':'
+                || bytes_lower[end] == b'-'
+                || bytes_lower[end] == b'_')
+        {
+            end += 1;
+        }
+        let tag = &lower[start..end];
+        let local = tag.rsplit_once(':').map_or(tag, |(_, name)| name);
+        if matches!(
+            local,
+            "script"
+                | "foreignobject"
+                | "iframe"
+                | "object"
+                | "embed"
+                | "applet"
+                | "meta"
+                | "link"
+                | "base"
+                | "animate"
+                | "set"
+                | "animatetransform"
+                | "animatemotion"
+                | "animatecolor"
+                | "handler"
+                | "listener"
+        ) {
             return false;
         }
     }

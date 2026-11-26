@@ -669,6 +669,12 @@ impl EnvironmentConfig {
     }
 }
 
+fn automatic_baseline_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, Domain>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Domain>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
 /// Snapshot storage is retained with the conversation, independently of code cwd.
 pub(crate) struct Environments {
     pub(crate) files: Files,
@@ -797,13 +803,39 @@ impl Environments {
         }
     }
 
+    fn verification_deny_reads(&self, workspace: &Path) -> Vec<PathBuf> {
+        let mut deny = Vec::new();
+        // self.directory is `<data>/environments/<run>`.
+        if let Some(data_dir) = self.directory.parent().and_then(Path::parent) {
+            deny.push(data_dir.to_path_buf());
+        }
+        // Deny sibling worktrees in the managed `.pi-n-worktrees` bucket.
+        if let Some(bucket) = workspace.parent().and_then(Path::parent) {
+            if crate::workspace_state::is_managed_worktrees_bucket(bucket) {
+                deny.push(bucket.to_path_buf());
+            }
+        }
+        // Deny the bound source repository if known from host-managed slot state.
+        if let Ok(state_root) = crate::workspace_state::root(workspace) {
+            if let Ok(source_raw) = fs::read_to_string(state_root.join("project-view")) {
+                let source = PathBuf::from(source_raw.trim());
+                if source.is_dir() && !crate::path_identity::same_path(&source, workspace) {
+                    deny.push(source);
+                }
+            }
+        }
+        deny
+    }
+
     pub(crate) fn validate_launch(&self, path: &Path, launch: &LaunchConfig) -> Result<(), String> {
         let (_, state) = self.discovery_roots(path)?;
-        crate::environment_discovery::validate_launch_with_state(
+        let deny = self.verification_deny_reads(path);
+        crate::environment_discovery::validate_launch_with_boundaries(
             path,
             state.as_deref(),
             launch,
             !self.config.best_effort,
+            &deny,
         )
     }
 
@@ -848,8 +880,6 @@ impl Environments {
 
     pub(crate) fn baseline(&self) -> Result<Domain, String> {
         self.config.validate()?;
-        let mut command = Command::new(&self.config.baseline[0]);
-        command.args(&self.config.baseline[1..]);
         let mut probe = self.config.launch.clone();
         // Business variables must not inject code/configuration into the trusted
         // baseline probe, or make unrelated host configuration part of D.
@@ -862,6 +892,17 @@ impl Environments {
                 && !value.contains("{workspace}")
                 && !value.contains("{state}")
         });
+        let policy_digest = digest(&serde_json::to_vec(&self.config).map_err(|e| e.to_string())?)?;
+        let cache_key = self.automatic_baseline_cache_key(&probe, &policy_digest)?;
+        if let Some(key) = &cache_key {
+            if let Ok(cache) = automatic_baseline_cache().lock() {
+                if let Some(domain) = cache.get(key) {
+                    return Ok(domain.clone());
+                }
+            }
+        }
+        let mut command = Command::new(&self.config.baseline[0]);
+        command.args(&self.config.baseline[1..]);
         clean_command(&mut command, &probe, None)?;
         command.env("PYTHONDONTWRITEBYTECODE", "1");
         let output = controlled_output(command)?;
@@ -882,13 +923,95 @@ impl Environments {
             serde_json::to_vec(&(executable.to_string(), &output))
         }
         .map_err(|e| e.to_string())?;
-        Ok(Domain {
+        let domain = Domain {
             platform: platform().into(),
             arch: std::env::consts::ARCH.into(),
             baseline: digest(&bytes)?,
-            policy: digest(&serde_json::to_vec(&self.config).map_err(|e| e.to_string())?)?,
+            policy: policy_digest,
             contract: "native-workspace-v4".into(),
-        })
+        };
+        if let Some(key) = cache_key {
+            if let Ok(mut cache) = automatic_baseline_cache().lock() {
+                if cache.len() >= 32 {
+                    cache.clear();
+                }
+                cache.insert(key, domain.clone());
+            }
+        }
+        Ok(domain)
+    }
+
+    fn automatic_baseline_cache_key(
+        &self,
+        probe: &LaunchConfig,
+        policy_digest: &str,
+    ) -> Result<Option<String>, String> {
+        // Only cache the built-in automatic Node.js baseline probe, whose
+        // exact file inputs are `baseline[0]` (node), `baseline[3]` (git),
+        // `baseline[4]` (shell), and python/conda binaries found in `probe.path`.
+        if self.config.baseline.len() != 5
+            || self.config.baseline[1] != "-e"
+            || !self.config.baseline[2].contains("process.execPath")
+            || (cfg!(windows)
+                && probe
+                    .path
+                    .iter()
+                    .any(|entry| entry.contains('"') || entry.contains(';')))
+        {
+            return Ok(None);
+        }
+        let stat_sig = |path: &Path| -> Option<(u64, i64, u32)> {
+            let meta = fs::metadata(path).ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| (d.as_secs() as i64, d.subsec_nanos()))
+                .unwrap_or((0, 0));
+            Some((meta.len(), modified.0, modified.1))
+        };
+        let mut file_stats: Vec<(String, Option<(u64, i64, u32)>)> = Vec::new();
+        for exe in [
+            &self.config.baseline[0],
+            &self.config.baseline[3],
+            &self.config.baseline[4],
+        ] {
+            file_stats.push((exe.clone(), stat_sig(Path::new(exe))));
+        }
+        let tool_names: &[&str] = if cfg!(windows) {
+            &["python.exe", "python3.exe", "conda.exe"]
+        } else {
+            &["python3", "python", "conda"]
+        };
+        for dir in &probe.path {
+            let dir_path = Path::new(dir);
+            for name in tool_names {
+                let candidate = dir_path.join(name);
+                if let Some(sig) = stat_sig(&candidate) {
+                    file_stats.push((candidate.to_string_lossy().into_owned(), Some(sig)));
+                }
+            }
+        }
+        let device = self
+            .config
+            .resources
+            .as_ref()
+            .map(|r| r.device_identity())
+            .transpose()?
+            .flatten();
+        let raw = serde_json::to_vec(&(
+            &self.config.baseline,
+            &probe.path,
+            &probe.variables,
+            policy_digest,
+            &device,
+            &file_stats,
+        ))
+        .map_err(|e| e.to_string())?;
+        Ok(Some(digest(&raw)?))
     }
 
     pub(crate) fn initialize(&self, source: &Path) -> Result<CompositeResult, String> {
@@ -1155,8 +1278,10 @@ impl Environments {
         }
         let state = self.environment_root_for(path, &selected.launch_ref)?;
         let mut retained_home = None;
+        let mut view_verified_exact = false;
         if !unbound_best_effort && same_view && !history_edit && !preserve_failed {
             self.verify_view(path, &selected.launch_ref, &selected.environment_ref)?;
+            view_verified_exact = true;
         } else if !preserve_failed && !unbound_best_effort {
             // Operation intent and recorded byte/launch coverage govern this
             // protection, never a diagnostic reason inherited from an old job.
@@ -1182,6 +1307,7 @@ impl Environments {
                         false,
                     )?;
                 }
+                view_verified_exact = true;
             }
         } else {
             scoped.validate(std::slice::from_ref(&selected.environment_ref))?;
@@ -1190,6 +1316,7 @@ impl Environments {
             && !self.config.import_source
             && !self.config.initialize.is_empty()
         {
+            view_verified_exact = false;
             let launch = self.load_launch(&selected.launch_ref)?.expanded(path);
             let expand = |v: &str| {
                 v.replace(
@@ -1228,6 +1355,7 @@ impl Environments {
             generation,
             head,
             resources,
+            view_verified_exact,
         )
     }
 
@@ -1242,6 +1370,7 @@ impl Environments {
         generation: &str,
         head: &str,
         resources: Vec<String>,
+        view_verified_exact: bool,
     ) -> Result<CompositeResult, String> {
         let launch = self.configured_launch(path, &selected.launch_ref)?;
         if self.config.discovery {
@@ -1259,7 +1388,14 @@ impl Environments {
             return Err("Declared default native entry is missing".into());
         }
         let launch_ref = self.launch(&launch)?;
-        let environment_ref = self.capture_scoped(path, &selected.environment_ref, &launch_ref)?;
+        // When the view was just verified or freshly materialized from
+        // `selected.environment_ref` and the launch configuration did not
+        // change, skip a redundant full-tree re-hash and reuse the ref.
+        let environment_ref = if view_verified_exact && launch_ref == selected.launch_ref {
+            selected.environment_ref.clone()
+        } else {
+            self.capture_scoped(path, &selected.environment_ref, &launch_ref)?
+        };
         let input = CompositeResult {
             domain: selected.domain.clone(),
             code_ref: head.into(),
@@ -1618,7 +1754,8 @@ impl Environments {
             return Ok(input.clone());
         }
         let (_, state) = self.discovery_roots(path)?;
-        let launch = crate::environment_discovery::resolve_for_policy_with_state(
+        let deny = self.verification_deny_reads(path);
+        let launch = crate::environment_discovery::resolve_for_policy_with_boundaries(
             path,
             state.as_deref(),
             &self.load_launch(&input.launch_ref)?,
@@ -1626,6 +1763,7 @@ impl Environments {
             &input.generation,
             !self.config.best_effort,
             self.config.best_effort,
+            &deny,
         )?;
         let reference = self.launch(&launch)?;
         let exclusions = self.exclusions_at(path, &reference)?;

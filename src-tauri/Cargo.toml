@@ -1,6 +1,6 @@
 [package]
 name = "pi-n-desktop"
-version = "1.9.18"
+version = "1.9.99"
 description = "Pi^n desktop shell"
 edition = "2021"
 license = "MIT"

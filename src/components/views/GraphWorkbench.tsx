@@ -57,7 +57,13 @@ import { executionSessionTiming, executionSessionUsageThrough, mergePlannerTurns
 import { PlanningActivity } from "../PlanningActivity";
 import { statusText, phaseText } from "../graph/TaskNode";
 import { useAnimatedNodes } from "../../hooks/useAnimatedNodes";
-import { useWorkbenchResizer } from "../../hooks/useWorkbenchResizer";
+import {
+  CHANGES_SPLIT_RATIO_STORAGE_KEY,
+  DEFAULT_CHANGES_SPLIT_RATIO,
+  DEFAULT_SPLIT_RATIO,
+  SPLIT_RATIO_STORAGE_KEY,
+  useWorkbenchResizer,
+} from "../../hooks/useWorkbenchResizer";
 import { computeExecutionLayers, graphFeedbackEnabled } from "../../hooks/useGraphElements";
 import { PublicationCompletedDetails } from "../PublicationCompletedDetails";
 import { PlannerTranscript } from "../PlannerTranscript";
@@ -1329,8 +1335,24 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     graphResizerRef.current = control;
     focusGraphPaneToggle(control);
   }, [focusGraphPaneToggle]);
+  // Only an accepted graph mutation may open the pane: a failed or still-running
+  // `edit_graph` call leaves the draft unchanged, so it must not reveal an empty
+  // topology on the right.
+  const hasAcceptedGraphTool = (t: any) =>
+    t?.toolName === "edit_graph" && t.status === "success" && !t.isError;
+  const hasGraphToolCalled =
+    (plannerStream.items || []).some(hasAcceptedGraphTool) ||
+    (plannerStream.tools || []).some(hasAcceptedGraphTool);
+  const hasGraphPane = routeType === "graph" && (state.graph.nodes.length > 0 || hasGraphToolCalled);
+  hasGraphPaneRef.current = hasGraphPane;
+  const changesPaneOpen = changesPaneRunKey === currentRunKey;
   const { workbenchRef, isResizing, splitRatio, handleStartResize, handleResizeKeyDown, handleResetResizer } =
-    useWorkbenchResizer({ onCollapse: collapseGraphPane, collapsed: graphPaneCollapsed });
+    useWorkbenchResizer({
+      onCollapse: collapseGraphPane,
+      collapsed: hasGraphPane ? graphPaneCollapsed : !changesPaneOpen,
+      storageKey: hasGraphPane ? SPLIT_RATIO_STORAGE_KEY : CHANGES_SPLIT_RATIO_STORAGE_KEY,
+      defaultRatio: hasGraphPane ? DEFAULT_SPLIT_RATIO : DEFAULT_CHANGES_SPLIT_RATIO,
+    });
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const failureNoticeRef = useRef<HTMLDivElement>(null);
   const expandedCardObserverRef = useRef<ResizeObserver | null>(null);
@@ -1460,12 +1482,8 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   const scrollBottomBtnRef = useRef<HTMLButtonElement>(null);
   const setScrollBottomVisible = useCallback((visible: boolean) => {
     const btn = scrollBottomBtnRef.current;
-    if (btn) {
-      if (visible) {
-        btn.classList.add("visible");
-      } else {
-        btn.classList.remove("visible");
-      }
+    if (btn && btn.classList.contains("visible") !== visible) {
+      btn.classList.toggle("visible", visible);
     }
   }, []);
   const conversationScrollStateRef = useRef<Map<string, ViewScrollState>>(new Map());
@@ -2652,17 +2670,6 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         : "none";
   const footerMotion = reduceMotion ? { duration: 0 } : { duration: 0.24, ease: [0.22, 1, 0.36, 1] as const };
   // Each conversation owns a fresh ReactFlow store and measured viewport.
-  // Only an accepted graph mutation may open the pane: a failed or still-running
-  // `edit_graph` call leaves the draft unchanged, so it must not reveal an empty
-  // topology on the right.
-  const hasAcceptedGraphTool = (t: any) =>
-    t?.toolName === "edit_graph" && t.status === "success" && !t.isError;
-  const hasGraphToolCalled =
-    (plannerStream.items || []).some(hasAcceptedGraphTool) ||
-    (plannerStream.tools || []).some(hasAcceptedGraphTool);
-  const hasGraphPane = routeType === "graph" && (state.graph.nodes.length > 0 || hasGraphToolCalled);
-  hasGraphPaneRef.current = hasGraphPane;
-  const changesPaneOpen = changesPaneRunKey === currentRunKey;
   const hasRightPane = hasGraphPane || changesPaneOpen;
   const showRightPane = hasRightPane && !graphPaneCollapsed;
   const rightPaneClosing = rightPaneClosingRunKey === currentRunKey && !showRightPane;
@@ -2686,7 +2693,12 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   const releaseContentWidthLock = useCallback(() => {
     contentWidthLockCleanupRef.current?.();
     contentWidthLockCleanupRef.current = null;
-    conversationPaneRef.current?.style.removeProperty("--conversation-content-max-width");
+    const pane = conversationPaneRef.current;
+    if (pane) {
+      delete pane.dataset.contentWidthLocking;
+      pane.style.removeProperty("--conversation-content-max-width");
+      pane.style.removeProperty("--conversation-content-start-margin-left");
+    }
   }, []);
   useEffect(() => {
     if (isResizing) releaseContentWidthLock();
@@ -2718,9 +2730,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     const padX = (parseFloat(scrollStyle.paddingLeft) || 0) + (parseFloat(scrollStyle.paddingRight) || 0);
     const currentInnerWidth = scroll.clientWidth - padX;
     const totalInset = Math.max(0, paneRect.width - currentInnerWidth);
-    const targetContentWidth = Math.min(860, Math.max(200, Math.floor(targetPaneWidth - totalInset)));
-    const currentEffectiveWidth = Math.min(860, Math.floor(currentInnerWidth));
+    const targetContentWidth = Math.min(860, Math.max(200, Math.round((targetPaneWidth - totalInset) * 100) / 100));
+    const currentEffectiveWidth = Math.min(860, currentInnerWidth);
     if (targetContentWidth >= currentEffectiveWidth - 1) return;
+    const startMarginLeft = Math.max(0, Math.round(((currentInnerWidth - currentEffectiveWidth) / 2) * 100) / 100);
 
     const distanceFromBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
     const pinBottom = distanceFromBottom <= 4
@@ -2728,37 +2741,51 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     let anchorRow: HTMLElement | null = null;
     let anchorTop = 0;
     if (!pinBottom) {
-      const scrollTopEdge = scroll.getBoundingClientRect().top + scroll.clientTop;
+      const scrollRect = scroll.getBoundingClientRect();
+      const scrollTopEdge = scrollRect.top + scroll.clientTop;
+      const scrollBottomEdge = scrollTopEdge + scroll.clientHeight;
       const rows = scroll.querySelectorAll<HTMLElement>("[data-transcript-id], .chat-message-row");
+      let fallbackRow: HTMLElement | null = null;
+      let fallbackTop = 0;
       for (const row of rows) {
         const rect = row.getBoundingClientRect();
-        if (rect.bottom > scrollTopEdge + 4) {
+        if (rect.top >= scrollTopEdge - 4 && rect.top < scrollBottomEdge) {
           anchorRow = row;
           anchorTop = rect.top;
           break;
         }
+        if (!fallbackRow && rect.bottom > scrollTopEdge + 4) {
+          fallbackRow = row;
+          fallbackTop = rect.top;
+        }
+      }
+      if (!anchorRow && fallbackRow) {
+        anchorRow = fallbackRow;
+        anchorTop = fallbackTop;
       }
     }
 
+    // Lock the column to its final split width and glide its left margin from
+    // the pre-open left edge to 0px in lockstep with the pane's width curve,
+    // so `margin: auto` never teleports the column rightward on frame 0.
     pane.style.setProperty("--conversation-content-max-width", `${targetContentWidth}px`);
+    pane.style.setProperty("--conversation-content-start-margin-left", `${startMarginLeft}px`);
+    pane.dataset.contentWidthLocking = "true";
 
     if (pinBottom) {
       scroll.scrollTop = scroll.scrollHeight;
-      lastScrollTopRef.current = scroll.scrollTop;
-      prevScrollHeightRef.current = scroll.scrollHeight;
-      scroll.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
     } else if (anchorRow && anchorRow.isConnected) {
       const delta = anchorRow.getBoundingClientRect().top - anchorTop;
       if (Math.abs(delta) >= 0.5) {
         scroll.scrollTop += delta;
-        lastScrollTopRef.current = scroll.scrollTop;
-        prevScrollHeightRef.current = scroll.scrollHeight;
-        scroll.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
       }
     }
+    lastScrollTopRef.current = scroll.scrollTop;
+    prevScrollHeightRef.current = scroll.scrollHeight;
+    scroll.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
 
     const onTransitionEnd = (event: TransitionEvent) => {
-      if (event.target === pane && event.propertyName === "width") {
+      if (event.target === pane && (event.propertyName === "width" || event.propertyName === "max-width")) {
         releaseContentWidthLock();
       }
     };
@@ -3835,6 +3862,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                       key={`${currentRunKey}:serial`}
                       open={detailsPanelOpen}
                       onToggle={toggleDetailsPanel}
+                      label={t("会话信息")}
                       showWorking={isMainViewWorking}
                       compacting={isMainViewWorking && !!serialExecution?.id && !!compactingAttempts[serialExecution.id]}
                       workingLabel={nodeCompletionStatusText(activity, serialNode?.id) ?? publicationWorkingLabel}

@@ -357,30 +357,43 @@ impl Store {
         self.shadow_repo_referenced_by("", shadow)
     }
 
+    pub(crate) fn is_shadow_repo_referenced(&self, shadow: &Path) -> Result<bool, String> {
+        self.shadow_repo_referenced_by("", shadow)
+    }
+
+    pub(crate) fn shadow_reference_watermark(&self) -> Result<(i64, i64, i64), String> {
+        let max_seq: i64 = self
+            .connection
+            .query_row("SELECT COALESCE(MAX(sequence), 0) FROM events", [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| error.to_string())?;
+        let (owned_count, owned_max_rowid): (i64, i64) = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM run_owned_directories",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok((max_seq, owned_count, owned_max_rowid))
+    }
+
     /// Single-pass set of canonical path keys for all shadow repositories
     /// currently referenced by any live/incomplete/standard-git Graph or
-    /// unrouted Run, avoiding O(N_shadows * N_runs) full replays during GC.
+    /// unrouted Run, using indexed `run_metadata` instead of full event replays.
     pub(crate) fn referenced_shadow_repos(
         &self,
     ) -> Result<std::collections::BTreeSet<String>, String> {
-        let deleted: std::collections::BTreeSet<String> =
-            self.deleted_runs()?.into_iter().collect();
         let mut referenced = std::collections::BTreeSet::new();
-        for id in self.runs()? {
-            if deleted.contains(&id) {
+        for entry in self.run_metadata_entries()? {
+            if entry.plan_type.as_deref() == Some("serial") || entry.repository.is_empty() {
                 continue;
             }
-            let state = self.load(&id)?;
-            if state.events.is_empty() || state.plan_type.as_deref() == Some("serial") {
-                continue;
-            }
-            let Some(config) = state.config else {
-                continue;
-            };
-            let source = Path::new(&config.repository);
+            let source = Path::new(&entry.repository);
             let Some(resolved) = crate::workspace::shadow_repo_dir(source).ok() else {
                 // Missing/moved source cannot disprove recorded shadow ownership.
-                for target in self.owned_cleanup_targets(&id)? {
+                for target in self.owned_cleanup_targets(&entry.run_id)? {
                     if let Target::Shadow { root, name, .. } = target {
                         referenced.insert(crate::path_identity::path_key(
                             &root.join("shadow_repos").join(name),
@@ -389,14 +402,9 @@ impl Store {
                 }
                 continue;
             };
-            let undelivered_result = state.published_head.is_none()
-                && state.nodes.values().any(|node| {
-                    node.status == "completed"
-                        && node.head.as_deref().is_some_and(|head| !head.is_empty())
-                });
-            if state.phase != "completed"
+            if entry.phase != "completed"
                 || crate::workspace::is_standard_git(source)
-                || undelivered_result
+                || entry.undelivered_result
             {
                 referenced.insert(crate::path_identity::path_key(&resolved));
             }
@@ -405,23 +413,17 @@ impl Store {
     }
 
     fn shadow_repo_referenced_by(&self, excluded: &str, expected: &Path) -> Result<bool, String> {
-        let deleted: std::collections::BTreeSet<String> =
-            self.deleted_runs()?.into_iter().collect();
-        for id in self.runs()? {
-            if id == excluded || deleted.contains(&id) {
+        for entry in self.run_metadata_entries()? {
+            if entry.run_id == excluded {
                 continue;
             }
-            let state = self.load(&id)?;
             // Serial does not consume Git snapshots, even while running or
             // paused. Keep unrouted histories conservative: a provisional
             // planning Run can still resolve to Graph.
-            if state.events.is_empty() || state.plan_type.as_deref() == Some("serial") {
+            if entry.plan_type.as_deref() == Some("serial") || entry.repository.is_empty() {
                 continue;
             }
-            let Some(config) = state.config else {
-                continue;
-            };
-            let source = Path::new(&config.repository);
+            let source = Path::new(&entry.repository);
             let resolved = crate::workspace::shadow_repo_dir(source).ok();
             if !resolved
                 .as_deref()
@@ -429,19 +431,14 @@ impl Store {
             {
                 // A missing binding cannot disprove recorded ownership. Don't
                 // discard recovery history merely because the source moved.
-                if resolved.is_none() && self.owned_cleanup_targets(&id)?.iter().any(|target| {
+                if resolved.is_none() && self.owned_cleanup_targets(&entry.run_id)?.iter().any(|target| {
                     matches!(target, Target::Shadow { root, name, .. } if crate::path_identity::same_path(&root.join("shadow_repos").join(name), expected))
                 }) { return Ok(true); }
                 continue;
             }
-            let undelivered_result = state.published_head.is_none()
-                && state.nodes.values().any(|node| {
-                    node.status == "completed"
-                        && node.head.as_deref().is_some_and(|head| !head.is_empty())
-                });
-            if state.phase != "completed"
+            if entry.phase != "completed"
                 || crate::workspace::is_standard_git(source)
-                || undelivered_result
+                || entry.undelivered_result
             {
                 return Ok(true);
             }

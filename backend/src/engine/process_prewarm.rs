@@ -101,6 +101,7 @@ pub(super) fn claim(config: &Config, role: PiRole, cwd: &Path) -> Option<ReadyPr
     if role == PiRole::Merger
         || PREWARM_SHUTTING_DOWN.load(Ordering::SeqCst)
         || process_control::current_owner().is_none()
+        || process_control::check_current_owner_stop().is_err()
     {
         return None;
     }
@@ -109,9 +110,15 @@ pub(super) fn claim(config: &Config, role: PiRole, cwd: &Path) -> Option<ReadyPr
     if !crate::path_identity::same_path(&cwd.canonicalize().ok()?, &key.repository) {
         return None;
     }
-    slot(role)
-        .get()?
-        .take_if(&key, |worker| worker.assign_to_current_owner().is_ok())
+    // Check owner stop before taking so a stopped owner never kills a healthy
+    // prewarmed worker and leaves its corpse in `Pool.ready`.
+    let candidate = slot(role).get()?.take_if(&key, |_| true)?;
+    if candidate.assign_to_current_owner().is_ok() {
+        Some(candidate)
+    } else {
+        drop(candidate);
+        None
+    }
 }
 
 pub(super) fn bind(
@@ -166,6 +173,9 @@ pub(super) fn invalidate() {
     }
 }
 pub(super) fn shutdown() {
+    // Set the shutdown flag before iterating slots so no concurrent `request()`
+    // can initialize a fresh slot after this loop passes it.
+    PREWARM_SHUTTING_DOWN.store(true, Ordering::SeqCst);
     for slot in [&PARTITIONER, &PLANNER, &NODE_SOURCE] {
         if let Some(pool) = slot.get() {
             pool.shutdown();
@@ -246,7 +256,7 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("{} was not ready with a late-selected model", role.name()));
             assert!(claim(&config, role, &repository).is_none());
-            let (mut child, _tree, _, _) = process.commit();
+            let (mut child, _stdout, _stderr, _tree, _, _) = process.commit();
             drop(child.stdin.take());
             assert!(child.wait().unwrap().success());
         }

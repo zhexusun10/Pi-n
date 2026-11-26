@@ -166,6 +166,35 @@ fn index_has_flag_delta(root: &Path, workspace_root: bool) -> Result<bool, Strin
     Ok(false)
 }
 
+/// Fast in-process check using libgit2 to prove a Git repository's index
+/// matches `HEAD` with zero special index flags (`assume-unchanged`,
+/// `skip-worktree`, `intent-to-add`, or unmerged stage). Returns `None` when
+/// libgit2 cannot inspect the repo (e.g. SHA-256 or custom extensions) so the
+/// caller falls back to the CLI probe.
+fn git2_index_clean(root: &Path, is_git_dir: bool) -> Option<bool> {
+    let flags = if is_git_dir {
+        git2::RepositoryOpenFlags::NO_SEARCH | git2::RepositoryOpenFlags::BARE
+    } else {
+        git2::RepositoryOpenFlags::NO_SEARCH
+    };
+    let repo = git2::Repository::open_ext(root, flags, &[] as &[&Path]).ok()?;
+    let head_tree = repo.head().ok()?.peel_to_tree().ok()?;
+    let index = repo.index().ok()?;
+    for entry in index.iter() {
+        // 0x8000 = assume-unchanged (VALID), 0x3000 = unmerged stage;
+        // 0x2000 = intent-to-add, 0x4000 = skip-worktree.
+        if (entry.flags & 0xB000) != 0 || (entry.flags_extended & 0x6000) != 0 {
+            return Some(false);
+        }
+    }
+    let mut opts = git2::DiffOptions::new();
+    opts.include_ignored(false).include_untracked(false);
+    let diff = repo
+        .diff_tree_to_index(Some(&head_tree), Some(&index), Some(&mut opts))
+        .ok()?;
+    Some(diff.deltas().len() == 0)
+}
+
 /// No record has a staged delta and the workspace index already follows its own
 /// project HEAD, so composing native indexes cannot change any staged entry.
 /// This is the ordinary publication case: reading every index twice per record
@@ -180,10 +209,32 @@ fn nothing_staged(
     // repository or an unborn HEAD is not proof, so it falls through to the full
     // composition instead.
     let args = ["diff-index", "--cached", "--quiet", "HEAD", "--"];
+    // Check workspace first (fast fail) and deduplicate record paths.
+    match git2_index_clean(workspace, false) {
+        Some(true) => {}
+        Some(false) => return Ok(false),
+        None => {
+            if workspace::project_git(workspace, &args).is_err() {
+                return Ok(false);
+            }
+            if !matches!(index_has_flag_delta(workspace, true), Ok(false)) {
+                return Ok(false);
+            }
+        }
+    }
+    let mut seen = BTreeSet::new();
     for record in std::iter::once(base)
         .chain(inputs.iter().map(PathBuf::as_path))
         .chain(std::iter::once(selected))
     {
+        if !seen.insert(record) {
+            continue;
+        }
+        match git2_index_clean(record, true) {
+            Some(true) => continue,
+            Some(false) => return Ok(false),
+            None => {}
+        }
         if git(record, &args).is_err() {
             return Ok(false);
         }
@@ -194,12 +245,7 @@ fn nothing_staged(
             Ok(true) | Err(_) => return Ok(false),
         }
     }
-    // A record addresses its own Git database by directory; the workspace keeps
-    // its project Git view in `.git` or in private metadata.
-    if workspace::project_git(workspace, &args).is_err() {
-        return Ok(false);
-    }
-    Ok(matches!(index_has_flag_delta(workspace, true), Ok(false)))
+    Ok(true)
 }
 
 /// Keep filesystem aliases out of the same skeleton. Compare every prefix,

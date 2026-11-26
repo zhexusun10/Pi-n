@@ -8,6 +8,19 @@ const MAX_STREAM_PER_TICK = 12;
 /** 后端结束后每次提交最多清空的积压字符数（按 32ms 折合 ~1250 字/秒，与 60fps × 20 字/帧速率一致）。 */
 const DRAIN_PER_TICK = 40;
 
+/** 跨卸载/重挂（例如切换「展开/收起卡片」）暂存未排空的打字机进度，避免文本跳变与流式状态闪烁。 */
+const MAX_SMOOTH_STREAM_CACHE = 64;
+const smoothStreamCache = new Map<string, string>();
+
+function saveSmoothStreamProgress(key: string, text: string) {
+  smoothStreamCache.delete(key);
+  smoothStreamCache.set(key, text);
+  if (smoothStreamCache.size > MAX_SMOOTH_STREAM_CACHE) {
+    const oldest = smoothStreamCache.keys().next().value;
+    if (oldest !== undefined) smoothStreamCache.delete(oldest);
+  }
+}
+
 /**
  * 打字机式逐字揭示流式模型输出：生产者-消费者模型。
  *
@@ -20,18 +33,29 @@ export function useSmoothStreamText(
   isStreaming: boolean,
   enabled = true,
   initialBackfillSnapChars = 0,
+  streamKey?: string,
 ): string {
   const reduceMotion = useReducedMotion();
-  const [displayedText, setDisplayedText] = useState(targetText);
+  const initialDisplayedRef = useRef<string | null>(null);
+  if (initialDisplayedRef.current === null) {
+    const cached = streamKey ? smoothStreamCache.get(streamKey) : undefined;
+    initialDisplayedRef.current =
+      cached !== undefined && enabled && !reduceMotion && targetText.startsWith(cached) && cached.length < targetText.length
+        ? cached
+        : targetText;
+  }
+  const initialDisplayed = initialDisplayedRef.current;
+  const [displayedText, setDisplayedText] = useState(initialDisplayed);
 
-  const displayedRef = useRef(targetText);
+  const displayedRef = useRef(initialDisplayed);
   const queueRef = useRef<string[]>([]);
   const queueIndexRef = useRef(0);
-  const enqueuedRef = useRef(targetText);
+  const enqueuedRef = useRef(initialDisplayed);
   const targetRef = useRef(targetText);
   const streamingRef = useRef(isStreaming);
   const enabledRef = useRef(enabled);
   const reduceMotionRef = useRef(Boolean(reduceMotion));
+  const streamKeyRef = useRef(streamKey);
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef(0);
 
@@ -39,6 +63,7 @@ export function useSmoothStreamText(
   streamingRef.current = isStreaming;
   enabledRef.current = enabled;
   reduceMotionRef.current = Boolean(reduceMotion);
+  streamKeyRef.current = streamKey;
 
   const stopLoop = useCallback(() => {
     if (rafRef.current !== null) {
@@ -85,6 +110,9 @@ export function useSmoothStreamText(
       if (end === queue.length) {
         queueRef.current = [];
         queueIndexRef.current = 0;
+        if (!streamingRef.current && streamKeyRef.current) {
+          smoothStreamCache.delete(streamKeyRef.current);
+        }
       }
     }
 
@@ -172,7 +200,16 @@ export function useSmoothStreamText(
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [ensureLoop, stopLoop]);
 
-  useEffect(() => stopLoop, [stopLoop]);
+  useEffect(() => () => {
+    stopLoop();
+    const key = streamKeyRef.current;
+    if (!key) return;
+    if ((streamingRef.current || displayedRef.current.length < targetRef.current.length) && displayedRef.current.length > 0) {
+      saveSmoothStreamProgress(key, displayedRef.current);
+    } else {
+      smoothStreamCache.delete(key);
+    }
+  }, [stopLoop]);
 
   return reduceMotion ? targetText : displayedText;
 }

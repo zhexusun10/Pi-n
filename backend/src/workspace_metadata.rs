@@ -413,6 +413,25 @@ mod platform {
                 ));
             }
         }
+        // On Linux, writing `user.*` xattrs requires owner write permission and
+        // opening a file to query/set inode flags requires read permission.
+        // Temporarily ensure owner rw(x) while restoring xattrs and flags, then
+        // apply the final target mode afterward.
+        #[cfg(target_os = "linux")]
+        let linux_restore_mode: Option<u32> = if !initial_metadata.file_type().is_symlink() {
+            use std::os::unix::fs::PermissionsExt;
+            let current_mode = initial_metadata.permissions().mode() & 0o7777;
+            let need_bits = if initial_metadata.is_dir() { 0o700 } else { 0o600 };
+            if current_mode & need_bits != need_bits {
+                fs::set_permissions(value, fs::Permissions::from_mode(current_mode | need_bits))
+                    .map_err(|e| e.to_string())?;
+                Some(mode.unwrap_or(current_mode))
+            } else {
+                mode
+            }
+        } else {
+            mode
+        };
         for name in xattr_names(value)? {
             if !extra
                 .attributes
@@ -488,45 +507,66 @@ mod platform {
                 ));
             }
         }
-        if let Some(mode) = mode {
-            if !initial_metadata.file_type().is_symlink() {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(value, fs::Permissions::from_mode(mode))
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        #[cfg(target_os = "macos")]
-        {
-            use std::os::macos::fs::MetadataExt;
-            let current = fs::symlink_metadata(value)
-                .map_err(|e| e.to_string())?
-                .st_flags();
-            // Keep the destination's own host-managed flags (revision,
-            // compression, storage/security state) and materialize only the
-            // source's project-visible flags.
-            let desired = (current & MACOS_HOST_MANAGED_FLAGS) | extra.flags;
-            if unsafe { lchflags(p.as_ptr(), desired) } != 0 {
-                return Err(format!(
-                    "Cannot preserve macOS project flags: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-        }
         #[cfg(target_os = "linux")]
         {
             let metadata = fs::symlink_metadata(value).map_err(|e| e.to_string())?;
             if metadata.is_file() || metadata.is_dir() {
                 linux_flags(value, Some(extra.flags))?;
             }
+            // Verify xattrs and flags BEFORE dropping owner read permission
+            // (e.g. `0o000` or `0o111`), because `capture` opens the file to
+            // inspect Linux inode flags.
+            let pre_chmod_meta = fs::symlink_metadata(value).map_err(|e| e.to_string())?;
+            if capture(value, &pre_chmod_meta)? != *extra {
+                return Err(format!(
+                    "Project metadata differs after materialization: {}",
+                    value.display()
+                ));
+            }
+            if let Some(target_mode) = linux_restore_mode {
+                if !initial_metadata.file_type().is_symlink() {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(value, fs::Permissions::from_mode(target_mode))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            return Ok(());
         }
-        let final_metadata = fs::symlink_metadata(value).map_err(|e| e.to_string())?;
-        if capture(value, &final_metadata)? != *extra {
-            return Err(format!(
-                "Project metadata differs after materialization: {}",
-                value.display()
-            ));
+        #[cfg(not(target_os = "linux"))]
+        {
+            if let Some(mode) = mode {
+                if !initial_metadata.file_type().is_symlink() {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(value, fs::Permissions::from_mode(mode))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                use std::os::macos::fs::MetadataExt;
+                let current = fs::symlink_metadata(value)
+                    .map_err(|e| e.to_string())?
+                    .st_flags();
+                // Keep the destination's own host-managed flags (revision,
+                // compression, storage/security state) and materialize only the
+                // source's project-visible flags.
+                let desired = (current & MACOS_HOST_MANAGED_FLAGS) | extra.flags;
+                if unsafe { lchflags(p.as_ptr(), desired) } != 0 {
+                    return Err(format!(
+                        "Cannot preserve macOS project flags: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+            }
+            let final_metadata = fs::symlink_metadata(value).map_err(|e| e.to_string())?;
+            if capture(value, &final_metadata)? != *extra {
+                return Err(format!(
+                    "Project metadata differs after materialization: {}",
+                    value.display()
+                ));
+            }
+            Ok(())
         }
-        Ok(())
     }
 }
 
@@ -931,6 +971,18 @@ mod platform {
             return Ok(());
         }
         let native_path = wide(path)?;
+        // Clear FILE_ATTRIBUTE_READONLY (0x1) before modifying ADS streams or
+        // EFS encryption; `EncryptFileW` and ADS writes fail on read-only files.
+        let initial_attrs = initial_metadata.file_attributes();
+        if initial_attrs & 0x1 != 0 {
+            let writable = (initial_attrs & !0x1) & 0x27;
+            if unsafe { SetFileAttributesW(native_path.as_ptr(), if writable == 0 { 0x80 } else { writable }) } == 0 {
+                return Err(format!(
+                    "Cannot clear read-only attribute before restoring metadata: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
         let expected: BTreeSet<&str> = extra
             .attributes
             .iter()
@@ -953,6 +1005,12 @@ mod platform {
             let mut name = path.as_os_str().to_os_string();
             name.push(key);
             fs::write(Path::new(&name), bytes).map_err(|e| e.to_string())?;
+        }
+        // Apply EFS encryption BEFORE restoring FILE_ATTRIBUTE_READONLY and
+        // restrictive DACLs (`EncryptFileW` rejects read-only files).
+        let pre_efs_metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+        if (pre_efs_metadata.file_attributes() & 0x4000 != 0) != extra.efs || extra.efs {
+            set_encrypted(path, extra.efs)?;
         }
         if unsafe {
             SetFileAttributesW(
@@ -1026,10 +1084,6 @@ mod platform {
             LocalFree(descriptor);
         }
         result?;
-        let pre_efs_metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        if (pre_efs_metadata.file_attributes() & 0x4000 != 0) != extra.efs || extra.efs {
-            set_encrypted(path, extra.efs)?;
-        }
         let final_metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
         let actual = capture(path, &final_metadata)?;
         if actual != *extra {

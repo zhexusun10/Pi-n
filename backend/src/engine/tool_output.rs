@@ -35,6 +35,9 @@ impl ToolOutputProjection {
                         if let Some(object) = event.as_object_mut() {
                             object.remove("message");
                         }
+                        // Text/thinking deltas carry no tool results or tool arguments;
+                        // skip the recursive `limit_arguments` walk on the 95%+ hot path.
+                        return true;
                     }
                     _ => {}
                 }
@@ -167,7 +170,10 @@ fn limit_arguments(value: &mut Value) {
             if truncated {
                 object.insert("argsTruncated".into(), true.into());
             }
-            for child in object.values_mut() {
+            for (key, child) in object.iter_mut() {
+                if matches!(key.as_str(), "args" | "arguments") {
+                    continue;
+                }
                 limit_arguments(child);
             }
         }

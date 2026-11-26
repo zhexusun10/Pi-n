@@ -15,6 +15,9 @@ pub(crate) use blob::verify_git_blob;
 type HostRepoLocks = OnceLock<Mutex<std::collections::HashMap<PathBuf, Weak<Mutex<()>>>>>;
 static HOST_REF_LOCKS: HostRepoLocks = OnceLock::new();
 static HOST_INDEX_LOCKS: HostRepoLocks = OnceLock::new();
+type ShadowUseLocks =
+    OnceLock<Mutex<std::collections::HashMap<PathBuf, Weak<std::sync::RwLock<()>>>>>;
+static SHADOW_USE_LOCKS: ShadowUseLocks = OnceLock::new();
 
 fn host_lock(locks: &'static HostRepoLocks, repository: &Path) -> Result<Arc<Mutex<()>>, String> {
     let key = PathBuf::from(crate::path_identity::path_key(repository));
@@ -27,6 +30,25 @@ fn host_lock(locks: &'static HostRepoLocks, repository: &Path) -> Result<Arc<Mut
         return Ok(lock);
     }
     let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
+}
+
+/// Shared/exclusive lifecycle lock keyed by shadow directory path.
+/// Active shadow operations hold a shared `read()` lock; background orphan GC
+/// uses non-blocking `try_write()` so it never deletes an actively-used shadow
+/// repository and never deadlocks against `host_index_lock` / `host_ref_lock`.
+pub(crate) fn shadow_use_lock(shadow: &Path) -> Result<Arc<std::sync::RwLock<()>>, String> {
+    let key = PathBuf::from(crate::path_identity::path_key(shadow));
+    let mut locks = SHADOW_USE_LOCKS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    locks.retain(|_, weak| weak.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(std::sync::RwLock::new(()));
     locks.insert(key, Arc::downgrade(&lock));
     Ok(lock)
 }
@@ -951,16 +973,105 @@ pub(crate) fn reclaim_orphan_git_metadata(run_root: &Path) -> Result<(), String>
     Ok(())
 }
 
+/// Check that every protected commit that actually exists in `shadow` is
+/// reachable from `shadow`'s current refs (either directly a ref tip in
+/// `remaining`, or an ancestor of a remaining ref). Objects belonging to other
+/// repositories or not present in `shadow` do not block GC of `shadow`.
+fn all_present_protected_objects_reachable(
+    shadow: &Path,
+    shadow_text: &str,
+    protected: &std::collections::BTreeSet<String>,
+    remaining: &std::collections::BTreeSet<&str>,
+) -> bool {
+    let not_tips: Vec<&str> = protected
+        .iter()
+        .map(String::as_str)
+        .filter(|oid| !oid.is_empty() && !remaining.contains(oid))
+        .collect();
+    if not_tips.is_empty() {
+        return true;
+    }
+    let mut batch_input = String::new();
+    for oid in &not_tips {
+        batch_input.push_str(oid);
+        batch_input.push('\n');
+    }
+    let Ok(check_bytes) = git_bytes(
+        shadow,
+        &[
+            "--git-dir",
+            shadow_text,
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype)",
+        ],
+        None,
+        Some(batch_input.as_bytes()),
+    ) else {
+        return false;
+    };
+    let Ok(check_output) = String::from_utf8(check_bytes) else {
+        return false;
+    };
+    let mut present_commits: Vec<&str> = Vec::new();
+    for line in check_output.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(oid) = parts.next() else {
+            continue;
+        };
+        if parts.next() == Some("commit") {
+            present_commits.push(oid);
+        }
+    }
+    if present_commits.is_empty() {
+        return true;
+    }
+    let mut args = vec!["--git-dir", shadow_text, "rev-list", "--max-count=1"];
+    args.extend(present_commits.iter().copied());
+    args.extend(["--not", "--all"]);
+    match git(shadow, &args) {
+        Ok(unreachable) => unreachable.trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
 /// Remove refs owned by a deleted Run and reclaim objects that are no longer
 /// reachable from any remaining Pi^n ref. Shared source databases keep
 /// their other Run refs, source snapshots and published results intact.
+#[cfg(test)]
 pub(crate) fn prune_shadow_run_refs(
     shadow: &Path,
     run_id: &str,
     protected: &std::collections::BTreeSet<String>,
     reclaim_objects: bool,
 ) -> Result<(), String> {
+    prune_shadow_run_refs_for_source(shadow, None, run_id, protected, reclaim_objects)
+}
+
+/// Strict lock hierarchy: `shadow_use_lock` (write when GC runs) -> `host_ref_lock`.
+pub(crate) fn prune_shadow_run_refs_for_source(
+    shadow: &Path,
+    source: Option<&Path>,
+    run_id: &str,
+    protected: &std::collections::BTreeSet<String>,
+    reclaim_objects: bool,
+) -> Result<(), String> {
     uuid::Uuid::parse_str(run_id).map_err(|_| "Invalid Run ID for shadow cleanup")?;
+    let shadow_lock = shadow_use_lock(shadow)?;
+    let _write_guard = if reclaim_objects {
+        Some(shadow_lock.write().map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let _read_guard = if !reclaim_objects {
+        Some(shadow_lock.read().map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let ref_lock = source.map(host_ref_lock).transpose()?;
+    let _ref_guard = ref_lock
+        .as_ref()
+        .map(|lock| lock.lock().map_err(|e| e.to_string()))
+        .transpose()?;
     let metadata = match fs::symlink_metadata(shadow) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1059,12 +1170,10 @@ pub(crate) fn prune_shadow_run_refs(
             ],
         )?;
         let remaining: std::collections::BTreeSet<&str> = remaining.lines().collect();
-        if protected
-            .iter()
-            .all(|object| remaining.contains(object.as_str()))
-        {
+        if all_present_protected_objects_reachable(shadow, shadow_text, protected, &remaining) {
             // Reflogs can keep otherwise unreachable objects alive; expire them
-            // before pruning. The host ref lock serializes this with Pi^n Git.
+            // before pruning. The exclusive shadow lock + host ref lock
+            // serialize this against concurrent snapshot writes.
             git(
                 shadow,
                 &[
@@ -1090,10 +1199,27 @@ pub(crate) fn prune_shadow_run_refs(
 /// dead `agent-views/` and unreachable Git objects from a retained shadow
 /// repository (e.g. a standard Git project after a Run settles) without
 /// removing any live Run's `refs/pi-n/runs/*` or protected commits.
+#[cfg(test)]
 pub(crate) fn prune_shadow_unreachable(
     shadow: &Path,
     protected: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
+    prune_shadow_unreachable_for_source(shadow, None, protected)
+}
+
+/// Strict lock hierarchy: `shadow_use_lock.write()` -> `host_ref_lock`.
+pub(crate) fn prune_shadow_unreachable_for_source(
+    shadow: &Path,
+    source: Option<&Path>,
+    protected: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    let shadow_lock = shadow_use_lock(shadow)?;
+    let _shadow_guard = shadow_lock.write().map_err(|e| e.to_string())?;
+    let ref_lock = source.map(host_ref_lock).transpose()?;
+    let _ref_guard = ref_lock
+        .as_ref()
+        .map(|lock| lock.lock().map_err(|e| e.to_string()))
+        .transpose()?;
     let metadata = match fs::symlink_metadata(shadow) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1159,10 +1285,7 @@ pub(crate) fn prune_shadow_unreachable(
         ],
     )?;
     let remaining: std::collections::BTreeSet<&str> = remaining.lines().collect();
-    if protected
-        .iter()
-        .all(|object| remaining.contains(object.as_str()))
-    {
+    if all_present_protected_objects_reachable(shadow, shadow_text, protected, &remaining) {
         if removed_cache_refs {
             git(
                 shadow,
@@ -1474,7 +1597,7 @@ fn ensure_shadow_metadata(target: &Path) -> Result<PathBuf, String> {
         fs::create_dir_all(&shadow_parent).map_err(|e| e.to_string())?;
         checked_shadow_directory(&shadow_parent)?;
     }
-    if !checked_shadow_directory(&shadow_dir)? {
+    if !checked_shadow_directory(&shadow_dir)? || !shadow_dir.join("HEAD").is_file() {
         fs::create_dir_all(&shadow_dir).map_err(|e| e.to_string())?;
         checked_shadow_directory(&shadow_dir)?;
         let git_dir_str = shadow_dir.to_str().ok_or("Invalid shadow path")?;
@@ -1525,6 +1648,8 @@ fn ensure_shadow_metadata(target: &Path) -> Result<PathBuf, String> {
 /// Initialize the host-only source database without collecting live files.
 /// The source is read-only; even the first node import must never write a ref
 /// or an internal commit into the user's .git.
+/// Callers must hold `shadow_use_lock` (before `host_ref_lock`) per the strict
+/// lock hierarchy.
 fn ensure_graph_metadata(target: &Path) -> Result<PathBuf, String> {
     let shadow = ensure_shadow_metadata(target)?;
     if is_standard_git(target) {
@@ -1585,39 +1710,57 @@ fn bridge_plain_snapshot(target: &Path) -> Result<String, String> {
     Ok(head)
 }
 
+fn rollback_shadow_head(canonical: &Path, prior_head: Option<&str>) {
+    if let Some(prev) = prior_head {
+        let _ = repository_git(canonical, &["update-ref", "HEAD", prev]);
+    } else if let Ok(sym) = repository_git(canonical, &["symbolic-ref", "HEAD"]) {
+        let _ = repository_git(canonical, &["update-ref", "-d", &sym]);
+    }
+}
+
 /// Materialize the external shadow repository for a plain directory: create
 /// the metadata when needed, then force-collect the current source files into
 /// one commit so a usable `HEAD` exists. This is the only lazy creation point.
 pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<String, String> {
     let canonical = canonical_workspace_path(target)?;
+    let shadow_path = shadow_repo_dir(&canonical)?;
+    let shadow_lock = shadow_use_lock(&shadow_path)?;
+    let _shadow_guard = shadow_lock.read().map_err(|e| e.to_string())?;
     let index_lock = host_index_lock(&canonical)?;
     let _index_guard = index_lock.lock().map_err(|e| e.to_string())?;
     let shadow = {
         let lock = host_ref_lock(&canonical)?;
         let _guard = lock.lock().map_err(|e| e.to_string())?;
-        ensure_shadow_metadata(&canonical)?
+        let shadow = ensure_shadow_metadata(&canonical)?;
+        let git_dir = shadow.to_str().ok_or("Invalid shadow path")?;
+        let head_exists = git(
+            &canonical,
+            &["--git-dir", git_dir, "rev-parse", "-q", "--verify", "HEAD"],
+        )
+        .is_ok();
+        if !head_exists {
+            // A crashed first collection can leave a stale lock behind. Only a
+            // missing `HEAD` justifies removing it; a valid repository keeps its lock.
+            let lock = shadow.join("index.lock");
+            if lock.exists() {
+                fs::remove_file(&lock).map_err(|error| error.to_string())?;
+            }
+        }
+        shadow
     };
     let git_dir = shadow.to_str().ok_or("Invalid shadow path")?;
     let work_tree = canonical.to_str().ok_or("Invalid target path")?;
+    let inspected = crate::workspace_view::inspect_source_scoped_with_stats(&canonical, exclusions)?;
+    let identity = crate::workspace_view::view_identity(&inspected.view)?;
+    crate::workspace_view::stage_project_with_view(&canonical, &shadow, &inspected.view)?;
+    let lock = host_ref_lock(&canonical)?;
+    let _guard = lock.lock().map_err(|e| e.to_string())?;
     let prior_head = git(
         &canonical,
         &["--git-dir", git_dir, "rev-parse", "-q", "--verify", "HEAD"],
     )
     .ok();
     let head_exists = prior_head.is_some();
-    if !head_exists {
-        // A crashed first collection can leave a stale lock behind. Only a
-        // missing `HEAD` justifies removing it; a valid repository keeps its lock.
-        let lock = shadow.join("index.lock");
-        if lock.exists() {
-            fs::remove_file(&lock).map_err(|error| error.to_string())?;
-        }
-    }
-    let inspected = crate::workspace_view::inspect_source_scoped_with_stats(&canonical, exclusions)?;
-    let identity = crate::workspace_view::view_identity(&inspected.view)?;
-    crate::workspace_view::stage_project_with_view(&canonical, &shadow, &inspected.view)?;
-    let lock = host_ref_lock(&canonical)?;
-    let _guard = lock.lock().map_err(|e| e.to_string())?;
     let mut commit = vec![
         "--git-dir",
         git_dir,
@@ -1626,6 +1769,7 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
         "commit",
         "-q",
     ];
+    let mut head_moved = false;
     if !head_exists {
         // First collection of an empty or populated directory needs a HEAD.
         commit.push("--allow-empty");
@@ -1646,11 +1790,30 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
             // Git omits empty directories and most filesystem metadata. Reuse
             // HEAD only when its recorded project view is still equivalent.
             let head = bridge_plain_snapshot(&canonical)?;
-            if !crate::workspace_view::source_record_changed(&canonical, &head, &inspected.view)? {
+            head_moved = prior_head.as_deref() != Some(head.as_str());
+            let changed = match crate::workspace_view::source_record_changed(
+                &canonical,
+                &head,
+                &inspected.view,
+            ) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    if head_moved {
+                        rollback_shadow_head(&canonical, prior_head.as_deref());
+                    }
+                    return Err(error);
+                }
+            };
+            if !changed {
                 if !crate::workspace_view::has_record(&canonical, &head) {
-                    crate::workspace_view::capture_source_with_inspection(
+                    if let Err(error) = crate::workspace_view::capture_source_with_inspection(
                         &canonical, &head, &identity, exclusions, inspected,
-                    )?;
+                    ) {
+                        if head_moved {
+                            rollback_shadow_head(&canonical, prior_head.as_deref());
+                        }
+                        return Err(error);
+                    }
                 }
                 return Ok(head);
             }
@@ -1658,17 +1821,24 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
         }
     }
     commit.extend(["-m", "Pi^n source snapshot"]);
-    git(&canonical, &commit)?;
-    let head = bridge_plain_snapshot(&canonical)?;
+    if let Err(error) = git(&canonical, &commit) {
+        if head_moved {
+            rollback_shadow_head(&canonical, prior_head.as_deref());
+        }
+        return Err(error);
+    }
+    let head = match bridge_plain_snapshot(&canonical) {
+        Ok(head) => head,
+        Err(error) => {
+            rollback_shadow_head(&canonical, prior_head.as_deref());
+            return Err(error);
+        }
+    };
     if !crate::workspace_view::has_record(&canonical, &head) {
         if let Err(error) = crate::workspace_view::capture_source_with_inspection(
             &canonical, &head, &identity, exclusions, inspected,
         ) {
-            if let Some(prev) = prior_head.as_deref() {
-                let _ = repository_git(&canonical, &["update-ref", "HEAD", prev]);
-            } else if let Ok(sym) = repository_git(&canonical, &["symbolic-ref", "HEAD"]) {
-                let _ = repository_git(&canonical, &["update-ref", "-d", &sym]);
-            }
+            rollback_shadow_head(&canonical, prior_head.as_deref());
             return Err(error);
         }
     }
@@ -1681,6 +1851,15 @@ pub fn remove_shadow_repo(target: &Path) -> Result<(), String> {
         return Ok(());
     }
     let shadow = shadow_repo_dir(&canonical)?;
+    // Acquire locks in the strict hierarchy: shadow_use_lock (write) ->
+    // host_index_lock -> host_ref_lock so removal can never race a reader or
+    // concurrent snapshot materialization.
+    let shadow_lock = shadow_use_lock(&shadow)?;
+    let _shadow_guard = shadow_lock.write().map_err(|e| e.to_string())?;
+    let index_lock = host_index_lock(&canonical)?;
+    let _index_guard = index_lock.lock().map_err(|e| e.to_string())?;
+    let ref_lock = host_ref_lock(&canonical)?;
+    let _ref_guard = ref_lock.lock().map_err(|e| e.to_string())?;
     if !checked_shadow_directory(&shadow)? {
         return Ok(());
     }
@@ -1693,7 +1872,7 @@ pub fn remove_shadow_repo(target: &Path) -> Result<(), String> {
         }
     }
     if shadow.is_dir() {
-        fs::remove_dir_all(shadow).map_err(|error| error.to_string())?;
+        crate::workspace_cleanup::remove_tree(&shadow).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -2859,7 +3038,10 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
     fs::create_dir_all(path).map_err(|error| error.to_string())?;
     canonical_workspace_path(path)?;
 
-    // Determine the source Git location (either standard repository or shadow repo)
+    // Determine the source Git location (either standard repository or shadow repo).
+    // Acquire `shadow_use_lock` before `host_ref_lock` to preserve the strict lock order.
+    let shadow_lock = shadow_use_lock(&shadow_repo_dir(&canonical_repo)?)?;
+    let _shadow_guard = shadow_lock.read().map_err(|error| error.to_string())?;
     let lock = host_ref_lock(&canonical_repo)?;
     let guard = lock.lock().map_err(|error| error.to_string())?;
     let source_git_path = if is_standard_git(&canonical_repo) {
@@ -2871,6 +3053,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
     let pin = format!("refs/pi-n/heads/{base}");
     repository_git(&canonical_repo, &["update-ref", &pin, base])?;
     drop(guard);
+    drop(_shadow_guard);
     // Resolve refs in the host repository first, then borrow its object store.
     // An alternate is read-only: node commits and refs remain local until
     // snapshot_node explicitly imports them back into the host repository.
@@ -3311,6 +3494,7 @@ fn snapshot_slot_to_ref_scoped(
     let current = git(&canonical_path, &["rev-parse", "HEAD"])?;
     let changed_view = !staged.record_matches(&canonical_repo, &current)?;
     let view_identity = staged.identity;
+    let staged_reuse = staged.reuse;
     // A head that already exists without a view record (an explicit human or
     // agent commit) is captured below instead of being given a redundant
     // snapshot commit. This keeps `runtime.resolved` importing the user's
@@ -3344,6 +3528,9 @@ fn snapshot_slot_to_ref_scoped(
     // Only host-object/ref writes need to serialize with other imports and GC.
     // The prepared inputs are already pinned; local staging above writes to
     // the slot's own object database, never the shared alternate.
+    // Acquire `shadow_use_lock` before `host_ref_lock` to preserve strict lock order.
+    let shadow_lock = shadow_use_lock(&shadow_repo_dir(&canonical_repo)?)?;
+    let _shadow_guard = shadow_lock.read().map_err(|error| error.to_string())?;
     let lock = host_ref_lock(&canonical_repo)?;
     let guard = lock.lock().map_err(|error| error.to_string())?;
     let shadow = if is_standard_git(&canonical_repo) {
@@ -3391,12 +3578,13 @@ fn snapshot_slot_to_ref_scoped(
                 // its full scan/copy must not serialize unrelated node imports.
                 // Completion still waits for capture to succeed.
                 drop(guard);
-                crate::workspace_view::capture_node_scoped(
+                crate::workspace_view::capture_node_scoped_with_reuse(
                     &canonical_path,
                     &canonical_repo,
                     &head,
                     exclusions,
                     view_identity.as_deref(),
+                    staged_reuse.as_ref(),
                 )?;
                 return Ok(head);
             }
@@ -3411,6 +3599,8 @@ fn snapshot_slot_to_ref_scoped(
 /// This changes only Pi^n-owned refs, never the source working files.
 pub fn pin_repository_head(repository: &Path, head: &str) -> Result<(), String> {
     let repository = canonical_workspace_path(repository)?;
+    let shadow_lock = shadow_use_lock(&shadow_repo_dir(&repository)?)?;
+    let _shadow_guard = shadow_lock.read().map_err(|error| error.to_string())?;
     let lock = host_ref_lock(&repository)?;
     let _guard = lock.lock().map_err(|error| error.to_string())?;
     repository_git(
@@ -4647,6 +4837,46 @@ pub(crate) fn copy_ordinary_files(
     let destination_tracked = tracked_paths(&destination)?;
     let project_tracked = project_tracked_paths(&source);
     let runtime_data = resolved_existing_path(runtime_data);
+    // Pre-index destination tracked paths and their ancestors so the filter
+    // checks overlap in O(depth) instead of O(N_files * N_tracked).
+    #[cfg(target_os = "macos")]
+    let dest_insensitive = crate::path_identity::case_insensitive_volume(&destination);
+    let normalize_dest = |value: &Path| -> PathBuf {
+        #[cfg(target_os = "macos")]
+        {
+            let mut out = PathBuf::new();
+            for component in value.components() {
+                match component {
+                    std::path::Component::CurDir => {}
+                    std::path::Component::Normal(part) => {
+                        out.push(crate::path_identity::macos_fold_component(
+                            &part.to_string_lossy(),
+                            dest_insensitive,
+                        ));
+                    }
+                    other => out.push(other.as_os_str()),
+                }
+            }
+            out
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            PathBuf::from(crate::path_identity::lexical_key(value))
+        }
+    };
+    let mut dest_tracked_exact = std::collections::HashSet::with_capacity(destination_tracked.len());
+    let mut dest_tracked_ancestors = std::collections::HashSet::with_capacity(destination_tracked.len());
+    for tracked in &destination_tracked {
+        let norm = normalize_dest(Path::new(tracked));
+        let mut cursor: Option<&Path> = Some(norm.as_path());
+        while let Some(prefix) = cursor.filter(|p| !p.as_os_str().is_empty()) {
+            if !dest_tracked_ancestors.insert(prefix.to_path_buf()) {
+                break;
+            }
+            cursor = prefix.parent();
+        }
+        dest_tracked_exact.insert(norm);
+    }
     crate::native_copy::copy_tree(&source, &destination, |relative| {
         let Some(name) = relative.to_str().map(|name| {
             if cfg!(windows) {
@@ -4657,15 +4887,18 @@ pub(crate) fn copy_ordinary_files(
         }) else {
             return false;
         };
+        let norm_name = normalize_dest(Path::new(&name));
+        let overlaps_dest_tracked = dest_tracked_ancestors.contains(&norm_name)
+            || norm_name
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| !ancestor.as_os_str().is_empty() && dest_tracked_exact.contains(ancestor));
         crate::path_identity::is_runtime_metadata_path(relative)
             || tracked_path_matches(Some(&source), &source_tracked, &name)
             || (is_generated_artifact(relative)
                 && !tracked_path_matches(Some(&source), &project_tracked, &name))
             || is_host_metadata(&name)
-            || destination_tracked.iter().any(|tracked| {
-                scope_contains_at(&destination, Path::new(&name), Path::new(tracked))
-                    || scope_contains_at(&destination, Path::new(tracked), Path::new(&name))
-            })
+            || overlaps_dest_tracked
             || exclusions
                 .iter()
                 .any(|scope| scope_contains_at(&source, relative, Path::new(scope)))
@@ -4744,6 +4977,9 @@ fn snapshot_source_scoped(
         {
             return Err("Unresolved or unrelated source merge remains".into());
         }
+        let shadow_path = shadow_repo_dir(path)?;
+        let shadow_lock = shadow_use_lock(&shadow_path)?;
+        let _shadow_guard = shadow_lock.read().map_err(|e| e.to_string())?;
         let index_lock = host_index_lock(path)?;
         let _index_guard = index_lock.lock().map_err(|e| e.to_string())?;
         // A source view embeds the project's own Git state, so only a durable
@@ -4957,6 +5193,9 @@ fn snapshot_source_scoped(
         Ok(snapshot)
     } else {
         let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+        let shadow_path = shadow_repo_dir(&canonical)?;
+        let shadow_lock = shadow_use_lock(&shadow_path)?;
+        let _shadow_guard = shadow_lock.read().map_err(|e| e.to_string())?;
         let index_lock = host_index_lock(&canonical)?;
         let _index_guard = index_lock.lock().map_err(|e| e.to_string())?;
         let shadow = {
@@ -4985,11 +5224,14 @@ fn snapshot_source_scoped(
         } else {
             crate::workspace_view::stage_project_scoped(&canonical, &shadow, exclusions)?;
         }
-        let unborn = git(
+        let lock = host_ref_lock(&canonical)?;
+        let _guard = lock.lock().map_err(|e| e.to_string())?;
+        let prior_head = git(
             &canonical,
-            &["--git-dir", git_dir_str, "rev-parse", "--verify", "HEAD"],
+            &["--git-dir", git_dir_str, "rev-parse", "-q", "--verify", "HEAD"],
         )
-        .is_err();
+        .ok();
+        let unborn = prior_head.is_none();
         let status = if unborn {
             String::new()
         } else {
@@ -5006,13 +5248,6 @@ fn snapshot_source_scoped(
                 ],
             )?
         };
-        let lock = host_ref_lock(&canonical)?;
-        let _guard = lock.lock().map_err(|e| e.to_string())?;
-        let prior_head = if unborn {
-            None
-        } else {
-            repository_git(&canonical, &["rev-parse", "--verify", "HEAD"]).ok()
-        };
         let changed_view = if status.trim().is_empty() && !unborn {
             let head = prior_head
                 .as_deref()
@@ -5028,6 +5263,7 @@ fn snapshot_source_scoped(
         } else {
             false
         };
+        let mut head_moved = false;
         if !status.trim().is_empty() || unborn || changed_view {
             let mut commit = vec![
                 "--git-dir",
@@ -5042,8 +5278,18 @@ fn snapshot_source_scoped(
             }
             commit.extend(["-m", SNAPSHOT_COMMIT_MESSAGE]);
             git(&canonical, &commit)?;
+            head_moved = true;
         }
-        let head = bridge_plain_snapshot(&canonical)?;
+        let head = match bridge_plain_snapshot(&canonical) {
+            Ok(head) => head,
+            Err(error) => {
+                if head_moved {
+                    rollback_shadow_head(&canonical, prior_head.as_deref());
+                }
+                return Err(error);
+            }
+        };
+        head_moved |= prior_head.as_deref() != Some(head.as_str());
         if !crate::workspace_view::has_record(&canonical, &head) {
             let capture_result = if let (Some(identity), Some(inspected)) =
                 (identity.as_deref(), source_inspection)
@@ -5057,10 +5303,8 @@ fn snapshot_source_scoped(
                 crate::workspace_view::capture_source_scoped(&canonical, &head, exclusions)
             };
             if let Err(error) = capture_result {
-                if let Some(prev) = prior_head.as_deref() {
-                    let _ = repository_git(&canonical, &["update-ref", "HEAD", prev]);
-                } else if let Ok(sym) = repository_git(&canonical, &["symbolic-ref", "HEAD"]) {
-                    let _ = repository_git(&canonical, &["update-ref", "-d", &sym]);
+                if head_moved {
+                    rollback_shadow_head(&canonical, prior_head.as_deref());
                 }
                 return Err(error);
             }

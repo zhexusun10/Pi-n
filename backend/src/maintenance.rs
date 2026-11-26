@@ -64,6 +64,28 @@ fn run_is_stale_reclaimable(state: &Snapshot) -> bool {
             .any(|node| matches!(node.status.as_str(), "failed" | "blocked"))
 }
 
+/// Never let `--stale-days` delete a workspace whose atomic publication
+/// journal still holds unsettled recovery/rollback evidence.
+fn workspace_publication_journals_settled(path: &Path) -> bool {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.ends_with(".publication") || name == "publication" {
+            if !crate::cleanup::publication_journal_settled(&entry.path()) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 fn workspace_plan(root: &Path, store: &Store, parent: &Path) -> Result<WorkspacePlan, String> {
     workspace_plan_with_stale(root, store, parent, None, crate::model::now())
@@ -119,7 +141,9 @@ fn workspace_plan_with_stale(
                                 && crate::path_identity::same_path(owner_parent, parent)
                             {
                                 if let Some(path) = target.resolve(root, id)? {
-                                    if !is_protected(&path) {
+                                    if !is_protected(&path)
+                                        && workspace_publication_journals_settled(&path)
+                                    {
                                         stale_paths.insert(StaleWorkspace {
                                             run_id: id.clone(),
                                             phase: state.phase.clone(),

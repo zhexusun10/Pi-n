@@ -114,6 +114,57 @@ pub(crate) fn real_child_path(
     Ok(Some(current))
 }
 
+/// Atomically write a host-owned file without ever following a symlink at the
+/// destination path (e.g., when writing into an agent-writable session dir).
+pub(crate) fn write_file_no_follow(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let parent = path.parent().ok_or("Missing destination parent directory")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let parent_meta = fs::symlink_metadata(parent).map_err(|e| e.to_string())?;
+    if !parent_meta.is_dir() || crate::workspace_symlinks::is_link(&parent_meta) {
+        return Err(format!(
+            "Destination parent is not a real directory: {}",
+            parent.display()
+        ));
+    }
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.is_dir() && !crate::workspace_symlinks::is_link(&meta) {
+            return Err(format!(
+                "Refusing to overwrite directory with host file: {}",
+                path.display()
+            ));
+        }
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Invalid destination filename")?;
+    let temp = parent.join(format!(".{name}.tmp-{}", uuid::Uuid::new_v4()));
+    let write_res = (|| -> Result<(), String> {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&temp).map_err(|e| e.to_string())?;
+        file.write_all(bytes).map_err(|e| e.to_string())?;
+        drop(file);
+        #[cfg(windows)]
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if crate::workspace_symlinks::is_link(&meta) {
+                crate::workspace_symlinks::remove(path)?;
+            }
+        }
+        fs::rename(&temp, path).map_err(|e| e.to_string())
+    })();
+    if write_res.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    write_res
+}
+
 #[cfg(test)]
 pub(crate) fn directory_link(target: &Path, link: &Path) {
     #[cfg(unix)]

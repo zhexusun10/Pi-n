@@ -2241,6 +2241,19 @@ pub(crate) fn warm_scoped_changes(
             }
         }
     }
+
+    // Historical/settled runs warmed on demand must be eligible for clean LRU
+    // eviction so browsing many past conversations does not grow memory forever.
+    if let Ok(mut guard) = cache().lock() {
+        if !guard.has_live_entries(&state.run_id) {
+            let seq = guard.mutation_seq.get(&state.run_id).copied().unwrap_or(0);
+            guard
+                .clean_persisted_seq
+                .insert(state.run_id.clone(), seq);
+            guard.touch_run(&state.run_id);
+            guard.evict_clean_runs_if_needed(&state.run_id);
+        }
+    }
 }
 
 #[cfg(test)]

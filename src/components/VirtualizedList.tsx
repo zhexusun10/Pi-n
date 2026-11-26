@@ -667,6 +667,16 @@ export function VirtualizedList<T extends { id: string }>({ items, renderRow, ga
       if (restoredScrollTop.current !== null) {
         restoredScrollTop.current = parent.scrollTop;
       }
+      // The caller already compensated `scrollTop` for whatever layout shift
+      // just happened (e.g. locking column width when opening a right pane).
+      // Adopt current row heights silently so ResizeObserver does not treat
+      // the same shift as a second live resize and double-adjust `scrollTop`.
+      pendingResizeDeltasRef.current.clear();
+      for (const [id, element] of rowElements.current) {
+        if (!element.isConnected) continue;
+        const rectHeight = element.getBoundingClientRect().height;
+        measure(id, rectHeight > 0 ? rectHeight : element.offsetHeight, false, true, false);
+      }
       const reading = readingAnchor.current;
       if (reading) {
         const readingRow = rowElements.current.get(reading.id);

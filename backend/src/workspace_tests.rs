@@ -2274,3 +2274,49 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         );
     }
 }
+
+#[test]
+fn materialize_shadow_repo_rolls_back_bridged_head_when_view_capture_fails() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("plain-source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("app.txt"), "hello").unwrap();
+
+    let initial_head = workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    let shadow = workspace::shadow_repo_dir(&source).unwrap();
+    let shadow_text = shadow.to_str().unwrap();
+
+    // Create an independent commit so `bridge_plain_snapshot` will advance HEAD
+    // during the `staged.trim().is_empty()` fast path.
+    let tree = workspace::repository_git(&source, &["rev-parse", &format!("{initial_head}^{{tree}}")]).unwrap();
+    let composed = workspace::repository_git(
+        &source,
+        &["commit-tree", &tree, "-m", "composed branch"],
+    )
+    .unwrap();
+    workspace::repository_git(&source, &["update-ref", "refs/pi-n/published/source", &initial_head])
+        .unwrap();
+    workspace::repository_git(&source, &["update-ref", "refs/pi-n/published/composed", &composed])
+        .unwrap();
+
+    // Break `agent-views` so capturing the newly bridged commit's view record fails.
+    let views_dir = shadow.join("agent-views");
+    if views_dir.is_dir() {
+        fs::remove_dir_all(&views_dir).unwrap();
+    }
+    fs::write(&views_dir, "not a directory").unwrap();
+
+    let err = workspace::materialize_shadow_repo(&source, &[]).unwrap_err();
+    assert!(!err.is_empty());
+
+    // HEAD must be rolled back to `initial_head` instead of staying on the
+    // unrecorded bridged commit.
+    let current_head = workspace::git(
+        &source,
+        &["--git-dir", shadow_text, "rev-parse", "--verify", "HEAD"],
+    )
+    .unwrap();
+    assert_eq!(current_head, initial_head);
+    fs::remove_file(&views_dir).unwrap();
+    workspace::remove_shadow_repo(&source).unwrap();
+}

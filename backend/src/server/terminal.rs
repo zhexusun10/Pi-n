@@ -61,6 +61,7 @@ struct Session {
 struct SessionTable {
     entries: HashMap<String, Session>,
     pending_creates: usize,
+    shutting_down: bool,
 }
 
 #[derive(Default)]
@@ -97,6 +98,9 @@ impl WebTerminals {
         // behind process startup.
         {
             let mut table = self.sessions.lock().map_err(|e| e.to_string())?;
+            if table.shutting_down {
+                return Err("Backend is shutting down".into());
+            }
             if table.entries.len() + table.pending_creates >= MAX_SESSIONS {
                 return Err("Too many open terminals; close an existing terminal first".into());
             }
@@ -119,6 +123,11 @@ impl WebTerminals {
             })?;
             table.pending_creates = table.pending_creates.saturating_sub(1);
             reservation.active = false;
+            if table.shutting_down {
+                drop(table);
+                self.pty.kill_session(&info.session_id);
+                return Err("Backend is shutting down".into());
+            }
             table.entries.insert(
                 info.session_id.clone(),
                 Session {
@@ -158,10 +167,22 @@ impl WebTerminals {
             .map(|(seq, _)| *seq)
             .unwrap_or(output.cursor + 1);
         let mut next = cursor.max(first - 1);
+        let start = if cursor < first {
+            0
+        } else {
+            let direct = (cursor - first + 1) as usize;
+            if direct < output.chunks.len()
+                && output.chunks.get(direct).is_some_and(|(seq, _)| *seq == cursor + 1)
+            {
+                direct
+            } else {
+                output.chunks.partition_point(|(seq, _)| *seq <= cursor)
+            }
+        };
         let chunks: Vec<&str> = output
             .chunks
             .iter()
-            .filter(|(seq, _)| *seq > cursor)
+            .skip(start)
             .take(32)
             .map(|(seq, data)| {
                 next = *seq;
@@ -262,10 +283,11 @@ pub(super) fn dispatch(command: &str, body: &Value) -> Result<Value, String> {
 
 pub(super) fn shutdown() {
     if let Some(manager) = TERMINALS.get() {
-        manager.pty.kill_all();
         if let Ok(mut table) = manager.sessions.lock() {
+            table.shutting_down = true;
             table.entries.clear();
         }
+        manager.pty.kill_all();
     }
 }
 

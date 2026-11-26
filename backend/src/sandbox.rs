@@ -207,10 +207,9 @@ fn write_profile(
             return Err("Invalid execution session or native engine location".into());
         }
     }
-    // Only a Pi^n-created alternate pointing at the bound repository's
-    // actual object database may be read. Never trust an arbitrary alternate
-    // path written by an agent when generating a profile. The Merger's graph
-    // Git borrows the same object store through its own alternate.
+    // Only a host-managed graph Git alternate (never agent-writable
+    // `current/.git/objects/info/alternates`) pointing at the bound
+    // repository's actual object database may be read.
     let borrowed_objects = (|| -> Option<PathBuf> {
         let expected = crate::workspace::repository_git(
             &repository,
@@ -223,11 +222,10 @@ fn write_profile(
         )
         .ok()?;
         let expected = kernel_path(Path::new(&expected)).ok()?;
-        for alternate in std::iter::once(current.join(".git/objects/info/alternates")).chain(
-            extra_exceptions
-                .iter()
-                .map(|path| path.join("objects/info/alternates")),
-        ) {
+        for alternate in extra_resolved
+            .iter()
+            .map(|path| path.join("objects/info/alternates"))
+        {
             if let Ok(value) = fs::read_to_string(&alternate) {
                 if let Ok(objects) = kernel_path(Path::new(value.trim())) {
                     if objects == expected {
@@ -397,19 +395,23 @@ fn write_profile(
     }
     // Source linked worktrees can keep all node snapshots in a shared Git
     // directory outside the source path. Protect that database as well.
-    let mut common_dirs = vec![crate::workspace::repository_git(
+    let mut common_dirs = Vec::new();
+    if let Ok(common) = crate::workspace::repository_git(
         &repository,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )];
+    ) {
+        common_dirs.push(common);
+    }
     if crate::workspace::is_standard_git(&repository) {
         // Internal snapshots no longer live in the user's database. A linked
-        // source worktree's real external database still needs protection.
+        // source worktree's real external database still needs protection; fail
+        // closed if Git cannot resolve its common dir.
         common_dirs.push(crate::workspace::git(
             &repository,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        ));
+        )?);
     }
-    for common in common_dirs.into_iter().flatten() {
+    for common in common_dirs {
         let common = kernel_path(Path::new(&common))?;
         if !common.starts_with(&repository)
             && !common.starts_with(&current)
@@ -422,23 +424,23 @@ fn write_profile(
     // shared object database outside the source folder. It contains all branch
     // snapshots and worktree locations, so it must not bypass the path boundary.
     // Standalone workspaces keep their .git strictly inside current, which is allowed.
-    if current.join(".git").exists() {
-        if let Ok(common) = crate::workspace::git(
+    // Fail closed if `current/.git` exists (including symlinks) and cannot be resolved.
+    if fs::symlink_metadata(current.join(".git")).is_ok() {
+        let common = crate::workspace::git(
             &current,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        ) {
-            let common = kernel_path(Path::new(&common))?;
-            if !common.starts_with(&current) && !extra_resolved.contains(&common) {
-                text.push_str(&format!(
-                    "(deny file-read* file-write* (subpath {}))\n",
-                    quote(&common)?
-                ));
-            }
+        )?;
+        let common = kernel_path(Path::new(&common))?;
+        if !common.starts_with(&current) && !extra_resolved.contains(&common) {
+            text.push_str(&format!(
+                "(deny file-read* file-write* (subpath {}))\n",
+                quote(&common)?
+            ));
         }
     }
     fs::create_dir_all(path.parent().ok_or("Invalid sandbox profile path")?)
         .map_err(|e| e.to_string())?;
-    fs::write(path, text).map_err(|e| e.to_string())?;
+    crate::path_safety::write_file_no_follow(path, text.as_bytes())?;
     Ok(path.to_path_buf())
 }
 

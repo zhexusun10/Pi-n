@@ -610,6 +610,7 @@ pub(super) fn install_file(
         relative,
         mode,
         None,
+        None,
         false,
         None,
         before_rename,
@@ -624,6 +625,7 @@ fn install_file_with_tracked(
     staged: &Path,
     relative: &str,
     mode: &str,
+    recorded_link: Option<&crate::workspace_symlinks::Link>,
     tracked: Option<&std::cell::OnceCell<BTreeSet<String>>>,
     pre_reserved: bool,
     dirty_parents: Option<&mut BTreeSet<PathBuf>>,
@@ -663,8 +665,15 @@ fn install_file_with_tracked(
         crate::workspace_symlinks::remove(&temporary)?;
     }
     if mode == "120000" {
+        // Git's 120000 blob only stores normalized link target text; preserve
+        // `project_absolute` and Windows `Kind::Junction` from `view.json`
+        // when its normalized target matches the staged Git blob.
         let metadata = fs::symlink_metadata(staged).map_err(|e| e.to_string())?;
-        let link = crate::workspace_symlinks::capture(repository, staged, &metadata)?;
+        let staged_link = crate::workspace_symlinks::capture(repository, staged, &metadata)?;
+        let link = match recorded_link {
+            Some(recorded) if recorded.value == staged_link.value => recorded.clone(),
+            _ => staged_link,
+        };
         crate::workspace_symlinks::materialize(repository, &temporary, &link)?;
     } else if matches!(mode, "100644" | "100755") {
         copy_and_sync_regular(staged, &temporary)?;
@@ -759,7 +768,25 @@ pub(super) fn cleanup_temporaries(
         validate_relative(&pending.target_relative)?;
         let hop = repository.join(&pending.hop_relative);
         let target = repository.join(&pending.target_relative);
-        if fs::symlink_metadata(&hop).is_ok() && fs::symlink_metadata(&target).is_err() {
+        let hop_parent_safe = hop.parent().is_some_and(|parent| {
+            parent == repository
+                || matches!(
+                    crate::path_safety::real_child_path(repository, parent, false),
+                    Ok(Some(_))
+                )
+        });
+        let target_parent_safe = target.parent().is_some_and(|parent| {
+            parent == repository
+                || matches!(
+                    crate::path_safety::real_child_path(repository, parent, false),
+                    Ok(Some(_))
+                )
+        });
+        if hop_parent_safe
+            && target_parent_safe
+            && fs::symlink_metadata(&hop).is_ok()
+            && fs::symlink_metadata(&target).is_err()
+        {
             fs::rename(&hop, &target).map_err(|e| e.to_string())?;
             if let Some(parent) = target.parent() {
                 sync_directory(parent)?;
@@ -781,12 +808,17 @@ pub(super) fn cleanup_temporaries(
         validate_relative(&pending.relative)?;
         let target = repository.join(&pending.relative);
         let parent = target.parent().ok_or("Missing publication parent")?;
+        let parent_safe = parent == repository
+            || matches!(
+                crate::path_safety::real_child_path(repository, parent, false),
+                Ok(Some(_))
+            );
         let owned = owners.get(&pending.temporary_name).map(String::as_str)
             == Some(pending.relative.as_str())
             || read_optional(&journal.join(&pending.temporary_name).with_extension("owner"))?
                 .as_deref()
                 == Some(pending.relative.as_bytes());
-        if owned && fs::symlink_metadata(&target).is_err() {
+        if parent_safe && owned && fs::symlink_metadata(&target).is_err() {
             let temporary = parent.join(&pending.temporary_name);
             if fs::symlink_metadata(&temporary).is_ok() && changed.contains(&pending.relative) {
                 let single = BTreeSet::from([pending.relative.clone()]);
@@ -1043,6 +1075,11 @@ fn install_with(
     if !new.is_empty() {
         reserve_owners(repository, journal, &journal_key, &new)?;
     }
+    let recorded_links = if new.values().any(|entry| entry.mode == "120000") {
+        crate::workspace_view::recorded_links(repository, result)
+    } else {
+        BTreeMap::new()
+    };
     let mut dirty_installed_parents: BTreeSet<PathBuf> = BTreeSet::new();
     for relative in changed.iter().filter(|p| new.contains_key(*p)) {
         crate::process_control::check_current_owner_stop()?;
@@ -1062,6 +1099,7 @@ fn install_with(
             &staged.join(relative),
             relative,
             &new[relative].mode,
+            recorded_links.get(relative),
             Some(&tracked_cell),
             true,
             Some(&mut dirty_installed_parents),

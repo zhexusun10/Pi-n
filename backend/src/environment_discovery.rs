@@ -291,7 +291,9 @@ pub(crate) fn context_with_source(
     best_effort: bool,
 ) -> Result<PathBuf, String> {
     Uuid::parse_str(generation).map_err(|_| "Invalid discovery writer generation")?;
+    fs::create_dir_all(session).map_err(|e| e.to_string())?;
     let file = session.join(format!("environment-observer-{generation}.json"));
+    real_child_path(session, &file, true)?;
     let context = Context {
         schema: 2,
         workspace: text(&canonical(workspace)?),
@@ -1127,6 +1129,158 @@ pub fn tool(args: Vec<String>) -> Result<i32, String> {
     Ok(status.code().unwrap_or(1))
 }
 
+fn build_sandboxed_verify_command(
+    python: &Path,
+    deny_reads: &[PathBuf],
+    allowed_roots: &[PathBuf],
+) -> Result<Command, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if !Path::new("/usr/bin/sandbox-exec").is_file() {
+            return Err("macOS sandbox-exec is unavailable for environment verification".into());
+        }
+        let quote = |path: &Path| -> Result<String, String> {
+            let value = path
+                .to_str()
+                .ok_or("Environment verification sandbox paths must be valid UTF-8")?;
+            if value.chars().any(char::is_control) {
+                return Err(
+                    "Environment verification sandbox paths cannot contain control characters"
+                        .into(),
+                );
+            }
+            Ok(format!(
+                "\"{}\"",
+                value.replace('\\', "\\\\").replace('"', "\\\"")
+            ))
+        };
+        let mut profile = String::from(
+            "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (literal \"/dev/null\"))\n(deny network*)\n(deny signal (target others))\n",
+        );
+        let allowed_canonical: Vec<PathBuf> = allowed_roots
+            .iter()
+            .filter_map(|p| p.canonicalize().ok())
+            .map(|p| crate::path_identity::actual_path(&p).unwrap_or(p))
+            .collect();
+        for deny in deny_reads {
+            let Ok(deny_canon) = deny.canonicalize() else {
+                continue;
+            };
+            let deny_canon = crate::path_identity::actual_path(&deny_canon).unwrap_or(deny_canon);
+            if allowed_canonical
+                .iter()
+                .any(|allowed| deny_canon.starts_with(allowed))
+            {
+                continue;
+            }
+            let nested_allowed: Vec<&PathBuf> = allowed_canonical
+                .iter()
+                .filter(|allowed| allowed.starts_with(&deny_canon))
+                .collect();
+            if nested_allowed.is_empty() {
+                profile.push_str(&format!(
+                    "(deny file-read* (subpath {}))\n",
+                    quote(&deny_canon)?
+                ));
+            } else {
+                let mut except_subpaths = String::new();
+                let mut except_ancestors = String::new();
+                let mut seen_ancestors = std::collections::BTreeSet::new();
+                for allowed in nested_allowed {
+                    except_subpaths
+                        .push_str(&format!(" (require-not (subpath {}))", quote(allowed)?));
+                    for ancestor in allowed.ancestors().skip(1) {
+                        if ancestor.starts_with(&deny_canon)
+                            && seen_ancestors.insert(ancestor.to_path_buf())
+                        {
+                            except_ancestors.push_str(&format!(
+                                " (require-not (literal {}))",
+                                quote(ancestor)?
+                            ));
+                        }
+                        if ancestor == deny_canon {
+                            break;
+                        }
+                    }
+                }
+                profile.push_str(&format!(
+                    "(deny file-read-data (require-all (subpath {}){except_subpaths}))\n",
+                    quote(&deny_canon)?
+                ));
+                profile.push_str(&format!(
+                    "(deny file-read-metadata (require-all (subpath {}){except_subpaths}{except_ancestors}))\n",
+                    quote(&deny_canon)?
+                ));
+            }
+        }
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command.arg("-p").arg(profile).arg(python);
+        return Ok(command);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if crate::linux_sandbox::require_supported().is_ok() {
+            let mut command = Command::new("/usr/bin/bwrap");
+            command.args([
+                "--die-with-parent",
+                "--unshare-user",
+                "--unshare-pid",
+                "--unshare-net",
+                "--cap-drop",
+                "ALL",
+                "--ro-bind",
+                "/",
+                "/",
+                "--dev-bind",
+                "/dev",
+                "/dev",
+                "--proc",
+                "/proc",
+            ]);
+            let allowed_canonical: Vec<PathBuf> = allowed_roots
+                .iter()
+                .filter_map(|p| p.canonicalize().ok())
+                .collect();
+            for deny in deny_reads {
+                let Ok(deny_canon) = deny.canonicalize() else {
+                    continue;
+                };
+                if allowed_canonical.iter().any(|allowed| {
+                    allowed.starts_with(&deny_canon) || deny_canon.starts_with(allowed)
+                }) {
+                    for sqlite_name in ["events.sqlite", "events.sqlite-wal", "events.sqlite-shm"] {
+                        let candidate = deny_canon.join(sqlite_name);
+                        if candidate.is_file() {
+                            command.arg("--ro-bind").arg("/dev/null").arg(&candidate);
+                        }
+                    }
+                    continue;
+                }
+                if deny_canon.is_file() {
+                    command.arg("--ro-bind").arg("/dev/null").arg(&deny_canon);
+                } else if deny_canon.is_dir() {
+                    command.arg("--tmpfs").arg(&deny_canon);
+                }
+            }
+            command.arg("--").arg(python);
+            return Ok(command);
+        }
+        #[cfg(not(test))]
+        return Err(
+            "Linux bubblewrap (/usr/bin/bwrap) is unavailable for environment verification".into(),
+        );
+        #[cfg(test)]
+        return Ok(Command::new(python));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (deny_reads, allowed_roots);
+        Ok(Command::new(python))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 fn verify(
     root: &Path,
     root_label: &str,
@@ -1135,6 +1289,29 @@ fn verify(
     project_requirements: bool,
     root_paths: &[(&str, &Path)],
     runtime_schema: Option<u32>,
+) -> Result<Binding, String> {
+    verify_with_boundaries(
+        root,
+        root_label,
+        prefix,
+        expected_kind,
+        project_requirements,
+        root_paths,
+        runtime_schema,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_with_boundaries(
+    root: &Path,
+    root_label: &str,
+    prefix: &str,
+    expected_kind: &str,
+    project_requirements: bool,
+    root_paths: &[(&str, &Path)],
+    runtime_schema: Option<u32>,
+    deny_reads: &[PathBuf],
 ) -> Result<Binding, String> {
     if !matches!(runtime_schema, Some(1..=3)) {
         return Err("Unsupported native runtime evidence schema".into());
@@ -1263,7 +1440,14 @@ print(json.dumps({'version':sys.version,'abi':sysconfig.get_config_var('SOABI'),
     if runtime_schema == Some(3) {
         script = script.replacen("selector_schema=2", "selector_schema=3", 1);
     }
-    let mut command = Command::new(&python);
+    let mut command = build_sandboxed_verify_command(
+        &python,
+        deny_reads,
+        &root_paths
+            .iter()
+            .map(|(_, p)| p.to_path_buf())
+            .collect::<Vec<_>>(),
+    )?;
     command
         .args(["-I", "-B", "-c", &script])
         .arg(native::host_path(root))
@@ -1315,18 +1499,29 @@ pub(crate) fn validate_launch(
     validate_launch_with_state(root, None, launch, project_requirements)
 }
 
+#[cfg(test)]
 pub(crate) fn validate_launch_with_state(
     workspace: &Path,
     state: Option<&Path>,
     launch: &LaunchConfig,
     project_requirements: bool,
 ) -> Result<(), String> {
+    validate_launch_with_boundaries(workspace, state, launch, project_requirements, &[])
+}
+
+pub(crate) fn validate_launch_with_boundaries(
+    workspace: &Path,
+    state: Option<&Path>,
+    launch: &LaunchConfig,
+    project_requirements: bool,
+    deny_reads: &[PathBuf],
+) -> Result<(), String> {
     if let Some(expected) = &launch.environment {
         expected.validate()?;
         let roots = roots(workspace, state);
         let label = binding_root_label(launch, &roots).to_string();
         let root = root_for(&roots, &label)?;
-        let mut actual = verify(
+        let mut actual = verify_with_boundaries(
             root,
             &label,
             &expected.prefix,
@@ -1337,6 +1532,7 @@ pub(crate) fn validate_launch_with_state(
                 .runtime_evidence
                 .as_ref()
                 .map(RuntimeEvidence::schema),
+            deny_reads,
         )?;
         if let Some(recorded) = &expected.runtime_evidence {
             if !actual
@@ -1390,6 +1586,7 @@ pub(crate) fn resolve_for_policy(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_for_policy_with_state(
     workspace: &Path,
     state: Option<&Path>,
@@ -1398,6 +1595,29 @@ pub(crate) fn resolve_for_policy_with_state(
     generation: &str,
     project_requirements: bool,
     best_effort: bool,
+) -> Result<LaunchConfig, String> {
+    resolve_for_policy_with_boundaries(
+        workspace,
+        state,
+        launch,
+        session,
+        generation,
+        project_requirements,
+        best_effort,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_for_policy_with_boundaries(
+    workspace: &Path,
+    state: Option<&Path>,
+    launch: &LaunchConfig,
+    session: &Path,
+    generation: &str,
+    project_requirements: bool,
+    best_effort: bool,
+    deny_reads: &[PathBuf],
 ) -> Result<LaunchConfig, String> {
     let roots = roots(workspace, state);
     launch.validate()?;
@@ -1477,10 +1697,12 @@ pub(crate) fn resolve_for_policy_with_state(
     }
     // Metadata inventory is a bounded refusal guard, never an adoption
     // heuristic. Do not traverse environment contents or follow directory links.
+    // Use BFS so shallow project roots (e.g. top-level `.venv`) are always
+    // inspected before deep dependency/build trees exhaust the directory bound.
     for (label, root) in &roots {
-        let mut inventory = vec![root.to_path_buf()];
+        let mut inventory = std::collections::VecDeque::from([root.to_path_buf()]);
         let mut visited = 0;
-        while let Some(directory) = inventory.pop() {
+        while let Some(directory) = inventory.pop_front() {
             visited += 1;
             if visited > 50_000 {
                 if best_effort {
@@ -1511,18 +1733,23 @@ pub(crate) fn resolve_for_policy_with_state(
                     .map_err(|e| e.to_string())?
                     .to_string_lossy()
                     .replace('\\', "/");
-                if [
-                    ".git",
-                    ".runtime-cache",
-                    ".agent-home",
-                    ".pi",
-                    ".project-git",
-                    ".git-config",
-                ]
-                .iter()
-                .any(|scope| {
-                    workspace::scope_contains_at(root, Path::new(&relative), Path::new(scope))
-                }) {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| matches!(name, "node_modules" | "target"))
+                    || [
+                        ".git",
+                        ".runtime-cache",
+                        ".agent-home",
+                        ".pi",
+                        ".project-git",
+                        ".git-config",
+                    ]
+                    .iter()
+                    .any(|scope| {
+                        workspace::scope_contains_at(root, Path::new(&relative), Path::new(scope))
+                    })
+                {
                     continue;
                 }
                 if let Ok(Some(_environment_kind)) = kind(&prefix) {
@@ -1555,7 +1782,7 @@ pub(crate) fn resolve_for_policy_with_state(
                         Err(error) => return Err(error),
                     }
                 } else {
-                    inventory.push(prefix);
+                    inventory.push_back(prefix);
                 }
             }
         }
@@ -1592,7 +1819,7 @@ pub(crate) fn resolve_for_policy_with_state(
     }
     if let Some(((root_label, prefix), kind)) = candidates.into_iter().next() {
         let root = root_for(&roots, &root_label)?;
-        let binding = match verify(
+        let binding = match verify_with_boundaries(
             root,
             &root_label,
             &prefix,
@@ -1600,6 +1827,7 @@ pub(crate) fn resolve_for_policy_with_state(
             project_requirements,
             &roots,
             Some(3),
+            deny_reads,
         ) {
             Ok(binding) => binding,
             Err(_) if best_effort => return unbound_launch(&next),
@@ -1623,10 +1851,9 @@ pub(crate) fn resolve_for_policy_with_state(
         next.variables.remove("CONDA_PREFIX");
         next.variables.remove("CONDA_DEFAULT_ENV");
         if kind == "conda" {
-            let conda = fs::read(session.join(format!("environment-observer-{generation}.json")))
-                .map_err(|e| e.to_string())?;
-            let ctx: Context = serde_json::from_slice(&conda).map_err(|e| e.to_string())?;
-            let tool = match find_conda(&ctx.launch.path, workspace) {
+            // Use the backend-owned launch PATH instead of reading the
+            // agent-writable observer context file from the session directory.
+            let tool = match find_conda(&launch.path, workspace) {
                 Ok(tool) => tool,
                 Err(_) if best_effort => return unbound_launch(&next),
                 Err(error) => return Err(error),
@@ -1660,7 +1887,7 @@ pub(crate) fn resolve_for_policy_with_state(
     } else if let Some(binding) = &launch.environment {
         let root_label = binding_root_label(launch, &roots).to_string();
         let root = root_for(&roots, &root_label)?;
-        match verify(
+        match verify_with_boundaries(
             root,
             &root_label,
             &binding.prefix,
@@ -1668,6 +1895,7 @@ pub(crate) fn resolve_for_policy_with_state(
             project_requirements,
             &roots,
             Some(3),
+            deny_reads,
         ) {
             Ok(verified) => next.environment = Some(verified),
             Err(_) if best_effort => return unbound_launch(&next),

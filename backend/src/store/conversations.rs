@@ -1,7 +1,7 @@
 //! Disposable sidebar projection: no Store::load, transcript hydration, Git
 //! inspection, schema changes or runtime lock. Only business metadata is reduced;
 //! the canonical reducer remains the authority for phase and active work.
-use crate::model::{apply, Event, Snapshot};
+use crate::model::{apply_without_metrics, Event, Snapshot};
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Serialize;
 use std::{
@@ -40,6 +40,7 @@ struct CachedRunEntry {
     max_sequence: i64,
     event_count: i64,
     outcome: CachedRunOutcome,
+    state: Option<Snapshot>,
 }
 
 struct Catalog {
@@ -81,7 +82,6 @@ pub fn conversation_summaries(path: &Path) -> Result<ConversationCatalog, String
         }
     };
     let mut catalog = catalog.lock().map_err(|e| e.to_string())?;
-    super::validate_database(&catalog.connection)?;
     let version: i64 = catalog
         .connection
         .query_row("PRAGMA data_version", [], |row| row.get(0))
@@ -89,6 +89,7 @@ pub fn conversation_summaries(path: &Path) -> Result<ConversationCatalog, String
     if catalog.version == Some(version) {
         return Ok(catalog.projection.clone());
     }
+    super::validate_database(&catalog.connection)?;
     refresh_summaries(&mut catalog, version)?;
     Ok(catalog.projection.clone())
 }
@@ -157,20 +158,40 @@ fn refresh_summaries(catalog: &mut Catalog, version: i64) -> Result<(), String> 
 
     let active_ids: HashSet<&str> = ordered_runs.iter().map(|(id, _, _)| id.as_str()).collect();
     let mut updated_entries: Vec<(String, CachedRunEntry)> = Vec::new();
-    for (id, max_sequence, event_count) in &ordered_runs {
-        let unchanged = catalog.runs.get(id).is_some_and(|cached| {
+    for (rank, (id, max_sequence, event_count)) in ordered_runs.iter().enumerate() {
+        let cached = catalog.runs.get(id);
+        if cached.is_some_and(|cached| {
             cached.max_sequence == *max_sequence && cached.event_count == *event_count
-        });
-        if unchanged {
+        }) {
             continue;
         }
-        let outcome = read_single_run_summary(&transaction, id)?;
+        let incremental_base = cached.and_then(|entry| {
+            (*max_sequence > entry.max_sequence && *event_count > entry.event_count)
+                .then(|| entry.state.as_ref().map(|s| (entry.max_sequence, s.clone())))
+                .flatten()
+        });
+        let (outcome, next_state) = match incremental_base {
+            Some((after_seq, state)) => {
+                read_single_run_summary_from(&transaction, id, after_seq, state)?
+            }
+            None => read_single_run_summary(&transaction, id)?,
+        };
+        // Bound cached incremental Snapshots to recent/active Runs so historical
+        // sidebar entries do not accumulate unbounded Snapshot state in RAM.
+        let keep_state = rank < 16
+            || matches!(
+                &outcome,
+                CachedRunOutcome::Summary(Some(summary))
+                    if summary.has_active_executions
+                        || !matches!(summary.phase.as_str(), "completed" | "rejected")
+            );
         updated_entries.push((
             id.clone(),
             CachedRunEntry {
                 max_sequence: *max_sequence,
                 event_count: *event_count,
                 outcome,
+                state: keep_state.then_some(next_state).flatten(),
             },
         ));
     }
@@ -205,7 +226,20 @@ fn refresh_summaries(catalog: &mut Catalog, version: i64) -> Result<(), String> 
 fn read_single_run_summary(
     transaction: &rusqlite::Transaction<'_>,
     id: &str,
-) -> Result<CachedRunOutcome, String> {
+) -> Result<(CachedRunOutcome, Option<Snapshot>), String> {
+    let state = Snapshot {
+        run_id: id.to_owned(),
+        ..Default::default()
+    };
+    read_single_run_summary_from(transaction, id, 0, state)
+}
+
+fn read_single_run_summary_from(
+    transaction: &rusqlite::Transaction<'_>,
+    id: &str,
+    after_sequence: i64,
+    mut state: Snapshot,
+) -> Result<(CachedRunOutcome, Option<Snapshot>), String> {
     // Keep at most one Run's business projection; omit heavy current fields.
     let mut statement = transaction
         .prepare_cached(
@@ -213,15 +247,13 @@ fn read_single_run_summary(
                 CASE WHEN json_valid(payload) THEN json_remove(payload,
                     '$.images','$.output','$.execution.output','$.execution.metrics','$.metrics')
                     ELSE NULL END
-             FROM events WHERE run_id = ?1
+             FROM events WHERE run_id = ?1 AND sequence > ?2
              ORDER BY sequence",
         )
         .map_err(|e| e.to_string())?;
-    let mut rows = statement.query(params![id]).map_err(|e| e.to_string())?;
-    let mut state = Snapshot {
-        run_id: id.to_owned(),
-        ..Default::default()
-    };
+    let mut rows = statement
+        .query(params![id, after_sequence])
+        .map_err(|e| e.to_string())?;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
         let sequence = row.get(0).map_err(|e| e.to_string())?;
         let timestamp = row.get(1).map_err(|e| e.to_string())?;
@@ -233,7 +265,7 @@ fn read_single_run_summary(
             // Invalid references in a damaged Run must not poison the cache
             // mutex or prevent unrelated Runs/settings from loading.
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                apply(
+                apply_without_metrics(
                     &mut state,
                     &Event {
                         sequence,
@@ -246,12 +278,13 @@ fn read_single_run_summary(
         });
         if !succeeded {
             eprintln!("[Pi^n] Sidebar metadata unavailable for Run {id}");
-            return Ok(CachedRunOutcome::Unavailable);
+            return Ok((CachedRunOutcome::Unavailable, None));
         }
         state.events.clear();
         state.run_metrics = None;
     }
-    Ok(CachedRunOutcome::Summary(build_summary(&state)))
+    let summary = build_summary(&state);
+    Ok((CachedRunOutcome::Summary(summary), Some(state)))
 }
 
 /// Upper bound on sidebar fallback titles derived from `original_goal`.

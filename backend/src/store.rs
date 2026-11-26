@@ -1,4 +1,4 @@
-use crate::model::{apply, now, Event, EventKind, Snapshot};
+use crate::model::{now, Event, EventKind, Snapshot};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
     cell::{Cell, RefCell},
@@ -184,6 +184,9 @@ pub(crate) fn incompatible_database_version(path: &Path) -> Result<Option<i64>, 
     }
     let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(10))
+        .map_err(|error| error.to_string())?;
     incompatible_version(&connection)
 }
 
@@ -213,6 +216,15 @@ pub(super) fn validate_database(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RunMetadataRow {
+    pub run_id: String,
+    pub repository: String,
+    pub plan_type: Option<String>,
+    pub phase: String,
+    pub undelivered_result: bool,
+}
+
 pub struct Store {
     connection: Connection,
     // Output batches count toward projection checkpoint cadence without ever
@@ -225,16 +237,16 @@ impl Store {
     pub fn open(path: &Path) -> Result<Self, String> {
         let _write_guard = store_write_guard()?;
         let connection = Connection::open(path).map_err(|error| error.to_string())?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(10))
+            .map_err(|error| error.to_string())?;
         if let Some(version) = incompatible_version(&connection)? {
             return Err(unsupported_database(version));
         }
         if database_version(&connection)? == FORMAT_VERSION {
             validate_database(&connection)?;
         }
-        connection
-            .busy_timeout(std::time::Duration::from_secs(10))
-            .map_err(|error| error.to_string())?;
-        connection.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+        connection.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
             BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS execution_logs (
                 run_id TEXT NOT NULL, execution_id TEXT NOT NULL, offset INTEGER NOT NULL,
@@ -244,6 +256,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, timestamp INTEGER NOT NULL, payload TEXT NOT NULL, planning_id TEXT, nested_planning_id TEXT, kind TEXT NOT NULL, execution_id TEXT);
             CREATE INDEX IF NOT EXISTS events_run ON events(run_id, sequence);
             CREATE TABLE IF NOT EXISTS checkpoints (run_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS run_metadata (run_id TEXT PRIMARY KEY, last_sequence INTEGER NOT NULL, repository TEXT NOT NULL, plan_type TEXT, phase TEXT NOT NULL, undelivered_result INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS workspace_selection (id INTEGER PRIMARY KEY CHECK(id=1), run_id TEXT);
             CREATE TABLE IF NOT EXISTS deleted_runs (run_id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS run_owned_directories (run_id TEXT NOT NULL, target TEXT NOT NULL, PRIMARY KEY(run_id,target));
@@ -276,10 +289,10 @@ impl Store {
     fn open_existing(path: &Path, flags: rusqlite::OpenFlags) -> Result<Self, String> {
         let connection =
             Connection::open_with_flags(path, flags).map_err(|error| error.to_string())?;
-        validate_database(&connection)?;
         connection
             .busy_timeout(std::time::Duration::from_secs(10))
             .map_err(|error| error.to_string())?;
+        validate_database(&connection)?;
         Ok(Self {
             connection,
             appended_since_checkpoint: Cell::new(0),
@@ -288,6 +301,14 @@ impl Store {
     }
 
     pub fn append(&self, state: &mut Snapshot, kind: EventKind) -> Result<(), String> {
+        self.append_events(state, vec![kind]).map(|_| ())
+    }
+
+    pub fn append_reporting_metrics(
+        &self,
+        state: &mut Snapshot,
+        kind: EventKind,
+    ) -> Result<bool, String> {
         self.append_events(state, vec![kind])
     }
 
@@ -297,17 +318,28 @@ impl Store {
         state: &mut Snapshot,
         kinds: Vec<EventKind>,
     ) -> Result<(), String> {
+        self.append_events(state, kinds).map(|_| ())
+    }
+
+    pub fn append_batch_reporting_metrics(
+        &mut self,
+        state: &mut Snapshot,
+        kinds: Vec<EventKind>,
+    ) -> Result<bool, String> {
         self.append_events(state, kinds)
     }
 
     /// Output writes also trigger checkpoints, retaining live pid/byte metadata.
-    fn note_appended(&self, state: &Snapshot, count: usize) {
+    fn note_appended(&self, state: &Snapshot, count: usize, update_metadata: bool) {
         let pending = self.appended_since_checkpoint.get() + count;
         if pending >= CHECKPOINT_INTERVAL {
             self.appended_since_checkpoint.set(0);
-            self.save_checkpoint(state);
+            self.save_checkpoint(state, update_metadata);
         } else {
             self.appended_since_checkpoint.set(pending);
+            if update_metadata {
+                self.upsert_run_metadata(state);
+            }
         }
     }
 
@@ -321,27 +353,130 @@ impl Store {
             .map_err(|error| error.to_string())
     }
 
+    fn run_metadata_fields(state: &Snapshot) -> Option<(i64, &str, Option<&str>, &str, i64)> {
+        let last = state.events.last()?;
+        let repository = state
+            .config
+            .as_ref()
+            .map(|c| c.repository.as_str())
+            .unwrap_or_default();
+        let undelivered = state.published_head.is_none()
+            && state.nodes.values().any(|node| {
+                node.status == "completed"
+                    && node.head.as_deref().is_some_and(|head| !head.is_empty())
+            });
+        Some((
+            last.sequence,
+            repository,
+            state.plan_type.as_deref(),
+            state.phase.as_str(),
+            i64::from(undelivered),
+        ))
+    }
+
+    fn upsert_run_metadata(&self, state: &Snapshot) {
+        let Some((last_sequence, repository, plan_type, phase, undelivered)) =
+            Self::run_metadata_fields(state)
+        else {
+            return;
+        };
+        let Ok(_guard) = store_write_guard() else {
+            return;
+        };
+        if self.run_was_deleted(&state.run_id).unwrap_or(true) {
+            return;
+        }
+        let _ = self.connection.execute(
+            "INSERT INTO run_metadata(run_id, last_sequence, repository, plan_type, phase, undelivered_result)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(run_id) DO UPDATE SET
+                last_sequence=excluded.last_sequence,
+                repository=excluded.repository,
+                plan_type=excluded.plan_type,
+                phase=excluded.phase,
+                undelivered_result=excluded.undelivered_result
+             WHERE excluded.last_sequence >= run_metadata.last_sequence",
+            params![
+                state.run_id,
+                last_sequence,
+                repository,
+                plan_type,
+                phase,
+                undelivered
+            ],
+        );
+    }
+
     // Checkpoints are optional accelerators. A failed write must not report a
     // committed event as failed; load can always replay the event log instead.
-    fn save_checkpoint(&self, state: &Snapshot) {
-        if let Some(last) = state.events.last() {
-            // Borrow the projection so checkpoint creation never clones the log.
-            // Transcripts remain in execution_logs and are never replayed.
-            let mut projection = crate::snapshot_view::checkpoint_projection(state);
-            let checksum = serde_json::to_vec(&projection)
-                .ok()
-                .and_then(|bytes| git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).ok());
-            let Some(checksum) = checksum else {
-                return;
-            };
-            projection["checksum"] = serde_json::json!(checksum.to_string());
-            if let Ok(payload) = serde_json::to_string(&projection) {
-                let _ = self.connection.execute(
+    fn save_checkpoint(&self, state: &Snapshot, update_metadata: bool) {
+        let Some(last) = state.events.last() else {
+            return;
+        };
+        // Build and serialize the checkpoint once outside STORE_WRITE_LOCK.
+        let projection = crate::snapshot_view::checkpoint_projection(state);
+        let Ok(mut bytes) = serde_json::to_vec(&projection) else {
+            return;
+        };
+        let Ok(checksum) = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes) else {
+            return;
+        };
+        if bytes.last() != Some(&b'}') {
+            return;
+        }
+        bytes.pop();
+        let suffix = format!(",\"checksum\":\"{checksum}\"}}");
+        bytes.extend_from_slice(suffix.as_bytes());
+        let Ok(payload) = String::from_utf8(bytes) else {
+            return;
+        };
+        let metadata = update_metadata
+            .then(|| Self::run_metadata_fields(state))
+            .flatten();
+        let Ok(_guard) = store_write_guard() else {
+            return;
+        };
+        if self.run_was_deleted(&state.run_id).unwrap_or(true) {
+            return;
+        }
+        if let Some((last_sequence, repository, plan_type, phase, undelivered)) = metadata {
+            if let Ok(tx) = self.connection.unchecked_transaction() {
+                let cp = tx.execute(
                     "INSERT INTO checkpoints(run_id, sequence, payload) VALUES (?1, ?2, ?3)
-                     ON CONFLICT(run_id) DO UPDATE SET sequence=excluded.sequence, payload=excluded.payload",
+                     ON CONFLICT(run_id) DO UPDATE SET sequence=excluded.sequence, payload=excluded.payload
+                     WHERE excluded.sequence >= checkpoints.sequence",
                     params![state.run_id, last.sequence, payload],
                 );
+                let md = tx.execute(
+                    "INSERT INTO run_metadata(run_id, last_sequence, repository, plan_type, phase, undelivered_result)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(run_id) DO UPDATE SET
+                        last_sequence=excluded.last_sequence,
+                        repository=excluded.repository,
+                        plan_type=excluded.plan_type,
+                        phase=excluded.phase,
+                        undelivered_result=excluded.undelivered_result
+                     WHERE excluded.last_sequence >= run_metadata.last_sequence",
+                    params![
+                        state.run_id,
+                        last_sequence,
+                        repository,
+                        plan_type,
+                        phase,
+                        undelivered
+                    ],
+                );
+                if cp.is_ok() && md.is_ok() {
+                    let _ = tx.commit();
+                }
             }
+        } else {
+            let _ = self.connection.execute(
+                "INSERT INTO checkpoints(run_id, sequence, payload) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(run_id) DO UPDATE SET sequence=excluded.sequence, payload=excluded.payload
+                 WHERE excluded.sequence >= checkpoints.sequence",
+                params![state.run_id, last.sequence, payload],
+            );
         }
     }
 
@@ -425,29 +560,190 @@ impl Store {
         runs
     }
 
+    fn load_valid_checkpoint(&self, run_id: &str) -> Option<(i64, Snapshot)> {
+        let (sequence, payload): (i64, String) = self
+            .connection
+            .query_row(
+                "SELECT c.sequence, c.payload FROM checkpoints c
+                 WHERE c.run_id=?1 AND EXISTS(
+                     SELECT 1 FROM events e WHERE e.run_id=c.run_id AND e.sequence=c.sequence
+                 )",
+                [run_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .ok()?;
+        let mut value: serde_json::Value = serde_json::from_str(&payload).ok()?;
+        if value["formatVersion"] != 1 {
+            return None;
+        }
+        let checksum = value.as_object_mut()?.remove("checksum")?;
+        let bytes = serde_json::to_vec(&value).ok()?;
+        let expected = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).ok()?;
+        if checksum.as_str() != Some(expected.to_string().as_str()) {
+            return None;
+        }
+        serde_json::from_value::<Snapshot>(value)
+            .ok()
+            .filter(|state| {
+                state.run_id == run_id
+                    && (state.events.is_empty()
+                        || state.events.last().map(|e| e.sequence) == Some(sequence))
+            })
+            .map(|state| (sequence, state))
+    }
+
+    /// Lightweight metadata-only load using checkpoint + tail events only.
+    /// Never hydrates historical `events` or queries `execution_logs`.
+    fn load_run_metadata_only(&self, run_id: &str) -> Result<RunMetadataRow, String> {
+        let (sequence, mut state) = self.load_valid_checkpoint(run_id).unwrap_or_else(|| {
+            (
+                0,
+                Snapshot {
+                    run_id: run_id.into(),
+                    ..Snapshot::default()
+                },
+            )
+        });
+        let mut statement = self
+            .connection
+            .prepare_cached(
+                "SELECT sequence, timestamp, payload FROM events WHERE run_id=?1 AND sequence>?2 ORDER BY sequence",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params![run_id, sequence], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        for row in rows {
+            let (event_sequence, timestamp, payload) = row.map_err(|error| error.to_string())?;
+            let kind = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            let event = Event {
+                sequence: event_sequence,
+                timestamp,
+                kind,
+            };
+            crate::model::apply_without_metrics(&mut state, &event);
+            state.events.clear();
+        }
+        let repository = state
+            .config
+            .as_ref()
+            .map(|c| c.repository.clone())
+            .unwrap_or_default();
+        let undelivered_result = state.published_head.is_none()
+            && state.nodes.values().any(|node| {
+                node.status == "completed"
+                    && node.head.as_deref().is_some_and(|head| !head.is_empty())
+            });
+        Ok(RunMetadataRow {
+            run_id: run_id.to_owned(),
+            repository,
+            plan_type: state.plan_type,
+            phase: state.phase,
+            undelivered_result,
+        })
+    }
+
+    pub(crate) fn run_metadata_entries(&self) -> Result<Vec<RunMetadataRow>, String> {
+        let has_table: bool = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_metadata')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let mut entries = Vec::new();
+        if has_table {
+            let mut stmt = self
+                .connection
+                .prepare_cached(
+                    "SELECT e.run_id, MAX(e.sequence), m.last_sequence, m.repository, m.plan_type, m.phase, m.undelivered_result
+                     FROM events e
+                     LEFT JOIN run_metadata m ON m.run_id = e.run_id
+                     WHERE e.run_id NOT IN (SELECT run_id FROM deleted_runs)
+                     GROUP BY e.run_id
+                     ORDER BY MAX(e.sequence) DESC",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                    ))
+                })
+                .map_err(|error| error.to_string())?;
+            let mut stale = Vec::new();
+            for row in rows {
+                let (run_id, max_seq, cached_seq, repo, plan_type, phase, undelivered) =
+                    row.map_err(|error| error.to_string())?;
+                if cached_seq == Some(max_seq) {
+                    entries.push(RunMetadataRow {
+                        run_id,
+                        repository: repo.unwrap_or_default(),
+                        plan_type,
+                        phase: phase.unwrap_or_default(),
+                        undelivered_result: undelivered.unwrap_or(0) != 0,
+                    });
+                } else {
+                    stale.push((entries.len(), run_id));
+                    entries.push(RunMetadataRow::default());
+                }
+            }
+            for (idx, run_id) in stale {
+                entries[idx] = self.load_run_metadata_only(&run_id)?;
+            }
+            return Ok(entries);
+        }
+        let deleted: std::collections::HashSet<String> =
+            self.deleted_runs()?.into_iter().collect();
+        for run_id in self.runs()? {
+            if deleted.contains(&run_id) {
+                continue;
+            }
+            entries.push(self.load_run_metadata_only(&run_id)?);
+        }
+        Ok(entries)
+    }
+
+    pub fn runs_for_repository(&self, repository: &str) -> Result<Vec<String>, String> {
+        let mut ids = Vec::new();
+        for entry in self.run_metadata_entries()? {
+            if !entry.repository.is_empty()
+                && crate::path_identity::same_repository_binding(&entry.repository, repository)
+            {
+                ids.push(entry.run_id);
+            }
+        }
+        Ok(ids)
+    }
+
     pub fn has_other_run_for_repository(
         &self,
         excluded_run_id: &str,
         repository: &Path,
     ) -> Result<bool, String> {
-        let run_ids = self
-            .runs()?
-            .into_iter()
-            .filter(|run_id| run_id != excluded_run_id)
-            .collect::<Vec<_>>();
-        for run_id in run_ids {
-            let state = self.load(&run_id)?;
-            let Some(config) = state.config else {
+        for entry in self.run_metadata_entries()? {
+            if entry.run_id == excluded_run_id || entry.repository.is_empty() {
                 continue;
-            };
-            let candidate = Path::new(&config.repository);
+            }
+            let candidate = Path::new(&entry.repository);
             let matches_repo = candidate == repository
                 || crate::path_identity::same_path(candidate, repository)
-                || repository
-                    .to_str()
-                    .is_some_and(|repo_str| {
-                        crate::path_identity::same_repository_binding(&config.repository, repo_str)
-                    });
+                || repository.to_str().is_some_and(|repo_str| {
+                    crate::path_identity::same_repository_binding(&entry.repository, repo_str)
+                });
             if matches_repo {
                 return Ok(true);
             }
@@ -459,38 +755,7 @@ impl Store {
         if !self.contains_run(run_id)? {
             return Err(format!("Run does not exist: {run_id}"));
         }
-        let checkpoint = self
-            .connection
-            .query_row(
-                "SELECT c.sequence, c.payload FROM checkpoints c
-                 WHERE c.run_id=?1 AND EXISTS(
-                     SELECT 1 FROM events e WHERE e.run_id=c.run_id AND e.sequence=c.sequence
-                 )",
-                [run_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-            )
-            .ok()
-            .and_then(|(sequence, payload)| {
-                let mut value: serde_json::Value = serde_json::from_str(&payload).ok()?;
-                if value["formatVersion"] != 1 {
-                    return None;
-                }
-                let checksum = value.as_object_mut()?.remove("checksum")?;
-                let bytes = serde_json::to_vec(&value).ok()?;
-                let expected = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).ok()?;
-                if checksum.as_str() != Some(expected.to_string().as_str()) {
-                    return None;
-                }
-                serde_json::from_str::<Snapshot>(&payload)
-                    .ok()
-                    .filter(|state| {
-                        state.run_id == run_id
-                            && (state.events.is_empty()
-                                || state.events.last().map(|e| e.sequence) == Some(sequence))
-                    })
-                    .map(|state| (sequence, state))
-            });
-        let (sequence, mut state) = checkpoint.unwrap_or_else(|| {
+        let (sequence, mut state) = self.load_valid_checkpoint(run_id).unwrap_or_else(|| {
             (
                 0,
                 Snapshot {
@@ -505,7 +770,7 @@ impl Store {
         }
         let mut statement = self
             .connection
-            .prepare(
+            .prepare_cached(
                 "SELECT sequence, timestamp, payload FROM events WHERE run_id=?1 ORDER BY sequence",
             )
             .map_err(|error| error.to_string())?;
@@ -527,17 +792,18 @@ impl Store {
                 kind,
             };
             if event_sequence > sequence {
-                apply(&mut state, &event);
+                crate::model::apply_without_metrics(&mut state, &event);
             } else {
                 state.events.push(event);
             }
         }
         state.rebuild_planning_turns();
         state.backfill_consumed_tokens();
+        let log_totals = self.all_log_bytes(run_id)?;
         for execution in state.executions.iter_mut().chain(state.mergers.iter_mut()) {
-            execution.output_bytes = execution
-                .output_bytes
-                .max(self.log_bytes(run_id, &execution.id)?);
+            if let Some(&bytes) = log_totals.get(&execution.id) {
+                execution.output_bytes = execution.output_bytes.max(bytes);
+            }
             execution.output = String::new();
         }
         state.run_metrics = Some(state.compute_run_metrics());
@@ -573,37 +839,41 @@ impl Store {
         &self,
         runs: impl IntoIterator<Item = (&'a str, Option<&'a crate::cleanup::Manifest>)>,
     ) -> Result<(), String> {
-        let _write_guard = store_write_guard()?;
-        let tx = self
-            .connection
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
         let mut deleted = Vec::new();
-        for (run_id, cleanup) in runs {
-            // Ownership and tombstones commit with ALL event/log deletions.
-            // A crash or locked file after commit cannot orphan cleanup.
-            if let Some(cleanup) = cleanup {
-                self.insert_cleanup(&tx, run_id, cleanup)?;
+        {
+            let _write_guard = store_write_guard()?;
+            let tx = self
+                .connection
+                .unchecked_transaction()
+                .map_err(|e| e.to_string())?;
+            for (run_id, cleanup) in runs {
+                // Ownership and tombstones commit with ALL event/log deletions.
+                // A crash or locked file after commit cannot orphan cleanup.
+                if let Some(cleanup) = cleanup {
+                    self.insert_cleanup(&tx, run_id, cleanup)?;
+                }
+                tx.execute(
+                    "INSERT OR IGNORE INTO deleted_runs(run_id) VALUES(?1)",
+                    [run_id],
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute(
+                    "UPDATE workspace_selection SET run_id=NULL WHERE run_id=?1",
+                    [run_id],
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM checkpoints WHERE run_id=?1", [run_id])
+                    .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM run_metadata WHERE run_id=?1", [run_id])
+                    .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM events WHERE run_id=?1", [run_id])
+                    .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM execution_logs WHERE run_id=?1", [run_id])
+                    .map_err(|e| e.to_string())?;
+                deleted.push(run_id);
             }
-            tx.execute(
-                "INSERT OR IGNORE INTO deleted_runs(run_id) VALUES(?1)",
-                [run_id],
-            )
-            .map_err(|e| e.to_string())?;
-            tx.execute(
-                "UPDATE workspace_selection SET run_id=NULL WHERE run_id=?1",
-                [run_id],
-            )
-            .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM checkpoints WHERE run_id=?1", [run_id])
-                .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM events WHERE run_id=?1", [run_id])
-                .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM execution_logs WHERE run_id=?1", [run_id])
-                .map_err(|e| e.to_string())?;
-            deleted.push(run_id);
+            tx.commit().map_err(|e| e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
         for run_id in deleted {
             crate::file_changes::invalidate_run(run_id);
         }
@@ -620,36 +890,41 @@ impl Store {
         &self,
         cleanups: &[(String, crate::cleanup::Manifest)],
     ) -> Result<(), String> {
-        let _write_guard = store_write_guard()?;
-        let tx = self
-            .connection
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
-        for (run_id, cleanup) in cleanups {
-            self.insert_cleanup(&tx, run_id, cleanup)?;
+        let cleared = {
+            let _write_guard = store_write_guard()?;
+            let tx = self
+                .connection
+                .unchecked_transaction()
+                .map_err(|e| e.to_string())?;
+            for (run_id, cleanup) in cleanups {
+                self.insert_cleanup(&tx, run_id, cleanup)?;
+                tx.execute(
+                    "INSERT OR IGNORE INTO deleted_runs(run_id) VALUES(?1)",
+                    [run_id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
             tx.execute(
-                "INSERT OR IGNORE INTO deleted_runs(run_id) VALUES(?1)",
-                [run_id],
+                "INSERT OR IGNORE INTO deleted_runs(run_id) SELECT DISTINCT run_id FROM events",
+                [],
             )
             .map_err(|e| e.to_string())?;
-        }
-        tx.execute(
-            "INSERT OR IGNORE INTO deleted_runs(run_id) SELECT DISTINCT run_id FROM events",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-        tx.execute("INSERT INTO workspace_selection(id,run_id) VALUES(1,NULL) ON CONFLICT(id) DO UPDATE SET run_id=NULL", [])
-            .map_err(|e| e.to_string())?;
-        // Include newly tombstoned Runs and provisional cleanup owners, but
-        // never invalidate live accumulators belonging to another data store.
-        let cleared = self.deleted_runs()?;
-        tx.execute("DELETE FROM checkpoints", [])
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM events", [])
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM execution_logs", [])
-            .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
+            tx.execute("INSERT INTO workspace_selection(id,run_id) VALUES(1,NULL) ON CONFLICT(id) DO UPDATE SET run_id=NULL", [])
+                .map_err(|e| e.to_string())?;
+            // Include newly tombstoned Runs and provisional cleanup owners, but
+            // never invalidate live accumulators belonging to another data store.
+            let cleared = self.deleted_runs()?;
+            tx.execute("DELETE FROM checkpoints", [])
+                .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM run_metadata", [])
+                .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM events", [])
+                .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM execution_logs", [])
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            cleared
+        };
         for run_id in cleared {
             crate::file_changes::invalidate_run(&run_id);
         }
@@ -661,9 +936,6 @@ impl Store {
     fn reclaim_deleted_pages(&self) {
         // Best effort after the delete commits: errors must not leave callers
         // believing a committed deletion failed (or retaining stale Services).
-        let _ = self
-            .connection
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         // rusqlite::execute_batch steps a row-producing PRAGMA only once.
         // incremental_vacuum yields after EACH reclaimed page, so consume it
         // fully. Bound work to 4096 pages (~16 MiB at the default page size)

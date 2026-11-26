@@ -2100,3 +2100,170 @@ fn orphan_shadow_and_publication_pruning_reclaim_only_unreferenced_settled_artif
     assert!(unsettled_dir.is_dir(), "unsettled publication journal must survive");
     assert!(foreign_dir.is_dir(), "dir with non-publication checkout must survive");
 }
+
+#[test]
+fn publication_journal_settled_fails_closed_on_non_not_found_errors() {
+    let temp = tempfile::tempdir().unwrap();
+    // Missing journal directory is genuinely absent -> settled.
+    assert!(crate::cleanup::publication_journal_settled(
+        &temp.path().join("missing.publication")
+    ));
+
+    // A regular file where a journal directory is expected triggers a non-NotFound
+    // `read_dir` error (`ENOTDIR`) and must fail closed (`false`).
+    let file_path = temp.path().join("not-a-dir.publication");
+    fs::write(&file_path, "corrupt").unwrap();
+    assert!(!crate::cleanup::publication_journal_settled(&file_path));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let locked = temp.path().join("locked.publication");
+        fs::create_dir_all(&locked).unwrap();
+        let original = fs::metadata(&locked).unwrap().permissions();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root can still read mode 000 directories; skip assertion only when unreadable check isn't enforced.
+        if fs::read_dir(&locked).is_err() {
+            assert!(!crate::cleanup::publication_journal_settled(&locked));
+        }
+        fs::set_permissions(&locked, original).unwrap();
+    }
+}
+
+#[test]
+fn prune_orphaned_shadow_repos_respects_shadow_use_lock_and_abort_guard() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("data");
+    fs::create_dir_all(&root).unwrap();
+    let store = crate::store::Store::open(&root.join("events.sqlite")).unwrap();
+
+    let orphan_source = temp.path().join("orphan-plain");
+    fs::create_dir(&orphan_source).unwrap();
+    let orphan_name = crate::workspace::shadow_repo_dir(&orphan_source)
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let orphan_shadow = root.join("shadow_repos").join(&orphan_name);
+    fs::create_dir_all(&orphan_shadow).unwrap();
+
+    // Holding a shared shadow_use_lock read guard prevents background GC from
+    // removing the shadow repository while a snapshot/materialization is in progress.
+    {
+        let shadow_lock = crate::workspace::shadow_use_lock(&orphan_shadow).unwrap();
+        let _active_reader = shadow_lock.read().unwrap();
+        assert_eq!(
+            crate::cleanup::prune_orphaned_shadow_repos_with_guard(
+                &root,
+                &store,
+                std::time::Duration::ZERO,
+                || false,
+            )
+            .unwrap(),
+            0
+        );
+        assert!(orphan_shadow.is_dir());
+    }
+
+    // Abort guard stops deletion before removing any candidate.
+    assert_eq!(
+        crate::cleanup::prune_orphaned_shadow_repos_with_guard(
+            &root,
+            &store,
+            std::time::Duration::ZERO,
+            || true,
+        )
+        .unwrap(),
+        0
+    );
+    assert!(orphan_shadow.is_dir());
+
+    // Once unguarded and unlocked, the idle orphan is reclaimed.
+    assert_eq!(
+        crate::cleanup::prune_orphaned_shadow_repos_with_guard(
+            &root,
+            &store,
+            std::time::Duration::ZERO,
+            || false,
+        )
+        .unwrap(),
+        1
+    );
+    assert!(!orphan_shadow.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn shadow_repo_idle_detects_recent_activity_in_runs_published_packed_refs_worktrees_and_objects() {
+    let temp = tempfile::tempdir().unwrap();
+    let shadow = temp.path().join("shadow");
+    let dirs = [
+        shadow.clone(),
+        shadow.join("refs"),
+        shadow.join("refs/heads"),
+        shadow.join("refs/pi-n"),
+        shadow.join("refs/pi-n/runs"),
+        shadow.join("refs/pi-n/runs/run-1"),
+        shadow.join("refs/pi-n/published"),
+        shadow.join("objects"),
+        shadow.join("objects/ab"),
+        shadow.join("worktrees"),
+        shadow.join("logs"),
+    ];
+    for dir in &dirs {
+        fs::create_dir_all(dir).unwrap();
+    }
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+    let age_all = |root: &std::path::Path| {
+        let mut stack = vec![root.to_path_buf()];
+        let mut order = Vec::new();
+        while let Some(dir) = stack.pop() {
+            order.push(dir.clone());
+            if let Ok(entries) = fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
+                        let _ = file.set_modified(old);
+                    }
+                }
+            }
+        }
+        // Backdate deepest directories first so parent mtime isn't bumped afterward.
+        for dir in order.into_iter().rev() {
+            if let Ok(file) = fs::File::open(&dir) {
+                let _ = file.set_modified(old);
+            }
+        }
+    };
+
+    let min_age = std::time::Duration::from_secs(600);
+    age_all(&shadow);
+    assert!(crate::cleanup::shadow_repo_idle(&shadow, min_age));
+
+    // Each of these paths must mark the shadow repo as active (not idle).
+    let fresh_probes = [
+        shadow.join("packed-refs"),
+        shadow.join("refs/pi-n/runs/run-1/node-a"),
+        shadow.join("refs/pi-n/published/result"),
+        shadow.join("worktrees/slot-1"),
+        shadow.join("objects/ab/cdef0123456789"),
+    ];
+    for probe in fresh_probes {
+        age_all(&shadow);
+        assert!(crate::cleanup::shadow_repo_idle(&shadow, min_age));
+        fs::write(&probe, "fresh").unwrap();
+        // Reset top-level shadow mtime back to `old` so detection must come
+        // from the specific sub-path probe rather than top-level directory mtime.
+        if let Ok(file) = fs::File::open(&shadow) {
+            let _ = file.set_modified(old);
+        }
+        assert!(
+            !crate::cleanup::shadow_repo_idle(&shadow, min_age),
+            "fresh write at {} must mark shadow repo non-idle",
+            probe.display()
+        );
+    }
+}

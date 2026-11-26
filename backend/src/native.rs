@@ -1230,7 +1230,8 @@ pub(crate) fn execution_command_scoped(
     if crate::path_identity::same_path(&source, &current) {
         return command(role, &source, &current);
     }
-    crate::workspace_view::validate_ready(&current, &source)?;
+    // `validate_workspace(role, repository, cwd)` above already called
+    // `workspace_view::validate_ready` for non-source workspaces.
     crate::workspace_state::prepare(&current)?;
     let worktree_root = current
         .parent()

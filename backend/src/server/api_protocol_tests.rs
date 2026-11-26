@@ -46,19 +46,27 @@ fn browser_terminal_http_runs_in_workspace_replays_output_and_checks_origin() {
     let id = created["result"]["sessionId"].as_str().unwrap();
     assert!(post("terminal_resize", json!({"sessionId":id,"cols":100,"rows":32}), &origin).starts_with("HTTP/1.1 200"));
     assert!(post("terminal_write", json!({"sessionId":id,"data":"printf 'web-%s\\n' terminal-ready > pty-proof.txt; exit\r"}), &origin).starts_with("HTTP/1.1 200"));
+    // A shell may echo typed input one character at a time, so output can span
+    // many 32-chunk pages. Follow the cursor as the browser does; `exited` is
+    // only reported on the page that reaches the end of the output.
     let deadline = Instant::now() + Duration::from_secs(8);
-    let final_page = loop {
-        let response = post("terminal_read", json!({"sessionId":id,"cursor":0}), &origin);
+    let mut cursor = 0u64;
+    let mut total_chunks = 0usize;
+    let (final_page, final_cursor) = loop {
+        let response = post("terminal_read", json!({"sessionId":id,"cursor":cursor}), &origin);
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
         let page: serde_json::Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
-        if page["result"]["exited"] == true { break page; }
-        assert!(Instant::now() < deadline, "shell did not exit");
-        std::thread::sleep(Duration::from_millis(20));
+        total_chunks += page["result"]["chunks"].as_array().unwrap().len();
+        if page["result"]["exited"] == true { break (page, cursor); }
+        assert!(Instant::now() < deadline, "shell did not exit: {page}");
+        let next = page["result"]["cursor"].as_u64().unwrap();
+        if page["result"]["more"] != true { std::thread::sleep(Duration::from_millis(20)); }
+        cursor = next;
     };
     assert_eq!(final_page["result"]["exitCode"], 0);
-    assert!(!final_page["result"]["chunks"].as_array().unwrap().is_empty());
+    assert!(total_chunks > 0);
     assert_eq!(fs::read_to_string(temp.path().join("pty-proof.txt")).unwrap(), "web-terminal-ready\n");
-    let replay = post("terminal_read", json!({"sessionId":id,"cursor":0}), &origin);
+    let replay = post("terminal_read", json!({"sessionId":id,"cursor":final_cursor}), &origin);
     let replay: serde_json::Value = serde_json::from_str(replay.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(replay, final_page);
     assert!(post("terminal_kill", json!({"sessionId":id}), &origin).starts_with("HTTP/1.1 200"));

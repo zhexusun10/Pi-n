@@ -266,12 +266,19 @@ pub(super) fn publish_batch(
             eprintln!("Cannot retire idle batch workspace slots: {error}");
         }
     }
-    if runtime.state.phase == "completed" {
-        if let Err(error) = runtime.prune_stale_environment_snapshots() {
+    let env_prune_plan = if runtime.state.phase == "completed" {
+        runtime.plan_stale_environment_snapshot_prune()
+    } else {
+        None
+    };
+    drop(runtime);
+    if let Some((store, retained_env_refs, retained_launch_refs)) = env_prune_plan {
+        if let Err(error) =
+            store.prune_unreferenced_snapshots(&retained_env_refs, &retained_launch_refs)
+        {
             eprintln!("Cannot prune stale environment snapshots: {error}");
         }
     }
-    drop(runtime);
     crate::file_changes::record_publication_git_changes(
         run_id,
         &repository,

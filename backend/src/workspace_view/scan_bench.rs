@@ -242,7 +242,7 @@ fn snapshot_staging_benchmark() {
             scan(&root, Path::new(""), &mut entries, false).unwrap();
             scans.push(started.elapsed());
             let started = Instant::now();
-            stage_project_entries(&root, &metadata, entries).unwrap();
+            stage_project_entries(&root, &metadata, &entries).unwrap();
             stages.push(started.elapsed());
             assert_eq!(workspace::git(&root, &prefix).unwrap(), expected);
         }

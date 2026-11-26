@@ -108,27 +108,31 @@ pub fn downstream(graph: &Graph, start: &str) -> BTreeSet<String> {
     seen
 }
 
-fn alternate_dependency_path(graph: &Graph, from: &str, to: &str) -> Option<Vec<String>> {
-    let mut queue = VecDeque::from([from.to_string()]);
-    let mut previous = BTreeMap::<String, Option<String>>::from([(from.to_string(), None)]);
+fn alternate_dependency_path(
+    adj: &BTreeMap<&str, BTreeSet<&str>>,
+    from: &str,
+    to: &str,
+) -> Option<Vec<String>> {
+    let mut queue = VecDeque::from([from]);
+    let mut previous = BTreeMap::<&str, Option<&str>>::from([(from, None)]);
     while let Some(name) = queue.pop_front() {
-        let neighbors: BTreeSet<_> = graph
-            .edges
-            .iter()
-            .filter(|edge| {
-                !edge.feedback && edge.from == name && !(edge.from == from && edge.to == to)
-            })
-            .map(|edge| edge.to.clone())
-            .collect();
-        for next in neighbors {
-            if previous.contains_key(&next) {
+        let Some(neighbors) = adj.get(name) else {
+            continue;
+        };
+        for &next in neighbors {
+            if name == from && next == to {
                 continue;
             }
-            previous.insert(next.clone(), Some(name.clone()));
+            if previous.contains_key(next) {
+                continue;
+            }
+            previous.insert(next, Some(name));
             if next == to {
-                let mut path = vec![next];
-                while let Some(Some(parent)) = path.last().and_then(|last| previous.get(last)) {
-                    path.push(parent.clone());
+                let mut path = vec![next.to_string()];
+                let mut cur = next;
+                while let Some(Some(parent)) = previous.get(cur) {
+                    path.push((*parent).to_string());
+                    cur = *parent;
                 }
                 path.reverse();
                 return Some(path);
@@ -374,8 +378,15 @@ pub fn compile(graph: &Graph, final_check: bool) -> Result<Plan, Vec<Diagnostic>
     if !errors.is_empty() {
         return Err(errors);
     }
+    let mut dep_adj: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for edge in &dependencies {
-        if let Some(path) = alternate_dependency_path(graph, &edge.from, &edge.to) {
+        dep_adj
+            .entry(edge.from.as_str())
+            .or_default()
+            .insert(edge.to.as_str());
+    }
+    for edge in &dependencies {
+        if let Some(path) = alternate_dependency_path(&dep_adj, &edge.from, &edge.to) {
             errors.push(Diagnostic {
                 code: "E209".into(),
                 message: format!(

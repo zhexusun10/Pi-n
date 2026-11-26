@@ -1334,8 +1334,15 @@ button.session-label-toggle:focus-visible {
   background: var(--bg-canvas);
   border-radius: var(--radius-surface);
   overflow: hidden;
-  box-shadow: var(--surface-card-shadow);
+  box-shadow: var(--shell-card-shadow);
   position: relative;
+  isolation: isolate;
+  /* Keep the workbench and its overflowing outer shadow on their own
+     compositing layer so unmounting it cannot leave stale shadow tiles in
+     .main's left gutter beside .sidebar in WKWebView. */
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
   /* The graph's inner canvas uses this width, not its animated aperture, so it
      stays measured at the final split size while the pane opens and closes. */
   container-type: inline-size;

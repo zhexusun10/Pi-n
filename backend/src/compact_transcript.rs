@@ -724,7 +724,11 @@ fn compact_message_update(
             ))
         }
         "toolcall_start" => {
+            const MAX_TOOLCALL_CONTENT_INDEX: u64 = 1024;
             let content_index = inner.get("contentIndex").and_then(Value::as_u64)?;
+            if content_index > MAX_TOOLCALL_CONTENT_INDEX {
+                return None;
+            }
             let part = inner
                 .get("partial")
                 .and_then(|p| p.get("content"))
@@ -1164,8 +1168,26 @@ pub fn compact_transcript_chunk_with_options(
     projection: TranscriptProjection,
     settled: bool,
 ) -> String {
-    let mut out = String::new();
     let mut in_final_response = false;
+    compact_transcript_chunk_stateful(
+        raw,
+        base_offset,
+        leading_fragment,
+        projection,
+        settled,
+        &mut in_final_response,
+    )
+}
+
+fn compact_transcript_chunk_stateful(
+    raw: &str,
+    base_offset: usize,
+    leading_fragment: bool,
+    projection: TranscriptProjection,
+    settled: bool,
+    in_final_response: &mut bool,
+) -> String {
+    let mut out = String::new();
     let mut offset = base_offset;
     let mut first = true;
     let mut pending = PendingTurnBuffer::default();
@@ -1186,13 +1208,13 @@ pub fn compact_transcript_chunk_with_options(
 
         let trimmed = clean.trim();
         if trimmed.is_empty() {
-            if in_final_response {
+            if *in_final_response {
                 out.push('\n');
             }
             continue;
         }
 
-        if in_final_response {
+        if *in_final_response {
             if trimmed.starts_with('{')
                 && trimmed.contains(r#""pi_n_planning_source""#)
                 && serde_json::from_str::<Value>(trimmed)
@@ -1204,7 +1226,7 @@ pub fn compact_transcript_chunk_with_options(
                     })
                     .unwrap_or(false)
             {
-                in_final_response = false;
+                *in_final_response = false;
                 out.push_str(trimmed);
                 out.push('\n');
             } else {
@@ -1220,7 +1242,7 @@ pub fn compact_transcript_chunk_with_options(
             || strip_ansi_csi(trimmed).trim() == FINAL_RESPONSE_MARKER
         {
             pending.flush_all(&mut out);
-            in_final_response = true;
+            *in_final_response = true;
             out.push_str(clean);
             out.push('\n');
             continue;
@@ -1345,13 +1367,50 @@ where
     if end == 0 {
         return Ok((String::new(), 0));
     }
+    struct TailChunk {
+        base_offset: usize,
+        raw: Option<String>,
+        compacted: String,
+        ended_in_final: bool,
+    }
+    const MAX_RETAINED_RAW_BYTES: usize = 8 * 1024 * 1024;
     let mut cursor = end;
     let mut tail_carry = String::new();
     let mut tail_carry_bytes = 0usize;
     let mut discarding_oversized_line = false;
-    let mut chunks: Vec<String> = Vec::new();
+    let mut chunks: Vec<TailChunk> = Vec::new();
+    let mut retained_raw_bytes = 0usize;
     let mut compacted_bytes = 0usize;
     let mut raw_scanned = 0usize;
+
+    let push_chunk = |chunks: &mut Vec<TailChunk>,
+                      retained_raw_bytes: &mut usize,
+                      compacted_bytes: &mut usize,
+                      body: &str,
+                      base_offset: usize| {
+        let mut ended_in_final = false;
+        let compacted = compact_transcript_chunk_stateful(
+            body,
+            base_offset,
+            false,
+            projection,
+            settled,
+            &mut ended_in_final,
+        );
+        *compacted_bytes += compacted.len();
+        let raw = if *retained_raw_bytes + body.len() <= MAX_RETAINED_RAW_BYTES {
+            *retained_raw_bytes += body.len();
+            Some(body.to_string())
+        } else {
+            None
+        };
+        chunks.push(TailChunk {
+            base_offset,
+            raw,
+            compacted,
+            ended_in_final,
+        });
+    };
 
     while cursor > 0
         && (compacted_bytes < compact_limit || discarding_oversized_line)
@@ -1395,11 +1454,13 @@ where
         tail_carry_bytes = 0;
 
         if chunk_start == 0 {
-            let compacted =
-                compact_transcript_chunk_with_options(&combined, 0, false, projection, settled);
-            if !compacted.is_empty() {
-                chunks.push(compacted);
-            }
+            push_chunk(
+                &mut chunks,
+                &mut retained_raw_bytes,
+                &mut compacted_bytes,
+                &combined,
+                0,
+            );
             cursor = 0;
             break;
         }
@@ -1408,17 +1469,13 @@ where
             let prefix_len = first_nl + 1;
             let body = &combined[prefix_len..];
             if !body.is_empty() {
-                let compacted = compact_transcript_chunk_with_options(
+                push_chunk(
+                    &mut chunks,
+                    &mut retained_raw_bytes,
+                    &mut compacted_bytes,
                     body,
                     chunk_start + prefix_len,
-                    false,
-                    projection,
-                    settled,
                 );
-                compacted_bytes += compacted.len();
-                if !compacted.is_empty() {
-                    chunks.push(compacted);
-                }
             }
             if prefix_len <= MAX_SPLIT_LINE_CARRY_BYTES {
                 tail_carry = combined[..prefix_len].to_string();
@@ -1435,6 +1492,30 @@ where
         cursor = chunk_start;
     }
 
+    // Propagate `in_final_response` forward across chunk boundaries so JSON or
+    // blank lines inside a multi-chunk final response are preserved intact.
+    if chunks.iter().any(|c| c.ended_in_final) {
+        let mut in_final = false;
+        for chunk in chunks.iter_mut().rev() {
+            if in_final {
+                if let Some(raw) = &chunk.raw {
+                    chunk.compacted = compact_transcript_chunk_stateful(
+                        raw,
+                        chunk.base_offset,
+                        false,
+                        projection,
+                        settled,
+                        &mut in_final,
+                    );
+                } else {
+                    in_final = chunk.ended_in_final;
+                }
+            } else {
+                in_final = chunk.ended_in_final;
+            }
+        }
+    }
+
     let start_offset = if cursor == 0 {
         0
     } else if cursor + tail_carry_bytes < end {
@@ -1442,10 +1523,10 @@ where
     } else {
         cursor
     };
-    let total_len: usize = chunks.iter().map(String::len).sum();
+    let total_len: usize = chunks.iter().map(|c| c.compacted.len()).sum();
     let mut result = String::with_capacity(total_len);
     for chunk in chunks.into_iter().rev() {
-        result.push_str(&chunk);
+        result.push_str(&chunk.compacted);
     }
     Ok((result, start_offset))
 }
