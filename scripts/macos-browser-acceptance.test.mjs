@@ -171,7 +171,7 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
       await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       const composer = page.locator('.landing-screen textarea');
       await composer.waitFor({ timeout: 30_000 });
-      await page.getByRole('button', { name: 'Graph', exact: true }).click();
+      await page.getByRole('button', { name: 'Compile', exact: true }).click();
       // Four dispatchable nodes exceed the private threshold after the worker
       // cap. The single join runs source-native after that batch is delivered.
       await composer.fill('BROWSER_MAC create four branches and combine their results');
@@ -233,7 +233,7 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
       // Serial uses the source project and must keep its Pi process/session for
       // the next turn, instead of treating it as a private Graph workspace.
       await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-      await page.getByRole('button', { name: 'Serial', exact: true }).click();
+      await page.getByRole('button', { name: 'Direct', exact: true }).click();
       const serialComposer = page.locator('.landing-screen textarea');
       await serialComposer.fill('BROWSER_MAC_SERIAL create a serial file');
       await serialComposer.press('Enter');
