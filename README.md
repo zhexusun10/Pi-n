@@ -39,6 +39,23 @@
 
 **We love [Pi](https://github.com/earendil-works/pi).** Compared to bloated coding harnesses, Pi is remarkably token-efficient—no hardcoded few-shots, no baked-in prior bias, giving frontier models maximum room to reason and the broadest generality across real engineering work. To us, Pi is the cleanest, most elegant agent harness runtime built so far.
 
+Just sending a single `"Hi"` on the same repo and the same model shows the difference immediately—**~16× less system-prompt overhead (`1.08k` vs. `18k` tokens)**, which translates into **2–4× lower end-to-end cost** across real multi-turn engineering sessions:
+
+<table>
+  <thead>
+    <tr>
+      <th align="center">Codex — <code>18k tokens</code> (7% context used)</th>
+      <th align="center">Pi<sup>n</sup> + <code>pi-trim</code> — <code>1.08k tokens</code> (0% context used)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td width="50%"><img src="assets/token-usage-codex.png" width="100%" alt="Codex spending 18k tokens (7% of context window) just to reply to Hi"></td>
+      <td width="50%"><img src="assets/token-usage-pi-n.png" width="100%" alt="Pi^n spending only 1.08k tokens (0% of context window) to reply to Hi on the same repo and model"></td>
+    </tr>
+  </tbody>
+</table>
+
 **But Pi is a minimal runtime, not an out-of-the-box product.** By design, Pi keeps anything outside the minimal agent loop out of its core repository—and in day-to-day engineering, four real gaps show up fast:
 
 - **No built-in web search** — Real tasks constantly require checking current docs, RFCs, or breaking API changes, yet bare Pi ships without a `web_search` tool.

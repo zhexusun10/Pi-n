@@ -39,11 +39,28 @@
 
 **我们非常喜欢 [Pi](https://github.com/earendil-works/pi)。** 相比市面上堆满系统提示词的编程 Harness，Pi 极度省 Token——不硬编码 few-shot，不引入先验偏置（prior bias），把最大的施展空间留给最强的模型，换来最好的通用性（generality）。在我们看来，Pi 是迄今为止最优雅、最出色的 Agent Harness Runtime。
 
+在同一仓库、同一模型下只发送一句 `"Hi"`，差距就一目了然——**系统提示词占用相差约 16×（`1.08k` vs. `18k` tokens）**，在真实多轮开发任务中可带来 **2–4× 的端到端成本优势**：
+
+<table>
+  <thead>
+    <tr>
+      <th align="center">Codex — <code>18k tokens</code>（已占 7% 上下文）</th>
+      <th align="center">Pi<sup>n</sup> + <code>pi-trim</code> — <code>1.08k tokens</code>（占 0% 上下文）</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td width="50%"><img src="assets/token-usage-codex.png" width="100%" alt="Codex 仅回复一句 Hi 即消耗 18k tokens（占用 7% 上下文窗口）"></td>
+      <td width="50%"><img src="assets/token-usage-pi-n.png" width="100%" alt="Pi^n 在同一仓库与同一模型下回复 Hi 仅消耗 1.08k tokens（0% 上下文占用）"></td>
+    </tr>
+  </tbody>
+</table>
+
 **但 Pi 是一个极简运行时，而不是能直接开箱即用的产品。** Pi 仓库有着极其克制的边界——任何不属于最简 Agent Loop 的能力都不进入核心源码。这让 Pi 保持纯净，却也在真实工程中留下了四处高频痛点：
 
 - **缺少开箱即用的 `web_search`** — 真实开发离不开查最新文档、RFC 与 API 变更，但裸 Pi 出厂不带联网搜索工具。
 - **Loop 边界的鲁棒性隐患** — 对不爱写超时参数的模型，一条测试命令就可能直接卡死整轮运行；输出触及模型 output limit、流式断连或瞬时异常时会直接失败，无法自动断点续跑。
-- **冗余的系统提示词噪音** — Pi 默认系统提示词里的 tool section 与各工具的 description 完全重复，附带的 Pi 自身文档对 99% 的工程任务是毫无用处ß。
+- **冗余的系统提示词噪音** — Pi 默认系统提示词里的 tool section 与各工具的 description 完全重复，附带的 Pi 自身文档对 99% 的工程任务毫无用处。
 - **缺少开箱即用的工作台体验** — 内联 Diff、过程折叠阅读、停靠终端、多工作区管理与零配置安装包，都需要开发者自己拼装。
 
 我们非常认同 Pi 守住极简内核的克制——**也正是这份边界，催生了 Pi<sup>n</sup> 的诞生。** Pi<sup>n</sup> 完整保留 Pi 纯粹无偏置的核心循环，将其打磨为真正开箱即用的工程产品：
