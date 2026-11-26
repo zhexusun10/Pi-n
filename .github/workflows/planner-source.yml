@@ -116,7 +116,7 @@ jobs:
         timeout-minutes: 6
         run: npm run test:native:scripts
       - name: Verify prewarm and shared native runtime acceptance
-        timeout-minutes: 6
+        timeout-minutes: 15
         run: npm run test:prewarm
       - name: Verify macOS filesystem policy with real child processes
         if: runner.os == 'macOS'

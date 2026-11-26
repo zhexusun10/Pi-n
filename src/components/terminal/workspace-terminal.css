@@ -338,15 +338,7 @@
 
 .workspace-terminal-error-title {
   font-weight: 600;
-  color: var(--status-danger-text);
-}
-
-.workspace-terminal-error-detail {
-  max-width: 480px;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  word-break: break-word;
+  color: var(--status-danger);
 }
 
 /* Composer toolbar button (placed directly to the right of Paperclip) */

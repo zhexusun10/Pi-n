@@ -532,6 +532,13 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("workspace");
         let temp_root = temp.path().join("system-tmp");
+        // Keep the absolute "outside" directory out of /tmp: on Linux the default temp dir is
+        // /tmp, and /tmp/... paths are intentionally resolved against `temp_roots` instead.
+        let outside_holder = tempfile::Builder::new()
+            .prefix("pi-n-outside-image-")
+            .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+            .unwrap();
+        let outside_abs_dir = outside_holder.path().to_path_buf();
         let outside = temp.path().join("outside");
         fs::create_dir_all(root.join("artifacts/中文 space")).unwrap();
         fs::create_dir_all(root.join(".tmp")).unwrap();
@@ -555,6 +562,7 @@ mod tests {
         fs::write(temp_root.join("compacted-card-preview.png"), tmp_png).unwrap();
         fs::write(temp_root.join("sub/preview.png"), tmp_png).unwrap();
         fs::write(outside.join("external.png"), png).unwrap();
+        fs::write(outside_abs_dir.join("external.png"), png).unwrap();
         fs::write(outside.join("secret.txt"), b"not an image").unwrap();
 
         let roots = vec![root.clone()];
@@ -599,7 +607,7 @@ mod tests {
             read_image(&roots, &temp_roots, "../outside/external.png").unwrap(),
             (png.to_vec(), "image/png")
         );
-        let outside_abs = outside.join("external.png");
+        let outside_abs = outside_abs_dir.join("external.png");
         assert_eq!(
             read_image(&roots, &temp_roots, &outside_abs.to_string_lossy()).unwrap(),
             (png.to_vec(), "image/png")

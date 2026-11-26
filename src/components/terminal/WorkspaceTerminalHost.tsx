@@ -358,7 +358,7 @@ const WorkspaceTerminalItem: React.FC<WorkspaceTerminalItemProps> = React.memo(
                       : t("已退出")}
                   </span>
                 )}
-                {(entry.status === "exited" || entry.status === "error") && (
+                {entry.status === "exited" && (
                   <button
                     type="button"
                     className="workspace-terminal-restart-btn"
@@ -382,14 +382,6 @@ const WorkspaceTerminalItem: React.FC<WorkspaceTerminalItemProps> = React.memo(
           {entry.status === "error" ? (
             <div className="workspace-terminal-error" role="alert">
               <p className="workspace-terminal-error-title">{t("无法启动终端")}</p>
-              <p className="workspace-terminal-error-detail">{entry.error}</p>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => onRestart(entry.key)}
-              >
-                {t("重试")}
-              </button>
             </div>
           ) : (
             <Suspense
