@@ -159,6 +159,38 @@ fn busy_settings_snapshot_falls_back_to_durable_metadata() {
 }
 
 #[test]
+fn nonblocking_fallback_survives_primary_unlock_before_dispatch_for_other_run() {
+    let temp = tempfile::tempdir().unwrap();
+    let service = primary(temp.path());
+    stored_execution_run(&service, "other-run", "other-exec");
+    {
+        let mut runtime = service.runtime.lock().unwrap();
+        runtime.state.run_id = "primary-run".into();
+    }
+
+    let output_body = serde_json::json!({
+        "runId": "other-run", "executionId": "other-exec", "offset": 0,
+        "limit": 64, "compact": true, "detail": "metadata"
+    });
+    let snapshot_body = serde_json::json!({
+        "runId": "other-run", "compact": true, "detail": "metadata"
+    });
+
+    // Acquire primary.runtime while api_service runs (forcing fallback to primary),
+    // then release it BEFORE dispatch runs to exercise the TOCTOU window.
+    let held = service.runtime.lock().unwrap();
+    let output_scoped = api_service(&service, "get_execution_output", &output_body).unwrap();
+    let snapshot_scoped = api_service(&service, "snapshot", &snapshot_body).unwrap();
+    drop(held);
+
+    let page = dispatch(&output_scoped, "get_execution_output", output_body).unwrap();
+    assert_eq!(page["content"], "history output");
+
+    let metadata = dispatch(&snapshot_scoped, "snapshot", snapshot_body).unwrap();
+    assert_eq!(metadata["runId"], "other-run");
+}
+
+#[test]
 fn a_busy_run_does_not_hold_the_primary_runtime_during_unrelated_lookup() {
     let temp = tempfile::tempdir().unwrap();
     let primary = primary(temp.path());

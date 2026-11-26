@@ -25,15 +25,23 @@ pub(super) fn capture_execution_output(
     let execution_id: String = argument(body, "executionId")?;
     match service.runtime.try_lock() {
         Ok(runtime) => {
-            if runtime.state.run_id != run_id {
-                return Err("Run does not match service".into());
+            if runtime.state.run_id == run_id {
+                return execution_output_read_from_state(
+                    runtime.root.clone(),
+                    run_id,
+                    execution_id,
+                    &runtime.state,
+                );
             }
-            execution_output_read_from_state(
-                runtime.root.clone(),
-                run_id,
-                execution_id,
-                &runtime.state,
-            )
+            // `api_service` may route a non-blocking transcript read to
+            // `primary` when `primary.runtime` was momentarily contended by an
+            // unrelated Run; if the lock became free before dispatch, fall back
+            // to the durable SQLite reader instead of failing with a mismatch.
+            let root = runtime.root.clone();
+            drop(runtime);
+            let store = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+            let state = store.load(&run_id)?;
+            execution_output_read_from_state(root, run_id, execution_id, &state)
         }
         Err(std::sync::TryLockError::WouldBlock) => {
             // Transcript pages are immutable/read-only SQLite reads. A worker

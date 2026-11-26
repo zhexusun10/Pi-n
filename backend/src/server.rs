@@ -520,6 +520,29 @@ fn remember_run_service(
     Ok(cache_service(root, run_id, service))
 }
 
+fn hot_child_service(
+    primary: &Arc<Service>,
+    run_id: &str,
+) -> Result<Option<Arc<Service>>, String> {
+    let Some(root) = known_service_root(primary) else {
+        return Ok(None);
+    };
+    let cached = RUN_SERVICES.get().and_then(|registry| {
+        registry
+            .lock()
+            .ok()
+            .and_then(|runs| runs.get(&root)?.get(run_id)?.upgrade())
+    });
+    if let Some(cached) = cached.filter(|cached| !Arc::ptr_eq(cached, primary)) {
+        let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+        if !reader.contains_run(run_id)? {
+            return Err("Run not found".into());
+        }
+        return Ok(Some(cache_service(&root, run_id, cached)));
+    }
+    Ok(None)
+}
+
 fn service_for_run(
     primary: &Arc<Service>,
     run_id: &str,
@@ -528,20 +551,8 @@ fn service_for_run(
     // A hot child Run already has an identity owner. Do not queue its reads
     // (including nonblocking snapshot polls) behind an unrelated primary Run.
     if !create {
-        if let Some(root) = known_service_root(primary) {
-            let cached = RUN_SERVICES.get().and_then(|registry| {
-                registry
-                    .lock()
-                    .ok()
-                    .and_then(|runs| runs.get(&root)?.get(run_id)?.upgrade())
-            });
-            if let Some(cached) = cached.filter(|cached| !Arc::ptr_eq(cached, primary)) {
-                let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
-                if !reader.contains_run(run_id)? {
-                    return Err("Run not found".into());
-                }
-                return Ok(cache_service(&root, run_id, cached));
-            }
+        if let Some(cached) = hot_child_service(primary, run_id)? {
+            return Ok(cached);
         }
     }
     let (root, exists, open_run) = {
@@ -6949,7 +6960,13 @@ pub fn dispatch(
     if command == "snapshot" && metadata {
         let run_id = body.get("runId").and_then(serde_json::Value::as_str);
         let captured = match service.runtime.try_lock() {
-            Ok(runtime) => runtime.browser_metadata()?,
+            Ok(runtime) => {
+                if let Some(id) = run_id.filter(|id| runtime.state.run_id != *id) {
+                    drop(runtime);
+                    return durable_snapshot_metadata(id, service);
+                }
+                runtime.browser_metadata()?
+            }
             Err(std::sync::TryLockError::WouldBlock) if run_id.is_some() => {
                 return durable_snapshot_metadata(run_id.unwrap(), service);
             }
@@ -7385,33 +7402,27 @@ fn api_service(
     command: &str,
     body: &serde_json::Value,
 ) -> Result<Arc<Service>, String> {
-    if command == "snapshot"
-        && body.get("detail").and_then(serde_json::Value::as_str) == Some("metadata")
-        && body.get("runId").is_some()
+    if ((command == "snapshot"
+        && body.get("detail").and_then(serde_json::Value::as_str) == Some("metadata"))
+        || command == "get_execution_output")
+        && body.get("runId").and_then(serde_json::Value::as_str).is_some()
     {
-        // Settings and Run navigation only need the compact projection. If the
-        // primary Runtime is in a long operation, let dispatch read the
-        // durable snapshot directly instead of queueing this request behind
-        // the projection mutex. The normal path below still prefers the live
-        // child service whenever it is available.
+        let run_id = body
+            .get("runId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        if let Some(cached) = hot_child_service(primary, run_id)? {
+            return Ok(cached);
+        }
+        // Settings, Run navigation, and transcript reads have durable SQLite
+        // fallbacks. If the primary Runtime is in a long operation, avoid
+        // queueing behind its projection mutex.
         if matches!(
             primary.runtime.try_lock(),
             Err(std::sync::TryLockError::WouldBlock)
         ) {
             return Ok(primary.clone());
         }
-    }
-    if command == "get_execution_output"
-        && body.get("runId").and_then(serde_json::Value::as_str).is_some()
-        && matches!(
-            primary.runtime.try_lock(),
-            Err(std::sync::TryLockError::WouldBlock)
-        )
-    {
-        // The transcript reader has its own durable fallback. Avoid blocking
-        // in service_for_run while verifying the current primary Run; this is
-        // the common path when output arrives during a long worker operation.
-        return Ok(primary.clone());
     }
     match command {
         "snapshot"
@@ -8361,7 +8372,7 @@ fn handle_http_request_with_options(
                 }
             }
             let acquired = ACTIVE_PLAN_STREAMS
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                     (current < MAX_ACTIVE_PLAN_STREAMS).then_some(current + 1)
                 })
                 .is_ok();
