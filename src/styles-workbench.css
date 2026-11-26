@@ -16,8 +16,6 @@
   z-index: 1000;
   overflow: hidden;
   user-select: none;
-  /* The hints collapse against the popover's own width, not the window's. */
-  container-type: inline-size;
 }
 
 .prompt-box-suggestions-header {
@@ -30,6 +28,10 @@
   font-size: 12px;
   color: var(--text-secondary);
   gap: 8px;
+  flex-shrink: 0;
+  /* Scope inline-size containment to the header so WKWebView does not apply
+     layout containment to the scrollable suggestions list below. */
+  container-type: inline-size;
 }
 
 .suggestions-header-title {
@@ -92,7 +94,7 @@
 
 /* Narrow composers keep the title, list and close button; the shortcuts are
    the only part that can go without hiding an action. */
-@container (max-width: 500px) {
+@container (max-width: 472px) {
   .suggestions-header-hints {
     display: none;
   }
@@ -126,12 +128,16 @@
 }
 
 .prompt-box-suggestions-list {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: 250px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  /* Keep block layout on the scroller itself: WebKit flex-direction: column
+     skips re-stretching children after overflow-y: auto adds the custom 10px
+     scrollbar, clipping each item's right edge until hover forces relayout. */
+  display: block;
   background: var(--bg-canvas);
 }
 
@@ -140,11 +146,16 @@
   position: relative;
   display: flex;
   align-items: center;
+  min-width: 0;
   padding: 8px 12px;
   border-radius: 14px;
   cursor: pointer;
   background: transparent;
   transition: background 0.12s ease;
+}
+
+.prompt-box-suggestion-item + .prompt-box-suggestion-item {
+  margin-top: 2px;
 }
 
 .prompt-box-suggestion-item:hover,

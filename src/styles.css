@@ -2190,7 +2190,7 @@ h3 {
   width: 100%;
   background: var(--bg-canvas);
   border: 1px solid var(--border-default);
-  box-shadow: var(--surface-card-shadow);
+  box-shadow: var(--shell-card-shadow);
   transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
@@ -2244,7 +2244,7 @@ h3 {
 .prompt-box-container:not(.disabled):not(.dragging-over):focus,
 .prompt-box-container:not(.disabled):not(.dragging-over):focus-within,
 .prompt-box-container:not(.disabled):not(.dragging-over):focus-visible {
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 0 18px rgba(15, 23, 42, 0.06);
 }
 
 .prompt-box-container button:focus:not(:focus-visible) {
@@ -2274,7 +2274,7 @@ h3 {
 .prompt-box-container.dragging-over {
   border-color: var(--brand-default, #2563eb) !important;
   background: color-mix(in srgb, var(--brand-subtle, rgba(37, 99, 235, 0.08)) 60%, var(--bg-canvas)) !important;
-  box-shadow: 0 0 0 2px var(--brand-border, rgba(37, 99, 235, 0.25)), 0 6px 24px rgba(37, 99, 235, 0.15) !important;
+  box-shadow: 0 0 0 2px var(--brand-border, rgba(37, 99, 235, 0.25)), 0 0 24px rgba(37, 99, 235, 0.15) !important;
 }
 
 .prompt-box-drag-overlay {

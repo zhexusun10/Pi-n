@@ -1785,9 +1785,9 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             <motion.div
               key="prompt-box-suggestions-popover"
               className="prompt-box-suggestions-popover"
-              initial={{ opacity: 0, y: 8, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
               transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
               onMouseDown={(e) => e.preventDefault()}
             >
@@ -1796,7 +1796,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                   {triggerMode === "@" ? (
                     <span>{t("提及项目文件")}</span>
                   ) : (
-                    <span>{t("Pi 技能与指令 (/skill:...)")}</span>
+                    <span>{t("指令与技能")}</span>
                   )}
                 </span>
                 <span className="suggestions-header-actions">

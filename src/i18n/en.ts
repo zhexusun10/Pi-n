@@ -575,7 +575,7 @@ export const en: Record<string, string> = {
   "[附件: {0}]": "[Attachment: {0}]",
   "释放以添加图片或文件附件": "Drop to attach an image or file",
   "提及项目文件": "Mention project files",
-  "Pi 技能与指令 (/skill:...)": "Pi skills and commands (/skill:...)",
+  "指令与技能": "Commands and skills",
   "选择": "Select",
   "确认": "Confirm",
   "关闭建议": "Close",
