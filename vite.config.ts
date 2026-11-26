@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
 
 const isDesktopDev = Boolean(
-  process.env.TAURI_ENV_PLATFORM || process.env.GRAPHER_DESKTOP_DEV === "1",
+  process.env.TAURI_ENV_PLATFORM || process.env.PI_N_DESKTOP_DEV === "1",
 );
 
 export default defineConfig({
@@ -46,7 +46,7 @@ export default defineConfig({
         "**/backend/**",
         "**/src-tauri/**",
         "**/target/**",
-        "**/.grapher/**",
+        "**/.pi-n/**",
         "**/.pi/**",
         "**/engine/**",
         "**/pi/**",
@@ -55,7 +55,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: `http://127.0.0.1:${process.env.GRAPHER_PORT || "1421"}`,
+        target: `http://127.0.0.1:${process.env.PI_N_PORT || "1421"}`,
         changeOrigin: true,
       },
     },

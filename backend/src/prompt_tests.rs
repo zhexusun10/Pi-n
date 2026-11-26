@@ -815,7 +815,7 @@ fn edit_planner_api_branches_the_same_run_and_keeps_the_previous_turn() {
     fs::write(
         &path,
         [
-            serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":run_id, "id":run_id, "cwd":repository}),
+            serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":run_id, "id":run_id, "cwd":repository}),
             serde_json::json!({"type":"message", "id":"first", "parentId":null,
           "message":{"role":"user", "content":"User query:\n\noriginal", "timestamp":1}}),
             serde_json::json!({"type":"message", "id":"answer", "parentId":"first",
@@ -838,7 +838,7 @@ fn edit_planner_api_branches_the_same_run_and_keeps_the_previous_turn() {
     })).unwrap();
     assert_eq!(result["runId"], run_id);
     assert_eq!(result["graph"]["originalGoal"], "replacement");
-    assert!(fs::read_to_string(&path).unwrap().contains("grapher-edit"));
+    assert!(fs::read_to_string(&path).unwrap().contains("pi-n-edit"));
     assert!(fs::read_to_string(&path).unwrap().contains("User query:"));
     assert_eq!(
         result["events"].as_array().unwrap().last().unwrap()["type"],
@@ -893,7 +893,7 @@ fn edit_planner_api_branches_a_first_turn_that_never_committed_a_graph() {
     fs::write(
         &path,
         [
-            serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":run_id, "id":run_id, "cwd":repository}),
+            serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":run_id, "id":run_id, "cwd":repository}),
             serde_json::json!({"type":"message", "id":"first", "parentId":null,
           "message":{"role":"user", "content":"original", "timestamp":1}}),
             serde_json::json!({"type":"message", "id":"answer", "parentId":"first",
@@ -928,7 +928,7 @@ fn edit_planner_api_branches_a_first_turn_that_never_committed_a_graph() {
         "runId":run_id, "oldText":"original", "instruction":"replacement", "compact":true, "detail":"metadata",
     })).unwrap();
     assert_eq!(result["graph"]["originalGoal"], "replacement");
-    assert!(fs::read_to_string(&path).unwrap().contains("grapher-edit"));
+    assert!(fs::read_to_string(&path).unwrap().contains("pi-n-edit"));
     assert_eq!(
         result["events"].as_array().unwrap().last().unwrap()["type"],
         "planner_conversation_edited"
@@ -974,7 +974,7 @@ fn edit_node_api_branches_the_pi_session_before_driving_a_new_turn() {
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("test_{}.jsonl", job.execution.session_id));
     fs::write(&path, [
-        serde_json::json!({"type":"session", "version":3,"grapherFormat":1,"grapherRunId":run_id,"id":job.execution.session_id, "cwd":job.execution.worktree}),
+        serde_json::json!({"type":"session", "version":3,"piNFormat":1,"piNRunId":run_id,"id":job.execution.session_id, "cwd":job.execution.worktree}),
         serde_json::json!({"type":"message", "id":"one", "parentId":null,
             "message":{"role":"user", "content":"original", "timestamp":job.execution.started_at}}),
     ].iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
@@ -996,7 +996,7 @@ fn edit_node_api_branches_the_pi_session_before_driving_a_new_turn() {
     .unwrap();
     assert_eq!(reply["graph"]["originalGoal"], "replacement");
     assert_eq!(reply["supersededExecutionIds"].as_array().unwrap().len(), 1);
-    assert!(fs::read_to_string(&path).unwrap().contains("grapher-edit"));
+    assert!(fs::read_to_string(&path).unwrap().contains("pi-n-edit"));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while service.driving.load(Ordering::SeqCst) {
         assert!(
@@ -1205,7 +1205,7 @@ fn planner_revision_updates_approved_run_without_reapproval() {
     fs::write(&script, r#"input="$(cat)"
 printf '%s' "$input" | grep -q -- '- keep: waiting' || exit 11
 printf '%s' "$input" | grep -q 'Add a node' || exit 12
-printf '%s' '{"originalGoal":"test","nodes":[{"id":"keep","task":"keep"},{"id":"added","task":"added"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{"originalGoal":"test","nodes":[{"id":"keep","task":"keep"},{"id":"added","task":"added"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Revised"}]}}'
 "#).unwrap();
     let root = temp.path().join("runtime");
@@ -1307,21 +1307,21 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-case "$GRAPHER_MODE" in
+case "$PI_N_MODE" in
   planner)
     printf '%s|%s\n' "$session" "$identity" >> "$(dirname "$0")/session-trace.txt"
-    if [ -f "$session/grapher_${identity}.jsonl" ]; then
-      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first v2"},{"id":"after","task":"after"},{"id":"extra","task":"extra"}],"edges":[{"from":"first","to":"after","feedback":false}]}' > "$GRAPHER_GRAPH_PATH"
+    if [ -f "$session/pi-n_${identity}.jsonl" ]; then
+      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first v2"},{"id":"after","task":"after"},{"id":"extra","task":"extra"}],"edges":[{"from":"first","to":"after","feedback":false}]}' > "$PI_N_GRAPH_PATH"
     else
-      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first"},{"id":"after","task":"after"}],"edges":[{"from":"first","to":"after","feedback":false}]}' > "$GRAPHER_GRAPH_PATH"
+      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first"},{"id":"after","task":"after"}],"edges":[{"from":"first","to":"after","feedback":false}]}' > "$PI_N_GRAPH_PATH"
       mkdir -p "$session"
       cwd="$PWD"
       if command -v cygpath >/dev/null 2>&1; then cwd="$(cygpath -m "$PWD")"; fi
-      printf '{"type":"session","version":3,"grapherFormat":1,"grapherRunId":"%s","id":"%s","cwd":"%s"}\n' "$GRAPHER_ACTIVE_RUN_ID" "$identity" "$cwd" > "$session/grapher_${identity}.jsonl"
+      printf '{"type":"session","version":3,"piNFormat":1,"piNRunId":"%s","id":"%s","cwd":"%s"}\n' "$PI_N_ACTIVE_RUN_ID" "$identity" "$cwd" > "$session/pi-n_${identity}.jsonl"
     fi
     ;;
   node)
-    printf 'node ran\n' > "node-${GRAPHER_NODE_EXECUTION_ID}.txt"
+    printf 'node ran\n' > "node-${PI_N_NODE_EXECUTION_ID}.txt"
     ;;
 esac
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Planned"}]}}'
@@ -1505,16 +1505,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 printf '%s\n' "$model" >> "$(dirname "$0")/model-trace.txt"
-case "$GRAPHER_MODE" in
+case "$PI_N_MODE" in
   planner)
-    if [ -f "$session/grapher_${identity}.jsonl" ]; then
-      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first v2"},{"id":"extra","task":"extra"}],"edges":[{"from":"first","to":"extra","feedback":false}]}' > "$GRAPHER_GRAPH_PATH"
+    if [ -f "$session/pi-n_${identity}.jsonl" ]; then
+      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first v2"},{"id":"extra","task":"extra"}],"edges":[{"from":"first","to":"extra","feedback":false}]}' > "$PI_N_GRAPH_PATH"
     else
-      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+      printf '%s' '{"originalGoal":"test","nodes":[{"id":"first","task":"first"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
       mkdir -p "$session"
       cwd="$PWD"
       if command -v cygpath >/dev/null 2>&1; then cwd="$(cygpath -m "$PWD")"; fi
-      printf '{"type":"session","version":3,"grapherFormat":1,"grapherRunId":"%s","id":"%s","cwd":"%s"}\n' "$GRAPHER_ACTIVE_RUN_ID" "$identity" "$cwd" > "$session/grapher_${identity}.jsonl"
+      printf '{"type":"session","version":3,"piNFormat":1,"piNRunId":"%s","id":"%s","cwd":"%s"}\n' "$PI_N_ACTIVE_RUN_ID" "$identity" "$cwd" > "$session/pi-n_${identity}.jsonl"
     fi
     ;;
 esac
@@ -1621,11 +1621,11 @@ fn manually_created_graph_uses_one_planner_session_even_before_first_revision_su
     );
     fs::create_dir_all(&expected).unwrap();
     fs::write(
-        expected.join(format!("grapher_{}.jsonl",runtime.state.run_id)),
+        expected.join(format!("pi_n_{}.jsonl",runtime.state.run_id)),
         format!(
             "{}\n",
             serde_json::json!({
-                "type": "session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id": runtime.state.run_id, "cwd": repo,
+                "type": "session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id": runtime.state.run_id, "cwd": repo,
             })
         ),
     )
@@ -1938,14 +1938,14 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$session" ] && [ -n "$identity" ] || exit 11
 printf '%s|%s\n' "$session" "$identity" >> "$(dirname "$0")/session-trace.txt"
-if [ -f "$session/grapher_${identity}.jsonl" ]; then
-  grep -q "\"id\":\"$identity\"" "$session/grapher_${identity}.jsonl" || exit 12
-  printf '%s' '{"originalGoal":"initial","nodes":[{"id":"first","task":"first"},{"id":"next","task":"next"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+if [ -f "$session/pi-n_${identity}.jsonl" ]; then
+  grep -q "\"id\":\"$identity\"" "$session/pi-n_${identity}.jsonl" || exit 12
+  printf '%s' '{"originalGoal":"initial","nodes":[{"id":"first","task":"first"},{"id":"next","task":"next"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
 else
-  printf '%s' '{"originalGoal":"initial","nodes":[{"id":"first","task":"first"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+  printf '%s' '{"originalGoal":"initial","nodes":[{"id":"first","task":"first"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
   cwd="$PWD"
   if command -v cygpath >/dev/null 2>&1; then cwd="$(cygpath -m "$PWD")"; fi
-  printf '{"type":"session","version":3,"grapherFormat":1,"grapherRunId":"%s","id":"%s","cwd":"%s"}\n' "$GRAPHER_ACTIVE_RUN_ID" "$identity" "$cwd" > "$session/grapher_${identity}.jsonl"
+  printf '{"type":"session","version":3,"piNFormat":1,"piNRunId":"%s","id":"%s","cwd":"%s"}\n' "$PI_N_ACTIVE_RUN_ID" "$identity" "$cwd" > "$session/pi-n_${identity}.jsonl"
 fi
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Planned"}]}}'
 "#).unwrap();
@@ -2044,7 +2044,7 @@ fn planner_revises_without_waiting_for_a_running_node() {
 printf '%s' "$input" | grep -q -- '- keep: running' || exit 11
 printf '%s' "$input" | grep -q -- '- pending: waiting' || exit 12
 printf '%s' "$input" | grep -q 'Update pending' || exit 13
-printf '%s' '{"originalGoal":"test","nodes":[{"id":"keep","task":"keep"},{"id":"pending","task":"updated"}],"edges":[{"from":"keep","to":"pending","feedback":false}]}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{"originalGoal":"test","nodes":[{"id":"keep","task":"keep"},{"id":"pending","task":"updated"}],"edges":[{"from":"keep","to":"pending","feedback":false}]}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Updated"}]}}'
 "#).unwrap();
     let config = Config {
@@ -2177,7 +2177,7 @@ fn running_revision_uses_the_latest_workspace_without_draining_its_writer() {
     let repo = crate::fixture::repository(temp.path()).unwrap();
     let script = temp.path().join("running-revise.sh");
     fs::write(&script, r#"cat >/dev/null
-printf '%s' '{"originalGoal":"test","nodes":[{"id":"change","task":"change"},{"id":"other","task":"other"},{"id":"added","task":"added"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{"originalGoal":"test","nodes":[{"id":"change","task":"change"},{"id":"other","task":"other"},{"id":"added","task":"added"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Updated"}]}}'
 "#).unwrap();
     let config = Config {
@@ -2286,7 +2286,7 @@ fn planner_auto_approve_only_when_enabled() {
     let repo = crate::fixture::repository(temp.path()).unwrap();
     let script = temp.path().join("auto-approve.sh");
     fs::write(&script, r#"cat >/dev/null
-printf '%s' '{"originalGoal":"test","nodes":[{"id":"work","task":"work"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{"originalGoal":"test","nodes":[{"id":"work","task":"work"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Planned"}]}}'
 "#).unwrap();
     let config = Config {
@@ -2365,7 +2365,7 @@ fn draft_planner_revision_stays_unapproved_and_approvable() {
     let repo = crate::fixture::repository(temp.path()).unwrap();
     let script = temp.path().join("revise-draft.sh");
     fs::write(&script, r#"test "$(cat)" = "Update the draft" || exit 14
-printf '%s' '{"originalGoal":"test","nodes":[{"id":"keep","task":"keep"},{"id":"added","task":"added"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{"originalGoal":"test","nodes":[{"id":"keep","task":"keep"},{"id":"added","task":"added"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Revised"}]}}'
 "#).unwrap();
     let root = temp.path().join("runtime");
@@ -2572,14 +2572,14 @@ fn partitioner_and_planner_share_source_cwd_and_create_only_session_data_before_
     let script = temp.path().join("planning-source.sh");
     fs::write(&script, r#"cat >/dev/null
 test -f source-marker || exit 17
-case "$GRAPHER_MODE" in
+case "$PI_N_MODE" in
   partition)
-    printf '%s' "$GRAPHER_WORKSPACE_ROOT" > partition-cwd.txt
+    printf '%s' "$PI_N_WORKSPACE_ROOT" > partition-cwd.txt
     printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"parallel"}]}}'
     ;;
   planner)
-    printf '%s' "$GRAPHER_WORKSPACE_ROOT" > planner-cwd.txt
-    printf '%s' '{"originalGoal":"test","nodes":[{"id":"worker","task":"test"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+    printf '%s' "$PI_N_WORKSPACE_ROOT" > planner-cwd.txt
+    printf '%s' '{"originalGoal":"test","nodes":[{"id":"worker","task":"test"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
     printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Planned"}]}}'
     ;;
   *) exit 18 ;;
@@ -2645,8 +2645,8 @@ esac
         canonical
     );
     for parent in [temp.path(), repo.parent().unwrap()] {
-        assert!(!parent.join(".grapher-workspaces").exists());
-        assert!(!parent.join(".grapher-worktrees").exists());
+        assert!(!parent.join(".pi-n-workspaces").exists());
+        assert!(!parent.join(".pi-n-worktrees").exists());
     }
     assert!(!repo.join("graph.json").exists());
 }
@@ -2793,7 +2793,7 @@ fn stopping_a_concurrent_planner_does_not_stop_the_other_run() {
     let second_release = temp.path().join("second-release");
     let first_script = temp.path().join("first.sh");
     let second_script = temp.path().join("second.sh");
-    let graph = "printf '%s' '{\"originalGoal\":\"test\",\"nodes\":[{\"id\":\"worker\",\"task\":\"test\"}],\"edges\":[]}' > \"$GRAPHER_GRAPH_PATH\"\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Planned\"}]}}'\n";
+    let graph = "printf '%s' '{\"originalGoal\":\"test\",\"nodes\":[{\"id\":\"worker\",\"task\":\"test\"}],\"edges\":[]}' > \"$PI_N_GRAPH_PATH\"\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Planned\"}]}}'\n";
     fs::write(
         &first_script,
         format!(
@@ -3027,7 +3027,7 @@ rm deleted.txt
 touch '{}'
 while [ ! -f '{}' ]; do sleep 0.02; done
 {}
-printf '%s' '{{"originalGoal":"test","nodes":[{{"id":"worker","task":"test"}}],"edges":[]}}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{{"originalGoal":"test","nodes":[{{"id":"worker","task":"test"}}],"edges":[]}}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"Planned"}}]}}}}'
 "#, started.display(), release.display(), if fail { "exit 1" } else { ":" })).unwrap();
             let config = Config {
@@ -3083,7 +3083,7 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
                 "planner new file"
             );
             assert!(!repository.join("deleted.txt").exists());
-            assert!(!temp.path().join(".grapher-workspaces").exists());
+            assert!(!temp.path().join(".pi-n-workspaces").exists());
             if fail {
                 assert!(result.is_err()); // Failed planning does not roll back native writes.
                 continue;
@@ -3141,7 +3141,7 @@ fn same_project_planners_run_together_and_write_disjoint_source_files() {
 touch '{}'
 while [ ! -f '{}' ]; do sleep 0.02; done
 printf '%s' '{}' > '{}.txt'
-printf '%s' '{{"originalGoal":"test","nodes":[{{"id":"worker","task":"test"}}],"edges":[]}}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{{"originalGoal":"test","nodes":[{{"id":"worker","task":"test"}}],"edges":[]}}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"Planned"}}]}}}}'
 "#, started.display(), release.display(), label, label)).unwrap();
         let config = Config {
@@ -3219,7 +3219,7 @@ fn independent_repositories_can_plan_concurrently() {
         fs::write(&script, format!(r#"cat >/dev/null
 touch '{}'
 while [ ! -f '{}' ]; do sleep 0.02; done
-printf '%s' '{{"originalGoal":"test","nodes":[{{"id":"worker","task":"test"}}],"edges":[]}}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{{"originalGoal":"test","nodes":[{{"id":"worker","task":"test"}}],"edges":[]}}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"Planned"}}]}}}}'
 "#, started.display(), release.display())).unwrap();
         let config = Config {
@@ -4204,7 +4204,7 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
 #[test]
 fn live_planner_metrics_fold_matches_the_whole_log_parse() {
     let log = concat!(
-        "{\"type\":\"grapher_process_started\",\"sessionId\":\"planner-session\",\"timestamp\":1726300000000}\n",
+        "{\"type\":\"pi_n_process_started\",\"sessionId\":\"planner-session\",\"timestamp\":1726300000000}\n",
         // A timestamp-only delta carries no counter and must not publish.
         "{\"type\":\"text_delta\",\"text\":\"thinking\",\"timestamp\":1726300000001}\n",
         "{\"type\":\"tool_execution_start\",\"toolName\":\"bash\"}\n",
@@ -4287,13 +4287,13 @@ fn planner_turn_progress_publishes_live_session_metrics() {
 
 #[test]
 fn planning_metrics_parsing_and_persistence() {
-    let sample_log = r#"{"type":"grapher_process_started","sessionId":"planner-session","timestamp":1726300000000}
+    let sample_log = r#"{"type":"pi_n_process_started","sessionId":"planner-session","timestamp":1726300000000}
 {"type":"tool_execution_start","toolName":"bash"}
 {"type":"tool_execution_end","toolName":"bash","isError":true}
 {"type":"tool_execution_start","toolName":"read"}
 {"type":"tool_execution_end","toolName":"read","isError":false}
 {"type":"message_end","message":{"role":"assistant","usage":{"input":200,"output":300,"cacheRead":50,"cacheWrite":0,"reasoning":100,"totalTokens":500}}}
-{"type":"grapher_process_exited","elapsedMs":12345,"success":true,"timestamp":1726300012345}
+{"type":"pi_n_process_exited","elapsedMs":12345,"success":true,"timestamp":1726300012345}
 "#;
     let metrics = parse_planning_role_metrics("test-model", sample_log);
     assert_eq!(metrics.model, "test-model");
@@ -4374,10 +4374,10 @@ fn planning_metrics_parsing_and_persistence() {
 fn execution_metrics_record_the_model_that_answered_without_a_model_change_event() {
     // Pi's JSON stream does not forward the session's startup model selection.
     let output = r#"
-{"type":"grapher_process_started","pid":123,"timestamp":1726300000000}
+{"type":"pi_n_process_started","pid":123,"timestamp":1726300000000}
 {"type":"message_start","message":{"role":"assistant","provider":"antigravity","model":"gemini-3.8-flash","stopReason":"pending"}}
 {"type":"message_end","message":{"role":"assistant","provider":"antigravity","model":"gemini-3.8-flash","thinkingLevel":"high","usage":{"input":10,"output":20,"totalTokens":30}}}
-{"type":"grapher_process_exited","elapsedMs":1250,"success":true,"timestamp":1726300001250}
+{"type":"pi_n_process_exited","elapsedMs":1250,"success":true,"timestamp":1726300001250}
 "#;
     let metrics = crate::model::parse_execution_metrics(output, 1726300000000, 1726300001250);
     assert_eq!(
@@ -4441,7 +4441,7 @@ fn completion_keeps_the_prelaunch_model_when_the_transcript_recorded_none() {
 #[test]
 fn execution_and_run_metrics_parsing_and_persistence() {
     let sample_output = r#"
-{"type":"grapher_process_started","pid":123,"timestamp":1726300000000}
+{"type":"pi_n_process_started","pid":123,"timestamp":1726300000000}
 {"type":"model_change","provider":"actual","modelId":"provider/model"}
 {"type":"thinking_level_change","thinkingLevel":"xhigh"}
 {"type":"tool_execution_start","toolName":"read"}
@@ -4449,7 +4449,7 @@ fn execution_and_run_metrics_parsing_and_persistence() {
 {"type":"tool_execution_start","toolName":"bash"}
 {"type":"tool_execution_end","toolName":"bash","isError":true}
 {"type":"message_end","message":{"role":"assistant","usage":{"input":150,"output":250,"cacheRead":20,"cacheWrite":10,"reasoning":80,"totalTokens":400}}}
-{"type":"grapher_process_exited","elapsedMs":8500,"success":true,"timestamp":1726300008500}
+{"type":"pi_n_process_exited","elapsedMs":8500,"success":true,"timestamp":1726300008500}
 "#;
     let exec_metrics =
         crate::model::parse_execution_metrics(sample_output, 1726300000000, 1726300008500);
@@ -4466,12 +4466,12 @@ fn execution_and_run_metrics_parsing_and_persistence() {
 
     // Multi-process restart / protocol repair case: duration must accumulate rather than overwrite
     let multi_process_output = r#"
-{"type":"grapher_process_started","pid":100,"timestamp":1726300000000}
+{"type":"pi_n_process_started","pid":100,"timestamp":1726300000000}
 {"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":200,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":300}}}
-{"type":"grapher_process_exited","elapsedMs":2400000,"success":true,"timestamp":1726302400000}
-{"type":"grapher_process_started","pid":101,"timestamp":1726302400100}
+{"type":"pi_n_process_exited","elapsedMs":2400000,"success":true,"timestamp":1726302400000}
+{"type":"pi_n_process_started","pid":101,"timestamp":1726302400100}
 {"type":"message_end","message":{"role":"assistant","usage":{"input":50,"output":50,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":100}}}
-{"type":"grapher_process_exited","elapsedMs":20000,"success":true,"timestamp":1726302420100}
+{"type":"pi_n_process_exited","elapsedMs":20000,"success":true,"timestamp":1726302420100}
 "#;
     let multi_metrics =
         crate::model::parse_execution_metrics(multi_process_output, 1726300000000, 1726302420100);
@@ -4981,11 +4981,11 @@ fn dynamic_port_readiness_and_stdin_shutdown_protocol_helpers() {
     let server = tiny_http::Server::http(("127.0.0.1", 0)).unwrap();
     let port = bound_server_port(&server).unwrap();
     assert_ne!(port, 0);
-    let data_dir = PathBuf::from("/tmp/grapher desktop/data");
+    let data_dir = PathBuf::from("/tmp/pi-n desktop/data");
     let line = format_ready_line(port, &data_dir);
     assert!(!line.contains('\n'));
     let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
-    assert_eq!(parsed["type"], "grapher_ready");
+    assert_eq!(parsed["type"], "pi_n_ready");
     assert_eq!(parsed["port"], port);
     assert_eq!(parsed["dataDir"], data_dir.to_string_lossy().as_ref());
 
@@ -5081,7 +5081,7 @@ fn workspace_attachment_dispatch_preserves_originals() {
     let uploaded = write_res["path"].as_str().unwrap();
     assert!(uploaded.contains("/attachment-inputs/"));
     assert_eq!(fs::read_to_string(uploaded).unwrap(), "hello world");
-    assert!(!repo.join("grapher-attachments").exists());
+    assert!(!repo.join("pi-n-attachments").exists());
     assert_eq!(
         fs::read_to_string(repo.join("hello.txt")).unwrap(),
         "original unsaved work"
@@ -5188,8 +5188,8 @@ fn workspace_attachment_dispatch_preserves_originals() {
     let node_path = node_write_res["path"].as_str().unwrap();
     assert!(node_path.contains(&format!("/attachment-inputs/{run_id}/")));
     assert_eq!(fs::read_to_string(node_path).unwrap(), "1,2,3");
-    assert!(!node_worktree.join("grapher-attachments").exists());
-    assert!(!repo.join("grapher-attachments").exists());
+    assert!(!node_worktree.join("pi-n-attachments").exists());
+    assert!(!repo.join("pi-n-attachments").exists());
     assert!(!repo.join("node_data.csv").exists());
 
     // Scoped deletion removes only the managed external file.
@@ -5822,14 +5822,14 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
-case "$GRAPHER_MODE" in
+case "$PI_N_MODE" in
     partition)
         test "$model:$thinking" = 'example/small:off' || exit 21
         text=parallel
         ;;
     planner)
         test "$model:$thinking" = 'example/large:high' || exit 22
-        printf '%s' '{"originalGoal":"test","nodes":[{"id":"worker","task":"test"}],"edges":[]}' > "$GRAPHER_GRAPH_PATH"
+        printf '%s' '{"originalGoal":"test","nodes":[{"id":"worker","task":"test"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
         text=planned
         ;;
     node)

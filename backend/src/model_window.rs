@@ -82,13 +82,13 @@ fn catalog() -> &'static BTreeMap<String, usize> {
 fn agent_model_files() -> Vec<PathBuf> {
     let home = crate::native::home_dir();
     let directory = crate::native::environment_path("PI_CODING_AGENT_DIR")
-        .or_else(|| home.as_ref().map(|home| home.join(".grapher/pi-agent")));
+        .or_else(|| home.as_ref().map(|home| home.join(".pi-n/pi-agent")));
     let mut files: Vec<PathBuf> = directory
         .into_iter()
         .map(|path| path.join("models.json"))
         .collect();
     // Match the runtime overlay: Pi's local definitions win when not isolated.
-    if std::env::var_os("GRAPHER_ISOLATED_PI_MODELS").as_deref() != Some(std::ffi::OsStr::new("1"))
+    if std::env::var_os("PI_N_ISOLATED_PI_MODELS").as_deref() != Some(std::ffi::OsStr::new("1"))
     {
         if let Some(home) = home {
             files.push(home.join(".pi/agent/models.json"));

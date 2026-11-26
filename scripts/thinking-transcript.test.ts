@@ -86,9 +86,9 @@ test("edit_graph cards reuse the edge tool's fork icon", () => {
 
 test("background Planner replies stay separate across turns with no visible user bubble", () => {
   const events = [
-    { type: "grapher_planning_source", planningId: "first" }, start(),
+    { type: "pi_n_planning_source", planningId: "first" }, start(),
     update("text_delta", 0, { delta: "PHASE_TWO_PLANNED" }), end([{ type: "text", text: "PHASE_TWO_PLANNED" }]),
-    { type: "grapher_planning_source", planningId: "review" }, start(),
+    { type: "pi_n_planning_source", planningId: "review" }, start(),
     update("text_delta", 0, { delta: "REVIEW_COMPLETE" }), end([{ type: "text", text: "REVIEW_COMPLETE" }]),
   ];
   const html = render(events);
@@ -318,9 +318,16 @@ test("tool-reported result truncation still marks the card", () => {
   const item = result.currentItems[0];
   assert.equal(item.truncated, true);
   const html = renderToStaticMarkup(createElement(ToolCallCard, { item, defaultExpanded: true }));
-  assert.ok(html.includes("tool-truncated-pill"), "tool-reported truncation renders the truncation pill");
-  assert.ok(html.includes(t("已截断")), "the truncation pill uses the active locale");
+  assert.ok(!html.includes("tool-truncated-pill"), "tool cards do not render a separate truncation pill");
+  assert.ok(html.includes(t("完成 (Exit {0})（已截断）", 0)), "tool-reported truncation appends the truncated suffix after completed");
   assert.ok(html.includes(t("已截断 (Truncated)")), "the bash output status reflects tool truncation");
+
+  const nonBashHtml = renderToStaticMarkup(createElement(ToolCallCard, {
+    item: { ...item, toolName: "read", exitCode: undefined },
+    defaultExpanded: false,
+  }));
+  assert.ok(!nonBashHtml.includes("tool-truncated-pill"), "non-bash tool cards do not render a separate truncation pill");
+  assert.ok(nonBashHtml.includes(t("完成（已截断）")), "non-bash truncated tools append the truncated suffix after completed");
 });
 
 test("display projection markers do not present a truncated tool call", () => {
@@ -336,6 +343,8 @@ test("display projection markers do not present a truncated tool call", () => {
   assert.equal(item.truncated, false);
   const html = renderToStaticMarkup(createElement(ToolCallCard, { item, defaultExpanded: true }));
   assert.ok(!html.includes("tool-truncated-pill"), "projection-only cuts show no truncation pill");
+  assert.ok(html.includes(t("完成 (Exit {0})", 0)), "projection-only cuts keep the non-truncated completed label");
+  assert.ok(!html.includes(t("完成 (Exit {0})（已截断）", 0)), "projection-only cuts do not add the truncated suffix");
   assert.ok(html.includes(t("完整 (Complete)")), "the bash output status stays complete");
 });
 
@@ -672,7 +681,7 @@ test("message_end backfills the empty card and separate turns retain repeated su
 });
 
 test("process exit keeps an unfinished empty block visible and preserves captured thinking", () => {
-  const exited = { type: "grapher_process_exited", success: false };
+  const exited = { type: "pi_n_process_exited", success: false };
   const empty = render([start(), update("thinking_start", 0), exited]);
   assert.equal(cardCount(empty), 1);
   assert.match(empty, /thinking-card settled collapsed/);

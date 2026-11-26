@@ -563,8 +563,8 @@ test("card-shell projections validate byte cursors, enforce LRU string sizing, a
       toolCallId: "call-big",
       toolName: "write",
       args: { path: "src/app.ts" },
-      grapherBodyOmitted: true,
-      grapherRawRange: [100, 5000],
+      piNBodyOmitted: true,
+      piNRawRange: [100, 5000],
     }),
     JSON.stringify({
       type: "tool_execution_end",
@@ -572,17 +572,17 @@ test("card-shell projections validate byte cursors, enforce LRU string sizing, a
       toolName: "write",
       isError: false,
       result: { details: { exitCode: 0 } },
-      grapherBodyOmitted: true,
-      grapherRawRange: [5000, 9000],
-      grapherSubcommandWarning: true,
+      piNBodyOmitted: true,
+      piNRawRange: [5000, 9000],
+      piNSubcommandWarning: true,
     }),
     JSON.stringify({
       type: "message_end",
-      grapherRawRange: [9000, 12000],
+      piNRawRange: [9000, 12000],
       message: {
         role: "assistant",
         content: [
-          { type: "thinking", thinking: "", grapherBodyOmitted: true, grapherThinkingChars: 3500 },
+          { type: "thinking", thinking: "", piNBodyOmitted: true, piNThinkingChars: 3500 },
           { type: "text", text: "Finished updating src/app.ts." },
         ],
       },
@@ -612,7 +612,7 @@ test("card-shell projections validate byte cursors, enforce LRU string sizing, a
       toolCallId: "call-big",
       toolName: "write",
       args: { path: "src/app.ts", content: "export const ok = true;\n" },
-      grapherRawRange: [100, 5000],
+      piNRawRange: [100, 5000],
     }),
     JSON.stringify({
       type: "tool_execution_end",
@@ -620,11 +620,11 @@ test("card-shell projections validate byte cursors, enforce LRU string sizing, a
       toolName: "write",
       isError: false,
       result: { content: [{ type: "text", text: "Wrote 24 bytes." }], details: { exitCode: 0 } },
-      grapherRawRange: [5000, 9000],
+      piNRawRange: [5000, 9000],
     }),
     JSON.stringify({
       type: "message_end",
-      grapherRawRange: [9000, 12000],
+      piNRawRange: [9000, 12000],
       message: {
         role: "assistant",
         content: [{ type: "thinking", thinking: "FULL_HYDRATED_REASONING" }, { type: "text", text: "" }],
@@ -725,5 +725,31 @@ test("isItemHydrated requires both args and result hydration when a live tool se
   };
   assert.equal(isItemHydrated(settledWithOmittedResult, argsHydratedPatch), false);
   assert.equal(isItemHydrated(settledWithOmittedResult, { ...argsHydratedPatch, result: "ok", resultOmitted: false }), true);
+});
+
+test("parseTranscriptChunkLines drops oversized truncated JSONL event fragments instead of rendering raw base64", () => {
+  const truncatedAgentEnd = `{"piNReceivedAt":1795587678477,"messages":[{"role":"toolResult","data":"${"QAUAFAB".repeat(500)}`;
+  const validAssistant = JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text: "Clean reply" }] },
+  });
+  const state: ParseTranscriptChunkState = {
+    source: "main",
+    byteOffset: 0,
+    assistantStartIndex: 0,
+    inTagThinking: false,
+    inFinalResponse: false,
+    finalResponseSuppressed: false,
+    compacting: false,
+  };
+  const { currentItems } = parseTranscriptChunkLines(
+    [truncatedAgentEnd, validAssistant],
+    [],
+    new Map(),
+    state,
+    { leadingFragment: false },
+  );
+  assert.equal(currentItems.length, 1);
+  assert.equal(currentItems[0].content, "Clean reply");
 });
 

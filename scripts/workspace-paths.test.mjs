@@ -25,7 +25,7 @@ test('Windows visible paths use forward slashes for Bash and JSON spellings', ()
 });
 
 test('literal shell mapping preserves quoting, external paths and opaque content', { skip: process.platform === 'win32' }, () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'grapher-path-regression-')));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pi-n-path-regression-')));
   try {
     const source = join(root, 'source');
     const workspace = join(root, "node ' space $literal");
@@ -127,7 +127,7 @@ test('literal shell mapping preserves quoting, external paths and opaque content
 });
 
 test('Windows workspace mapping preserves native and slash paths without requiring a POSIX shell', { skip: process.platform !== 'win32' }, () => {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'grapher-path-regression-')));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'pi-n-path-regression-')));
   try {
     const source = join(root, 'source');
     const workspace = join(root, 'node with spaces');
@@ -233,17 +233,17 @@ test('Windows workspace mapping preserves native and slash paths without requiri
 });
 
 test('private-execution denials report permission, not a platform errno', { skip: process.platform === 'win32' }, () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'grapher-denied-')));
-  const previous = process.env.GRAPHER_DENIED_PATHS;
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pi-n-denied-')));
+  const previous = process.env.PI_N_DENIED_PATHS;
   try {
     const source = join(root, 'source');
-    const worktrees = join(root, '.grapher-worktrees');
+    const worktrees = join(root, '.pi-n-worktrees');
     const workspace = join(worktrees, 'run', 'node');
     const data = join(root, 'data');
     const session = join(data, 'sessions', 'node');
     const engine = join(root, 'engine');
     for (const dir of [source, workspace, session, engine]) mkdirSync(dir, { recursive: true });
-    process.env.GRAPHER_DENIED_PATHS = JSON.stringify({
+    process.env.PI_N_DENIED_PATHS = JSON.stringify({
       read: [source, worktrees, data],
       write: [source, worktrees, data, engine],
       allowed: [workspace, session],
@@ -272,14 +272,14 @@ test('private-execution denials report permission, not a platform errno', { skip
         "EACCES: permission denied, open './secret'");
     }
   } finally {
-    if (previous === undefined) delete process.env.GRAPHER_DENIED_PATHS;
-    else process.env.GRAPHER_DENIED_PATHS = previous;
+    if (previous === undefined) delete process.env.PI_N_DENIED_PATHS;
+    else process.env.PI_N_DENIED_PATHS = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test('case/Unicode command mapping preserves suffix case and separates source vs workspace sensitivity', () => {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'grapher-case-split-')));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'pi-n-case-split-')));
   try {
     const source = join(root, 'ProjSource');
     const workspace = join(root, 'WorkSpace');

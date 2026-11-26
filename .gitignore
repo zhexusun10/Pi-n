@@ -33,16 +33,18 @@ MYLOG.md
 *.pfx
 *.key
 
-# Grapher runtime and Rust outputs
+# Pi^n runtime and Rust outputs
 backend/target*/
 src-tauri/target*/
 src-tauri/gen/
 src-tauri/resources/
 desktop-dist/
 target*/
+.pi-n/
+# Legacy (pre-rename) data directory
 .grapher/
-.grapher-verify*/
-.grapher-path-audit/
+.pi-n-verify*/
+.pi-n-path-audit/
 .pi/
 .agents/skills/
 

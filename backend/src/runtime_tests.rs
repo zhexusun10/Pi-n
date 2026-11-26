@@ -73,7 +73,7 @@ fn setup(git: bool, graph: Graph) -> (TempDir, PathBuf, Runtime) {
             &runtime.state.run_id,
             &BTreeSet::from([crate::cleanup::Target::Workspace {
                 parent: temp.path().canonicalize().unwrap(),
-                bucket: ".grapher-worktrees".into(),
+                bucket: ".pi-n-worktrees".into(),
                 owner: runtime.state.run_id.clone(),
                 checkout: None,
             }]),
@@ -249,11 +249,11 @@ fn cached_graph_workspaces_keep_durable_cleanup_when_the_source_moves() {
     let checkout = PathBuf::from(&job.execution.worktree);
     assert!(checkout.starts_with(
         crate::native::host_path(&workspace::workspaces_parent(&runtime.root))
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&runtime.state.run_id)
     ));
     assert!(
-        !temp.path().join(".grapher-worktrees").exists(),
+        !temp.path().join(".pi-n-worktrees").exists(),
         "new workspaces are not project-adjacent"
     );
     workspace::prepare_with_merger_expected_for_run(
@@ -268,7 +268,7 @@ fn cached_graph_workspaces_keep_durable_cleanup_when_the_source_moves() {
     .unwrap();
     assert!(runtime.store.owned_cleanup_targets(&runtime.state.run_id).unwrap().iter().any(|target| {
         matches!(target, crate::cleanup::Target::Workspace { parent, bucket, .. }
-            if parent == &workspace::workspaces_parent(&runtime.root).canonicalize().unwrap() && bucket == ".grapher-worktrees")
+            if parent == &workspace::workspaces_parent(&runtime.root).canonicalize().unwrap() && bucket == ".pi-n-worktrees")
     }));
     runtime
         .finish(&job.execution, Err("stopped".into()))
@@ -287,7 +287,7 @@ fn cached_graph_workspaces_keep_durable_cleanup_when_the_source_moves() {
 
 #[test]
 fn cleanup_refuses_linked_workspace_roots_without_deleting_external_data() {
-    let name = ".grapher-worktrees";
+    let name = ".pi-n-worktrees";
     let (temp, _source, mut runtime) = setup(true, single());
     runtime.set_route("serial").unwrap();
     let outside = temp.path().join("external");
@@ -316,14 +316,14 @@ fn cleanup_uses_physical_source_parent_and_preserves_alias_parent_workspaces() {
     runtime.state.config.as_mut().unwrap().repository = alias.to_string_lossy().into();
     let actual = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     let decoy = alias_parent
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     let other = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(Uuid::new_v4().to_string());
     for path in [&actual, &decoy, &other] {
         fs::create_dir_all(path).unwrap();
@@ -347,7 +347,7 @@ fn cleanup_unlinks_nested_directory_links_without_following_their_targets() {
     runtime.set_route("serial").unwrap();
     let owned = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     let outside = temp.path().join("external");
     fs::create_dir_all(&owned).unwrap();
@@ -367,7 +367,7 @@ fn reset_with_missing_source_preserves_owned_workspace_until_run_deletion() {
     let (temp, source, mut runtime) = setup(true, single());
     let retained = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     fs::create_dir_all(&retained).unwrap();
     fs::write(retained.join("marker"), "retained").unwrap();
@@ -395,7 +395,7 @@ fn deleting_a_historical_run_recursively_cleans_its_nodes_without_changing_selec
         runtime.create(single(), config).unwrap();
         runtime.set_route("graph").unwrap();
         let current = runtime.state.run_id.clone();
-        for name in [".grapher-worktrees", ".grapher-workspaces"] {
+        for name in [".pi-n-worktrees", ".pi-n-workspaces"] {
             for id in [&historical, &current] {
                 let path = temp
                     .path()
@@ -407,10 +407,10 @@ fn deleting_a_historical_run_recursively_cleans_its_nodes_without_changing_selec
             }
         }
         runtime.delete_run(&historical).unwrap();
-        for name in [".grapher-worktrees", ".grapher-workspaces"] {
+        for name in [".pi-n-worktrees", ".pi-n-workspaces"] {
             assert_eq!(
                 temp.path().join(name).join(&historical).exists(),
-                name == ".grapher-workspaces"
+                name == ".pi-n-workspaces"
             );
             assert!(temp
                 .path()
@@ -447,17 +447,17 @@ fn deleting_a_run_cleans_recorded_planner_workspaces_and_preserves_unrecorded_si
     let owner = run_id.clone();
     let legacy = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&owner)
         .join(&first);
     let failed = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&owner)
         .join(&failed_revision);
     let sibling = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(Uuid::new_v4().to_string())
         .join(Uuid::new_v4().to_string());
     runtime
@@ -467,7 +467,7 @@ fn deleting_a_run_cleans_recorded_planner_workspaces_and_preserves_unrecorded_si
             &BTreeSet::from([
                 crate::cleanup::Target::Workspace {
                     parent: temp.path().canonicalize().unwrap(),
-                    bucket: ".grapher-worktrees".into(),
+                    bucket: ".pi-n-worktrees".into(),
                     owner: owner.clone(),
                     checkout: None,
                 },
@@ -540,7 +540,7 @@ fn deleting_a_run_cleans_recorded_planner_workspaces_and_preserves_unrecorded_si
 fn serial_cleanup_removes_owned_private_leftovers_but_never_the_source_cwd() {
     let (temp, source, mut runtime) = setup(true, single());
     runtime.set_route("serial").unwrap();
-    for name in [".grapher-worktrees", ".grapher-workspaces"] {
+    for name in [".pi-n-worktrees", ".pi-n-workspaces"] {
         fs::create_dir_all(
             temp.path()
                 .join(name)
@@ -551,8 +551,8 @@ fn serial_cleanup_removes_owned_private_leftovers_but_never_the_source_cwd() {
     }
     let id = runtime.state.run_id.clone();
     runtime.delete_run(&id).unwrap();
-    assert!(!temp.path().join(".grapher-worktrees").join(&id).exists());
-    assert!(temp.path().join(".grapher-workspaces").join(&id).is_dir());
+    assert!(!temp.path().join(".pi-n-worktrees").join(&id).exists());
+    assert!(temp.path().join(".pi-n-workspaces").join(&id).is_dir());
     assert_eq!(
         fs::read_to_string(source.join("tracked.txt")).unwrap(),
         "original"
@@ -577,14 +577,14 @@ fn clearing_history_cleans_every_saved_run_and_preserves_unknown_directories() {
                 id,
                 &BTreeSet::from([crate::cleanup::Target::Workspace {
                     parent: temp.path().canonicalize().unwrap(),
-                    bucket: ".grapher-worktrees".into(),
+                    bucket: ".pi-n-worktrees".into(),
                     owner: id.clone(),
                     checkout: None,
                 }]),
             )
             .unwrap();
     }
-    for name in [".grapher-worktrees", ".grapher-workspaces"] {
+    for name in [".pi-n-worktrees", ".pi-n-workspaces"] {
         for id in ids.iter().chain(std::iter::once(&unknown)) {
             let path = temp.path().join(name).join(id).join("nested/node");
             fs::create_dir_all(&path).unwrap();
@@ -592,11 +592,11 @@ fn clearing_history_cleans_every_saved_run_and_preserves_unknown_directories() {
         }
     }
     runtime.clear_history().unwrap();
-    for name in [".grapher-worktrees", ".grapher-workspaces"] {
+    for name in [".pi-n-worktrees", ".pi-n-workspaces"] {
         for id in &ids {
             assert_eq!(
                 temp.path().join(name).join(id).exists(),
-                name == ".grapher-workspaces"
+                name == ".pi-n-workspaces"
             );
         }
         assert!(temp
@@ -617,12 +617,12 @@ fn failed_historical_cleanup_keeps_database_ownership_for_retry() {
     runtime
         .create(single(), runtime.state.config.clone().unwrap())
         .unwrap();
-    let retained = temp.path().join(".grapher-worktrees").join(&old_id);
+    let retained = temp.path().join(".pi-n-worktrees").join(&old_id);
     fs::create_dir_all(&retained).unwrap();
     let outside = temp.path().join("outside");
     fs::create_dir_all(outside.join(&old_id)).unwrap();
-    fs::remove_dir_all(temp.path().join(".grapher-worktrees")).unwrap();
-    crate::path_safety::directory_link(&outside, &temp.path().join(".grapher-worktrees"));
+    fs::remove_dir_all(temp.path().join(".pi-n-worktrees")).unwrap();
+    crate::path_safety::directory_link(&outside, &temp.path().join(".pi-n-worktrees"));
     assert!(runtime.delete_run(&old_id).is_err());
     assert!(runtime.store.contains_run(&old_id).unwrap());
     assert!(
@@ -638,7 +638,7 @@ fn deleting_a_noncurrent_running_run_is_rejected() {
     worker.approve().unwrap();
     worker.jobs().unwrap();
     let id = worker.state.run_id.clone();
-    let path = temp.path().join(".grapher-worktrees").join(&id);
+    let path = temp.path().join(".pi-n-worktrees").join(&id);
     fs::create_dir_all(&path).unwrap();
     let mut idle = worker.open_run("").unwrap();
     assert!(idle.delete_run(&id).unwrap_err().contains("running"));
@@ -1185,7 +1185,7 @@ fn parallel_snapshots_of_one_host_repository_do_not_race_ref_locks() {
                     &source,
                     &[
                         "rev-parse",
-                        &format!("refs/grapher/runs/{run_id}/nodes/worker{i}")
+                        &format!("refs/pi-n/runs/{run_id}/nodes/worker{i}")
                     ]
                 )
                 .unwrap(),
@@ -1366,7 +1366,7 @@ fn messaging_a_failed_node_resumes_its_session_without_a_successful_result() {
             let session_dir = runtime.root.join("sessions").join(&failed.execution.id);
             fs::create_dir_all(&session_dir).unwrap();
             fs::write(session_dir.join(format!("test_{}.jsonl", failed.execution.session_id)),
-                format!("{}\n", serde_json::json!({"type": "session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id": failed.execution.session_id, "cwd": failed.execution.worktree}))).unwrap();
+                format!("{}\n", serde_json::json!({"type": "session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id": failed.execution.session_id, "cwd": failed.execution.worktree}))).unwrap();
             assert_eq!(runtime.state.phase, "needs_attention");
             assert!(!runtime.state.can_resume_interrupted());
             assert_eq!(runtime.state.nodes["task"].status, "failed");
@@ -1580,7 +1580,7 @@ fn editing_an_earlier_serial_turn_branches_pi_and_supersedes_later_executions() 
     fs::create_dir_all(&session_dir).unwrap();
     let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
     let entries = [
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":source}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":source}),
         serde_json::json!({"type":"message", "id":"root", "parentId":null, "message":{"role":"system", "content":"system"}}),
         serde_json::json!({"type":"message", "id":"one", "parentId":"root", "message":{"role":"user", "content":"self-contained task", "timestamp":first.execution.started_at}}),
         serde_json::json!({"type":"message", "id":"answer1", "parentId":"one", "message":{"role":"assistant", "content":[]}}),
@@ -1643,7 +1643,7 @@ fn editing_a_repeated_steer_uses_its_log_cursor_and_can_reedit_the_retained_pref
         fs::create_dir_all(&session_dir).unwrap();
         let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
         let entries = [
-            serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
+            serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
             serde_json::json!({"type":"message", "id":"opening", "parentId":null, "message":{"role":"user", "content":first.task, "timestamp":time}}),
             serde_json::json!({"type":"message", "id":"answer", "parentId":"opening", "message":{"role":"assistant", "content":[]}}),
             serde_json::json!({"type":"message", "id":"steer-one", "parentId":"answer", "message":{"role":"user", "content":"继续 中文🚀", "timestamp":time}}),
@@ -1857,7 +1857,7 @@ fn a_text_only_edit_scans_only_the_retained_prefix() {
     fs::create_dir_all(&session_dir).unwrap();
     let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
     let entries = [
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
         serde_json::json!({"type":"message", "id":"opening", "parentId":null, "message":{"role":"user", "content":first.task, "timestamp":time}}),
         serde_json::json!({"type":"message", "id":"answer", "parentId":"opening", "message":{"role":"assistant", "content":[]}}),
         serde_json::json!({"type":"message", "id":"steer-one", "parentId":"answer", "message":{"role":"user", "content":"again", "timestamp":time}}),
@@ -1949,7 +1949,7 @@ fn editing_a_consumed_steer_keeps_the_opening_task_and_branches_at_the_steer() {
             fs::create_dir_all(&session_dir).unwrap();
             let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
             let entries = [
-                serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
+                serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
                 serde_json::json!({"type":"message", "id":"opening", "parentId":null, "message":{"role":"user", "content":first.task, "timestamp":first.execution.started_at}}),
                 serde_json::json!({"type":"message", "id":"answer", "parentId":"opening", "message":{"role":"assistant", "content":[]}}),
                 serde_json::json!({"type":"message", "id":"earlier-steer", "parentId":"answer", "message":{"role":"user", "content":"earlier steer", "timestamp":first.execution.started_at}}),
@@ -2035,7 +2035,7 @@ fn editing_a_node_turn_retires_the_runs_parked_serial_shell() {
     fs::create_dir_all(&session_dir).unwrap();
     let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
     fs::write(&file, [
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
         serde_json::json!({"type":"message", "id":"opening", "parentId":null, "message":{"role":"user", "content":first.task, "timestamp":first.execution.started_at}}),
         serde_json::json!({"type":"message", "id":"answer", "parentId":"opening", "message":{"role":"assistant", "content":[]}}),
     ].iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
@@ -2078,7 +2078,7 @@ fn editing_a_running_node_stops_its_execution_and_branches_from_the_start() {
     fs::create_dir_all(&session_dir).unwrap();
     let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
     let entries = [
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":source}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":source}),
         serde_json::json!({"type":"message", "id":"root", "parentId":null, "message":{"role":"system", "content":"system"}}),
         serde_json::json!({"type":"message", "id":"one", "parentId":"root", "message":{"role":"user", "content":"self-contained task", "timestamp":first.execution.started_at}}),
         serde_json::json!({"type":"message", "id":"answer1", "parentId":"one", "message":{"role":"assistant", "content":[]}}),
@@ -2325,7 +2325,7 @@ fn manual_node_pause_is_replayable_and_does_not_disguise_an_unrelated_failure() 
     runtime
         .emit_outputs(vec![EventKind::Output {
             execution_id: left.id.clone(),
-            text: "{\"type\":\"grapher_process_started\",\"pid\":1234}\n".into(),
+            text: "{\"type\":\"pi_n_process_started\",\"pid\":1234}\n".into(),
         }])
         .unwrap();
     let stopped = runtime.request_execution_stop(Some("left")).unwrap();
@@ -2545,7 +2545,7 @@ fn editing_serial_initial_turn_updates_goal_without_replacing_the_run() {
     fs::create_dir_all(&session_dir).unwrap();
     let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
     fs::write(&file, [
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":source}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":source}),
         serde_json::json!({"type":"message", "id":"root", "parentId":null, "message":{"role":"system", "content":"system"}}),
         serde_json::json!({"type":"message", "id":"first", "parentId":"root", "message":{"role":"user", "content":"self-contained task", "timestamp":first.execution.started_at}}),
     ].iter().map(|e| format!("{e}\n")).collect::<String>()).unwrap();
@@ -2616,7 +2616,7 @@ fn editing_graph_node_uses_earlier_checkpoint_and_propagates_change() {
     fs::create_dir_all(&first.execution.worktree).unwrap();
     let file = session_dir.join(format!("test_{}.jsonl", first.execution.session_id));
     fs::write(&file, [
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":first.execution.session_id, "cwd":first.execution.worktree}),
         serde_json::json!({"type":"message", "id":"start", "parentId":null, "message":{"role":"user", "content":"parent", "timestamp":first.execution.started_at}}),
         serde_json::json!({"type":"message", "id":"answer", "parentId":"start", "message":{"role":"assistant", "content":[]}}),
         serde_json::json!({"type":"message", "id":"next", "parentId":"answer", "message":{"role":"user", "content":"later", "timestamp":later.execution.started_at}}),
@@ -2762,8 +2762,8 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         .filter_map(Result::ok)
         .filter(|entry| {
             entry.file_name() != ".files"
-                && entry.file_name() != ".grapher-git"
-                && entry.file_name() != ".grapher-state"
+                && entry.file_name() != ".pi-n-git"
+                && entry.file_name() != ".pi-n-state"
                 && entry.file_type().unwrap().is_dir()
         })
         .count();
@@ -2900,8 +2900,8 @@ fn fanout_allocates_one_workspace_per_parallel_branch_and_fanin_reclaims_extras(
         .filter_map(Result::ok)
         .filter(|entry| {
             entry.file_name() != ".files"
-                && entry.file_name() != ".grapher-git"
-                && entry.file_name() != ".grapher-state"
+                && entry.file_name() != ".pi-n-git"
+                && entry.file_name() != ".pi-n-state"
                 && entry.file_type().unwrap().is_dir()
         })
         .count();
@@ -3260,7 +3260,7 @@ fn approval_captures_planner_files_before_allocating_graph_workspaces() {
         let (temp, source, mut runtime) = setup(standard_git, single());
         let old_head = workspace::verify(&source).unwrap();
         assert!(runtime.jobs().unwrap().is_empty());
-        assert!(!temp.path().join(".grapher-worktrees").exists());
+        assert!(!temp.path().join(".pi-n-worktrees").exists());
         // Both staged and unstaged planner changes, new files, and deletions.
         fs::write(source.join("tracked.txt"), "staged").unwrap();
         workspace::repository_git(&source, &["add", "tracked.txt"]).unwrap();
@@ -4172,7 +4172,7 @@ fn fan_in_conflict_invokes_merger_and_preserves_both_parents() {
                 &[
                     "merge-base",
                     "--is-ancestor",
-                    &format!("refs/grapher/parents/{name}"),
+                    &format!("refs/pi-n/parents/{name}"),
                     &head,
                 ],
             )
@@ -4447,7 +4447,7 @@ fn reset_retains_failed_workspaces_until_explicit_run_deletion() {
     let job = runtime.jobs().unwrap().remove(0);
     let path = Path::new(&job.execution.worktree);
     fs::create_dir_all(path).unwrap();
-    let other = temp.path().join(".grapher-worktrees").join("other-run");
+    let other = temp.path().join(".pi-n-worktrees").join("other-run");
     fs::create_dir_all(&other).unwrap();
     runtime
         .emit(EventKind::Failed {
@@ -4467,7 +4467,7 @@ fn reset_retains_failed_workspaces_until_explicit_run_deletion() {
                 parent: workspace::workspaces_parent(&runtime.root)
                     .canonicalize()
                     .unwrap(),
-                bucket: ".grapher-worktrees".into(),
+                bucket: ".pi-n-worktrees".into(),
                 owner: run_id.clone(),
                 checkout: None,
             }]),

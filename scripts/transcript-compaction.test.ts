@@ -66,7 +66,7 @@ test("process exit clears a compaction that never completed", () => {
   const state = freshState();
   parse([{ type: "compaction_start", reason: "threshold" }], state);
   assert.equal(state.compacting, true);
-  parse([{ type: "grapher_process_exited", success: false }], state);
+  parse([{ type: "pi_n_process_exited", success: false }], state);
   assert.equal(state.compacting, false);
 });
 

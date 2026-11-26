@@ -12,7 +12,7 @@ import { request } from 'node:http';
 const delay = ms => new Promise(completed => setTimeout(completed, ms));
 
 test('production HTTP confines static paths and refuses linked workspace cleanup', { timeout: 60_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-hardening-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-hardening-'));
   const listener = createServer();
   await new Promise(completed => listener.listen(0, '127.0.0.1', completed));
   const { port } = listener.address();
@@ -25,11 +25,11 @@ test('production HTTP confines static paths and refuses linked workspace cleanup
   await mkdir(source);
   await mkdir(external);
   await writeFile(join(source, 'file.txt'), 'source');
-  const backend = spawn(join(target, `debug/grapher${process.platform === 'win32' ? '.exe' : ''}`), [], {
+  const backend = spawn(join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`), [], {
     // Keep automatic repository discovery scoped to the small test project.
     cwd: source,
-    env: { ...process.env, GRAPHER_DATA_DIR: join(directory, 'data'), GRAPHER_PORT: String(port),
-      PI_CODING_AGENT_DIR: agent, GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces') },
+    env: { ...process.env, PI_N_DATA_DIR: join(directory, 'data'), PI_N_PORT: String(port),
+      PI_CODING_AGENT_DIR: agent, PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let diagnostics = '';
@@ -86,7 +86,7 @@ test('production HTTP confines static paths and refuses linked workspace cleanup
     await mkdir(externalRun);
     await writeFile(join(externalRun, 'must-survive.txt'), 'external data');
     // Windows junctions do not require Developer Mode or symlink privilege.
-    await symlink(external, join(directory, '.grapher-worktrees'), process.platform === 'win32' ? 'junction' : 'dir');
+    await symlink(external, join(directory, '.pi-n-worktrees'), process.platform === 'win32' ? 'junction' : 'dir');
     try { await api('delete_run', { runId: state.runId }); } catch (error) {
       assert.match(String(error), /symlink|redirect|real director/i);
     }

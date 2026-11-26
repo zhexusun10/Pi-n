@@ -39,13 +39,13 @@ before(async () => {
   });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
 async function newPage(handler) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   await context.route("**/api/*", handler);
   const page = await context.newPage();
@@ -551,13 +551,13 @@ test("Planner shows generated tools immediately and moves a queued steer only wh
     await page.getByText("Running...", { exact: true }).waitFor();
     assert.equal(await page.locator('[data-testid="tool-call-card"]').count(), 1);
     emit({ type: "tool_execution_end", toolCallId: "tool-one", toolName: "bash", result: { content: [{ type: "text", text: "done" }], details: { exitCode: 0 } } });
-    const marked = `STEER WHILE TOOL RUNS\n\n<grapher-steer-id>${requestId}</grapher-steer-id>`;
+    const marked = `STEER WHILE TOOL RUNS\n\n<pi-n-steer-id>${requestId}</pi-n-steer-id>`;
     emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: marked }] } });
     emit({ type: "message_end", message: { role: "user", content: [{ type: "text", text: marked }] } });
     await page.locator(".planner-transcript .chat-bubble-user", { hasText: "STEER WHILE TOOL RUNS" }).waitFor();
     assert.equal(await page.locator(".chat-bubble-user", { hasText: "STEER WHILE TOOL RUNS" }).count(), 1);
     assert.equal(await page.locator(".planner-steer-list").count(), 0);
-    assert.equal(await page.getByText(/grapher-steer-id/).count(), 0);
+    assert.equal(await page.getByText(/pi-n-steer-id/).count(), 0);
     // Durable command replies still carry the previous committed graph. They
     // must not erase nodes previewed by the ongoing Planner SSE stream.
     emit({ type: "tool_execution_start", toolCallId: "preview-node", toolName: "edit_graph",
@@ -583,8 +583,8 @@ test("recovered Planner keeps repeated queued steers separate and marks unread d
     line({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "ORIGINAL GOAL" }] } }),
     line({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "ORIGINAL GOAL" }] } }),
     line({ type: "tool_execution_start", toolCallId: "tool", toolName: "bash", args: { command: "long" } }),
-    line({ type: "queue_update", steering: ["REPEATED INSTRUCTION\n\n<grapher-steer-id>12345678-1234-4234-8234-123456789abd</grapher-steer-id>"] }),
-    line({ type: "message_start", message: { role: "user", content: [{ type: "text", text: `REPEATED INSTRUCTION\n\n<grapher-steer-id>${id}</grapher-steer-id>` }] } }),
+    line({ type: "queue_update", steering: ["REPEATED INSTRUCTION\n\n<pi-n-steer-id>12345678-1234-4234-8234-123456789abd</pi-n-steer-id>"] }),
+    line({ type: "message_start", message: { role: "user", content: [{ type: "text", text: `REPEATED INSTRUCTION\n\n<pi-n-steer-id>${id}</pi-n-steer-id>` }] } }),
   ].join(""));
   let running = true;
   const { context, page, errors } = await newPage(route => {
@@ -609,7 +609,7 @@ test("recovered Planner keeps repeated queued steers separate and marks unread d
     assert.equal(await page.locator(".planner-steer-list .chat-bubble-user", { hasText: "REPEATED INSTRUCTION" }).count(), 1);
     // A paged window that begins with a steer identical to the goal must not
     // mistake that marked turn for the separately rendered header.
-    output = Buffer.from(line({ type: "message_start", message: { role: "user", content: [{ type: "text", text: `REPEATED INSTRUCTION\n\n<grapher-steer-id>${id}</grapher-steer-id>` }] } }));
+    output = Buffer.from(line({ type: "message_start", message: { role: "user", content: [{ type: "text", text: `REPEATED INSTRUCTION\n\n<pi-n-steer-id>${id}</pi-n-steer-id>` }] } }));
     running = true;
     await page.goto(`${origin}/__steer-recovery?sameGoal=true`, { waitUntil: "domcontentloaded" });
     await page.getByText("Queued; waiting for the current step to finish", { exact: true }).waitFor();
@@ -636,7 +636,7 @@ test("first-turn Planner handoff fills behind the live stream so a progress-only
     rows.map(text => assistant(text)).join("");
   // Simulate a trailing agent_end larger than INITIAL_TRANSCRIPT_BYTES: the first
   // tail page lands on trailing metadata lines with zero visible rows.
-  const metadataTail = line({ type: "grapher_context_usage", tokens: 1000, window: 500000 }) +
+  const metadataTail = line({ type: "pi_n_context_usage", tokens: 1000, window: 500000 }) +
     line({ type: "agent_settled", aborted: false });
   const olderBytes = Buffer.from(olderBody), tailBytes = Buffer.from(metadataTail);
   const totalBytes = olderBytes.length + tailBytes.length;

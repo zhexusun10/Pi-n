@@ -10,7 +10,7 @@ import { createWorkspacePaths } from '../engine/workspace-paths.mjs';
 import { isCaseInsensitive } from '../engine/path-identity.mjs';
 
 test('file tools map source aliases, file URLs and case/Unicode variants', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-tool-paths-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-tool-paths-'));
   try {
     const source = join(root, 'SourceCase');
     const workspace = join(root, 'WorkspaceCase');
@@ -50,7 +50,7 @@ test('file tools map source aliases, file URLs and case/Unicode variants', () =>
 });
 
 test('file tools convert registered Git Bash mounts such as /tmp', { skip: process.platform !== 'win32' }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-tool-msys-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-tool-msys-'));
   try {
     const source = join(root, 'source');
     const workspace = join(root, 'workspace');
@@ -72,7 +72,7 @@ test('file tools convert registered Git Bash mounts such as /tmp', { skip: proce
 });
 
 test('file tools preserve suffix case and honor sourceCaseInsensitive independently', () => {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'grapher-tool-suffix-')));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'pi-n-tool-suffix-')));
   try {
     const source = join(root, 'SourceRoot');
     const workspace = join(root, 'WorkspaceRoot');

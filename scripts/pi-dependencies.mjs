@@ -1,4 +1,4 @@
-// Grapher's source-runtime dependency profile. Keep the upstream Git tree and
+// Pi^n's source-runtime dependency profile. Keep the upstream Git tree and
 // lockfile intact; install only core dependencies plus reviewed build/test tools.
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -7,7 +7,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const corePackages = ['chord', 'tui', 'telemetry', 'schema', 'codemode', 'mcp', 'ai', 'durable', 'agent', 'coding-agent'];
-export const BUNDLED_PI_MANIFEST_FILE = '.grapher-bundled-manifest.json';
+export const BUNDLED_PI_MANIFEST_FILE = '.pi-n-bundled-manifest.json';
 export const PI_DEPENDENCIES_MODE_RUNTIME_ONLY = 'runtime-only';
 const excludedPackages = new Set(['shx', 'shelljs', 'fast-glob', 'micromatch', 'braces', 'node-forge', '@earendil-works/gondolin']);
 const json = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -45,7 +45,7 @@ export function dependencyManifest(root, { includeDev = true } = {}) {
     add('@types/node', upstream.devDependencies['@types/node']);
   }
   return {
-    name: 'grapher-pi-dependencies', version, private: true, type: 'module',
+    name: 'pi-n-pi-dependencies', version, private: true, type: 'module',
     description: 'Pinned dependencies for the unmodified Pi source runtime; no example workspaces or shelljs build chain.',
     engines: upstream.engines,
     dependencies: Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))),
@@ -94,7 +94,7 @@ function isTrustedRuntimeOnlyInstallation(root) {
   const expectedSource = join(root, 'pi');
   if (existsSync(join(expectedSource, '.git'))) return false;
   if (!existsSync(join(expectedSource, BUNDLED_PI_MANIFEST_FILE))) return false;
-  const markerPath = join(expectedSource, 'node_modules', '.grapher-pi-dependencies.json');
+  const markerPath = join(expectedSource, 'node_modules', '.pi-n-pi-dependencies.json');
   try {
     return json(markerPath)?.mode === PI_DEPENDENCIES_MODE_RUNTIME_ONLY;
   } catch {
@@ -156,7 +156,7 @@ export function verifyPiDependencies(root, { installationRoot = root, profileCac
   const source = join(installationRoot, 'pi');
   const expectedSource = join(root, 'pi');
   const modules = join(source, 'node_modules');
-  const markerPath = join(modules, '.grapher-pi-dependencies.json');
+  const markerPath = join(modules, '.pi-n-pi-dependencies.json');
   let markerRaw;
   try { markerRaw = readFileSync(markerPath, 'utf8'); }
   catch { throw new Error('Pi dependencies are missing or use an unreviewed install; run npm run pi:setup'); }
@@ -235,7 +235,7 @@ export function installPiDependencies(root, runNpm) {
     mkdirSync(dirname(target), { recursive: true });
     symlinkSync(process.platform === 'win32' ? workspace : relative(dirname(target), workspace), target, process.platform === 'win32' ? 'junction' : 'dir');
   }
-  writeFileSync(join(modules, '.grapher-pi-dependencies.json'), `${JSON.stringify(dependencyProfileHashes(root))}\n`);
+  writeFileSync(join(modules, '.pi-n-pi-dependencies.json'), `${JSON.stringify(dependencyProfileHashes(root))}\n`);
   verifyPiDependencies(root);
 }
 

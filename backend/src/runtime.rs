@@ -502,7 +502,7 @@ impl Runtime {
             return;
         }
         if let Err(error) = crate::file_changes::persist_run(&self.root, &self.state.run_id) {
-            eprintln!("[Grapher] Cannot persist file-change summary: {error}");
+            eprintln!("[Pi^n] Cannot persist file-change summary: {error}");
         }
     }
 
@@ -548,7 +548,7 @@ impl Runtime {
                 }
                 Ok(None) => {}
                 Err(error) => eprintln!(
-                    "[Grapher] Result descriptor unavailable; publishing code without it: {error}"
+                    "[Pi^n] Result descriptor unavailable; publishing code without it: {error}"
                 ),
             }
         }
@@ -983,7 +983,7 @@ impl Runtime {
                 checkout: None,
             } = target
             {
-                if bucket == ".grapher-worktrees" && owner == self.state.run_id {
+                if bucket == ".pi-n-worktrees" && owner == self.state.run_id {
                     if let Ok(resolved) = parent.canonicalize().map(|resolved| {
                         crate::path_identity::actual_path(&resolved).unwrap_or(resolved)
                     }) {
@@ -998,7 +998,7 @@ impl Runtime {
         let mut publication_dirs = Vec::new();
         let mut touched_run_roots = BTreeSet::new();
         for parent in parents {
-            let run_root = parent.join(".grapher-worktrees").join(&self.state.run_id);
+            let run_root = parent.join(".pi-n-worktrees").join(&self.state.run_id);
             let Ok(meta) = fs::symlink_metadata(&run_root) else {
                 continue;
             };
@@ -1050,7 +1050,7 @@ impl Runtime {
                 let git_target = crate::cleanup::Target::workspace_checkout(
                     parent,
                     &self.state.run_id,
-                    format!(".grapher-git/{digest}.git"),
+                    format!(".pi-n-git/{digest}.git"),
                 );
                 let _ = crate::cleanup::detached::retire(
                     &self.root,
@@ -1061,7 +1061,7 @@ impl Runtime {
                 let state_target = crate::cleanup::Target::workspace_checkout(
                     parent,
                     &self.state.run_id,
-                    format!(".grapher-state/{digest}"),
+                    format!(".pi-n-state/{digest}"),
                 );
                 let _ = crate::cleanup::detached::retire(
                     &self.root,
@@ -1095,7 +1095,7 @@ impl Runtime {
             touched_run_roots.insert(run_root);
         }
         for run_root in touched_run_roots {
-            for container in [".grapher-git", ".grapher-state"] {
+            for container in [".pi-n-git", ".pi-n-state"] {
                 let dir = run_root.join(container);
                 if fs::read_dir(&dir)
                     .ok()
@@ -1512,7 +1512,7 @@ impl Runtime {
         for task in self.store.pending_cleanups()? {
             if task.manifest.sequence.is_none() {
                 if let Err(error) = crate::cleanup::attempt(&self.root, &self.store, &task) {
-                    eprintln!("[Grapher] Pending cleanup {}: {error}", task.run_id);
+                    eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
                 }
             }
         }
@@ -1580,7 +1580,7 @@ impl Runtime {
         };
         self.touch();
         if let Err(error) = self.retry_deleted_cleanups() {
-            eprintln!("[Grapher] History cleared; filesystem cleanup remains queued: {error}");
+            eprintln!("[Pi^n] History cleared; filesystem cleanup remains queued: {error}");
         }
         Ok(())
     }
@@ -1615,7 +1615,7 @@ impl Runtime {
         for run_id in run_ids {
             if let Err(error) = self.retry_cleanup(run_id) {
                 eprintln!(
-                    "[Grapher] Run {run_id} deleted; filesystem cleanup remains queued: {error}"
+                    "[Pi^n] Run {run_id} deleted; filesystem cleanup remains queued: {error}"
                 );
             }
         }
@@ -1917,11 +1917,11 @@ impl Runtime {
                 .planner_workspace_owner(&execution)
                 .is_none_or(|owner| owner.id != execution.id)
         {
-            eprintln!("[Grapher] Retiring the latest Planner workspace for node '{}': its physical owner is a different execution. Planning in the source project instead", execution.node);
+            eprintln!("[Pi^n] Retiring the latest Planner workspace for node '{}': its physical owner is a different execution. Planning in the source project instead", execution.node);
             return Ok(None);
         }
         if let Err(error) = self.validate_planner_workspace(&execution, &repository) {
-            eprintln!("[Grapher] Retiring the latest Planner workspace for node '{}': {error}. Planning in the source project instead", execution.node);
+            eprintln!("[Pi^n] Retiring the latest Planner workspace for node '{}': {error}. Planning in the source project instead", execution.node);
             return Ok(None);
         }
         Ok(Some(execution))
@@ -2131,7 +2131,7 @@ impl Runtime {
                         let actual = match crate::path_safety::real_child_path(&root, path, false) {
                             Ok(actual) => actual,
                             Err(error) => {
-                                eprintln!("[Grapher] The explicit Planner workspace for node '{}' is unavailable: {error}", current.node);
+                                eprintln!("[Pi^n] The explicit Planner workspace for node '{}' is unavailable: {error}", current.node);
                                 None
                             }
                         };
@@ -2196,7 +2196,7 @@ impl Runtime {
                 // An unusable latest slot never becomes an older-slot fallback;
                 // Planner answers from the source project for this selection.
                 eprintln!(
-                    "[Grapher] Retiring the latest Planner workspace for node '{}': {}",
+                    "[Pi^n] Retiring the latest Planner workspace for node '{}': {}",
                     execution.node,
                     path.display()
                 );
@@ -2208,11 +2208,11 @@ impl Runtime {
             let actual = match crate::path_safety::real_child_path(&root, path, false) {
                 Ok(Some(actual)) => actual,
                 Ok(None) => {
-                    eprintln!("[Grapher] Retiring the latest Planner workspace for node '{}': {} is outside this Run. Planning in the source project instead", execution.node, path.display());
+                    eprintln!("[Pi^n] Retiring the latest Planner workspace for node '{}': {} is outside this Run. Planning in the source project instead", execution.node, path.display());
                     return Ok(None);
                 }
                 Err(error) => {
-                    eprintln!("[Grapher] Retiring the latest Planner workspace for node '{}': {error}. Planning in the source project instead", execution.node);
+                    eprintln!("[Pi^n] Retiring the latest Planner workspace for node '{}': {error}. Planning in the source project instead", execution.node);
                     return Ok(None);
                 }
             };
@@ -2221,7 +2221,7 @@ impl Runtime {
                 continue;
             }
             if !workspace::has_private_git(&actual) {
-                eprintln!("[Grapher] Retiring the latest Planner workspace for node '{}': {} is not a private Git repository. Planning in the source project instead", execution.node, actual.display());
+                eprintln!("[Pi^n] Retiring the latest Planner workspace for node '{}': {} is not a private Git repository. Planning in the source project instead", execution.node, actual.display());
                 return Ok(None);
             }
             let mut selected = execution.clone();
@@ -2364,7 +2364,7 @@ impl Runtime {
                 Ok(None) => continue,
                 Err(error) => {
                     eprintln!(
-                        "[Grapher] Planner workspace for '{}' is unavailable: {error}",
+                        "[Pi^n] Planner workspace for '{}' is unavailable: {error}",
                         node.id
                     );
                     continue;
@@ -2386,7 +2386,7 @@ impl Runtime {
                 let result = self.validate_planner_workspace(&resolution.execution, &repository);
                 if let Err(error) = &result {
                     eprintln!(
-                        "[Grapher] Planner workspace for '{}' is unavailable: {error}",
+                        "[Pi^n] Planner workspace for '{}' is unavailable: {error}",
                         resolution.execution.node
                     );
                 }
@@ -4022,7 +4022,7 @@ impl Runtime {
             }
             workspace::git(
                 path,
-                &["rev-parse", "--verify", "refs/grapher/base^{commit}"],
+                &["rev-parse", "--verify", "refs/pi-n/base^{commit}"],
             )
             .map_err(|error| {
                 format!("Cannot resolve workspace without its recorded preparation base: {error}")
@@ -5802,7 +5802,7 @@ impl Runtime {
 
     fn run_workspace_root(&self) -> PathBuf {
         workspace::workspaces_parent(&self.root)
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&self.state.run_id)
     }
 
@@ -5874,8 +5874,8 @@ impl Runtime {
             .filter_map(|entry| {
                 let name = entry.file_name();
                 if name == ".files"
-                    || name == ".grapher-git"
-                    || name == ".grapher-state"
+                    || name == ".pi-n-git"
+                    || name == ".pi-n-state"
                     || name.to_string_lossy().starts_with("publication-")
                 {
                     return None;
@@ -6151,8 +6151,8 @@ impl Runtime {
             }
             let path = entry.path();
             if entry.file_name() == ".files"
-                || entry.file_name() == ".grapher-git"
-                || entry.file_name() == ".grapher-state"
+                || entry.file_name() == ".pi-n-git"
+                || entry.file_name() == ".pi-n-state"
                 || entry
                     .file_name()
                     .to_string_lossy()
@@ -6361,12 +6361,12 @@ impl Runtime {
                 {
                     if let Some(m) = &exec.metrics {
                         eprintln!(
-                            "[Grapher] [Execution] Node '{}' finished in {:.2}s (head: {}, tokens: in={}, out={}, tools: {}, errors: {})",
+                            "[Pi^n] [Execution] Node '{}' finished in {:.2}s (head: {}, tokens: in={}, out={}, tools: {}, errors: {})",
                             exec.node, m.duration_seconds, head, m.usage.input, m.usage.output, m.tools, m.tool_errors
                         );
                     } else {
                         eprintln!(
-                            "[Grapher] [Execution] Node '{}' finished (head: {})",
+                            "[Pi^n] [Execution] Node '{}' finished (head: {})",
                             exec.node, head
                         );
                     }
@@ -6388,7 +6388,7 @@ impl Runtime {
                     error
                 };
                 eprintln!(
-                    "[Grapher] [Execution] Node '{}' failed: {error}",
+                    "[Pi^n] [Execution] Node '{}' failed: {error}",
                     execution.node
                 );
                 self.emit(EventKind::Failed {
@@ -6578,7 +6578,7 @@ impl Runtime {
         if !stopped.is_empty() {
             for (node, execution_id) in &stopped {
                 eprintln!(
-                    "[Grapher] [Feedback] Stopping node '{node}': a queued <FEEDBACK> verdict invalidates its in-flight result",
+                    "[Pi^n] [Feedback] Stopping node '{node}': a queued <FEEDBACK> verdict invalidates its in-flight result",
                 );
                 crate::process_control::stop_owner(&crate::process_control::execution_owner(
                     &self.state.run_id,
@@ -7347,13 +7347,13 @@ pub(crate) fn perform_result(
                 )?;
                 #[cfg(feature = "fixture")]
                 let mut command = crate::native::fixture_execution_command(path)?;
-                command.arg("--grapher-run-result").args(&job.args);
+                command.arg("--pi-n-run-result").args(&job.args);
                 command
-                    .env("GRAPHER_MODE", "result")
-                    .env("GRAPHER_EXECUTION_KIND", "graph")
-                    .env("GRAPHER_WORKSPACE_ROOT", crate::native::host_path(path))
+                    .env("PI_N_MODE", "result")
+                    .env("PI_N_EXECUTION_KIND", "graph")
+                    .env("PI_N_WORKSPACE_ROOT", crate::native::host_path(path))
                     .env(
-                        "GRAPHER_ORIGINAL_ROOT",
+                        "PI_N_ORIGINAL_ROOT",
                         crate::native::host_path(&repository),
                     );
                 crate::environment::bind_command(
@@ -7696,7 +7696,7 @@ fn perform_with_merger_inner(
                 .and_then(Path::file_name)
                 .and_then(|name| name.to_str());
             if owner != Some(&job.run_id)
-                || bucket != Some(".grapher-worktrees")
+                || bucket != Some(".pi-n-worktrees")
                 || !source_path.is_dir()
             {
                 return Err("Feedback requires an existing worktree owned by this Run".into());

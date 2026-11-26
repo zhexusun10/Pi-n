@@ -827,6 +827,17 @@ export function VirtualizedList<T extends { id: string }>({ items, renderRow, ga
       }
     }
     transitionInitialIdsRef.current = selected;
+  } else if (transitionPhase === "expanding" && transitionInitialIdsRef.current !== null && structureChanged) {
+    // A brand-new summary group appended while a live expand animation is in
+    // flight joins the active transition instead of staying collapsed and
+    // popping open at idle handoff.
+    const beforeSet = new Set(beforeIds);
+    for (let index = range.start; index < range.end; index++) {
+      const id = ids[index];
+      if (!beforeSet.has(id) && id.startsWith("summary_")) {
+        transitionInitialIdsRef.current.add(id);
+      }
+    }
   }
 
   // When scrolling upward mounts previously unmeasured older rows above the

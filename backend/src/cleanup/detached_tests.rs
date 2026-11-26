@@ -16,8 +16,8 @@ fn fixture() -> Fixture {
     fs::create_dir(&root).unwrap();
     let store = Store::open(&root.join("events.sqlite")).unwrap();
     let run = Uuid::new_v4().to_string();
-    let target = Target::workspace(temp.path(), &run, ".grapher-worktrees");
-    let original = temp.path().join(".grapher-worktrees").join(&run);
+    let target = Target::workspace(temp.path(), &run, ".pi-n-worktrees");
+    let original = temp.path().join(".pi-n-worktrees").join(&run);
     fs::create_dir_all(original.join("node")).unwrap();
     fs::write(original.join("node/old.txt"), "old workspace").unwrap();
     let source = temp.path().join("source");
@@ -232,11 +232,11 @@ fn detached_cleanup_rejects_retired_planner_layout_without_renaming_it() {
     let checkout = Uuid::new_v4().to_string();
     let target = Target::Workspace {
         parent: f._temp.path().to_path_buf(),
-        bucket: ".grapher-workspaces".into(),
+        bucket: ".pi-n-workspaces".into(),
         owner: f.run.clone(),
         checkout: Some(checkout.clone()),
     };
-    let parent = f._temp.path().join(".grapher-workspaces").join(&f.run);
+    let parent = f._temp.path().join(".pi-n-workspaces").join(&f.run);
     let original = parent.join(checkout);
     fs::create_dir_all(&original).unwrap();
     fs::write(original.join("old.txt"), "retired Planner").unwrap();
@@ -270,13 +270,13 @@ fn detached_cleanup_refuses_non_workspace_receipts() {
 fn detached_slot_retire_moves_slot_git_and_state_outside_run_dir_and_rejects_invalid_checkouts() {
     let f = fixture();
     let parent = f._temp.path();
-    let run_dir = parent.join(".grapher-worktrees").join(&f.run);
+    let run_dir = parent.join(".pi-n-worktrees").join(&f.run);
     let slot = run_dir.join("node-a-1");
     fs::create_dir_all(&slot).unwrap();
     fs::write(slot.join("code.txt"), "slot").unwrap();
     let digest = crate::workspace_state::slot_digest(&slot).unwrap();
-    let git_dir = run_dir.join(".grapher-git").join(format!("{digest}.git"));
-    let state_dir = run_dir.join(".grapher-state").join(&digest);
+    let git_dir = run_dir.join(".pi-n-git").join(format!("{digest}.git"));
+    let state_dir = run_dir.join(".pi-n-state").join(&digest);
     fs::create_dir_all(&git_dir).unwrap();
     fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
     fs::create_dir_all(&state_dir).unwrap();
@@ -286,12 +286,12 @@ fn detached_slot_retire_moves_slot_git_and_state_outside_run_dir_and_rejects_inv
         "../escape",
         "nested/slot",
         ".files",
-        ".grapher-git",
-        ".grapher-state",
+        ".pi-n-git",
+        ".pi-n-state",
         "publication-files-1234",
-        ".grapher-cleanup-1234",
-        ".grapher-git/not-hex.git",
-        ".grapher-state/short",
+        ".pi-n-cleanup-1234",
+        ".pi-n-git/not-hex.git",
+        ".pi-n-state/short",
     ] {
         let bad = Target::workspace_checkout(parent, &f.run, invalid);
         assert!(
@@ -300,8 +300,8 @@ fn detached_slot_retire_moves_slot_git_and_state_outside_run_dir_and_rejects_inv
         );
     }
 
-    let git_target = Target::workspace_checkout(parent, &f.run, format!(".grapher-git/{digest}.git"));
-    let state_target = Target::workspace_checkout(parent, &f.run, format!(".grapher-state/{digest}"));
+    let git_target = Target::workspace_checkout(parent, &f.run, format!(".pi-n-git/{digest}.git"));
+    let state_target = Target::workspace_checkout(parent, &f.run, format!(".pi-n-state/{digest}"));
     let slot_target = Target::workspace_checkout(parent, &f.run, "node-a-1");
     retire(&f.root, &f.store, &f.run, &git_target).unwrap();
     retire(&f.root, &f.store, &f.run, &state_target).unwrap();
@@ -310,13 +310,13 @@ fn detached_slot_retire_moves_slot_git_and_state_outside_run_dir_and_rejects_inv
     assert!(!slot.exists());
     assert!(!git_dir.exists());
     assert!(!state_dir.exists());
-    // Detached directories live beside `<run_id>` in `.grapher-worktrees/`, never inside `<run_id>/`.
+    // Detached directories live beside `<run_id>` in `.pi-n-worktrees/`, never inside `<run_id>/`.
     assert!(run_dir.is_dir());
     let receipts = f.store.detached_workspaces().unwrap();
     assert_eq!(receipts.len(), 3);
     for record in &receipts {
         let (_, destination) = record.location(&f.root).unwrap();
-        assert_eq!(destination.parent().unwrap(), parent.join(".grapher-worktrees"));
+        assert_eq!(destination.parent().unwrap(), parent.join(".pi-n-worktrees"));
         assert!(destination.is_dir());
     }
 

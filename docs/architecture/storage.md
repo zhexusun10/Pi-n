@@ -5,14 +5,14 @@
 
 ## Runtime data
 
-Runtime data defaults to `.grapher/`, configurable with `GRAPHER_DATA_DIR`.
+Runtime data defaults to `.pi-n/`, configurable with `PI_N_DATA_DIR`.
 On a known database-format mismatch, startup preserves that directory's existing
 data and selects a separate current-format `format-1/` child (or the next available
 numbered slot). Subsequent starts reuse it; all paths below are relative to the
 effective data root reported in startup logs and bootstrap `dataPath`:
 
 ```text
-.grapher/
+.pi-n/
   events.sqlite          # Events, log chunks, ownership and durable cleanup tasks
   runtime.lock           # One backend writer per data directory
   config.json            # Saved defaults shared by Run services
@@ -50,11 +50,11 @@ Graph workspaces default to:
 
 | Platform | Workspace parent |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\Grapher\workspaces` |
-| macOS | `~/Library/Caches/Grapher/workspaces` |
-| Linux | `${XDG_CACHE_HOME:-~/.cache}/grapher/workspaces` |
+| Windows | `%LOCALAPPDATA%\Pi^n\workspaces` |
+| macOS | `~/Library/Caches/Pi-n/workspaces` |
+| Linux | `${XDG_CACHE_HOME:-~/.cache}/pi-n/workspaces` |
 
-Run slots live beneath the parent's `.grapher-worktrees/` directory. `GRAPHER_CACHE_DIR` changes the cache root; `GRAPHER_WORKSPACE_PARENT` overrides the node-workspace parent. Cache placement is independent of `GRAPHER_DATA_DIR`. Existing execution paths are retained, not moved.
+Run slots live beneath the parent's `.pi-n-worktrees/` directory. `PI_N_CACHE_DIR` changes the cache root; `PI_N_WORKSPACE_PARENT` overrides the node-workspace parent. Cache placement is independent of `PI_N_DATA_DIR`. Existing execution paths are retained, not moved.
 
 Successful publication/reset cleans owned workspaces but keeps Pi histories for follow-ups. Git reconstruction and ownership constraints follow [Cleanup and reproducibility](workspace-snapshots-and-feedback.md#cleanup-and-reproducibility); do not infer a node's current workspace from its allocation name.
 
@@ -73,13 +73,13 @@ remain owned until their retention requirements end. Unbound `automatic-lazy`
 Runs (or Runs whose earlier managed result was superseded by a later batch)
 retire their workspace roots normally on completion. After an intermediate batch `PublicationCompleted` (or an approved idle graph
 revision), excess idle slots, installed `publication-files-*` /
-`publication-view-*` temporary directories (together with their `.grapher-git/`
-and `.grapher-state/` metadata, pruning empty metadata containers) are retired
-via the same detached receipt queue into `.grapher-worktrees/.grapher-cleanup-<UUID>`,
+`publication-view-*` temporary directories (together with their `.pi-n-git/`
+and `.pi-n-state/` metadata, pruning empty metadata containers) are retired
+via the same detached receipt queue into `.pi-n-worktrees/.pi-n-cleanup-<UUID>`,
 retaining only slots needed for live work, recovery, feedback, bound fixed
 layouts, uninstalled publication journals, failed Mergers, or the immediately
 ready next private batch. Once a Graph Run settles, obsolete environment
-captures (`versions/`, `blobs/`, `launches/`) under `.grapher/environments/<run>/`
+captures (`versions/`, `blobs/`, `launches/`) under `.pi-n/environments/<run>/`
 are pruned only when unreachable from recorded inputs/results, baselines,
 publication descriptors and inheritance evidence in both current state and
 append-only history. A later batch does not release historical E/L references.
@@ -92,7 +92,7 @@ A retained generation is acknowledged without discarding its ownership records;
 explicit conversation deletion still handles those resources. Each eligible root
 gets an independent SQLite
 `detached_workspaces` receipt before a same-parent rename to a unique
-`.grapher-cleanup-<UUID>` directory. A committed detached marker precedes any
+`.pi-n-cleanup-<UUID>` directory. A committed detached marker precedes any
 recursive deletion. The original allocation path can then be reused without an
 old cleanup touching new work; `workspace_cleanup_done` records that the cleanup
 generation was handled (retired or retained by policy), not that all physical
@@ -133,7 +133,7 @@ The browser removes its workspace/conversation indexes only after the commit. It
 
 ## Shared Pi runtime cache
 
-All projects/backends with the same engine inputs share one content-keyed Pi runtime cache under the OS cache's `workspaces/.grapher-workspaces/`. `GRAPHER_NATIVE_RUNTIME_PARENT` overrides this location.
+All projects/backends with the same engine inputs share one content-keyed Pi runtime cache under the OS cache's `workspaces/.pi-n-workspaces/`. `PI_N_NATIVE_RUNTIME_PARENT` overrides this location.
 
 The key covers engine/adapters, Pi source/builds, dependency locks, bundled extensions and platform/Node ABI—not workspace/session paths. An exclusive cache lock serializes preparation; shared process-lifetime file leases protect active readers. Cached engine inputs are rechecked before reuse. Damaged idle copies are rebuilt, never overwritten under live readers.
 
@@ -155,4 +155,4 @@ engine inputs, not project workspace inheritance or additional filesystem isolat
 
 Successful caches survive shutdown/restart. Failed preparations, abandoned per-backend copies and unused obsolete versions in the current runtime cache are reclaimed before preparation; live versions are never removed. Old project-adjacent caches and unmarked engine directories are left untouched. Offline cleanup also requires the current marker/lease protocol.
 
-The cache contains engine/dependencies and host-primed `.grapher-runtime-cache` verification/compilation artifacts, not project state or conversations. Generated code caches do not participate in the code-content key and are reclaimed with their leased runtime. Role/process preparation belongs to [Pi prewarming](../development/pi-integration.md#prewarming-and-prepared-runtime); external shared-state limits belong to [Filesystem isolation](filesystem-isolation.md#shared-runtime-and-external-state).
+The cache contains engine/dependencies and host-primed `.pi-n-runtime-cache` verification/compilation artifacts, not project state or conversations. Generated code caches do not participate in the code-content key and are reclaimed with their leased runtime. Role/process preparation belongs to [Pi prewarming](../development/pi-integration.md#prewarming-and-prepared-runtime); external shared-state limits belong to [Filesystem isolation](filesystem-isolation.md#shared-runtime-and-external-state).

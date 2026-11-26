@@ -166,7 +166,7 @@ test("browser mode retains exact relative /api URLs across all services without 
     if (url === "/api/provider_auth") {
       return jsonResponse(validProviderCatalog);
     }
-    return jsonResponse(emptySnapshot, { "x-grapher-events": "1" });
+    return jsonResponse(emptySnapshot, { "x-pi-n-events": "1" });
   }) as typeof fetch;
 
   const unsub = subscribeSnapshotChanges(() => {});
@@ -357,7 +357,7 @@ test("backend URL validation rejects non-loopback or malformed URLs and classifi
     let closedInvokes = 0;
     installTauriInvoke(async () => {
       closedInvokes++;
-      throw "Grapher backend exited unexpectedly after startup (exit status: 1).";
+      throw "Pi^n backend exited unexpectedly after startup (exit status: 1).";
     });
     await assert.rejects(
       runtimeService.bootstrap(),
@@ -399,7 +399,7 @@ test("Tauri fetch failure probes backend_url to report closed sidecar or transpa
     // Case 2: sidecar shuts down mid-session; fetch error surfaces the real closed diagnostic.
     installTauriInvoke(async () => {
       if (seenUrls.length === 2) return "http://127.0.0.1:42002";
-      throw "Grapher backend has already shut down.";
+      throw "Pi^n backend has already shut down.";
     });
     await resolveBackendBaseUrl();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -430,7 +430,7 @@ test("Tauri fetch failure probes backend_url to report closed sidecar or transpa
     installTauriInvoke(async () => {
       streamPhase++;
       if (streamPhase === 1) return "http://127.0.0.1:42004";
-      throw "Grapher backend exited unexpectedly after startup (exit status: 9).";
+      throw "Pi^n backend exited unexpectedly after startup (exit status: 9).";
     });
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       assert.equal(String(input), "http://127.0.0.1:42004/api/plan_goal_stream");

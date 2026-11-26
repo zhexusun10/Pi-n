@@ -345,7 +345,11 @@ export const ChangedFileRow = React.memo(function ChangedFileRow({
                 diffState.data.binary ? (
                   <div className="changed-file-diff-message">{t("二进制文件")}</div>
                 ) : diffState.data.lines.length === 0 ? (
-                  <div className="changed-file-diff-message">{t("无文本变更")}</div>
+                  <div className="changed-file-diff-message">
+                    {item.status === "deleted"
+                      ? t("文件已删除，无可显示内容")
+                      : t("无文本变更")}
+                  </div>
                 ) : (
                   <DiffLinesView
                     path={item.path}

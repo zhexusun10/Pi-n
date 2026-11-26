@@ -120,7 +120,7 @@ export function verifyBaseline({ installationRoot = root, baseline = lock } = {}
   } else {
     const git = (...args) => {
       try {
-        return execFileSync(process.env.GRAPHER_TRUSTED_GIT || "git", ["--no-optional-locks", "-C", pi, ...args], {
+        return execFileSync(process.env.PI_N_TRUSTED_GIT || "git", ["--no-optional-locks", "-C", pi, ...args], {
           encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
           env: toolchainEnv(Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")))),
         }).trim();
@@ -129,9 +129,9 @@ export function verifyBaseline({ installationRoot = root, baseline = lock } = {}
       }
     };
     const actual = git("rev-parse", "HEAD");
-    if (actual !== baseline.forkCommit) throw new Error(`Pi checkout is ${actual}, expected ${baseline.forkCommit}; restore the pinned submodule before starting Grapher`);
+    if (actual !== baseline.forkCommit) throw new Error(`Pi checkout is ${actual}, expected ${baseline.forkCommit}; restore the pinned submodule before starting Pi^n`);
     if (git("status", "--porcelain", "--untracked-files=normal")) {
-      throw new Error("Pi checkout has tracked or untracked changes; review and remove them before starting Grapher (ignored build artifacts and model data are allowed)");
+      throw new Error("Pi checkout has tracked or untracked changes; review and remove them before starting Pi^n (ignored build artifacts and model data are allowed)");
     }
   }
   if (json(join(pi, "packages/coding-agent/package.json")).version !== baseline.packageVersion) {
@@ -199,7 +199,7 @@ let activeResolverState = null;
 export function installPiRuntimeResolver({ installationRoot = root } = {}) {
   // Private launches retain session-local temp paths. The host primes this
   // runtime-owned directory before exposing it read-only inside their sandbox.
-  const cacheRoot = process.env.GRAPHER_RUNTIME_CACHE_DIR;
+  const cacheRoot = process.env.PI_N_RUNTIME_CACHE_DIR;
   try { enableCompileCache(cacheRoot ? join(cacheRoot, "compile") : undefined); } catch {}
   if (activeResolverState?.key === installationRoot) return;
   const piRoot = join(installationRoot, "pi");
@@ -329,7 +329,7 @@ function fastBaselineFingerprint(installationRoot = root, baseline = lock) {
     const piPkgStat = statSync(join(piDir, "package.json"));
     const piLockStat = statSync(join(piDir, "package-lock.json"));
     const modulesStat = statSync(join(piDir, "node_modules"));
-    const depMarker = readFileSync(join(piDir, "node_modules/.grapher-pi-dependencies.json"), "utf8").trim();
+    const depMarker = readFileSync(join(piDir, "node_modules/.pi-n-pi-dependencies.json"), "utf8").trim();
     const depPkgStat = statSync(join(installationRoot, "engine/pi-dependencies/package.json"));
     const depLockStat = statSync(join(installationRoot, "engine/pi-dependencies/package-lock.json"));
     const modelDataDir = join(installationRoot, "engine/model-data");
@@ -368,12 +368,12 @@ const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
 const sleepSync = ms => { try { Atomics.wait(waitBuffer, 0, 0, ms); } catch {} };
 
 // Verify baseline and Pi dependencies once per explicit backend lifecycle
-// context (`GRAPHER_BASELINE_CONTEXT`), reusing the verified stamp across
+// context (`PI_N_BASELINE_CONTEXT`), reusing the verified stamp across
 // Provider/Auth, Partitioner, Planner, and NodeAgent prewarm workers while
 // installing the cached source-runtime resolver. Standalone CLI runs without an
 // explicit backend context always perform full verification.
 export function verifyRuntimeBaseline({ installationRoot = root, baseline = lock } = {}) {
-  const contextKey = process.env.GRAPHER_BASELINE_CONTEXT?.trim();
+  const contextKey = process.env.PI_N_BASELINE_CONTEXT?.trim();
   const fingerprint = contextKey ? fastBaselineFingerprint(installationRoot, baseline) : null;
   if (!contextKey || !fingerprint) {
     verifyBaseline({ installationRoot, baseline });
@@ -382,14 +382,14 @@ export function verifyRuntimeBaseline({ installationRoot = root, baseline = lock
     return { verified: true, cached: false };
   }
   const verifiedEnvValue = `${contextKey}:${fingerprint}`;
-  if (process.env.GRAPHER_VERIFIED_BASELINE === verifiedEnvValue) {
+  if (process.env.PI_N_VERIFIED_BASELINE === verifiedEnvValue) {
     installPiRuntimeResolver({ installationRoot });
     return { verified: true, cached: true };
   }
 
-  const cacheDir = process.env.GRAPHER_RUNTIME_CACHE_DIR
-    ? join(process.env.GRAPHER_RUNTIME_CACHE_DIR, "baseline")
-    : join(tmpdir(), "grapher-pi-baseline-cache");
+  const cacheDir = process.env.PI_N_RUNTIME_CACHE_DIR
+    ? join(process.env.PI_N_RUNTIME_CACHE_DIR, "baseline")
+    : join(tmpdir(), "pi-n-pi-baseline-cache");
   const stampKey = createHash("sha256")
     .update(`v2\0${contextKey}\0${installationRoot}\0${fingerprint}`)
     .digest("hex");
@@ -400,7 +400,7 @@ export function verifyRuntimeBaseline({ installationRoot = root, baseline = lock
     try {
       const parsed = json(stampFile);
       if (parsed && parsed.verified === true) {
-        process.env.GRAPHER_VERIFIED_BASELINE = verifiedEnvValue;
+        process.env.PI_N_VERIFIED_BASELINE = verifiedEnvValue;
         installPiRuntimeResolver({ installationRoot });
         return { verified: true, cached: true };
       }
@@ -446,7 +446,7 @@ export function verifyRuntimeBaseline({ installationRoot = root, baseline = lock
       // Other live backends may still consume their host-primed stamps through
       // a read-only engine mount. Reclaim these with the leased runtime, not
       // an age-based sweep performed by a newer backend.
-      for (const name of process.env.GRAPHER_RUNTIME_CACHE_DIR ? [] : readdirSync(cacheDir)) {
+      for (const name of process.env.PI_N_RUNTIME_CACHE_DIR ? [] : readdirSync(cacheDir)) {
         if (name === `${stampKey}.json` || name === `${stampKey}.lock`) continue;
         try {
           const candidate = join(cacheDir, name);
@@ -454,7 +454,7 @@ export function verifyRuntimeBaseline({ installationRoot = root, baseline = lock
         } catch {}
       }
     } catch {}
-    process.env.GRAPHER_VERIFIED_BASELINE = verifiedEnvValue;
+    process.env.PI_N_VERIFIED_BASELINE = verifiedEnvValue;
     installPiRuntimeResolver({ installationRoot });
     return { verified: true, cached: false };
   } finally {

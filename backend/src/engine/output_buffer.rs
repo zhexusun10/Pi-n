@@ -41,7 +41,7 @@ fn same_fields(left: &Value, right: &Value, ignored: &[&str]) -> bool {
 }
 
 fn compatible(left: &Value, right: &Value) -> bool {
-    same_fields(left, right, &["assistantMessageEvent", "grapherReceivedAt"])
+    same_fields(left, right, &["assistantMessageEvent", "piNReceivedAt"])
         && same_fields(
             &left["assistantMessageEvent"],
             &right["assistantMessageEvent"],
@@ -120,7 +120,7 @@ mod tests {
     use serde_json::json;
 
     fn frame(kind: &str, index: usize, text: &str) -> Value {
-        json!({ "type": "message_update", "grapherReceivedAt": 1,
+        json!({ "type": "message_update", "piNReceivedAt": 1,
             "assistantMessageEvent": { "type": kind, "contentIndex": index, "delta": text } })
     }
 
@@ -131,7 +131,7 @@ mod tests {
         let mut output = |line| lines.push(line);
         for index in 0..10_000 {
             let mut event = frame("thinking_delta", 0, "中文🚀");
-            event["grapherReceivedAt"] = index.into();
+            event["piNReceivedAt"] = index.into();
             buffer.push(event, &mut output).unwrap();
         }
         buffer.flush(&mut output).unwrap();
@@ -148,7 +148,7 @@ mod tests {
         assert!(events
             .iter()
             .all(|event| delta(event).unwrap().len() <= DELTA_BYTES));
-        assert_eq!(events[0]["grapherReceivedAt"], 0);
+        assert_eq!(events[0]["piNReceivedAt"], 0);
         assert!(lines.iter().map(String::len).sum::<usize>() < text.len() * 2);
     }
 

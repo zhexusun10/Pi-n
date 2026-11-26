@@ -28,7 +28,7 @@ before(async () => {
   });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { planningResponse?.destroy(); await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
@@ -41,9 +41,9 @@ test("actual App: node results render before Planner completion; edges rearrange
   let snapshot = empty, textTimer, allowSnapshotPoll = true, providerAuthRequests = 0;
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "no-preference" });
   await context.addInitScript(config => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_plan_mode", "graph");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: config.repository, path: config.repository, name: "Live graph", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_plan_mode", "graph");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: config.repository, path: config.repository, name: "Live graph", lastOpened: 1 }]));
   }, config);
   const errors = [];
   await context.route("**/api/*", async route => {
@@ -353,7 +353,7 @@ function assertSameViewport(actual, expected) {
 for (const language of ["en", "zh"]) {
   test(`Merger rows use task spacing and replace bypass connections (${language})`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, reducedMotion: "reduce" });
-    await context.addInitScript(language => localStorage.setItem("grapher_language_v1", language), language);
+    await context.addInitScript(language => localStorage.setItem("pi_n_language_v1", language), language);
     const errors = [];
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -405,7 +405,7 @@ for (const language of ["en", "zh"]) {
 
 test("publication Merger waits for its recorded objective instead of showing the global goal", { timeout: 30_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   let releasePrompt, markRequested;
   const gate = new Promise(resolve => { releasePrompt = resolve; });
   const requested = new Promise(resolve => { markRequested = resolve; });
@@ -457,7 +457,7 @@ test("publication Merger waits for its recorded objective instead of showing the
 
 test("literal task IDs and colliding Merger cards open separate conversations", { timeout: 35_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   const output = JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "MERGER_LOG" }] } }) + "\n";
   await context.route("**/api/*", async route => {
@@ -531,7 +531,7 @@ test("literal task IDs and colliding Merger cards open separate conversations", 
 
 test("prototype-like and Unicode task IDs remain literal in the graph UI", { timeout: 25_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -568,7 +568,7 @@ for (const collision of [
 ]) {
   test(`${collision.label} Merger history stays separate from task ${collision.taskId}`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     const errors = [];
     const output = text => JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } }) + "\\n";
     const executions = [
@@ -632,7 +632,7 @@ for (const collision of [
 
 test("Fit View prioritizes current running cards only when the graph cannot fit", { timeout: 35_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -708,7 +708,7 @@ test("Fit View prioritizes current running cards only when the graph cannot fit"
 
 test("manual Fit View follows running cards through an ongoing layout animation", { timeout: 20_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "no-preference" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -744,8 +744,8 @@ test("manual Fit View follows running cards through an ongoing layout animation"
 test("graph splitter preserves ordinary resizing, cancellation, keyboard control and reset", { timeout: 20_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_workbench_split_ratio", "0.55");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_workbench_split_ratio", "0.55");
   });
   const errors = [];
   await context.route("**/api/*", async route => {
@@ -766,7 +766,7 @@ test("graph splitter preserves ordinary resizing, cancellation, keyboard control
     const initialViewport = await viewport(page);
     const splitter = page.getByRole("separator", { name: "Resize execution graph", exact: true });
     await splitter.waitFor();
-    const savedRatio = () => page.evaluate(() => Number(localStorage.getItem("grapher_workbench_split_ratio")));
+    const savedRatio = () => page.evaluate(() => Number(localStorage.getItem("pi_n_workbench_split_ratio")));
     const beginDrag = async delta => {
       await splitter.evaluate(element => element.addEventListener("pointerdown", event => { window.resizePointerId = event.pointerId; }, { once: true }));
       const bounds = await splitter.boundingBox();
@@ -813,7 +813,7 @@ test("graph splitter preserves ordinary resizing, cancellation, keyboard control
 for (const reducedMotion of ["no-preference"]) {
   test(`Planner layouts settle centered at Fit View scale (${reducedMotion})`, { timeout: 35_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     const errors = [];
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);

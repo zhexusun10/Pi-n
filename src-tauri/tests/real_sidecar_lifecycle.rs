@@ -1,9 +1,9 @@
-//! End-to-end desktop shell tests against the real compiled `grapher` backend:
+//! End-to-end desktop shell tests against the real compiled `pi-n` backend:
 //! - Launches the backend via `BackendSidecar` in dynamic-port desktop mode.
-//! - Verifies bundled `GRAPHER_INSTALLATION_ROOT/dist` serving and Tauri origin access.
+//! - Verifies bundled `PI_N_INSTALLATION_ROOT/dist` serving and Tauri origin access.
 //! - Verifies live cross-process `runtime.lock` exclusion during legacy migration,
 //!   followed by graceful stdin-EOF shutdown and successful preserve-first migration.
-use grapher_desktop_lib::{
+use pi_n_desktop_lib::{
     migration::{migrate_legacy_data_if_needed, MigrationOutcome},
     paths::backend_binary_name,
     sidecar::{BackendSidecar, ShutdownKind, SidecarConfig},
@@ -18,7 +18,7 @@ use std::{
 use tempfile::TempDir;
 
 fn locate_real_backend() -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("GRAPHER_TEST_BACKEND_BIN") {
+    if let Ok(explicit) = std::env::var("PI_N_TEST_BACKEND_BIN") {
         let p = PathBuf::from(explicit);
         if p.is_file() {
             return Some(p);
@@ -81,7 +81,7 @@ fn real_backend_sidecar_lifecycle_and_live_lock_migration_interoperability() {
     );
     config
         .extra_env
-        .push(("GRAPHER_DEV_LAZY_PRIMARY".into(), "1".into()));
+        .push(("PI_N_DEV_LAZY_PRIMARY".into(), "1".into()));
 
     let sidecar = BackendSidecar::start(config).unwrap();
     let url = sidecar.backend_url().unwrap();
@@ -115,7 +115,7 @@ fn real_backend_sidecar_lifecycle_and_live_lock_migration_interoperability() {
     // 3. While the real backend is alive, migration MUST refuse because runtime.lock is held.
     let lock_err = migrate_legacy_data_if_needed(&app_data, Some(&legacy_data), &[]).unwrap_err();
     assert!(
-        lock_err.contains("Another Grapher instance owns this runtime"),
+        lock_err.contains("Another Pi^n instance owns this runtime"),
         "{lock_err}"
     );
     assert!(!app_data.join("data").exists());
@@ -149,7 +149,7 @@ fn real_backend_sidecar_lifecycle_and_live_lock_migration_interoperability() {
     );
     desktop_config
         .extra_env
-        .push(("GRAPHER_DEV_LAZY_PRIMARY".into(), "1".into()));
+        .push(("PI_N_DEV_LAZY_PRIMARY".into(), "1".into()));
     let desktop_sidecar = BackendSidecar::start(desktop_config).unwrap();
     assert_ne!(desktop_sidecar.info().port, 0);
     assert_eq!(desktop_sidecar.shutdown(), ShutdownKind::Graceful);

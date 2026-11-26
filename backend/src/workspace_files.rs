@@ -652,8 +652,8 @@ impl Files {
                         path.display()
                     ));
                 }
-                // Nested `.git` or `.grapher*` directories inside a managed scope
-                // (for example `$HOME/.grapher/pi-agent` or editable `.venv` git
+                // Nested `.git` or `.pi-n*` directories inside a managed scope
+                // (for example `$HOME/.pi-n/pi-agent` or editable `.venv` git
                 // checkouts) cannot enter snapshot manifests; skip them untouched
                 // rather than failing the whole environment snapshot.
                 collection.note_untouched(Some(root), name)?;

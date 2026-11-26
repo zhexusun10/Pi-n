@@ -70,17 +70,17 @@ impl Drop for StagingGuard {
     }
 }
 
-/// Discover default legacy `.grapher` store candidates for desktop first launch.
+/// Discover default legacy `.pi-n` store candidates for desktop first launch.
 pub fn default_legacy_candidates(
     current_exe: Option<&Path>,
     installation_root: &Path,
 ) -> (Option<PathBuf>, Vec<PathBuf>) {
-    let explicit = crate::paths::non_empty_env_path("GRAPHER_LEGACY_DATA_DIR");
+    let explicit = crate::paths::non_empty_env_path("PI_N_LEGACY_DATA_DIR");
     let mut implicit = Vec::new();
     if let Some(exe_dir) = current_exe.and_then(Path::parent) {
-        implicit.push(exe_dir.join(".grapher"));
+        implicit.push(exe_dir.join(".pi-n"));
     }
-    let install_legacy = installation_root.join(".grapher");
+    let install_legacy = installation_root.join(".pi-n");
     if !implicit.contains(&install_legacy) {
         implicit.push(install_legacy);
     }
@@ -93,7 +93,7 @@ pub fn default_legacy_candidates(
 /// - `explicit_source`: when `Some`, must be a valid safe directory if present
 ///   (invalid/symlink explicit sources fail loudly rather than silently skipping).
 /// - `implicit_candidates`: probed in order; only eligible directories that
-///   exist and contain a Grapher SQLite store are selected.
+///   exist and contain a Pi^n SQLite store are selected.
 pub fn migrate_legacy_data_if_needed(
     app_data_dir: &Path,
     explicit_source: Option<&Path>,
@@ -340,7 +340,7 @@ fn migrate_from_source(
     destination: &Path,
 ) -> Result<MigrationOutcome, String> {
     // 1. Acquire the existing runtime.lock on the legacy store (and any nested
-    //    format-* slot) so a live Grapher process cannot mutate SQLite/WAL files.
+    //    format-* slot) so a live Pi^n process cannot mutate SQLite/WAL files.
     let _source_lock = runtime_lock::acquire_runtime(source)?;
     let _nested_locks = acquire_nested_format_locks(source)?;
 
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn migrates_legacy_store_preserving_exact_bytes_and_unrelated_files() {
         let temp = tempfile::tempdir().unwrap();
-        let legacy = temp.path().join("legacy-grapher");
+        let legacy = temp.path().join("legacy-pi-n");
         let app_data = temp.path().join("app-data");
         seed_legacy_store(&legacy);
 
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn skips_migration_when_destination_already_exists_even_if_empty() {
         let temp = tempfile::tempdir().unwrap();
-        let legacy = temp.path().join("legacy-grapher");
+        let legacy = temp.path().join("legacy-pi-n");
         let app_data = temp.path().join("app-data");
         seed_legacy_store(&legacy);
         fs::create_dir_all(app_data.join("data")).unwrap();
@@ -613,13 +613,13 @@ mod tests {
     #[test]
     fn fails_cleanly_when_legacy_runtime_lock_is_held_leaving_both_stores_intact() {
         let temp = tempfile::tempdir().unwrap();
-        let legacy = temp.path().join("legacy-grapher");
+        let legacy = temp.path().join("legacy-pi-n");
         let app_data = temp.path().join("app-data");
         seed_legacy_store(&legacy);
 
         let _held_lock = runtime_lock::acquire_runtime(&legacy).unwrap();
         let err = migrate_legacy_data_if_needed(&app_data, Some(&legacy), &[]).unwrap_err();
-        assert!(err.contains("Another Grapher instance owns this runtime"), "{err}");
+        assert!(err.contains("Another Pi^n instance owns this runtime"), "{err}");
 
         // Destination was never created, source is untouched, no staging dir left behind.
         assert!(!app_data.join("data").exists());
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn rejects_symlink_inside_legacy_store_and_cleans_up_staging() {
         let temp = tempfile::tempdir().unwrap();
-        let legacy = temp.path().join("legacy-grapher");
+        let legacy = temp.path().join("legacy-pi-n");
         let app_data = temp.path().join("app-data");
         let outside = temp.path().join("outside-secret.txt");
         fs::write(&outside, b"do-not-copy").unwrap();

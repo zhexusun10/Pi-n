@@ -31,10 +31,10 @@ export function configurePlannerWorkspace(
   workspace: string,
   project: string,
   alias: string,
-  rawTargets = process.env.GRAPHER_PLANNER_WORKSPACES || '{}',
+  rawTargets = process.env.PI_N_PLANNER_WORKSPACES || '{}',
 ) {
   const parsed = JSON.parse(rawTargets) as Record<string, WorkspaceTarget>;
-  targetFile = process.env.GRAPHER_PLANNER_WORKSPACES_FILE;
+  targetFile = process.env.PI_N_PLANNER_WORKSPACES_FILE;
   targets = new Map(Object.entries(parsed));
   const initial = realpathSync.native(workspace);
   state = { workspace: initial, project, alias, paths: createWorkspacePaths(initial, project, alias, workspaceRoots(targets)) };
@@ -59,7 +59,7 @@ export function switchPlannerWorkspace(requestedNode: string): WorkspaceTarget {
   const target = Object.hasOwn(currentTargets, requestedNode) ? currentTargets[requestedNode] : undefined;
   if (!target) throw new Error(`No current workspace is available for node '${requestedNode}'`);
   const workspace = realpathSync.native(target.workspace);
-  if (process.env.GRAPHER_EXECUTION_KIND === 'graph' && workspace !== state.workspace) {
+  if (process.env.PI_N_EXECUTION_KIND === 'graph' && workspace !== state.workspace) {
     // Native launch grants cover these exact backend targets. Both the process
     // cwd (extensions/subprocesses) and managed Bash state follow the new slot.
     rebindWorkspaceEnvironment(target.runtimeEnvironment, workspace);

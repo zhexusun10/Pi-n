@@ -15,7 +15,12 @@ const DRAIN_PER_TICK = 40;
  * 消费者：requestAnimationFrame 循环，按队列积压量弹性调速取字；
  * 队列为空或页面隐藏时立即停帧，杜绝空转 CPU 消耗。
  */
-export function useSmoothStreamText(targetText: string, isStreaming: boolean, enabled = true): string {
+export function useSmoothStreamText(
+  targetText: string,
+  isStreaming: boolean,
+  enabled = true,
+  initialBackfillSnapChars = 0,
+): string {
   const reduceMotion = useReducedMotion();
   const [displayedText, setDisplayedText] = useState(targetText);
 
@@ -112,8 +117,12 @@ export function useSmoothStreamText(targetText: string, isStreaming: boolean, en
       }
       return;
     }
-    if (!target.startsWith(enqueuedRef.current)) {
-      // 内容被替换而不是追加：直接显示完整文本，避免反复重打。
+    const isLargeInitialBackfill = initialBackfillSnapChars > 0
+      && enqueuedRef.current.length === 0
+      && target.length >= initialBackfillSnapChars;
+    if (!target.startsWith(enqueuedRef.current) || isLargeInitialBackfill) {
+      // 内容被替换、或从空摘要/延迟水合一次性回填大段已有内容时直接展示，
+      // 避免从 shimmer 骤缩成单行再逐字重打引起卡片高度反复抖动。
       queueRef.current = [];
       queueIndexRef.current = 0;
       enqueuedRef.current = target;
@@ -128,7 +137,7 @@ export function useSmoothStreamText(targetText: string, isStreaming: boolean, en
       enqueuedRef.current = target;
       ensureLoop();
     }
-  }, [targetText, ensureLoop, stopLoop]);
+  }, [targetText, ensureLoop, stopLoop, initialBackfillSnapChars]);
 
   // 后端结束时若仍有未消费积压，唤醒消费以收尾档清空。
   useEffect(() => {

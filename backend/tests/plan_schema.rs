@@ -1,4 +1,4 @@
-use grapher::{
+use pi_n::{
     compiler::compile,
     model::{Config, Edge, EventKind, Graph, Node, Plan, Snapshot},
     snapshot_view::snapshot_metadata,

@@ -33,8 +33,8 @@ function withDesktopGlobal<T>(
 
 test('resolveExternalHttpUrl accepts only http/https URLs and rejects anchors or unsafe schemes', () => {
   assert.equal(
-    resolveExternalHttpUrl('https://github.com/zhexusun10/grapher/releases'),
-    'https://github.com/zhexusun10/grapher/releases',
+    resolveExternalHttpUrl('https://github.com/zhexusun10/pi-n/releases'),
+    'https://github.com/zhexusun10/pi-n/releases',
   );
   assert.equal(
     resolveExternalHttpUrl('http://example.com/path?a=1&b=2'),
@@ -107,11 +107,11 @@ test('openExternalUrl delegates to open_external_url IPC command in Tauri deskto
   await withDesktopGlobal(async (cmd, args) => {
     calls.push({ cmd, args });
   }, async () => {
-    const ok = await openExternalUrl('https://github.com/zhexusun10/grapher/releases');
+    const ok = await openExternalUrl('https://github.com/zhexusun10/pi-n/releases');
     assert.equal(ok, true);
     assert.deepEqual(calls, [{
       cmd: 'open_external_url',
-      args: { url: 'https://github.com/zhexusun10/grapher/releases' },
+      args: { url: 'https://github.com/zhexusun10/pi-n/releases' },
     }]);
     assert.equal(await openExternalUrl('file:///etc/passwd'), false);
     assert.equal(calls.length, 1);
@@ -145,7 +145,7 @@ test('installDesktopExternalLinkHandler intercepts external anchor clicks only i
     const anchor = {
       target: '_blank',
       hasAttribute: () => false,
-      getAttribute: (name: string) => (name === 'href' ? 'https://github.com/zhexusun10/grapher/releases' : null),
+      getAttribute: (name: string) => (name === 'href' ? 'https://github.com/zhexusun10/pi-n/releases' : null),
       closest: () => anchor,
     };
     onClick({
@@ -158,7 +158,7 @@ test('installDesktopExternalLinkHandler intercepts external anchor clicks only i
     assert.equal(prevented, true);
     assert.deepEqual(calls, [{
       cmd: 'open_external_url',
-      args: { url: 'https://github.com/zhexusun10/grapher/releases' },
+      args: { url: 'https://github.com/zhexusun10/pi-n/releases' },
     }]);
 
     // Same-origin internal link without _blank is left untouched.

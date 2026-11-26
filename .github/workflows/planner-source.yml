@@ -73,7 +73,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           /usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/sh -c ': <>/dev/null'
-      - name: Install Grapher and pinned Pi
+      - name: Install Pi^n and pinned Pi
         run: |
           npm ci --ignore-scripts
           node scripts/patch-picomatch.mjs
@@ -124,7 +124,7 @@ jobs:
       - name: Select an explicit short Windows test parent (native package path limits)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: '"GRAPHER_ENV_TEST_PARENT=C:\g-env-tests" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+        run: '"PI_N_ENV_TEST_PARENT=C:\g-env-tests" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
       # Component cost evidence only on explicit/weekly runs; no release/publication
       # dependency and no timing threshold. Correctness stays in the Rust suites,
       # and missing uv fails the probe rather than falling back to a synthetic pass.
@@ -132,8 +132,8 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 6
         env:
-          GRAPHER_ENV_PROBE_REQUIRE_UV: '1'
-          GRAPHER_ENV_PROBE_REPORT: ${{ runner.temp }}/environment-baseline.json
+          PI_N_ENV_PROBE_REQUIRE_UV: '1'
+          PI_N_ENV_PROBE_REPORT: ${{ runner.temp }}/environment-baseline.json
         run: node scripts/cargo.mjs test --manifest-path backend/Cargo.toml --no-default-features --features fixture --lib environment_project_baseline -- --ignored --nocapture --test-threads=1
       # Cost comparison only on explicit/weekly runs; no release/publication
       # dependency and no timing threshold. Correctness stays in the Rust suites.
@@ -141,7 +141,7 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 6
         env:
-          GRAPHER_ENV_SEAL_PROBE_REPORT: ${{ runner.temp }}/dependency-sealing.json
+          PI_N_ENV_SEAL_PROBE_REPORT: ${{ runner.temp }}/dependency-sealing.json
         run: node scripts/cargo.mjs test --manifest-path backend/Cargo.toml --no-default-features --features fixture --lib environment_dependency_sealing_benchmark -- --ignored --nocapture --test-threads=1
       - name: Retain native-host dependency cost evidence
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -274,7 +274,7 @@ jobs:
         timeout-minutes: 8
         run: |
           set -euo pipefail
-          parent="$(mktemp -d "$RUNNER_TEMP/grapher-apfs.XXXXXX")"
+          parent="$(mktemp -d "$RUNNER_TEMP/pi-n-apfs.XXXXXX")"
           image="$parent/filesystem.sparseimage"
           volume="$parent/mount"
           device="$volume"
@@ -308,7 +308,7 @@ jobs:
           }
           trap cleanup EXIT
           mkdir "$volume"
-          hdiutil create -size 2g -type SPARSE -fs "Case-sensitive APFS" -volname GrapherCaseSensitive "$image"
+          hdiutil create -size 2g -type SPARSE -fs "Case-sensitive APFS" -volname PiNCaseSensitive "$image"
           hdiutil attach -nobrowse -owners on -mountpoint "$volume" -plist "$image" > "$parent/attached.plist"
           attached=1
           device="$(/usr/libexec/PlistBuddy -c 'Print :system-entities:0:dev-entry' "$parent/attached.plist")"

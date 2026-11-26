@@ -32,7 +32,7 @@ pub enum Target {
         root: PathBuf,
         name: String,
         /// Source binding owned when this target was recorded. Used to serialize
-        /// live ref/object reclamation with Grapher Git work on that source.
+        /// live ref/object reclamation with Pi^n Git work on that source.
         #[serde(deserialize_with = "Option::deserialize")]
         source: Option<PathBuf>,
     },
@@ -81,12 +81,12 @@ pub(crate) fn is_publication_workspace_checkout(checkout: &str) -> bool {
 }
 
 pub(crate) fn valid_workspace_checkout(checkout: &str) -> bool {
-    if let Some(git) = checkout.strip_prefix(".grapher-git/") {
+    if let Some(git) = checkout.strip_prefix(".pi-n-git/") {
         return git
             .strip_suffix(".git")
             .is_some_and(|hex| hex.len() == 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
     }
-    if let Some(state) = checkout.strip_prefix(".grapher-state/") {
+    if let Some(state) = checkout.strip_prefix(".pi-n-state/") {
         return state.len() == 16 && state.bytes().all(|b| b.is_ascii_hexdigit());
     }
     if is_publication_workspace_checkout(checkout) {
@@ -96,10 +96,10 @@ pub(crate) fn valid_workspace_checkout(checkout: &str) -> bool {
         && checkout != "."
         && checkout != ".."
         && !checkout.contains(['/', '\\', '\0'])
-        && !checkout.starts_with(".grapher-cleanup-")
+        && !checkout.starts_with(".pi-n-cleanup-")
         && checkout != ".files"
-        && checkout != ".grapher-git"
-        && checkout != ".grapher-state"
+        && checkout != ".pi-n-git"
+        && checkout != ".pi-n-state"
         && !checkout.starts_with("publication-")
 }
 
@@ -136,7 +136,7 @@ impl Target {
                 checkout,
             } => {
                 if !parent.is_absolute()
-                    || bucket != ".grapher-worktrees"
+                    || bucket != ".pi-n-worktrees"
                     || Uuid::parse_str(owner).is_err()
                     || owner != run_id
                     || checkout
@@ -204,7 +204,7 @@ impl Target {
     ) -> Self {
         Self::Workspace {
             parent: parent.to_path_buf(),
-            bucket: ".grapher-worktrees".into(),
+            bucket: ".pi-n-worktrees".into(),
             owner: run_id.into(),
             checkout: Some(checkout.into()),
         }
@@ -241,7 +241,7 @@ pub(crate) fn configuration_targets(
             .canonicalize()
             .map(|resolved| crate::path_identity::actual_path(&resolved).unwrap_or(resolved))
             .map_err(|error| error.to_string())?;
-        targets.insert(Target::workspace(&parent, run_id, ".grapher-worktrees"));
+        targets.insert(Target::workspace(&parent, run_id, ".pi-n-worktrees"));
     }
     let shadow = crate::workspace::shadow_repo_dir(&source)?;
     if fs::symlink_metadata(&shadow).is_ok() {
@@ -408,7 +408,7 @@ pub(crate) fn validate(root: &Path, run_id: &str, manifest: &Manifest) -> Result
 }
 
 /// Commits that another live Run may still resolve while its node results are
-/// prepared. They keep their `refs/grapher/heads/*` pins during a deleted Run's
+/// prepared. They keep their `refs/pi-n/heads/*` pins during a deleted Run's
 /// object reclamation even if no current ref points at them yet.
 pub(crate) fn protected_shadow_objects(
     store: &Store,

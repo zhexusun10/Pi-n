@@ -265,14 +265,14 @@ fn compose_graph_scoped(
         for head in heads {
             git(
                 repository,
-                &["update-ref", &format!("refs/grapher/parents/{head}"), head],
+                &["update-ref", &format!("refs/pi-n/parents/{head}"), head],
             )?;
         }
     }
     // Verify common project-view ancestry before performing any merges or
     // invoking a Merger agent so missing/ambiguous evidence fails immediately
     // instead of after expensive conflict resolution.
-    let preflight_base = git(repository, &["rev-parse", "refs/grapher/base"])
+    let preflight_base = git(repository, &["rev-parse", "refs/pi-n/base"])
         .ok()
         .filter(|base| crate::workspace_view::has_record(source, base));
     if let Some(base) = preflight_base.as_deref() {
@@ -322,7 +322,7 @@ fn compose_graph_scoped(
     // A plain-folder or bound composition carries a recorded source view, so the
     // composed head needs its own project-view record. Host-only fixture
     // checkouts without that evidence keep their bare head.
-    let recorded_base = git(repository, &["rev-parse", "refs/grapher/base"])
+    let recorded_base = git(repository, &["rev-parse", "refs/pi-n/base"])
         .ok()
         .filter(|base| crate::workspace_view::has_record(source, base));
     if let Some(base) = recorded_base {
@@ -494,7 +494,7 @@ pub(crate) fn resolve_with_merger_for_node(
         },
         || {
             // Node composition must exclude the managed environment/cache scopes
-            // exactly like publication does; otherwise Grapher's own staging would
+            // exactly like publication does; otherwise Pi^n's own staging would
             // commit `.agent-home`/`.venv` and the next preparation would reject the
             // merge as a tracked-file conflict.
             let exclusions = config
@@ -525,7 +525,7 @@ pub(crate) fn resolve_with_merger_for_node(
         Ok(()) => {
             let head = git(repository, &["rev-parse", "HEAD"])?;
             eprintln!(
-                "[Grapher] [Merger] Finished resolving conflicts for '{node}' (HEAD: {head})"
+                "[Pi^n] [Merger] Finished resolving conflicts for '{node}' (HEAD: {head})"
             );
             emit(EventKind::MergerFinished {
                 execution_id: id.clone(),
@@ -535,7 +535,7 @@ pub(crate) fn resolve_with_merger_for_node(
             })?
         }
         Err(error) => {
-            eprintln!("[Grapher] [Merger] Failed resolving conflicts for '{node}': {error}");
+            eprintln!("[Pi^n] [Merger] Failed resolving conflicts for '{node}': {error}");
             emit(EventKind::MergerFailed {
                 execution_id: id.clone(),
                 error: error.clone(),
@@ -629,7 +629,7 @@ pub fn continue_merger_for_node(
                 .into(),
         ));
     }
-    environment.push(("GRAPHER_NODE_EXECUTION_ID", id.clone()));
+    environment.push(("PI_N_NODE_EXECUTION_ID", id.clone()));
     // Retain this ancestry requirement across validation turns, even when a
     // model commits/aborts the pending merge during its first turn.
     let incoming = if git_backed {
@@ -710,7 +710,7 @@ pub fn continue_merger_for_node(
                 // No Git snapshot exists for this source-direct continuation.
                 String::new()
             };
-            eprintln!("[Grapher] [Merger] Continued publication repair (HEAD: {head})");
+            eprintln!("[Pi^n] [Merger] Continued publication repair (HEAD: {head})");
             emit(EventKind::MergerFinished {
                 execution_id: id,
                 head,
@@ -719,7 +719,7 @@ pub fn continue_merger_for_node(
             })?;
         }
         Err(error) => {
-            eprintln!("[Grapher] [Merger] Publication continuation failed: {error}");
+            eprintln!("[Pi^n] [Merger] Publication continuation failed: {error}");
             emit(EventKind::MergerFailed {
                 execution_id: id,
                 error: error.clone(),

@@ -1,4 +1,4 @@
-use grapher::{
+use pi_n::{
     compiler::compile,
     model::{Edge, Graph, Node},
     workspace,
@@ -38,7 +38,7 @@ fn shadow_identity_requires_an_existing_path() {
 #[cfg(target_os = "macos")]
 #[test]
 fn sandbox_rejects_symlinked_exceptions() {
-    use grapher::sandbox;
+    use pi_n::sandbox;
     use std::{fs, os::unix::fs::symlink};
     let temp = TempDir::new().unwrap();
     let base = temp.path();
@@ -52,7 +52,7 @@ fn sandbox_rejects_symlinked_exceptions() {
         fs::create_dir_all(dir).unwrap();
     }
     let profile = base.join("profile.sb");
-    let installation = grapher::native::installation_root();
+    let installation = pi_n::native::installation_root();
     sandbox::write_execution_profile(
         &profile,
         &source,

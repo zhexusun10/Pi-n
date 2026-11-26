@@ -9,6 +9,7 @@ import { normalizeWorkspacePath, workspaceKey } from "../../services/workspaceCo
 import { copyTextToClipboard } from "../../services/externalLink";
 import { workspacePathDisplay } from "./workspacePathDisplay";
 import { ContextMenu, contextMenuAnchor, type ContextMenuAnchor } from "../ui/context-menu";
+import { PiBrandMark } from "../ui/PiBrandMark";
 
 export { normalizeWorkspacePath } from "../../services/workspaceConversations";
 
@@ -362,7 +363,6 @@ interface SidebarProps {
   onNewConversation: () => void;
   onOpenSearch?: () => void;
   onOpenSettings: () => void;
-  isSettingsOpen: boolean;
   hasUpdateAvailable?: boolean;
   runLabels?: Record<string, string>;
   runCardKeys?: Record<string, string>;
@@ -394,7 +394,6 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
   onNewConversation,
   onOpenSearch,
   onOpenSettings,
-  isSettingsOpen,
   hasUpdateAvailable = false,
   runLabels = {},
   runCardKeys = {},
@@ -810,8 +809,8 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
   return (
     <aside className={`sidebar${isCollapsed ? " is-collapsed" : ""}`} aria-label={t("侧边栏")}>
       <div className="sidebar-brand-row">
-        <div className="brand">
-          <strong>Grapher</strong>
+        <div className="brand" aria-label="Pi^n">
+          <PiBrandMark width={22} height={18} />
         </div>
         <button
           type="button"
@@ -955,7 +954,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
       <div className="sidebar-bottom">
         <button
           type="button"
-          className={`sidebar-bottom-btn ${isSettingsOpen ? "active" : ""}`}
+          className="sidebar-bottom-btn"
           onClick={onOpenSettings}
           aria-label="Settings"
         >

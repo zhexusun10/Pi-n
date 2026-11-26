@@ -1,5 +1,5 @@
 /**
- * Grapher Semantic Design Tokens
+ * Pi^n Semantic Design Tokens
  * 语义化设计令牌系统
  */
 
@@ -12,7 +12,7 @@
   --bg-surface-hover: #F1F5F9;
 
   /* 边框、分割线与容器圆角 */
-  --radius-surface: 18px;
+  --radius-surface: 16px;
   --border-default: #E2E8F0;
   --border-hover: #CBD5E1;
   --border-subtle: #F1F5F9;
@@ -27,6 +27,10 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
   /* 品牌色体系 */
+  --pi-coral: #F09082;
+  --pi-blue: #4D9ABF;
+  --pi-yellow: #F1BE58;
+  --pi-ink: #262B34;
   --brand-default: #2563EB;
   --brand-hover: #1D4ED8;
   --brand-active: #1E40AF;

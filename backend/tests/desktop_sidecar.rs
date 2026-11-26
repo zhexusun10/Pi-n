@@ -1,6 +1,6 @@
 //! End-to-end backend tests for desktop sidecar readiness, dynamic port,
 //! resource/executable overrides, strict Tauri v2 origins, and stdin EOF shutdown.
-use grapher::store::Store;
+use pi_n::store::Store;
 use serde_json::Value;
 use std::{
     fs,
@@ -85,12 +85,12 @@ fn desktop_sidecar_binds_dynamic_port_validates_tauri_origins_and_shuts_down_on_
     .unwrap();
 
     let mut child = SidecarGuard(
-        Command::new(env!("CARGO_BIN_EXE_grapher"))
+        Command::new(env!("CARGO_BIN_EXE_pi-n"))
             .arg("--desktop-sidecar")
-            .env("GRAPHER_PORT", "0")
-            .env("GRAPHER_DATA_DIR", &data)
-            .env("GRAPHER_INSTALLATION_ROOT", &resources)
-            .env("GRAPHER_DEV_LAZY_PRIMARY", "1")
+            .env("PI_N_PORT", "0")
+            .env("PI_N_DATA_DIR", &data)
+            .env("PI_N_INSTALLATION_ROOT", &resources)
+            .env("PI_N_DEV_LAZY_PRIMARY", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(fs::File::create(&stderr_path).unwrap())
@@ -108,7 +108,7 @@ fn desktop_sidecar_binds_dynamic_port_validates_tauri_origins_and_shuts_down_on_
             fs::read_to_string(&stderr_path).unwrap_or_default()
         )
     });
-    assert_eq!(ready["type"], "grapher_ready");
+    assert_eq!(ready["type"], "pi_n_ready");
     let port = ready["port"].as_u64().unwrap() as u16;
     assert_ne!(port, 0);
     assert_eq!(
@@ -125,7 +125,7 @@ fn desktop_sidecar_binds_dynamic_port_validates_tauri_origins_and_shuts_down_on_
         "expected bound port in stderr banner: {stderr_log}"
     );
 
-    // Static assets are served from GRAPHER_INSTALLATION_ROOT/dist using the actual port.
+    // Static assets are served from PI_N_INSTALLATION_ROOT/dist using the actual port.
     let index_resp = http_exchange(
         port,
         &format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
@@ -276,11 +276,11 @@ fn desktop_sidecar_shuts_down_cleanly_on_stdin_shutdown_command() {
     let stderr_path = temp.path().join("sidecar.stderr.log");
 
     let mut child = SidecarGuard(
-        Command::new(env!("CARGO_BIN_EXE_grapher"))
+        Command::new(env!("CARGO_BIN_EXE_pi-n"))
             .arg("--desktop-sidecar")
-            .env("GRAPHER_PORT", "0")
-            .env("GRAPHER_DATA_DIR", &data)
-            .env("GRAPHER_DEV_LAZY_PRIMARY", "1")
+            .env("PI_N_PORT", "0")
+            .env("PI_N_DATA_DIR", &data)
+            .env("PI_N_DEV_LAZY_PRIMARY", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(fs::File::create(&stderr_path).unwrap())
@@ -292,7 +292,7 @@ fn desktop_sidecar_shuts_down_cleanly_on_stdin_shutdown_command() {
     let stdout = child.0.stdout.take().unwrap();
     let (ready_line, _) = read_first_line_with_timeout(stdout, Duration::from_secs(20));
     let ready: Value = serde_json::from_str(ready_line.trim()).unwrap();
-    assert_eq!(ready["type"], "grapher_ready");
+    assert_eq!(ready["type"], "pi_n_ready");
     assert_ne!(ready["port"].as_u64().unwrap(), 0);
 
     writeln!(stdin, "shutdown").unwrap();
@@ -315,10 +315,10 @@ fn fixed_port_browser_cli_mode_preserves_quiet_stdout_and_ignores_stdin_eof() {
     drop(listener);
 
     let mut child = SidecarGuard(
-        Command::new(env!("CARGO_BIN_EXE_grapher"))
-            .env("GRAPHER_PORT", port.to_string())
-            .env("GRAPHER_DATA_DIR", &data)
-            .env("GRAPHER_DEV_LAZY_PRIMARY", "1")
+        Command::new(env!("CARGO_BIN_EXE_pi-n"))
+            .env("PI_N_PORT", port.to_string())
+            .env("PI_N_DATA_DIR", &data)
+            .env("PI_N_DEV_LAZY_PRIMARY", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(fs::File::create(&stderr_path).unwrap())
@@ -412,12 +412,12 @@ fn desktop_sidecar_first_launch_reports_actionable_git_preflight_when_host_git_a
     let missing_git = temp.path().join("no-such-git");
 
     let mut child = SidecarGuard(
-        Command::new(env!("CARGO_BIN_EXE_grapher"))
+        Command::new(env!("CARGO_BIN_EXE_pi-n"))
             .arg("--desktop-sidecar")
-            .env("GRAPHER_PORT", "0")
-            .env("GRAPHER_DATA_DIR", &data)
-            .env("GRAPHER_TRUSTED_GIT", &missing_git)
-            .env("GRAPHER_DEV_LAZY_PRIMARY", "1")
+            .env("PI_N_PORT", "0")
+            .env("PI_N_DATA_DIR", &data)
+            .env("PI_N_TRUSTED_GIT", &missing_git)
+            .env("PI_N_DEV_LAZY_PRIMARY", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(fs::File::create(&stderr_path).unwrap())
@@ -445,7 +445,7 @@ fn desktop_sidecar_first_launch_reports_actionable_git_preflight_when_host_git_a
     let preflight = &boot_json["result"]["hostPreflight"];
     assert_eq!(preflight["gitAvailable"], Value::Bool(false), "{preflight}");
     let git_error = preflight["gitError"].as_str().unwrap_or("");
-    assert!(git_error.contains("GRAPHER_TRUSTED_GIT"), "{git_error}");
+    assert!(git_error.contains("PI_N_TRUSTED_GIT"), "{git_error}");
     #[cfg(target_os = "macos")]
     assert!(
         git_error.contains("xcode-select --install"),

@@ -1,6 +1,6 @@
 # Desktop Release Automation & Secrets Guide
 
-Grapher publishes both native Tauri v2 desktop installers and relocatable CLI/browser archives from [`.github/workflows/release.yml`](../../.github/workflows/release.yml) whenever a `v*` tag is pushed.
+Pi^n publishes both native Tauri v2 desktop installers and relocatable CLI/browser archives from [`.github/workflows/release.yml`](../../.github/workflows/release.yml) whenever a `v*` tag is pushed.
 
 ## Local desktop development and builds
 
@@ -14,7 +14,7 @@ Before building locally, install prerequisites for your host OS (Node.js 22.19+,
   ```sh
   npm run desktop:icons
   ```
-  Derives the white rounded-square desktop app icon (`#FFFFFF` canvas with the `#4A4A4A` Grapher web mark) and regenerates `src-tauri/icons/{icon.png,32x32.png,128x128.png,128x128@2x.png,icon.icns,icon.ico}` via `@tauri-apps/cli`.
+  Derives the white rounded-square desktop app icon (`#FFFFFF` canvas with the `#4A4A4A` Pi^n web mark) and regenerates `src-tauri/icons/{icon.png,32x32.png,128x128.png,128x128@2x.png,icon.icns,icon.ico}` via `@tauri-apps/cli`.
 - **Stage bundled frontend, release backend, verified Pi runtime, and pinned Node.js `22.19.0` only:**
   ```sh
   npm run desktop:stage -- --target macos-arm64   # or macos-x64 / windows-x64
@@ -29,26 +29,26 @@ Before building locally, install prerequisites for your host OS (Node.js 22.19+,
 
 - **Launch at login (macOS / Windows):** The desktop shell registers `tauri-plugin-autostart` v2 (`MacosLauncher::LaunchAgent` on macOS; per-user `HKCU\...\Run` on Windows, not an elevated Windows service) under least-privilege `autostart:default` (`allow-enable`, `allow-disable`, `allow-is-enabled`) in `src-tauri/capabilities/default.json` without requesting filesystem or shell permissions. Plugin registration never auto-enables startup on its own and degrades safely if initialization fails. **Settings → Desktop settings → Launch at login** queries the actual OS registration on open, applies changes immediately (independent of backend config save/cancel), rolls back visibly on error, and displays a browser-unavailable notice outside Tauri.
 
-- **Desktop titlebars & macOS limitations:** `src-tauri/tauri.conf.json` configures `"titleBarStyle": "Overlay"` and `"hiddenTitle": true` on the `main` window for macOS, while `src-tauri/tauri.windows.conf.json` configures a hidden borderless window (`"decorations": false`) on Windows rendered with `DesktopTitlebar.tsx` (matching the sidebar surface and revealed once React commits; browser mode is unaffected). On macOS, the native title text and titlebar separator below the traffic lights are hidden, while `.app-shell.is-tauri-macos` reserves a pure-white (`#FFFFFF`) top bar strip and `data-tauri-drag-region` (permitted on macOS via `src-tauri/capabilities/macos-window.json` and Windows via `src-tauri/capabilities/windows-window.json`). Known macOS-only native limitations under Tauri v2 `TitleBarStyle::Overlay`:
+- **Desktop titlebars & macOS limitations:** `src-tauri/tauri.conf.json` configures `"titleBarStyle": "Overlay"` and `"hiddenTitle": true` on the `main` window for macOS, while `src-tauri/tauri.windows.conf.json` configures a hidden borderless window (`"decorations": false`) on Windows rendered with `DesktopTitlebar.tsx` (matching the sidebar surface and revealed once React commits; browser mode is unaffected). On macOS, the native title text and titlebar separator below the traffic lights are hidden, while `.desktop-titlebar.is-macos` floats transparently across the top `32px` inset with `data-tauri-drag-region` (permitted on macOS via `src-tauri/capabilities/macos-window.json` and Windows via `src-tauri/capabilities/windows-window.json`) so landing backgrounds extend to the top edge of the window while `.app-shell.is-tauri-macos` pads the sidebar and workspace below the traffic lights. Known macOS-only native limitations under Tauri v2 `TitleBarStyle::Overlay`:
   - Window dragging via `data-tauri-drag-region` requires the window to be focused first on macOS (upstream Tauri limitation [tauri#4316](https://github.com/tauri-apps/tauri/issues/4316)).
-  - Native macOS titlebar/traffic-light geometry varies slightly across macOS releases; linking desktop releases against the macOS 26+ SDK (while keeping `minimumSystemVersion: "12.0"`) opts into modern `14×14pt` traffic lights on macOS 26+, and the `32px` overlay inset matches the `32pt` native titlebar strip while dropping the redundant `12px` top margin on the floating sidebar and workbench cards (restoring the `12px` margin automatically in fullscreen).
+  - Native macOS titlebar/traffic-light geometry varies slightly across macOS releases; linking desktop releases against the macOS 26 SDK (while keeping `minimumSystemVersion: "12.0"` and `UIDesignRequiresCompatibility`) preserves pre-Liquid-Glass styling on macOS 26/27 while `src-tauri/objc/macos_window.m` scales classic `12×12pt` traffic lights up to `14×14pt` centered inside the `32px` transparent overlay titlebar strip (dropping the redundant `12px` top margin on the floating sidebar and workbench cards and restoring it automatically in fullscreen).
 
-- The desktop shell stores persistent runtime data at `app_data_dir()/data` (`~/Library/Application Support/io.github.zhexusun10.grapher/data` on macOS; `%APPDATA%\io.github.zhexusun10.grapher\data` on Windows) and runs a locked, atomic, preserve-first copy from an existing legacy `.grapher` store (or `GRAPHER_LEGACY_DATA_DIR`) only when `data` does not yet exist (Unix lock files open with `O_NOFOLLOW` in `src-tauri/src/runtime_lock.rs`).
-- **Desktop user `PATH` resolution & fallback ordering (`src-tauri/src/paths.rs`, `src-tauri/src/sidecar.rs`):** GUI and autostart launchers often start with a minimal environment (such as `/usr/bin:/bin:/usr/sbin:/sbin` on macOS/Linux). Before resolving host Git and spawning the backend sidecar, the desktop shell resolves the user's `PATH`—merging the Unix login shell `PATH` ahead of default system directories while preserving explicit session prefixes, or merging fresh Windows Machine and User registry `Path` entries—and filters out malformed/duplicate entries. Bundled fallback binary directories (such as bundled `node` without `npm`) are **appended** after the resolved user `PATH` (`build_fallback_path`) rather than prepended so user-installed toolchains (Node, Cargo, Git, Homebrew, etc.) keep consistent precedence, while the backend still receives explicit `GRAPHER_TRUSTED_NODE`, `GRAPHER_NODE_PATH`, `GRAPHER_TRUSTED_GIT`, and `GRAPHER_MANAGED_GIT_PATH`.
-- Node.js `22.19.0` and the pinned Pi runtime are bundled inside the installer. If no working host **Git** is detected on first launch, the desktop shell automatically downloads and SHA-256-verifies a portable Git runtime into `app_data_dir()/tools/git/<id>/` in the background (`dugite-native` on macOS, `PortableGit` with Git Bash on Windows) and exposes it to the backend via `GRAPHER_MANAGED_GIT_PATH` without requiring a restart; if offline or download fails, the banner offers **Retry download** and **Re-check** fallbacks.
+- The desktop shell stores persistent runtime data at `app_data_dir()/data` (`~/Library/Application Support/io.github.zhexusun10.pi-n/data` on macOS; `%APPDATA%\io.github.zhexusun10.pi-n\data` on Windows) and runs a locked, atomic, preserve-first copy from an existing legacy `.pi-n` store (or `PI_N_LEGACY_DATA_DIR`) only when `data` does not yet exist (Unix lock files open with `O_NOFOLLOW` in `src-tauri/src/runtime_lock.rs`).
+- **Desktop user `PATH` resolution & fallback ordering (`src-tauri/src/paths.rs`, `src-tauri/src/sidecar.rs`):** GUI and autostart launchers often start with a minimal environment (such as `/usr/bin:/bin:/usr/sbin:/sbin` on macOS/Linux). Before resolving host Git and spawning the backend sidecar, the desktop shell resolves the user's `PATH`—merging the Unix login shell `PATH` ahead of default system directories while preserving explicit session prefixes, or merging fresh Windows Machine and User registry `Path` entries—and filters out malformed/duplicate entries. Bundled fallback binary directories (such as bundled `node` without `npm`) are **appended** after the resolved user `PATH` (`build_fallback_path`) rather than prepended so user-installed toolchains (Node, Cargo, Git, Homebrew, etc.) keep consistent precedence, while the backend still receives explicit `PI_N_TRUSTED_NODE`, `PI_N_NODE_PATH`, `PI_N_TRUSTED_GIT`, and `PI_N_MANAGED_GIT_PATH`.
+- Node.js `22.19.0` and the pinned Pi runtime are bundled inside the installer. If no working host **Git** is detected on first launch, the desktop shell automatically downloads and SHA-256-verifies a portable Git runtime into `app_data_dir()/tools/git/<id>/` in the background (`dugite-native` on macOS, `PortableGit` with Git Bash on Windows) and exposes it to the backend via `PI_N_MANAGED_GIT_PATH` without requiring a restart; if offline or download fails, the banner offers **Retry download** and **Re-check** fallbacks.
 
 ## Workflow architecture
 
 - **Trigger:** `push` of `v*` tags (for example `v1.9.9` or `v2.0.0-rc.1`).
 - **Least-privilege permissions:** Top-level workflow permissions default to `contents: read`. Only the final `create-release` aggregation job elevates to `contents: write`.
 - **Jobs:**
-  1. `build-release` — builds and smoke-tests the relocatable archives (`grapher-linux-x64.tar.gz`, `grapher-macos-arm64.tar.gz`, `grapher-macos-x64.tar.gz`, `grapher-windows-x64.zip`) plus `.sha256` checksums.
-  2. `build-desktop` — runs on separate native runners (`macos-26` for Apple Silicon `macos-arm64`, `macos-26-intel` for Intel `macos-x64`, and `windows-latest` for `windows-x64`) so macOS builds link against the macOS 26+ SDK while preserving `minimumSystemVersion: "12.0"`. Each job runs [`scripts/desktop-build.mjs`](../../scripts/desktop-build.mjs), which stages the frontend `dist/`, release Rust `grapher` binary, verified pinned Pi/engine runtime, and pinned Node.js `22.19.0` binary (SHA-256 verified) via [`scripts/desktop-stage.mjs`](../../scripts/desktop-stage.mjs), builds the native installer, and optionally signs Tauri updater artifacts.
+  1. `build-release` — builds and smoke-tests the relocatable archives (`pi-n-linux-x64.tar.gz`, `pi-n-macos-arm64.tar.gz`, `pi-n-macos-x64.tar.gz`, `pi-n-windows-x64.zip`) plus `.sha256` checksums.
+  2. `build-desktop` — runs on separate native runners (`macos-26` for Apple Silicon `macos-arm64`, `macos-26-intel` for Intel `macos-x64`, and `windows-latest` for `windows-x64`) so macOS builds link against the macOS 26+ SDK while preserving `minimumSystemVersion: "12.0"`. Each job runs [`scripts/desktop-build.mjs`](../../scripts/desktop-build.mjs), which stages the frontend `dist/`, release Rust `pi-n` binary, verified pinned Pi/engine runtime, and pinned Node.js `22.19.0` binary (SHA-256 verified) via [`scripts/desktop-stage.mjs`](../../scripts/desktop-stage.mjs), builds the native installer, and optionally signs Tauri updater artifacts.
   3. `create-release` — waits for both `build-release` and `build-desktop`, downloads all artifacts into `release-assets/`, runs [`scripts/desktop-updater-manifest.mjs`](../../scripts/desktop-updater-manifest.mjs) to build and verify `latest.json` when signed updater artifacts are present, consolidates all asset checksums into a single `SHA256SUMS.txt` while pruning per-file `.sha256` and standalone `.sig` files (whose signatures are already embedded in `latest.json`), and creates or refreshes a **draft** GitHub Release.
 
 ## Windows in-place upgrade cleanup
 
-The NSIS preinstall hook stops only a backend whose full executable path is exactly `<install directory>/runtime/grapher.exe`. It holds a process handle while checking the image through local CIM, which also works when 32-bit Windows PowerShell inspects a 64-bit backend. Independent CLI binaries, the GUI executable and other installation directories remain untouched. The install path is passed as a literal `-File` argument, including spaces, apostrophes and non-ASCII characters.
+The NSIS preinstall hook stops only a backend whose full executable path is exactly `<install directory>/runtime/pi-n.exe`. It holds a process handle while checking the image through local CIM, which also works when 32-bit Windows PowerShell inspects a 64-bit backend. Independent CLI binaries, the GUI executable and other installation directories remain untouched. The install path is passed as a literal `-File` argument, including spaces, apostrophes and non-ASCII characters.
 
 A failed process query/termination or a still-locked bundled directory aborts the upgrade instead of falling back to a process-name kill or extracting over stale runtime files. The focused **Windows upgrade cleanup** CI job runs [policy and live-process regressions](../../scripts/windows-upgrade-cleanup.test.mjs) without the full Rust/Pi setup.
 
@@ -66,10 +66,10 @@ Before creating a `v<X.Y.Z>` tag, keep all three desktop/package version fields 
 
 | Path | Release artifacts & `latest.json` keys | Install & restart semantics | Required secrets / variables | Verification coverage |
 | --- | --- | --- | --- | --- |
-| **macOS signed update path** (`macos-arm64`, `macos-x64`) | `Grapher_<ver>_{aarch64,x64}.app.tar.gz` + `.sig`; keys `darwin-aarch64` / `darwin-aarch64-app` and `darwin-x86_64` / `darwin-x86_64-app` | `tauri-plugin-updater` verifies Ed25519 minisign signature + signed `version:` (`requireSignedVersion: true`), swaps `Grapher.app` in place, frontend closes the update handle, then calls `@tauri-apps/plugin-process` `relaunch()` (falls back to manual restart button if relaunch fails) | `TAURI_SIGNING_PRIVATE_KEY` (+ optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) **and** matching public key in `plugins.updater.pubkey` or `GRAPHER_UPDATER_PUBKEY`; Apple Developer ID / notarization secrets optional | Real Tauri CLI signing + Ed25519 payload/global verification, manifest & controller tests, and Rust shell tests |
-| **Windows NSIS signed update path** (`windows-x64`) | `Grapher_<ver>_x64-setup.exe` + `.sig` (raw signed NSIS `.exe`, not `.nsis.zip`/`.msi`); keys `windows-x86_64` / `windows-x86_64-nsis` | `tauri-plugin-updater` verifies signature + signed `version:`, extracts `.exe`, runs `cleanup_before_exit()` (which drops `SidecarShutdownGuard` in `app.resources_table()` so `grapher.exe` exits before file replacement), launches NSIS with `/P /UPDATE /R`, and exits directly (`std::process::exit(0)`). Frontend does **not** call `relaunch()` and treats IPC teardown during handoff as a clean transition rather than a false error | Same `TAURI_SIGNING_PRIVATE_KEY` + matching public key (`plugins.updater.pubkey` or `GRAPHER_UPDATER_PUBKEY`) | Deterministic Windows target/manifest/signing tests, controller Windows NSIS handoff tests, and `windows-latest` CI builds. **Windows native runtime smoke testing is not available in this macOS environment.** |
+| **macOS signed update path** (`macos-arm64`, `macos-x64`) | `Pi-n_<ver>_{aarch64,x64}.app.tar.gz` + `.sig`; keys `darwin-aarch64` / `darwin-aarch64-app` and `darwin-x86_64` / `darwin-x86_64-app` | `tauri-plugin-updater` verifies Ed25519 minisign signature + signed `version:` (`requireSignedVersion: true`), swaps `Pi^n.app` in place, frontend closes the update handle, then calls `@tauri-apps/plugin-process` `relaunch()` (falls back to manual restart button if relaunch fails) | `TAURI_SIGNING_PRIVATE_KEY` (+ optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) **and** matching public key in `plugins.updater.pubkey` or `PI_N_UPDATER_PUBKEY`; Apple Developer ID / notarization secrets optional | Real Tauri CLI signing + Ed25519 payload/global verification, manifest & controller tests, and Rust shell tests |
+| **Windows NSIS signed update path** (`windows-x64`) | `Pi-n_<ver>_x64-setup.exe` + `.sig` (raw signed NSIS `.exe`, not `.nsis.zip`/`.msi`); keys `windows-x86_64` / `windows-x86_64-nsis` | `tauri-plugin-updater` verifies signature + signed `version:`, extracts `.exe`, runs `cleanup_before_exit()` (which drops `SidecarShutdownGuard` in `app.resources_table()` so `pi-n.exe` exits before file replacement), launches NSIS with `/P /UPDATE /R`, and exits directly (`std::process::exit(0)`). Frontend does **not** call `relaunch()` and treats IPC teardown during handoff as a clean transition rather than a false error | Same `TAURI_SIGNING_PRIVATE_KEY` + matching public key (`plugins.updater.pubkey` or `PI_N_UPDATER_PUBKEY`) | Deterministic Windows target/manifest/signing tests, controller Windows NSIS handoff tests, and `windows-latest` CI builds. **Windows native runtime smoke testing is not available in this macOS environment.** |
 | **Unsigned / manual-install builds** (macOS & Windows) | Native `.dmg` / NSIS `-setup.exe` installers (+ `.sha256`) and relocatable archives only; no `.sig` files and no `latest.json` published | Installers build and run normally; startup silent check stays quiet on missing `latest.json` (`unsigned-unavailable`); **Settings → Software Update** directs users to GitHub Releases. Any unsigned build with an empty or mismatched `pubkey` fails closed on signature verification (`signature` error) | None required (`TAURI_SIGNING_PRIVATE_KEY` unset) | Tested locally and in CI (`desktop-updater-manifest.test.mjs`, `updater.test.ts`, `desktop-packaging.test.mjs`) |
-| **Browser mode** (`npm run dev`, CLI/archive) | Relocatable `grapher-*.tar.gz` / `.zip` archives | Updater plugin APIs are feature-gated behind `isTauriDesktop()` and never imported or invoked; Settings shows browser-mode notice and GitHub Releases link | None | Tested in `updater.test.ts` (zero Tauri globals) |
+| **Browser mode** (`npm run dev`, CLI/archive) | Relocatable `pi-n-*.tar.gz` / `.zip` archives | Updater plugin APIs are feature-gated behind `isTauriDesktop()` and never imported or invoked; Settings shows browser-mode notice and GitHub Releases link | None | Tested in `updater.test.ts` (zero Tauri globals) |
 
 > **Environment limitation:** Windows native runtime smoke testing (executing the NSIS `.exe` installer, observing live WebView2 / `ShellExecuteW` updater handoff, or exercising real `HKCU\...\Run` launch-at-login registration) is **not available in this macOS environment**. Windows installers are compiled and validated in GitHub Actions on `windows-latest`, while Windows target configuration, NSIS `.exe` signature verification, non-relaunch NSIS handoff semantics, and launch-at-login controller/UI contracts are covered by deterministic automated tests locally.
 
@@ -77,10 +77,10 @@ Before creating a `v<X.Y.Z>` tag, keep all three desktop/package version fields 
 
 | Target | Installer / Archive | Updater payload (when `TAURI_SIGNING_PRIVATE_KEY` is set) | `latest.json` platform keys |
 | --- | --- | --- | --- |
-| macOS Apple Silicon (`macos-arm64`) | `Grapher_<ver>_aarch64.dmg` | `Grapher_<ver>_aarch64.app.tar.gz` (signature embedded in `latest.json`) | `darwin-aarch64`, `darwin-aarch64-app` |
-| macOS Intel (`macos-x64`) | `Grapher_<ver>_x64.dmg` | `Grapher_<ver>_x64.app.tar.gz` (signature embedded in `latest.json`) | `darwin-x86_64`, `darwin-x86_64-app` |
-| Windows x64 (`windows-x64`) | `Grapher_<ver>_x64-setup.exe` | Reuses `Grapher_<ver>_x64-setup.exe` (signature embedded in `latest.json`) | `windows-x86_64`, `windows-x86_64-nsis` |
-| Relocatable archives (all platforms) | `grapher-{linux-x64,macos-arm64,macos-x64}.tar.gz`, `grapher-windows-x64.zip` | — | — |
+| macOS Apple Silicon (`macos-arm64`) | `Pi-n_<ver>_aarch64.dmg` | `Pi-n_<ver>_aarch64.app.tar.gz` (signature embedded in `latest.json`) | `darwin-aarch64`, `darwin-aarch64-app` |
+| macOS Intel (`macos-x64`) | `Pi-n_<ver>_x64.dmg` | `Pi-n_<ver>_x64.app.tar.gz` (signature embedded in `latest.json`) | `darwin-x86_64`, `darwin-x86_64-app` |
+| Windows x64 (`windows-x64`) | `Pi-n_<ver>_x64-setup.exe` | Reuses `Pi-n_<ver>_x64-setup.exe` (signature embedded in `latest.json`) | `windows-x86_64`, `windows-x86_64-nsis` |
+| Relocatable archives (all platforms) | `pi-n-{linux-x64,macos-arm64,macos-x64}.tar.gz`, `pi-n-windows-x64.zip` | — | — |
 | Aggregated release metadata | `SHA256SUMS.txt` (single consolidated checksum file for all downloadable installers/archives) | `latest.json` (uploaded only when signed updater artifacts exist; standalone `.sig` files are verified and pruned before release upload) | — |
 
 ## Secrets, variables & the three independent signing concerns
@@ -89,11 +89,11 @@ Desktop releases involve **three independent signing concerns**. Each protects a
 
 | Signing concern | What it signs | Who verifies it | Secrets / Variables | If omitted |
 | --- | --- | --- | --- | --- |
-| **1. Tauri updater minisign signatures** | `.app.tar.gz` (macOS) and `-setup.exe` (Windows) updater payloads -> `.sig` files + `latest.json` | Grapher's compiled-in `tauri-plugin-updater` using the embedded Ed25519 minisign public key (`requireSignedVersion: true`) | Secrets: `TAURI_SIGNING_PRIVATE_KEY`, optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`<br>Variable or config: `GRAPHER_UPDATER_PUBKEY` **or** `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` | Unsigned installer-only release: `.dmg` / `-setup.exe` installers still build; `.sig` and `latest.json` are skipped; clients show `unsigned-unavailable` and link to GitHub Releases. |
-| **2. macOS Developer ID signing & notarization** | Inside-out Mach-O binaries (`node`, `grapher`, `.node`/`.dylib`), `Grapher.app`, and `Grapher_<ver>_*.dmg` (with Hardened Runtime & entitlements) | macOS Gatekeeper / Apple notary service | Secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`; optional notarization: `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_P8` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) | Falls back to inside-out ad-hoc Mach-O signing (`-`); macOS Gatekeeper warns on downloaded builds until opened via Privacy & Security or `xattr -dr com.apple.quarantine`. |
-| **3. Optional Windows Authenticode signing** | `Grapher.exe` and the NSIS `Grapher_<ver>_x64-setup.exe` installer (applied **before** minisign so `.sig` covers the final signed `.exe`) | Windows SmartScreen & Authenticode / `signtool` | Secrets: `WINDOWS_CERTIFICATE` + `WINDOWS_CERTIFICATE_PASSWORD` (base64 `.pfx`), **or** `WINDOWS_CERTIFICATE_THUMBPRINT`, **or** `WINDOWS_SIGN_COMMAND` (Azure Trusted Signing / HSM)<br>Variable: optional `WINDOWS_TIMESTAMP_URL` (default `http://timestamp.digicert.com`, RFC 3161 TSP) | Unsigned NSIS `.exe` installer; Windows SmartScreen ("Windows protected your PC") warns on downloaded builds until users choose *More info → Run anyway*. |
+| **1. Tauri updater minisign signatures** | `.app.tar.gz` (macOS) and `-setup.exe` (Windows) updater payloads -> `.sig` files + `latest.json` | Pi^n's compiled-in `tauri-plugin-updater` using the embedded Ed25519 minisign public key (`requireSignedVersion: true`) | Secrets: `TAURI_SIGNING_PRIVATE_KEY`, optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`<br>Variable or config: `PI_N_UPDATER_PUBKEY` **or** `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` | Unsigned installer-only release: `.dmg` / `-setup.exe` installers still build; `.sig` and `latest.json` are skipped; clients show `unsigned-unavailable` and link to GitHub Releases. |
+| **2. macOS Developer ID signing & notarization** | Inside-out Mach-O binaries (`node`, `pi-n`, `.node`/`.dylib`), `Pi^n.app`, and `Pi-n_<ver>_*.dmg` (with Hardened Runtime & entitlements) | macOS Gatekeeper / Apple notary service | Secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`; optional notarization: `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_P8` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) | Falls back to inside-out ad-hoc Mach-O signing (`-`); macOS Gatekeeper warns on downloaded builds until opened via Privacy & Security or `xattr -dr com.apple.quarantine`. |
+| **3. Optional Windows Authenticode signing** | `Pi^n.exe` and the NSIS `Pi-n_<ver>_x64-setup.exe` installer (applied **before** minisign so `.sig` covers the final signed `.exe`) | Windows SmartScreen & Authenticode / `signtool` | Secrets: `WINDOWS_CERTIFICATE` + `WINDOWS_CERTIFICATE_PASSWORD` (base64 `.pfx`), **or** `WINDOWS_CERTIFICATE_THUMBPRINT`, **or** `WINDOWS_SIGN_COMMAND` (Azure Trusted Signing / HSM)<br>Variable: optional `WINDOWS_TIMESTAMP_URL` (default `http://timestamp.digicert.com`, RFC 3161 TSP) | Unsigned NSIS `.exe` installer; Windows SmartScreen ("Windows protected your PC") warns on downloaded builds until users choose *More info → Run anyway*. |
 
-> **Ordering invariant:** Native OS signing always runs **before** Tauri updater minisign signing—on macOS, `Grapher.app` is inside-out signed and optionally notarized/stapled *before* creating `.app.tar.gz` and `.app.tar.gz.sig`; on Windows, Authenticode signs `Grapher_<ver>_x64-setup.exe` *before* `tauri signer sign` creates `Grapher_<ver>_x64-setup.exe.sig`. Re-signing an artifact after generating its `.sig` invalidates the minisign signature.
+> **Ordering invariant:** Native OS signing always runs **before** Tauri updater minisign signing—on macOS, `Pi^n.app` is inside-out signed and optionally notarized/stapled *before* creating `.app.tar.gz` and `.app.tar.gz.sig`; on Windows, Authenticode signs `Pi-n_<ver>_x64-setup.exe` *before* `tauri signer sign` creates `Pi-n_<ver>_x64-setup.exe.sig`. Re-signing an artifact after generating its `.sig` invalidates the minisign signature.
 
 ### Step-by-step GitHub repository setup
 
@@ -103,37 +103,37 @@ In GitHub, open **Settings → Secrets and variables → Actions**. Note careful
 
 1. Generate a minisign keypair offline on a trusted machine **outside the repository checkout** (the helper refuses paths inside the repo and sets mode `0600` on the private key without ever printing private key contents):
    ```sh
-   npm run desktop:signing -- generate --output ~/.tauri/grapher-updater.key
+   npm run desktop:signing -- generate --output ~/.tauri/pi-n-updater.key
    ```
-   (For a passphrase-protected key, add `--password '<passphrase>'` or run `npm run tauri -- signer generate -w ~/.tauri/grapher-updater.key` interactively.)
-2. Back up `~/.tauri/grapher-updater.key` offline in your password manager/vault. **Never commit `.key` files to Git.**
-3. Configure the **public key** (`~/.tauri/grapher-updater.key.pub`, base64-encoded single-line string):
-   - **Recommended (GitHub Actions Variable):** In **Settings → Secrets and variables → Actions → Variables → New repository variable**, create `GRAPHER_UPDATER_PUBKEY` with the exact contents of `~/.tauri/grapher-updater.key.pub`.
+   (For a passphrase-protected key, add `--password '<passphrase>'` or run `npm run tauri -- signer generate -w ~/.tauri/pi-n-updater.key` interactively.)
+2. Back up `~/.tauri/pi-n-updater.key` offline in your password manager/vault. **Never commit `.key` files to Git.**
+3. Configure the **public key** (`~/.tauri/pi-n-updater.key.pub`, base64-encoded single-line string):
+   - **Recommended (GitHub Actions Variable):** In **Settings → Secrets and variables → Actions → Variables → New repository variable**, create `PI_N_UPDATER_PUBKEY` with the exact contents of `~/.tauri/pi-n-updater.key.pub`.
    - **Alternative (in-repo config):** Commit the exact base64 public key into `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` so local builds and CI builds automatically share the same public key.
-   - Precedence (identical in `src-tauri/src/lib.rs`, `scripts/desktop-build.mjs`, `scripts/desktop-updater-manifest.mjs`, and `scripts/desktop-signing.mjs`): `GRAPHER_UPDATER_PUBKEY` → `TAURI_UPDATER_PUBKEY` → `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
-   - When `GRAPHER_UPDATER_PUBKEY` is set, `desktop-build.mjs` compiles it into the desktop binary via **both** `option_env!("GRAPHER_UPDATER_PUBKEY")` in `src-tauri/src/lib.rs` and Tauri's `--config` override. `src-tauri/build.rs` and `src-tauri/src/lib.rs` validate any non-empty public key at compile time and refuse raw or base64-encoded private keys.
+   - Precedence (identical in `src-tauri/src/lib.rs`, `scripts/desktop-build.mjs`, `scripts/desktop-updater-manifest.mjs`, and `scripts/desktop-signing.mjs`): `PI_N_UPDATER_PUBKEY` → `TAURI_UPDATER_PUBKEY` → `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+   - When `PI_N_UPDATER_PUBKEY` is set, `desktop-build.mjs` compiles it into the desktop binary via **both** `option_env!("PI_N_UPDATER_PUBKEY")` in `src-tauri/src/lib.rs` and Tauri's `--config` override. `src-tauri/build.rs` and `src-tauri/src/lib.rs` validate any non-empty public key at compile time and refuse raw or base64-encoded private keys.
 4. Configure the **private key** in **Settings → Secrets and variables → Actions → Secrets → New repository secret**:
-   - `TAURI_SIGNING_PRIVATE_KEY` — exact contents of `~/.tauri/grapher-updater.key`.
+   - `TAURI_SIGNING_PRIVATE_KEY` — exact contents of `~/.tauri/pi-n-updater.key`.
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — key passphrase if generated with a password; omit or leave empty for password-less (`--ci`) keys.
 
 **Behavior in CI:**
 - **Preflight fast-fail:** At the start of `build-desktop` (before `npm run pi:setup` and before compiling), `node scripts/desktop-signing.mjs check` validates the configured public key, decrypts/validates `TAURI_SIGNING_PRIVATE_KEY` (with `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), derives its public key, and aborts immediately if the private key and public key do not match.
 - **When `TAURI_SIGNING_PRIVATE_KEY` is present (signed release mode):**
-  - A matching base64 minisign public key **must** be configured via `GRAPHER_UPDATER_PUBKEY` (Variable) or `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+  - A matching base64 minisign public key **must** be configured via `PI_N_UPDATER_PUBKEY` (Variable) or `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
   - Every generated `.sig` is cryptographically verified against its payload bytes, the configured public key, and `--app-version` before upload.
   - `create-release` runs `scripts/desktop-updater-manifest.mjs --tauri-conf src-tauri/tauri.conf.json --require-pubkey --require-all-when-signed` and then runs `scripts/desktop-signing.mjs verify-manifest --require-all` as an independent post-generation gate, refusing to publish `latest.json` if any target (`macos-arm64`, `macos-x64`, `windows-x64`) is missing or fails Ed25519 verification.
 - **When `TAURI_SIGNING_PRIVATE_KEY` is absent (unsigned installer-only mode):**
-  - macOS `.dmg` and Windows NSIS `.exe` installers still build and upload normally (even if a valid public key is already configured in `tauri.conf.json` or `GRAPHER_UPDATER_PUBKEY`, so those installers can still auto-update once signed releases begin).
+  - macOS `.dmg` and Windows NSIS `.exe` installers still build and upload normally (even if a valid public key is already configured in `tauri.conf.json` or `PI_N_UPDATER_PUBKEY`, so those installers can still auto-update once signed releases begin).
   - `.app.tar.gz` / `.sig` files and `latest.json` are skipped cleanly.
 
 #### 2. macOS Developer ID signing & notarization (optional; Secrets)
 
-Without Apple secrets, macOS builds use inside-out ad-hoc Mach-O signing (`scripts/desktop-sign-macos.mjs` with identity `-`) so bundled Node.js, `grapher`, and native `.node`/`.dylib` modules carry matching entitlements (`src-tauri/Entitlements.plist` and `src-tauri/NodeEntitlements.plist`).
+Without Apple secrets, macOS builds use inside-out ad-hoc Mach-O signing (`scripts/desktop-sign-macos.mjs` with identity `-`) so bundled Node.js, `pi-n`, and native `.node`/`.dylib` modules carry matching entitlements (`src-tauri/Entitlements.plist` and `src-tauri/NodeEntitlements.plist`).
 
 **Certificate requirements:**
 - Requires a **Developer ID Application** certificate (not "Apple Development" or "Mac App Distribution") issued by an active Apple Developer Program account, exported with its private key as a `.p12` file from Keychain Access.
 - Hardened Runtime (`"hardenedRuntime": true` in `src-tauri/tauri.conf.json`) and secure timestamps (`--timestamp --options runtime`) are automatically enabled whenever a non-ad-hoc `APPLE_SIGNING_IDENTITY` is active.
-- Nested binaries are signed strictly deepest-first without `--deep` so `NodeEntitlements.plist` (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`) stays attached to bundled `node` and `.node`/`.dylib` modules while `Entitlements.plist` stays on `Grapher.app` and `grapher`.
+- Nested binaries are signed strictly deepest-first without `--deep` so `NodeEntitlements.plist` (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`) stays attached to bundled `node` and `.node`/`.dylib` modules while `Entitlements.plist` stays on `Pi^n.app` and `pi-n`.
 
 Configure all three **Repository Secrets** for Developer ID signing:
 
@@ -147,7 +147,7 @@ In CI, the `.p12` is decoded to `$RUNNER_TEMP` with mode `0600`, imported into a
 
 **Notarization (optional; requires Developer ID signing):**
 
-When Developer ID signing is active, Grapher notarizes and staples both `Grapher.app` (before building `.app.tar.gz`) and the `.dmg` installer via `xcrun notarytool submit --wait` + `xcrun stapler staple`. Configure **either** Option A (recommended) **or** Option B under **Repository Secrets**:
+When Developer ID signing is active, Pi^n notarizes and staples both `Pi^n.app` (before building `.app.tar.gz`) and the `.dmg` installer via `xcrun notarytool submit --wait` + `xcrun stapler staple`. Configure **either** Option A (recommended) **or** Option B under **Repository Secrets**:
 
 - **Option A — App Store Connect API key (recommended):**
   | Secret | Description |
@@ -166,7 +166,7 @@ If credentials are partial (for example `APPLE_CERTIFICATE` without `APPLE_SIGNI
 
 #### 3. Windows Authenticode / installer signing (optional; Secrets + optional Variable)
 
-Without Windows code-signing credentials, `windows-latest` still builds and uploads `Grapher_<ver>_x64-setup.exe` (and signs it with the Tauri updater minisign key if configured), but downloaded installers will trigger Windows SmartScreen warnings.
+Without Windows code-signing credentials, `windows-latest` still builds and uploads `Pi-n_<ver>_x64-setup.exe` (and signs it with the Tauri updater minisign key if configured), but downloaded installers will trigger Windows SmartScreen warnings.
 
 **Certificate / PFX requirements:**
 - Requires an Authenticode **Code Signing** certificate (X.509 with Code Signing EKU `1.3.6.1.5.5.7.3.3`).
@@ -197,41 +197,41 @@ Use `npm run desktop:signing` (backed by [`scripts/desktop-signing.mjs`](../../s
 
 ```sh
 # 1. Generate a new minisign keypair offline (outside the repo, chmod 0600 on private key)
-npm run desktop:signing -- generate --output ~/.tauri/grapher-updater.key
+npm run desktop:signing -- generate --output ~/.tauri/pi-n-updater.key
 
 # 2. Derive the base64 public key from an existing private key and check it against the app config/env
-TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/grapher-updater.key \
+TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/pi-n-updater.key \
   npm run desktop:signing -- derive-pubkey --check-configured
 
 # 3. Preflight-check all three signing concerns for your current shell env
 npm run desktop:signing -- check --tauri-conf src-tauri/tauri.conf.json
 
 # 4. Dry-run signed mode preflight (fails fast on missing/mismatched/invalid keys)
-GRAPHER_UPDATER_PUBKEY="$(cat ~/.tauri/grapher-updater.key.pub)" \
-TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/grapher-updater.key \
+PI_N_UPDATER_PUBKEY="$(cat ~/.tauri/pi-n-updater.key.pub)" \
+TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/pi-n-updater.key \
   npm run desktop:signing -- check --require-updater-signing
 
 # 5. Verify a standalone updater signature (.sig) against its payload and public key
 npm run desktop:signing -- verify-signature \
-  --artifact desktop-dist/Grapher_1.9.9_aarch64.app.tar.gz \
-  --pubkey ~/.tauri/grapher-updater.key.pub \
+  --artifact desktop-dist/Pi-n_1.9.9_aarch64.app.tar.gz \
+  --pubkey ~/.tauri/pi-n-updater.key.pub \
   --version 1.9.9
 
 # 6. Verify a generated latest.json manifest and all referenced payload files
 npm run desktop:signing -- verify-manifest \
   --manifest release-assets/latest.json \
   --assets-dir release-assets \
-  --pubkey ~/.tauri/grapher-updater.key.pub \
+  --pubkey ~/.tauri/pi-n-updater.key.pub \
   --tag v1.9.9 \
   --require-all
 ```
 
 ## Key rotation implications
 
-- **Rotating the Tauri updater minisign keypair (`TAURI_SIGNING_PRIVATE_KEY` + `GRAPHER_UPDATER_PUBKEY` / `tauri.conf.json`):**
+- **Rotating the Tauri updater minisign keypair (`TAURI_SIGNING_PRIVATE_KEY` + `PI_N_UPDATER_PUBKEY` / `tauri.conf.json`):**
   - `tauri-plugin-updater` pins a **single** Ed25519 public key in the compiled desktop binary.
   - Existing installations compiled with the **old** public key (or compiled with empty `pubkey: ""` in unsigned releases) **cannot** auto-update to releases signed with a **new** private key—they fail closed with `UnexpectedKeyId` / `InvalidEncoding` (`signature` error) and must perform a one-time manual reinstall from GitHub Releases to pick up the new public key.
-  - Never rotate `TAURI_SIGNING_PRIVATE_KEY` without simultaneously updating `GRAPHER_UPDATER_PUBKEY` (or `src-tauri/tauri.conf.json`). CI preflight (`desktop-signing.mjs check`) automatically blocks releases where the private key and public key diverge.
+  - Never rotate `TAURI_SIGNING_PRIVATE_KEY` without simultaneously updating `PI_N_UPDATER_PUBKEY` (or `src-tauri/tauri.conf.json`). CI preflight (`desktop-signing.mjs check`) automatically blocks releases where the private key and public key diverge.
   - Treat the minisign private key as long-lived release infrastructure: back it up securely offline and rotate only if compromised or intentionally migrating users with release notes directing a manual reinstall.
 - **Rotating Apple Developer ID or Windows Authenticode certificates:**
   - Does **not** break Tauri minisign updater verification (those are independent trust layers).
@@ -242,11 +242,11 @@ npm run desktop:signing -- verify-manifest \
 
 | Symptom / Error | Root cause | Fix |
 | --- | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY is set, but no updater public key is configured` | `TAURI_SIGNING_PRIVATE_KEY` secret is set, `src-tauri/tauri.conf.json` has `"pubkey": ""`, and `GRAPHER_UPDATER_PUBKEY` is empty—most commonly because `GRAPHER_UPDATER_PUBKEY` was added under GitHub **Secrets** instead of **Variables**. | Create `GRAPHER_UPDATER_PUBKEY` under **Settings → Secrets and variables → Actions → Variables** (not Secrets), or commit the base64 public key into `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. |
-| `raw 2-line minisign text rather than the base64-encoded public key` / `not valid base64` | Raw `.pub` text (`untrusted comment: ...`) or truncated base64 was pasted into `GRAPHER_UPDATER_PUBKEY` / `tauri.conf.json`. | Use the exact base64 output printed by `npm run desktop:signing -- generate` or `derive-pubkey`. |
-| `Refusing to accept private/secret key material` | The private `.key` contents (raw or base64-encoded) were pasted into `GRAPHER_UPDATER_PUBKEY` or `plugins.updater.pubkey`. | Replace with the companion `.key.pub` public key immediately; rotate the keypair if the private key was ever committed or exposed. |
+| `TAURI_SIGNING_PRIVATE_KEY is set, but no updater public key is configured` | `TAURI_SIGNING_PRIVATE_KEY` secret is set, `src-tauri/tauri.conf.json` has `"pubkey": ""`, and `PI_N_UPDATER_PUBKEY` is empty—most commonly because `PI_N_UPDATER_PUBKEY` was added under GitHub **Secrets** instead of **Variables**. | Create `PI_N_UPDATER_PUBKEY` under **Settings → Secrets and variables → Actions → Variables** (not Secrets), or commit the base64 public key into `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. |
+| `raw 2-line minisign text rather than the base64-encoded public key` / `not valid base64` | Raw `.pub` text (`untrusted comment: ...`) or truncated base64 was pasted into `PI_N_UPDATER_PUBKEY` / `tauri.conf.json`. | Use the exact base64 output printed by `npm run desktop:signing -- generate` or `derive-pubkey`. |
+| `Refusing to accept private/secret key material` | The private `.key` contents (raw or base64-encoded) were pasted into `PI_N_UPDATER_PUBKEY` or `plugins.updater.pubkey`. | Replace with the companion `.key.pub` public key immediately; rotate the keypair if the private key was ever committed or exposed. |
 | `Failed to decrypt TAURI_SIGNING_PRIVATE_KEY` | `TAURI_SIGNING_PRIVATE_KEY` is malformed/truncated, or `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` does not match the key's passphrase. | Test locally with `npm run desktop:signing -- derive-pubkey` and re-save `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` without extra shell escaping. |
-| `Tauri updater signing keypair mismatch: ... derives key ID X, but ... has key ID Y` / `The signature was created with a different key` | `TAURI_SIGNING_PRIVATE_KEY` and `GRAPHER_UPDATER_PUBKEY` (or `tauri.conf.json`) belong to different keypairs, or an already-installed app has an older/empty embedded public key. | Run `npm run desktop:signing -- derive-pubkey` against the CI private key to get the exact matching public key and update `GRAPHER_UPDATER_PUBKEY` / `tauri.conf.json`. Existing installs compiled with an old or empty pubkey must manually reinstall once. |
+| `Tauri updater signing keypair mismatch: ... derives key ID X, but ... has key ID Y` / `The signature was created with a different key` | `TAURI_SIGNING_PRIVATE_KEY` and `PI_N_UPDATER_PUBKEY` (or `tauri.conf.json`) belong to different keypairs, or an already-installed app has an older/empty embedded public key. | Run `npm run desktop:signing -- derive-pubkey` against the CI private key to get the exact matching public key and update `PI_N_UPDATER_PUBKEY` / `tauri.conf.json`. Existing installs compiled with an old or empty pubkey must manually reinstall once. |
 | `failed Ed25519 payload signature verification` | The `.app.tar.gz` or `-setup.exe` was modified or re-signed (for example by Authenticode or re-archiving) *after* `.sig` generation, or corrupted in transit. | Always sign with `tauri signer sign` last, after native OS signing/notarization, and verify with `npm run desktop:signing -- verify-manifest --assets-dir ...`. |
 | `missing a signed version in its trusted comment` / `SignedVersionMismatch` | `requireSignedVersion: true` is enabled in `tauri.conf.json`, and an artifact was signed without `--app-version <X.Y.Z>` or with a mismatched version. | Always sign via `scripts/desktop-build.mjs` (or pass `--app-version <X.Y.Z>` matching `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the git tag). |
 | `unsigned-unavailable` in app / `skipping latest.json` in CI / `Refusing to generate partial latest.json` | No `.sig` files were produced (unsigned installer-only release), or one of the three desktop targets (`macos-arm64`, `macos-x64`, `windows-x64`) failed to produce a `.sig` while others succeeded. | For unsigned releases this is expected—users install manually from GitHub Releases. For signed releases, ensure all three `build-desktop` targets succeed with `TAURI_SIGNING_PRIVATE_KEY` available. |

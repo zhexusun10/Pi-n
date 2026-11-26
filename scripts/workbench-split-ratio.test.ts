@@ -38,7 +38,7 @@ test("getStoredRatio loads persisted split ratio and clamps within bounds", () =
 
 test("getStoredRatio ignores retired pixel width", () => {
   const legacyStorage = {
-    getItem: (key: string) => (key === "grapher_pane_width" ? "480" : null),
+    getItem: (key: string) => (key === "pi_n_pane_width" ? "480" : null),
   };
   assert.equal(getStoredRatio(legacyStorage), DEFAULT_SPLIT_RATIO);
 });
@@ -47,7 +47,7 @@ test("getStoredRatio prioritizes split ratio over legacy width", () => {
   const bothStorage = {
     getItem: (key: string) => {
       if (key === SPLIT_RATIO_STORAGE_KEY) return "0.50";
-      if (key === "grapher_pane_width") return "370";
+      if (key === "pi_n_pane_width") return "370";
       return null;
     },
   };

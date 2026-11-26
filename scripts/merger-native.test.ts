@@ -20,14 +20,14 @@ const normalize = (value: string) => value.replace(/^\\\\\?\\/, '').replaceAll('
 const privateGitDirectory = (worktree: string) => {
   const name = basename(worktree);
   const digest = createHash('sha1').update(`blob ${Buffer.byteLength(name)}\0${name}`).digest('hex');
-  return join(dirname(worktree), '.grapher-git', `${digest.slice(0, 16)}.git`);
+  return join(dirname(worktree), '.pi-n-git', `${digest.slice(0, 16)}.git`);
 };
 const delay = (ms: number) => new Promise(completed => setTimeout(completed, ms));
 
 // Real Pi processes make the Windows production path roughly twice as slow
 // as local runs; keep headroom so host load is not reported as a hang.
 test('production Planner writes source directly; legacy private Runs retain node and publication Mergers', { timeout: 600000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-merger-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-merger-')));
   const agent = join(directory, 'agent');
   const data = join(directory, 'data');
   const cases = new Map<string, { repository: string; kind: 'node' | 'publication' | 'planner'; plain: boolean; fail: boolean }>();
@@ -147,7 +147,7 @@ test('production Planner writes source directly; legacy private Runs retain node
       } else if (results.length === 0) {
         const projectView = scenario.plain
           ? 'test ! -e .git && '
-          : 'test -d .git && test -z "$(git for-each-ref --format=\"%(refname)\" refs/grapher/)" && test "$(git branch --show-current)" != grapher-node && ';
+          : 'test -d .git && test -z "$(git for-each-ref --format=\"%(refname)\" refs/pi-n/)" && test "$(git branch --show-current)" != pi-n-node && ';
         const command = prompt.includes('WRITE_LEFT') ? "printf 'left\\n' > shared.txt"
           : prompt.includes('WRITE_RIGHT') ? "printf 'right\\n' > shared.txt"
           : prompt.includes('VERIFY_PLANNER_REVISION') ? 'test "$(cat shared.txt)" = "planner revision" && test "$(cat revision.txt)" = latest && test "$(cat failed.txt)" = survived && test "$(cat verified.txt)" = verified && printf inherited > late.txt'
@@ -182,13 +182,13 @@ test('production Planner writes source directly; legacy private Runs retain node
     await new Promise<void>(completed => listener.listen(0, '127.0.0.1', completed));
     const port = (listener.address() as AddressInfo).port;
     await new Promise<void>(completed => listener.close(() => completed()));
-    const env = { ...process.env, GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(port), PI_CODING_AGENT_DIR: agent,
-      GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'),
+    const env = { ...process.env, PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
+      PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
       PLANNER_MODEL: 'merger-test/native', NODE_AGENT_MODEL: 'merger-test/native',
       PARTITIONER_MODEL: 'merger-test/native', MERGER_MODEL: 'merger-test/native',
       PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PARTITIONER_THINKING: 'off', MERGER_THINKING: 'off' };
     const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
-    backend = spawn(join(target, `debug/grapher${process.platform === 'win32' ? '.exe' : ''}`), [],
+    backend = spawn(join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`), [],
       { env, stdio: ['ignore', 'ignore', 'pipe'] });
     backend.stderr!.on('data', value => { diagnostics += value.toString(); });
     const api = async (command: string, body: any = {}) => {
@@ -351,7 +351,7 @@ test('production Planner writes source directly; legacy private Runs retain node
         if (!plain) {
           assert.equal(git(repository, 'rev-parse', 'HEAD'), originalHead);
           assert.equal(git(repository, 'log', '--format=%s', `${originalHead}..HEAD`), '');
-          assert.equal(git(repository, 'for-each-ref', '--format=%(refname)', 'refs/grapher'), '');
+          assert.equal(git(repository, 'for-each-ref', '--format=%(refname)', 'refs/pi-n'), '');
           for (const execution of state.executions) assert.throws(() => git(repository, 'cat-file', '-e', `${execution.after}^{commit}`));
           assert.ok(git(repository, 'status', '--porcelain').includes('shared.txt') || git(repository, 'status', '--porcelain').includes('verified.txt'));
         } else {

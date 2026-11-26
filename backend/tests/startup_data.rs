@@ -1,5 +1,5 @@
 //! Exercise the actual startup entry point with a disposable incompatible store.
-use grapher::{
+use pi_n::{
     model::{Config, EventKind, Graph, Snapshot},
     store::Store,
 };
@@ -28,10 +28,10 @@ fn start(root: &Path, stderr: &Path) -> (Backend, u16) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
-    let child = Command::new(env!("CARGO_BIN_EXE_grapher"))
-        .env("GRAPHER_DATA_DIR", root)
-        .env("GRAPHER_PORT", port.to_string())
-        .env("GRAPHER_DEV_LAZY_PRIMARY", "1")
+    let child = Command::new(env!("CARGO_BIN_EXE_pi-n"))
+        .env("PI_N_DATA_DIR", root)
+        .env("PI_N_PORT", port.to_string())
+        .env("PI_N_DEV_LAZY_PRIMARY", "1")
         .stdout(Stdio::null())
         .stderr(fs::File::create(stderr).unwrap())
         .spawn()

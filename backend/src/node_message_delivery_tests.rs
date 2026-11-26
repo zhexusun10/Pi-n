@@ -235,7 +235,7 @@ print(json.dumps({'type':'tool_execution_start'}), flush=True)
 for index, expected in enumerate(['stale browser message', 'same', 'same']):
     message = json.loads(sys.stdin.readline())
     assert message['streamingBehavior'] == 'steer'
-    assert message['message'] == expected + '\n\n<grapher-node-steer-id>' + message['id'] + '</grapher-node-steer-id>'
+    assert message['message'] == expected + '\n\n<pi-n-node-steer-id>' + message['id'] + '</pi-n-node-steer-id>'
     assert message['images'][0]['data'] == str(index)
     # A long tool turn may not acknowledge promptly. Control must return after
     # delivery instead of blocking the HTTP worker on this response.
@@ -295,8 +295,8 @@ sys.stdin.read()
                 session_id: None,
                 extra_args: vec![],
                 environment: vec![
-                    ("GRAPHER_TEST_NODE_RPC", "1".into()),
-                    ("GRAPHER_NODE_EXECUTION_ID", job.execution.id.clone()),
+                    ("PI_N_TEST_NODE_RPC", "1".into()),
+                    ("PI_N_NODE_EXECUTION_ID", job.execution.id.clone()),
                 ],
                 system_prompt: None,
                 images: None,

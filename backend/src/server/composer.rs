@@ -357,7 +357,7 @@ fn record_withdrawal(
                 continue;
             }
         }
-        // Extension-owned input has no Grapher identity.
+        // Extension-owned input has no Pi^n identity.
         // Return the removed content, but never suppress a same-text card.
         messages.push(RecalledMessage {
             text: entry.text,

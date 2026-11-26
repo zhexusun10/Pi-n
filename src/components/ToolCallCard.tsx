@@ -154,7 +154,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = React.memo(
       if (!resultText) return false;
       const text = resultText;
       return (
-        text.includes("[grapher:step_error") ||
+        text.includes("[pi-n:step_error") ||
         /\b(?:not ok\s+\d+|✖\s+[^\n]+|AssertionError:)\b/.test(text)
       );
     }, [isError, exitCode, item.subcommandWarning, resultText]);
@@ -195,13 +195,20 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = React.memo(
             summary: args.path || t("代码编辑与修改"),
             type: "file",
           };
-        case "route_task":
+        case "route_task": {
+          const planLabel =
+            args.plan_type === "serial"
+              ? "Direct"
+              : args.plan_type === "graph"
+                ? "Compile"
+                : args.plan_type;
           return {
             icon: <Compass size={14} className="tool-icon route" />,
             badge: "route_task",
-            summary: args.plan_type ? t("决定任务路线: [{0}]", args.plan_type) : t("任务路线决策"),
+            summary: planLabel ? t("决定任务路线: [{0}]", planLabel) : t("任务路线决策"),
             type: "route",
           };
+        }
         case "read_graph":
           return {
             icon: <Network size={14} className="tool-icon read" />,
@@ -297,10 +304,6 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = React.memo(
             </div>
 
             <div className="tool-header-right">
-              {isTruncated && (
-                <span className="tool-truncated-pill">
-                  {t("已截断")}</span>
-              )}
               {status === "running" && (
                 <span className="tool-status running">
                   <Loader2 size={12} className="spin" />
@@ -318,11 +321,13 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = React.memo(
                 <span className="tool-status success">
                   <CheckCircle2 size={13} />
                   <span>
-                    {toolName === "bash"
-                      ? exitCode !== null
-                        ? t("完成 (Exit {0})", exitCode)
-                        : t("完成")
-                      : t("完成")}
+                    {toolName === "bash" && exitCode !== null
+                      ? isTruncated
+                        ? t("完成 (Exit {0})（已截断）", exitCode)
+                        : t("完成 (Exit {0})", exitCode)
+                      : isTruncated
+                        ? t("完成（已截断）")
+                        : t("完成")}
                   </span>
                 </span>
               )}

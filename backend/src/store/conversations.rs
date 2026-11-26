@@ -245,7 +245,7 @@ fn read_single_run_summary(
             .is_ok()
         });
         if !succeeded {
-            eprintln!("[Grapher] Sidebar metadata unavailable for Run {id}");
+            eprintln!("[Pi^n] Sidebar metadata unavailable for Run {id}");
             return Ok(CachedRunOutcome::Unavailable);
         }
         state.events.clear();

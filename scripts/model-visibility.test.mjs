@@ -7,7 +7,7 @@ import { readModelVisibility, saveModelVisibility } from '../engine/model-visibi
 import { ProviderAuthAdapter } from '../engine/provider-auth-adapter.mjs';
 
 const temporary = fn => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-model-visibility-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-model-visibility-'));
   try { return fn(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
 };
 
@@ -39,7 +39,7 @@ test('invalid visibility updates and corrupt files fail without erasing saved ch
 }));
 
 test('provider catalog projects hidden models without changing credential availability, across adapter restarts', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-scope-adapter-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-scope-adapter-'));
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
   const models = [{ provider: 'a', id: 'one', name: 'One', contextWindow: 1000 }, { provider: 'a', id: 'two', name: 'Two', contextWindow: 1000 }];

@@ -34,7 +34,7 @@ fn fixture(files: usize) -> (tempfile::TempDir, PathBuf, PathBuf, Runtime) {
         .unwrap();
     let workspace = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     for group in 0..files.div_ceil(100) {
         fs::create_dir_all(workspace.join(format!("node/artifacts/{group}"))).unwrap();

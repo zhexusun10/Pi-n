@@ -111,21 +111,21 @@ for (const reducedMotion of ["no-preference"]) {
     let browser;
     try {
       await server.listen();
-      browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
       const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, reducedMotion });
       await context.addInitScript(({ repository, config }) => {
-        localStorage.setItem("grapher_language_v1", "en");
-        localStorage.setItem("grapher_execution_overview_v1", "1");
-        localStorage.setItem("grapher_workbench_split_ratio", "0.55");
-        localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
-        localStorage.setItem("grapher_config", JSON.stringify(config));
+        localStorage.setItem("pi_n_language_v1", "en");
+        localStorage.setItem("pi_n_execution_overview_v1", "1");
+        localStorage.setItem("pi_n_workbench_split_ratio", "0.55");
+        localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
+        localStorage.setItem("pi_n_config", JSON.stringify(config));
       }, { repository, config });
       await context.route("**/api/*", async route => {
         const command = new URL(route.request().url()).pathname.slice(5);
         const body = route.request().postDataJSON();
         let result;
         switch (command) {
-          case "bootstrap": case "save_config": result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo, dataPath: "/mock/.grapher" }; break;
+          case "bootstrap": case "save_config": result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo, dataPath: "/mock/.pi-n" }; break;
           case "get_file_changes": result = fixtureFileChanges(body); break;
           case "load_run": case "history": result = snapshots[body.runId] || empty; break;
           // Paint the previous view while metadata is in flight, as on a cold history read.
@@ -183,7 +183,7 @@ for (const reducedMotion of ["no-preference"]) {
         const pane = page.locator(".conversation-pane");
         const draft = await page.locator(".pane-bottom-chat textarea").inputValue();
         const originalWidth = (await pane.boundingBox()).width;
-        const storedRatio = await page.evaluate(() => localStorage.getItem("grapher_workbench_split_ratio"));
+        const storedRatio = await page.evaluate(() => localStorage.getItem("pi_n_workbench_split_ratio"));
         assert.equal(await page.getByRole("button", { name: "Collapse execution graph", exact: true }).count(), 0,
           "the graph toolbar no longer has a collapse button");
         const splitter = page.getByRole("separator", { name: "Resize execution graph", exact: true });
@@ -300,7 +300,7 @@ for (const reducedMotion of ["no-preference"]) {
           assert.ok(ready.length > 1 && ready.every(frame => frame.viewport === ready.at(-1).viewport),
             `the opening animation does not continuously zoom or recenter the graph: ${JSON.stringify(ready)}`);
         }
-        assert.equal(await page.evaluate(() => localStorage.getItem("grapher_workbench_split_ratio")), storedRatio,
+        assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_workbench_split_ratio")), storedRatio,
           "reopening preserves the saved split ratio");
         assert.equal(await page.locator(".pane-bottom-chat textarea").inputValue(), draft);
         assert.equal(await splitter.evaluate(element => element === document.activeElement), true,
@@ -353,7 +353,7 @@ for (const reducedMotion of ["no-preference"]) {
             "reversing a drag collapse does not unmount the graph");
         }
         await page.waitForFunction(width => Math.abs(document.querySelector(".conversation-pane").getBoundingClientRect().width - width) < 1, originalWidth);
-        assert.equal(await page.evaluate(() => localStorage.getItem("grapher_workbench_split_ratio")), storedRatio);
+        assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_workbench_split_ratio")), storedRatio);
         assert.equal(await page.locator(".pane-bottom-chat textarea").inputValue(), draft);
       };
       const switchAndMeasure = async id => {

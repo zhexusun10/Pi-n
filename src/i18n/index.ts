@@ -2,7 +2,7 @@ import { en } from "./en.ts";
 
 type Locale = "zh-CN" | "en";
 export type LanguagePreference = "auto" | Locale;
-export const LANGUAGE_PREFERENCE_KEY = "grapher_language_v1";
+export const LANGUAGE_PREFERENCE_KEY = "pi_n_language_v1";
 
 export function readLanguagePreference(storage?: Pick<Storage, "getItem">): LanguagePreference {
   try {

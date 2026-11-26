@@ -63,7 +63,7 @@
   z-index: 30;
 }
 
-/* Maximized mode matches .workbench's exact bounding box and 18px radius on
+/* Maximized mode matches .workbench's exact bounding box and 16px radius on
    both Windows (top: 12px) and macOS with overlay titlebar (top: 0).
    justify-content: flex-end pins the bottom edge during expand animations. */
 .workspace-terminal-dock.is-maximized {
@@ -114,7 +114,7 @@
 }
 
 /* Override shadcn Terminal's demo max-w-lg / max-h-100 / rounded-xl so the
-   card fills the dock/workbench cleanly and aligns its 18px corner radius
+   card fills the dock/workbench cleanly and aligns its 16px corner radius
    with .workbench. Avoid !important on height so Web Animations FLIP runs cleanly. */
 .workspace-terminal-card {
   width: 100%;
@@ -125,7 +125,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-surface, 18px);
+  border-radius: var(--radius-surface, 16px);
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
   box-shadow: var(--surface-card-shadow);

@@ -1,4 +1,4 @@
-//! Immutable external attachment inputs stored under Grapher's data directory.
+//! Immutable external attachment inputs stored under Pi^n's data directory.
 //! Attachments are never written into the user's project directory or any
 //! private Run worktree; sandboxed executions receive read-only access to the
 //! Run's attachment directories instead.
@@ -77,7 +77,7 @@ fn immutable_file(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> 
     // Publish only a complete, synced file. A failed write removes its staging
     // file, so a retry cannot mistake partial bytes for immutable evidence.
     let mut staged = tempfile::Builder::new()
-        .prefix(".grapher-attachment-")
+        .prefix(".pi-n-attachment-")
         .tempfile_in(path.parent().ok_or("Missing attachment directory")?)
         .map_err(|error| error.to_string())?;
     staged.write_all(bytes).map_err(|error| error.to_string())?;
@@ -237,7 +237,7 @@ fn is_managed_attachment_path(path: &str) -> bool {
     }
 }
 
-/// Strip leading `@<path>` / `@"<path>"` mentions that point into Grapher's
+/// Strip leading `@<path>` / `@"<path>"` mentions that point into Pi^n's
 /// external `attachment-inputs/` store, leaving the user's message text intact.
 pub(crate) fn strip_leading_managed_mentions(mut text: &str) -> &str {
     loop {
@@ -592,7 +592,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failed_attachment_write_does_not_publish_partial_data_and_retry_succeeds() {
-        const FIXTURE_ROOT: &str = "GRAPHER_TEST_ATTACHMENT_WRITE_ROOT";
+        const FIXTURE_ROOT: &str = "PI_N_TEST_ATTACHMENT_WRITE_ROOT";
         if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
             let root = PathBuf::from(root);
             let id = Uuid::new_v4().to_string();

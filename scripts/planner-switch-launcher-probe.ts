@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export default async function (pi: any) {
-  const extension = await import(pathToFileURL(join(process.env.GRAPHER_TEST_RUNTIME!, 'engine/prompt-extension.ts')).href);
+  const extension = await import(pathToFileURL(join(process.env.PI_N_TEST_RUNTIME!, 'engine/prompt-extension.ts')).href);
   const tools: any[] = [];
   extension.default({ ...pi, registerTool(tool: any) { tools.push(tool); } });
   const call = async (name: string, input: any) => {
@@ -13,7 +13,7 @@ export default async function (pi: any) {
     return tool.execute(crypto.randomUUID(), input);
   };
   const text = (result: any) => result.content?.filter((block: any) => block.type === 'text').map((block: any) => block.text).join('\n') || '';
-  const target = JSON.parse(process.env.GRAPHER_PLANNER_WORKSPACES!).target;
+  const target = JSON.parse(process.env.PI_N_PLANNER_WORKSPACES!).target;
   const switchTool = tools.find(tool => tool.name === 'switch_workspace');
   assert.equal(switchTool.prepareArguments, undefined);
   assert.equal(switchTool.promptSnippet, undefined);
@@ -32,7 +32,7 @@ export default async function (pi: any) {
   writeFileSync(join(process.env.HOME!, 'planner-written'), 'target-owned');
   await call('write', { path: 'task.txt', content: 'selected target' });
   if (process.platform !== 'win32') {
-    assert.throws(() => readFileSync(join(process.env.GRAPHER_TEST_DENIED!, 'business.txt')));
+    assert.throws(() => readFileSync(join(process.env.PI_N_TEST_DENIED!, 'business.txt')));
   }
   process.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'planner-switch-ok' }] } }) + '\n');
   process.exit(0);

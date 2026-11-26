@@ -49,29 +49,47 @@ test("Markdown allowlist preserves useful formatting, code, links, images and in
   assert.equal(sanitizeHtml('<input type="text" autofocus onfocus="evil()">'), '<input type="checkbox" disabled />');
 });
 
-test("Workspace Markdown images stay inert until resolved by their conversation", () => {
+test("Workspace and local Markdown images stay inert until resolved by their conversation", () => {
   const cache = new StreamingMarkdownCache();
   const markdown = '![截图](artifacts/user-preview-current/screenshots/01-main-menu.png)\n\n'
     + '![中文](<./artifacts/中文 space/截图.png>)\n\n'
     + '![工作区临时](.tmp/card-preview.png)\n\n'
+    + '![工作区外相对](../outside/card-preview.png)\n\n'
+    + '![主目录](~/Desktop/card-preview.png)\n\n'
+    + '![绝对路径](/Users/demo/Desktop/card-preview.png)\n\n'
+    + '![Windows](<C:\\Users\\demo\\card-preview.png>)\n\n'
     + '![系统临时](/tmp/compacted-card-preview.png)\n\n'
     + '![macOS 临时](/private/tmp/sub/card-preview.png)\n\n'
-    + '![文件协议临时](file:///tmp/中文%20space/截图.png)';
+    + '![文件协议临时](file:///tmp/中文%20space/截图.png)\n\n'
+    + '![文件协议外路径](file:///Users/demo/shot.png)\n\n'
+    + '![文件协议Windows](file:///C:/Users/demo/shot.png)';
   for (const streaming of [true, false]) {
     const output = cache.render(markdown, streaming);
     assert.match(output, /data-workspace-path="artifacts\/user-preview-current\/screenshots\/01-main-menu\.png"/);
     assert.match(output, /data-workspace-path="artifacts\/中文 space\/截图\.png"/);
     assert.match(output, /data-workspace-path="\.tmp\/card-preview\.png"/);
+    assert.match(output, /data-workspace-path="\.\.\/outside\/card-preview\.png"/);
+    assert.match(output, /data-workspace-path="~\/Desktop\/card-preview\.png"/);
+    assert.match(output, /data-workspace-path="\/Users\/demo\/Desktop\/card-preview\.png"/);
+    assert.match(output, /data-workspace-path="C:\/Users\/demo\/card-preview\.png"/);
     assert.match(output, /data-workspace-path="\/tmp\/compacted-card-preview\.png"/);
     assert.match(output, /data-workspace-path="\/tmp\/sub\/card-preview\.png"/);
     assert.match(output, /data-workspace-path="\/tmp\/中文 space\/截图\.png"/);
-    assert.doesNotMatch(output, /\ssrc=/, "workspace paths must not generate browser GETs");
+    assert.match(output, /data-workspace-path="\/Users\/demo\/shot\.png"/);
+    assert.match(output, /data-workspace-path="C:\/Users\/demo\/shot\.png"/);
+    assert.doesNotMatch(output, /\ssrc=/, "local paths must not generate browser GETs");
   }
-  for (const src of ['/api/control', '/etc/passwd', '/tmp', '/tmp/', '/tmp/../etc/passwd',
-    '/tmp/%2e%2e/etc/passwd', '/tmp//preview.png', '/tmp/.git/a.png', '/tmp/.grapher/a.png',
-    'file:///etc/passwd', 'file://evil.test/tmp/a.png', '//tmp/a.png',
-    '../outside.png', '%2e%2e/outside.png', 'C:\\outside.png',
-    '//evil.test/image.png', 'data:image/svg+xml,evil', 'blob:https://example.test/forged', '.git/image.png', '.grapher/image.png']) {
+  const pngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  const inlineImg = sanitizeHtml(`<img src="${pngDataUrl}" alt="inline">`);
+  assert.match(inlineImg, /src="data:image\/png;base64,iVBORw0/);
+  assert.doesNotMatch(inlineImg, /data-workspace-path/);
+
+  for (const src of ['/api/control', '/api/get_workspace_image', '/', '~', '~/', 'C:/', '..',
+    '/tmp/', '/tmp/../etc/passwd', '/tmp/%2e%2e/etc/passwd', '/tmp//preview.png',
+    '/tmp/.git/a.png', '/tmp/.pi-n/a.png', 'file://evil.test/tmp/a.png', '//tmp/a.png',
+    '\\tmp\\a.png', 'image.png:stream', '//evil.test/image.png', 'data:image/svg+xml,evil',
+    'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=', 'data:text/html;base64,PGI+eDwvYj4=',
+    'blob:https://example.test/forged', '.git/image.png', '.pi-n/image.png']) {
     const output = sanitizeHtml(`<img src="${src}" data-workspace-path="forged.png" onerror="evil()" alt="preview">`);
     assert.doesNotMatch(output, /<img|data-workspace-path|\ssrc=|onerror/, src);
   }
@@ -83,7 +101,7 @@ test("Markdown links open outside the app and cannot be retargeted by model HTML
   const output = cache.render('[文档](https://example.com/docs "标题") and [local](/workspace/file.md)', false);
   assert.match(output, /<a href="https:\/\/example.com\/docs" title="标题" target="_blank" rel="noopener noreferrer">文档<\/a>/);
   // A workspace path is not a URL: rendering it as an anchor would navigate the
-  // Grapher tab (and drop the Run), so it degrades to plain text with the path.
+  // Pi^n tab (and drop the Run), so it degrades to plain text with the path.
   assert.doesNotMatch(output, /<a href="\/workspace\/file.md"/);
   // Latin link text keeps ASCII parentheses; CJK prose gets the full-width pair.
   assert.match(output, /local\(\/workspace\/file\.md\)/);

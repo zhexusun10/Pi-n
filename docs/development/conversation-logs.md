@@ -13,7 +13,7 @@ Recent execution and Planner windows use bounded LRUs. Cached windows never repl
 
 ## Offline maintenance
 
-Back up the runtime data directory and stop its backend before explicit maintenance. Confirm `GRAPHER_DATA_DIR` selects the intended current-format database.
+Back up the runtime data directory and stop its backend before explicit maintenance. Confirm `PI_N_DATA_DIR` selects the intended current-format database.
 
 ```sh
 npm run cleanup:workspaces
@@ -33,7 +33,7 @@ Conversation and workspace deletion remove their event, checkpoint and log recor
 
 ## Acceptance prerequisites
 
-The [harness](../../scripts/conversation-acceptance.mjs) needs a prepared checkout with Node/npm, pinned Pi dependencies, Rust and Git; Python 3.11+ (`PYTHON` may select the executable); and Playwright Chromium or Microsoft Edge on Windows (`GRAPHER_BROWSER_CHANNEL` may override the channel).
+The [harness](../../scripts/conversation-acceptance.mjs) needs a prepared checkout with Node/npm, pinned Pi dependencies, Rust and Git; Python 3.11+ (`PYTHON` may select the executable); and Playwright Chromium or Microsoft Edge on Windows (`PI_N_BROWSER_CHANNEL` may override the channel).
 
 Run from the repository root:
 
@@ -41,7 +41,7 @@ Run from the repository root:
 npm run test:conversation-acceptance
 ```
 
-`GRAPHER_ACCEPTANCE_DIR` may select a new, empty evidence directory. The default is a timestamped `.grapher/acceptance/` directory. The harness creates a disposable Git project and every Run through the current backend API. It never reads a user database, migrates old data or makes model calls. `GRAPHER_ACCEPTANCE_SOURCE` and the old legacy stress-fixture initializer are no longer used.
+`PI_N_ACCEPTANCE_DIR` may select a new, empty evidence directory. The default is a timestamped `.pi-n/acceptance/` directory. The harness creates a disposable Git project and every Run through the current backend API. It never reads a user database, migrates old data or makes model calls. `PI_N_ACCEPTANCE_SOURCE` and the old legacy stress-fixture initializer are no longer used.
 
 Builds share one invocation-owned temporary Cargo target, reclaimed after backend shutdown; an explicit `CARGO_TARGET_DIR` is reused and never deleted. Evidence databases, process logs, screenshots, browser traces and `report.json` remain in the evidence directory.
 

@@ -1,6 +1,6 @@
 //! Unified per-file diff extraction for the Changes panel.
 //! Mirrors `pi-gpui`'s read-only diff model (`hunk`, `context`, `added`, `removed`,
-//! binary detection, and bounded line rendering) while honoring Grapher's shadow
+//! binary detection, and bounded line rendering) while honoring Pi^n's shadow
 //! repositories, isolated worktrees, and path-safety boundaries.
 
 use serde::{Deserialize, Serialize};
@@ -316,9 +316,160 @@ pub fn path_exists_in_working_tree_head(repo_or_worktree: &Path, path: &str) -> 
     run_working_tree_git_mode(mode, repo_or_worktree, &["cat-file", "-e", &spec]).is_ok()
 }
 
+/// `HEAD`, or the empty tree on an unborn repository. `None` outside Git.
+fn head_base(mode: WorkingTreeGit, repo_or_worktree: &Path) -> Option<String> {
+    match run_working_tree_git_mode(
+        mode,
+        repo_or_worktree,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+    ) {
+        Ok(_) => Some("HEAD".to_string()),
+        Err(_) => {
+            run_working_tree_git_mode(mode, repo_or_worktree, &["rev-parse", "--git-dir"]).ok()?;
+            let format = run_working_tree_git_mode(
+                mode,
+                repo_or_worktree,
+                &["rev-parse", "--show-object-format=storage"],
+            )
+            .unwrap_or_default();
+            Some(if format.trim() == "sha256" {
+                EMPTY_TREE_SHA256.to_string()
+            } else {
+                EMPTY_TREE_SHA1.to_string()
+            })
+        }
+    }
+}
+
+/// What Git says about a bounded set of paths relative to a baseline.
+#[derive(Clone, Debug)]
+pub(super) struct PathBaseline {
+    /// Tracked differences keyed by path (no rename detection).
+    pub changes: std::collections::BTreeMap<String, super::FileChangeItem>,
+    /// Untracked, non-ignored files below the requested paths (live tree only).
+    pub untracked: Vec<String>,
+}
+
+/// Why a baseline may be missing matters: a workspace without Git will never
+/// have one, while a failed Git call is transient and must not be frozen into
+/// a durable result.
+#[derive(Clone, Debug)]
+pub(super) enum BaselineOutcome {
+    NoGit,
+    Failed,
+    Ready(PathBaseline),
+}
+
+const BASELINE_PATH_CHUNK: usize = 200;
+const BASELINE_UNTRACKED_LIMIT: usize = 2_000;
+
+/// Compare `paths` with the baseline: the execution's `before` snapshot when it
+/// has one (to `after`, or the live tree), otherwise the real working-tree
+/// `HEAD`. Ignored paths never appear. `None` means no usable Git baseline,
+/// which callers must treat as unknown rather than as "unchanged".
+pub(super) fn path_baseline(
+    root: &Path,
+    before: &str,
+    after: Option<&str>,
+    paths: &[String],
+) -> BaselineOutcome {
+    match path_baseline_inner(root, before, after, paths) {
+        Ok(Some(baseline)) => BaselineOutcome::Ready(baseline),
+        Ok(None) => BaselineOutcome::NoGit,
+        Err(()) => BaselineOutcome::Failed,
+    }
+}
+
+fn path_baseline_inner(
+    root: &Path,
+    before: &str,
+    after: Option<&str>,
+    paths: &[String],
+) -> Result<Option<PathBaseline>, ()> {
+    if paths.is_empty() || !root.exists() {
+        return Ok(None);
+    }
+    let after = after.filter(|sha| !sha.is_empty());
+    let explicit = !before.is_empty();
+    let mode = if explicit {
+        None
+    } else {
+        match detect_working_tree_git(root) {
+            WorkingTreeGit::None => return Ok(None),
+            mode => Some(mode),
+        }
+    };
+    let run = |args: &[&str]| match mode {
+        Some(mode) => run_working_tree_git_mode(mode, root, args),
+        None => run_snapshot_git(root, args),
+    };
+    let base = match mode {
+        Some(mode) => head_base(mode, root).ok_or(())?,
+        None => before.to_string(),
+    };
+    if after == Some(base.as_str()) {
+        return Ok(Some(PathBaseline {
+            changes: Default::default(),
+            untracked: Vec::new(),
+        }));
+    }
+    let mut changes = std::collections::BTreeMap::new();
+    let mut untracked = Vec::new();
+    for chunk in paths.chunks(BASELINE_PATH_CHUNK) {
+        let mut args = vec![
+            "-c",
+            "core.quotePath=false",
+            // A read-only probe must not start a user's fsmonitor daemon.
+            "-c",
+            "core.fsmonitor=false",
+            "--literal-pathspecs",
+            "diff",
+            "--raw",
+            "--numstat",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--relative",
+            base.as_str(),
+        ];
+        if let Some(after) = after {
+            args.push(after);
+        }
+        args.push("--");
+        args.extend(chunk.iter().map(String::as_str));
+        let output = run(&args).map_err(|_| ())?;
+        changes.extend(super::git_diff::parse(&output, "", "").ok_or(())?);
+        if after.is_none() {
+            let mut args = vec![
+                "-c",
+                "core.quotePath=false",
+                "-c",
+                "core.fsmonitor=false",
+                "--literal-pathspecs",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+            ];
+            args.extend(chunk.iter().map(String::as_str));
+            let output = run(&args).map_err(|_| ())?;
+            untracked.extend(
+                output
+                    .split('\0')
+                    .filter(|path| !path.is_empty())
+                    .take(BASELINE_UNTRACKED_LIMIT.saturating_sub(untracked.len()))
+                    .map(str::to_string),
+            );
+        }
+    }
+    Ok(Some(PathBaseline { changes, untracked }))
+}
+
 /// Compute working-tree diff against `HEAD` (or the empty tree on an unborn
 /// repo). Standard Git repositories and their subdirectories compare against
-/// the user's real `HEAD` instead of Grapher's shadow snapshot `HEAD`.
+/// the user's real `HEAD` instead of Pi^n's shadow snapshot `HEAD`.
 pub fn compute_head_file_diff(
     repo_or_worktree: &Path,
     path: &str,
@@ -328,31 +479,7 @@ pub fn compute_head_file_diff(
     if mode == WorkingTreeGit::None {
         return None;
     }
-    let base = match run_working_tree_git_mode(
-        mode,
-        repo_or_worktree,
-        &["rev-parse", "--verify", "--quiet", "HEAD"],
-    ) {
-        Ok(_) => "HEAD".to_string(),
-        Err(_) => {
-            if run_working_tree_git_mode(mode, repo_or_worktree, &["rev-parse", "--git-dir"])
-                .is_err()
-            {
-                return None;
-            }
-            let format = run_working_tree_git_mode(
-                mode,
-                repo_or_worktree,
-                &["rev-parse", "--show-object-format=storage"],
-            )
-            .unwrap_or_default();
-            if format.trim() == "sha256" {
-                EMPTY_TREE_SHA256.to_string()
-            } else {
-                EMPTY_TREE_SHA1.to_string()
-            }
-        }
-    };
+    let base = head_base(mode, repo_or_worktree)?;
     compute_git_file_diff_with(repo_or_worktree, &base, None, path, old_path, |dir, args| {
         run_working_tree_git_mode(mode, dir, args)
     })
@@ -669,7 +796,7 @@ impl TranscriptDiffAccumulator {
 
         for raw_line in jsonl.lines() {
             let line = raw_line.trim();
-            if line.is_empty() || (!line.contains("\"tool") && !line.contains("\"grapher_process")) {
+            if line.is_empty() || (!line.contains("\"tool") && !line.contains("\"pi_n_process")) {
                 continue;
             }
             let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -790,12 +917,12 @@ impl TranscriptDiffAccumulator {
                         }
                     }
                 }
-                "grapher_process_exited" => {
+                "pi_n_process_exited" => {
                     process_alive = false;
                     pending_ops.clear();
                     pending_order.clear();
                 }
-                "grapher_process_started" | "grapher_session_resumed" => {
+                "pi_n_process_started" | "pi_n_session_resumed" => {
                     process_alive = is_running;
                 }
                 _ => {}
@@ -972,7 +1099,7 @@ rename to new.txt
         assert!(validate_relative_diff_path("a/../b.txt").is_err());
         assert!(validate_relative_diff_path("/etc/passwd").is_err());
         assert!(validate_relative_diff_path(".git/config").is_err());
-        assert!(validate_relative_diff_path(".grapher/state.json").is_err());
+        assert!(validate_relative_diff_path(".pi-n/state.json").is_err());
         assert_eq!(validate_relative_diff_path("src/ledger.rs").unwrap(), "src/ledger.rs");
     }
 
@@ -1033,7 +1160,7 @@ rename to new.txt
         crate::workspace::git(&repo, &["add", "."]).unwrap();
         crate::workspace::git(&repo, &["commit", "-qm", "base"]).unwrap();
 
-        // Modify working tree and take a Grapher shadow snapshot so the shadow
+        // Modify working tree and take a Pi^n shadow snapshot so the shadow
         // repository's HEAD now matches the modified file while .git HEAD does not.
         fs::write(repo.join("file.txt"), "after\n").unwrap();
         let _snapshot = crate::workspace::snapshot_repository(&repo).unwrap();

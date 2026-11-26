@@ -58,7 +58,9 @@ type PendingTransitionRow = {
 
 type ActiveTransitionRow = {
   headerTrack: HTMLDivElement;
+  headerInner: HTMLDivElement;
   bodyTrack: HTMLDivElement;
+  bodyInner: HTMLDivElement;
   headerHeight: number;
   bodyHeight: number;
   collapsing: boolean;
@@ -116,8 +118,11 @@ function syncTransitionAnchorScroll(emitEvent = true) {
   if (!anchor || !anchor.scroller.isConnected) return;
   const { scroller, trigger, pinToBottom, targetTop } = anchor;
   if (pinToBottom) {
-    scroller.scrollTop = scroller.scrollHeight;
-    if (emitEvent) scroller.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
+    const target = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    if (Math.abs(scroller.scrollTop - target) >= 0.5) {
+      scroller.scrollTop = scroller.scrollHeight;
+      if (emitEvent) scroller.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
+    }
     return;
   }
   if (trigger && trigger.isConnected) {
@@ -148,7 +153,9 @@ function flushPendingTransitionRows(syncAnchor = true) {
   for (const { entry, headerHeight, bodyHeight } of measured) {
     const active: ActiveTransitionRow = {
       headerTrack: entry.headerTrack,
+      headerInner: entry.headerInner,
       bodyTrack: entry.bodyTrack,
+      bodyInner: entry.bodyInner,
       headerHeight,
       bodyHeight,
       collapsing: entry.collapsing,
@@ -248,12 +255,24 @@ export function beginCardsTransitionAnchor(
     scroller.addEventListener("wheel", cancel, { passive: true, once: true });
     scroller.addEventListener("touchstart", cancel, { passive: true, once: true });
     scroller.addEventListener("pointerdown", cancel, { passive: true, once: true });
+    // Live streaming output (assistant text wraps, new rows, growing cards) can
+    // resize the conversation between animation frames while GraphWorkbench's
+    // own auto-scroll is suppressed. Compensate synchronously before paint so
+    // the anchored footer/trigger never drops for a frame and snaps back.
+    const observer = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => syncTransitionAnchorScroll(true))
+      : null;
+    if (observer) {
+      observer.observe(scroller);
+      if (scroller.firstElementChild) observer.observe(scroller.firstElementChild);
+    }
     activeTransitionAnchor = {
       scroller,
       trigger,
       pinToBottom,
       targetTop: trigger?.getBoundingClientRect().top ?? 0,
       cleanup: () => {
+        observer?.disconnect();
         scroller.removeEventListener("wheel", cancel);
         scroller.removeEventListener("touchstart", cancel);
         scroller.removeEventListener("pointerdown", cancel);
@@ -283,6 +302,7 @@ function tickCardsTransition(now: number) {
     // Let the browser finish Frame 0's style/layout/paint before starting the
     // animation clock so newly mounted cards never skip the start of the curve.
     awaitingFirstPaint = false;
+    syncTransitionAnchorScroll(false);
     transitionRafId = requestAnimationFrame(tickCardsTransition);
     return;
   }
@@ -294,13 +314,24 @@ function tickCardsTransition(now: number) {
   const eased = easeCardsTransition(progress);
   lastAppliedEased = eased;
 
-  let anyHeightChanged = false;
+  // Pass 1 (READ ONLY): refresh live target heights so a streaming thinking
+  // card or newly arrived tool call mid-expand never snaps at idle handoff.
+  // Keep collapsing body heights fixed so shrinking cards never bounce larger.
   for (const row of activeTransitionRows) {
-    if (applyRowAt(row, eased)) anyHeightChanged = true;
+    if (!row.collapsing && !row.keepBodyOpen) {
+      const liveBodyH = Math.round(row.bodyInner.offsetHeight || row.bodyInner.getBoundingClientRect().height);
+      if (liveBodyH > 0) row.bodyHeight = liveBodyH;
+    } else if (row.collapsing) {
+      const liveHeaderH = Math.round(row.headerInner.offsetHeight || row.headerInner.getBoundingClientRect().height);
+      if (liveHeaderH > 0) row.headerHeight = liveHeaderH;
+    }
   }
-  if (anyHeightChanged || progress === 0 || progress >= 1) {
-    syncTransitionAnchorScroll(false);
+
+  // Pass 2 (WRITE ONLY): update every animated track together, then sync scroll.
+  for (const row of activeTransitionRows) {
+    applyRowAt(row, eased);
   }
+  syncTransitionAnchorScroll(false);
 
   if (progress < 1 && activeTransitionRows.size > 0) {
     transitionRafId = requestAnimationFrame(tickCardsTransition);
@@ -431,6 +462,7 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
     [items, item.summaryOpen],
   );
   const isGlobalTransition = !reduceMotion && (transitionPhase === "collapsing" || transitionPhase === "expanding");
+  const isCollapsingTransition = transitionPhase === "collapsing";
   const keepBodyExpanded = !reduceMotion && transitionPhase === "expanding" && isExpanded;
 
   useEffect(() => {
@@ -445,18 +477,16 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
     const bodyInner = bodyInnerRef.current;
     if (!headerTrack || !headerInner || !bodyTrack || !bodyInner) return;
 
-    const collapsing = transitionPhase === "collapsing";
-    const keepBodyOpen = !collapsing && isExpanded;
     return registerCardsTransitionRow({
       headerTrack,
       headerInner,
       bodyTrack,
       bodyInner,
-      collapsing,
-      keepBodyOpen,
+      collapsing: isCollapsingTransition,
+      keepBodyOpen: keepBodyExpanded,
       active: null,
     });
-  }, [isGlobalTransition, transitionPhase, isExpanded]);
+  }, [isGlobalTransition, isCollapsingTransition, keepBodyExpanded]);
 
   const toggleExpanded = useCallback(() => {
     if (isGlobalTransition) return;

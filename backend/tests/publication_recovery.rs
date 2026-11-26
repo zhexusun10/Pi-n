@@ -1,5 +1,5 @@
 //! Files-only delivery must survive interruption without changing user Git state.
-use grapher::{
+use pi_n::{
     graph_merge::{merge_graph_with_workspace as publish, publication_workspace},
     workspace,
 };
@@ -19,7 +19,7 @@ fn source(sha256: bool) -> (TempDir, PathBuf, String) {
     static DATA: OnceLock<TempDir> = OnceLock::new();
     DATA.get_or_init(|| {
         let dir = TempDir::new().unwrap();
-        std::env::set_var("GRAPHER_DATA_DIR", dir.path());
+        std::env::set_var("PI_N_DATA_DIR", dir.path());
         dir
     });
     let temp = TempDir::new().unwrap();
@@ -75,7 +75,7 @@ fn interrupt(source: &Path, heads: &[String]) -> PathBuf {
     fs::remove_file(journal.join("installed")).unwrap();
     fs::write(
         index(source).with_extension("lock"),
-        format!("Grapher publication {}\n", journal.display()),
+        format!("Pi^n publication {}\n", journal.display()),
     )
     .unwrap();
     journal
@@ -92,7 +92,7 @@ fn assert_private(
     assert_eq!(&objects(source), before_objects);
     assert!(git(
         source,
-        &["for-each-ref", "--format=%(refname)", "refs/grapher"]
+        &["for-each-ref", "--format=%(refname)", "refs/pi-n"]
     )
     .is_empty());
     workspace::repository_git(source, &["cat-file", "-e", &format!("{result}^{{commit}}")])
@@ -183,7 +183,7 @@ fn interrupted_atomic_copy_retries_large_addition_without_installing_partial_byt
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     journal.canonicalize().unwrap().hash(&mut hash);
     "large.exe".hash(&mut hash);
-    let temporary = source.join(format!(".grapher-publish-{:016x}.tmp", hash.finish()));
+    let temporary = source.join(format!(".pi-n-publish-{:016x}.tmp", hash.finish()));
     fs::write(&temporary, &bytes[..4096]).unwrap();
     fs::write(journal.join("staging-index.lock"), []).unwrap();
     assert_eq!(publish(&source, &heads, |_| panic!()).unwrap(), result);

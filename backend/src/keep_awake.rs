@@ -1,12 +1,12 @@
 //! Keep macOS awake while the backend is running.
 //!
-//! Grapher is often left open during long agent tasks. macOS idle sleep,
+//! Pi^n is often left open during long agent tasks. macOS idle sleep,
 //! display sleep and the screen saver would otherwise lock the session while
 //! the user is watching or steering work. The guard is scoped to this backend
 //! process: `caffeinate -w <pid>` releases its assertions when the process
 //! exits, including after a crash.
 //!
-//! Set `GRAPHER_KEEP_AWAKE=0` (`off`, `false`, `no`) to disable. Other
+//! Set `PI_N_KEEP_AWAKE=0` (`off`, `false`, `no`) to disable. Other
 //! platforms are unaffected.
 
 #[cfg(target_os = "macos")]
@@ -14,7 +14,7 @@ use std::thread;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
-pub const KEEP_AWAKE_ENV: &str = "GRAPHER_KEEP_AWAKE";
+pub const KEEP_AWAKE_ENV: &str = "PI_N_KEEP_AWAKE";
 
 #[cfg(target_os = "macos")]
 const CAFFEINATE: &str = "/usr/bin/caffeinate";
@@ -35,7 +35,7 @@ pub fn enabled(value: Option<&str>) -> bool {
     }
 }
 
-/// Start the guard. Failure is non-fatal: Grapher still runs.
+/// Start the guard. Failure is non-fatal: Pi^n still runs.
 pub fn install() {
     if enabled(std::env::var(KEEP_AWAKE_ENV).ok().as_deref()) {
         #[cfg(target_os = "macos")]
@@ -60,18 +60,18 @@ fn install_macos() {
     match keeper {
         Ok(mut child) => {
             eprintln!(
-                "[Grapher] Keeping macOS awake while the backend runs; set GRAPHER_KEEP_AWAKE=0 to disable."
+                "[Pi^n] Keeping macOS awake while the backend runs; set PI_N_KEEP_AWAKE=0 to disable."
             );
             // `-w` exits with this process; reap it so a failed assertion does
             // not leave a zombie for the lifetime of the backend.
             let _ = thread::Builder::new()
-                .name("grapher-keep-awake".into())
+                .name("pi-n-keep-awake".into())
                 .spawn(move || {
                     let _ = child.wait();
                 });
         }
         Err(error) => {
-            eprintln!("[Grapher] Cannot prevent macOS idle sleep: {error}");
+            eprintln!("[Pi^n] Cannot prevent macOS idle sleep: {error}");
             return;
         }
     }
@@ -80,7 +80,7 @@ fn install_macos() {
     // separately. `-u` defaults to a five-second assertion; `-t 1` keeps each
     // helper short while the interval resets the idle timer.
     let _ = thread::Builder::new()
-        .name("grapher-keep-awake-activity".into())
+        .name("pi-n-keep-awake-activity".into())
         .spawn(|| {
             // A login-time launch can briefly precede the GUI session, so retry
             // after a failed refresh instead of disabling the guard for the rest
@@ -97,7 +97,7 @@ fn install_macos() {
                 {
                     Ok(_) => reported_error = false,
                     Err(error) if !reported_error => {
-                        eprintln!("[Grapher] Cannot refresh macOS user activity: {error}");
+                        eprintln!("[Pi^n] Cannot refresh macOS user activity: {error}");
                         reported_error = true;
                     }
                     Err(_) => {}

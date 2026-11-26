@@ -40,13 +40,13 @@ before(async () => {
     } }],
   });
   await server.listen(); origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { streamResponse?.destroy(); await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
 async function newPage(handler, language = "en") {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(value => localStorage.setItem("grapher_language_v1", value), language);
+  await context.addInitScript(value => localStorage.setItem("pi_n_language_v1", value), language);
   const errors = [];
   await context.route("**/api/*", route => {
     if (new URL(route.request().url()).pathname === "/api/get_file_changes") {
@@ -178,7 +178,7 @@ for (const mode of ["graph", "merger", "node-merger"]) {
 test("serial: retries continue transcripts inline without attempt record headers", { timeout: 30_000 }, async () => {
   const outputs = {
     "first-failed": startTool("t1", "Run bash") + endTool("t1", "ok"),
-    "middle-empty-paused": '{"type":"grapher_process_started"}\n{"type":"turn_start"}\n{"type":"grapher_process_exited"}\n',
+    "middle-empty-paused": '{"type":"pi_n_process_started"}\n{"type":"turn_start"}\n{"type":"pi_n_process_exited"}\n',
     "retry-completed": startTool("t2", "Read file A") + endTool("t2", "a") + startTool("t3", "Read file B") + endTool("t3", "b") + assistant("retry-completed reply"),
   };
   const attempt = (id, status, index) => ({
@@ -746,6 +746,8 @@ for (const role of ["node", "planner"]) {
       await card.waitFor();
       assert.equal(await card.locator(".tool-truncated-pill").count(), 0,
         "a bounded display preview is not tool-reported truncation");
+      assert.doesNotMatch(await card.locator(".tool-status").innerText(), /Truncated|已截断/,
+        "a bounded display preview does not append the truncated label");
       assert.equal(await card.count(), 1, "keep the tool card, not just an ellipsis in place of it");
       await card.locator(".tool-call-header").click();
       await card.locator(".tool-result-code").waitFor();
@@ -881,7 +883,7 @@ test("private batch progress includes capped and failed peers until the whole vi
     plan: { executionBatches: [members, ["child"]], rootNodes: members, terminals: ["child"], warnings: [] },
   };
   try {
-    await context.addInitScript(() => localStorage.setItem("grapher_execution_overview_v1", "1"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_execution_overview_v1", "1"));
     await page.goto(`${origin}/__workspace-footer?mode=planner`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !!window.audit?.setBatchSnapshot);
     await page.evaluate(value => window.audit.setBatchSnapshot(value), snapshot);
@@ -922,7 +924,7 @@ test("completed write-back details live inside the topology overview with copy a
     outputBytes: Buffer.byteLength(assistant(`PUBLICATION_LOG_publication-${attempt}`)),
     startedAt: completedAt - 1000, completedAt }));
   try {
-    await context.addInitScript(() => localStorage.setItem("grapher_execution_overview_v1", "1"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_execution_overview_v1", "1"));
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
     await page.goto(`${origin}/__workspace-footer?mode=planner`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !!window.audit?.setPublicationResult);
@@ -1101,7 +1103,7 @@ test("write-back merger history preserves wheel progress in its nested viewport"
   });
   try {
     page.setDefaultTimeout(30_000);
-    await context.addInitScript(() => localStorage.setItem("grapher_execution_overview_v1", "1"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_execution_overview_v1", "1"));
     await page.goto(`${origin}/__workspace-footer?mode=planner`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !!window.audit?.setPublicationResult);
     await page.evaluate(bytes => {
@@ -1492,7 +1494,7 @@ for (const [mode, turn] of [
   test(`workspace footer: ${mode} ${turn} stays still before model output`, { timeout: 30_000 }, async () => {
     let releaseOutput;
     const outputReady = new Promise(resolve => { releaseOutput = resolve; });
-    let currentOutput = line({ type: "grapher_process_started", pid: 123 }), settled = false;
+    let currentOutput = line({ type: "pi_n_process_started", pid: 123 }), settled = false;
     const { context, page, errors } = await newPage(async route => {
       const body = route.request().postDataJSON();
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -1615,7 +1617,7 @@ data: ${JSON.stringify({ runId: running.runId })}
     return route.fulfill({ json: { result } });
   });
   try {
-    await context.addInitScript(() => localStorage.setItem("grapher_execution_overview_v1", "1"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_execution_overview_v1", "1"));
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.locator('[data-run-id="stalled-run"]').click();
     await page.locator(".pane-bottom-chat").first().waitFor();
@@ -1674,12 +1676,12 @@ test("actual App preserves a landing draft while authoritative bootstrap blocks 
   });
   try {
     await page.addInitScript(({ config, saved }) => {
-      localStorage.setItem("grapher_projects", JSON.stringify([{ id: config.repository, path: config.repository,
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: config.repository, path: config.repository,
         name: "Bootstrap gate", branch: "main", clean: true, lastOpened: 1 }]));
-      localStorage.setItem("grapher_data_path", "/mock");
-      localStorage.setItem("grapher-format-1:/mock:grapher_config", JSON.stringify(config));
-      localStorage.setItem("grapher-format-1:/mock:grapher_workspace_runs", JSON.stringify({ [config.repository]: [saved.runId] }));
-      localStorage.setItem("grapher-format-1:/mock:grapher_run_labels", JSON.stringify({ [saved.runId]: "Existing conversation" }));
+      localStorage.setItem("pi_n_data_path", "/mock");
+      localStorage.setItem("pi-n-format-1:/mock:pi_n_config", JSON.stringify(config));
+      localStorage.setItem("pi-n-format-1:/mock:pi_n_workspace_runs", JSON.stringify({ [config.repository]: [saved.runId] }));
+      localStorage.setItem("pi-n-format-1:/mock:pi_n_run_labels", JSON.stringify({ [saved.runId]: "Existing conversation" }));
     }, { config, saved });
     await page.goto(origin, { waitUntil: "domcontentloaded" });
     assert.equal(await page.locator('[data-run-id="fast"]').count(), 0,
@@ -1735,7 +1737,7 @@ test("actual App re-attaches a running revision plan without locking or stale ro
     return route.fulfill({ json: { result } });
   });
   try {
-    await context.addInitScript(() => localStorage.setItem("grapher_execution_overview_v1", "1"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_execution_overview_v1", "1"));
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.locator('[data-run-id="recovered-run"]').click();
     const input = page.locator(".pane-bottom-chat textarea");
@@ -2022,7 +2024,7 @@ test("actual App: first Serial message keeps the footer still through approval a
   // Approval changes the phase, but the Runtime leaves the node waiting until
   // its background driver starts preparing the first execution.
   const approved = { ...draft, approved: true, phase: "running" };
-  const header = line({ type: "grapher_process_started", pid: 123 });
+  const header = line({ type: "pi_n_process_started", pid: 123 });
   const running = { ...approved, nodes: { task: { ...draft.nodes.task, status: "running" } },
     executions: [{ id: "first-execution", node: "task", status: "running", output: "", outputBytes: Buffer.byteLength(header),
       revision: 0, attempt: 1, startedAt: 1, completedAt: null, sessionId: "first-session", worktree: config.repository, before: "", after: null }] };
@@ -2062,8 +2064,8 @@ test("actual App: first Serial message keeps the footer still through approval a
   });
   try {
     await context.addInitScript(config => {
-      localStorage.setItem("grapher_plan_mode", "serial");
-      localStorage.setItem("grapher_projects", JSON.stringify([{ id: config.repository, path: config.repository, name: "First Serial", lastOpened: 1 }]));
+      localStorage.setItem("pi_n_plan_mode", "serial");
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: config.repository, path: config.repository, name: "First Serial", lastOpened: 1 }]));
     }, config);
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto(origin, { waitUntil: "networkidle" });
@@ -2774,7 +2776,7 @@ for (const role of ["node", "planner"]) {
     ] } }) + startTool("lazy-tool", "read historical file") + endTool("lazy-tool", "HISTORICAL_TOOL_RESULT") +
       line({ type: "message_start", message: { role: "assistant", content: [] } }) +
       line({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "PENDING_HISTORY_REASONING" } }) +
-      line({ type: "grapher_process_exited", success: false });
+      line({ type: "pi_n_process_exited", success: false });
     const requests = [];
     const { context, page, errors } = await newPage(async route => {
       const body = route.request().postDataJSON(); requests.push(body);
@@ -2997,7 +2999,7 @@ for (const mode of ["node", "serial"]) {
   // still pinned to the newest output. That clamp is layout motion, not the
   // reader asking for earlier history.
   const padding = count => Array.from({ length: count }, (_, index) =>
-    line({ type: "grapher_context_usage", tokens: index, pad: "x".repeat(900) })).join("");
+    line({ type: "pi_n_context_usage", tokens: index, pad: "x".repeat(900) })).join("");
   let data = padding(1200) +
     Array.from({ length: 24 }, (_, index) => assistant(`VISIBLE_NODE_ROW_${index} ` + "word ".repeat(30))).join("") +
     padding(380) + assistant("LAST_NODE_ANSWER");
@@ -4454,7 +4456,7 @@ for (const cardsCollapsed of [false, true]) {
     });
     try {
       if (cardsCollapsed) {
-        await context.addInitScript(() => localStorage.setItem("grapher_cards_collapsed_v1", "1"));
+        await context.addInitScript(() => localStorage.setItem("pi_n_cards_collapsed_v1", "1"));
       }
       await page.goto(`${origin}/__workspace-footer?mode=serial`, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(() => !!window.audit?.setExecutions);
@@ -4574,7 +4576,7 @@ for (const cardsCollapsed of [false, true]) {
     });
     try {
       if (cardsCollapsed) {
-        await context.addInitScript(() => localStorage.setItem("grapher_cards_collapsed_v1", "1"));
+        await context.addInitScript(() => localStorage.setItem("pi_n_cards_collapsed_v1", "1"));
       }
       await page.goto(`${origin}/__workspace-footer?mode=serial`, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(() => !!window.audit?.setExecutions);

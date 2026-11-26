@@ -345,17 +345,17 @@ test("skipLeadingUserTurn skips an opening prompt matching a later steer and col
   );
 });
 
-test("grapherRequestId and authoritative steerOffsets place steers deterministically across rewrites and partial tails", () => {
+test("piNRequestId and authoritative steerOffsets place steers deterministically across rewrites and partial tails", () => {
   const reqEarlier = "11111111-1111-4111-8111-111111111111";
   const reqInWindow = "22222222-2222-4222-8222-222222222222";
   const reqUnread = "33333333-3333-4333-8333-333333333333";
   const reqBeyond = "44444444-4444-4444-8444-444444444444";
 
-  // 1. Parser matches an extension-rewritten user turn solely by grapherRequestId.
+  // 1. Parser matches an extension-rewritten user turn solely by piNRequestId.
   const lines = [
     JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "before" }] } }),
     JSON.stringify({
-      grapherRequestId: reqInWindow,
+      piNRequestId: reqInWindow,
       type: "message_start",
       message: { role: "user", content: [{ type: "text", text: "COMPLETELY_REWRITTEN_BY_EXTENSION" }] },
     }),

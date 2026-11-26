@@ -1,6 +1,6 @@
 # Pi execution engine
 
-This directory contains Grapher's pinned Pi launcher, compatibility boundary, provider bridge, and Graph path/tool adapters. Pi itself remains the upstream `pi/` submodule.
+This directory contains Pi^n's pinned Pi launcher, compatibility boundary, provider bridge, and Graph path/tool adapters. Pi itself remains the upstream `pi/` submodule.
 
 Canonical documentation:
 

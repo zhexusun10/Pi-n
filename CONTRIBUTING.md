@@ -1,14 +1,14 @@
 # Contributing
 
-This is the only contributor guide; it is meant for people changing Grapher itself. For application use, follow the [README quick start](README.md#quick-start). [Architecture](docs/architecture/overview.md) explains system boundaries; the [task index](docs/index.md#task-routes) locates implementation and tests.
+This is the only contributor guide; it is meant for people changing Pi^n itself. For application use, follow the [README quick start](README.md#quick-start). [Architecture](docs/architecture/overview.md) explains system boundaries; the [task index](docs/index.md#task-routes) locates implementation and tests.
 
 ## Set up a checkout
 
 Install Node.js 22.19+, npm, Git, stable Rust, and native compiler/linker tools. Windows needs Git for Windows Bash and the linker for the selected Rust toolchain; macOS needs Xcode Command Line Tools. Linux Graph execution needs bubblewrap and permitted unprivileged user/mount/PID namespaces. Initial setup needs network access.
 
 ```sh
-git clone --recurse-submodules https://github.com/zhexusun10/grapher.git
-cd grapher
+git clone --recurse-submodules https://github.com/zhexusun10/pi-n.git
+cd pi-n
 npm ci --ignore-scripts
 npm run pi:setup
 npm run dev
@@ -16,7 +16,7 @@ npm run dev
 
 The UI runs at `127.0.0.1:1420`, with `/api` proxied to the local backend at `1421` by default. The first Cargo build can take several minutes.
 
-For separate terminals, use `npm run frontend` and `npm run backend`, exporting the same `GRAPHER_PORT` to both if you change it. The combined dev launcher loads `.env` or `backend/.env`; the standalone Vite command reads the backend port from its process environment.
+For separate terminals, use `npm run frontend` and `npm run backend`, exporting the same `PI_N_PORT` to both if you change it. The combined dev launcher loads `.env` or `backend/.env`; the standalone Vite command reads the backend port from its process environment.
 
 After dependency setup, `npm run build` followed by `npm start` serves the production UI at `http://127.0.0.1:1421` (or the configured backend port), without Vite.
 
@@ -56,7 +56,7 @@ Use [Testing](docs/development/testing.md) to select a focused check, not a subm
 
 Describe behavior changes and effects on persisted state or credentials. Keep generated evidence separate from source.
 
-Bug reports and feature proposals go through the [issue templates](https://github.com/zhexusun10/grapher/issues/new/choose). Redact credentials, private code, prompts, and local paths from issues and logs.
+Bug reports and feature proposals go through the [issue templates](https://github.com/zhexusun10/pi-n/issues/new/choose). Redact credentials, private code, prompts, and local paths from issues and logs.
 
 ## Documentation policy
 
@@ -75,4 +75,4 @@ For log migration, see [Conversation logs](docs/development/conversation-logs.md
 
 ## Licensing and sensitive data
 
-Grapher's original code uses [MIT](LICENSE); the Pi submodule and other dependencies retain their own licenses. Preserve applicable notices and confirm rights to contributions/assets. Never commit API keys, auth directories, local `.env`, or unreviewed traces containing private code and prompts. Report vulnerabilities privately per [SECURITY.md](SECURITY.md), not in a public issue.
+Pi^n's original code uses [MIT](LICENSE); the Pi submodule and other dependencies retain their own licenses. Preserve applicable notices and confirm rights to contributions/assets. Never commit API keys, auth directories, local `.env`, or unreviewed traces containing private code and prompts. Report vulnerabilities privately per [SECURITY.md](SECURITY.md), not in a public issue.

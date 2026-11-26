@@ -11,7 +11,7 @@ function temporaryModelsPath(content) {
   const existing = snapshots.get(digest);
   if (existing && existsSync(existing)) return existing;
   if (!temporaryDirectory) {
-    temporaryDirectory = mkdtempSync(join(tmpdir(), 'grapher-models-'));
+    temporaryDirectory = mkdtempSync(join(tmpdir(), 'pi-n-models-'));
     process.once('exit', () => { try { rmSync(temporaryDirectory, { recursive: true, force: true }); } catch {} });
   }
   const path = join(temporaryDirectory, `models-${++temporarySequence}.json`);
@@ -21,7 +21,7 @@ function temporaryModelsPath(content) {
 }
 
 // Provider fields and model overrides merge recursively. Model definitions are
-// keyed by id, with a complete Pi model replacing a matching Grapher model.
+// keyed by id, with a complete Pi model replacing a matching Pi^n model.
 function merge(base, preferred, key = '') {
   if (key === 'models' && Array.isArray(base) && Array.isArray(preferred)) {
     const ids = new Set(preferred.map(model => model?.id).filter(id => typeof id === 'string'));
@@ -49,8 +49,8 @@ function isEmptyModelsConfig(value) {
 
 /** Prepare a private, process-local model overlay. The source files are never modified. */
 export async function prepareModelOverlay(agentDir, parse, options = {}) {
-  if (process.env.GRAPHER_ISOLATED_PI_MODELS === '1') return undefined;
-  const source = options.source ?? process.env.GRAPHER_UPSTREAM_PI_MODELS ?? join(homedir(), '.pi', 'agent', 'models.json');
+  if (process.env.PI_N_ISOLATED_PI_MODELS === '1') return undefined;
+  const source = options.source ?? process.env.PI_N_UPSTREAM_PI_MODELS ?? join(homedir(), '.pi', 'agent', 'models.json');
   const target = join(agentDir, 'models.json');
   let sourceContent, targetContent;
   try { sourceContent = readFileSync(source, 'utf8'); }
@@ -69,7 +69,7 @@ export async function prepareModelOverlay(agentDir, parse, options = {}) {
   // built-ins. Never let a valid file mask errors in the other file.
   let local, upstream;
   try { local = parse(targetContent); } catch { return target; }
-  // A default empty Grapher models.json has nothing to merge or back up.
+  // A default empty Pi^n models.json has nothing to merge or back up.
   if (isEmptyModelsConfig(local)) return source;
   try { upstream = parse(sourceContent); } catch { return source; }
   // Pi must validate both layers separately: merging first could hide an
@@ -84,7 +84,7 @@ export async function prepareModelOverlay(agentDir, parse, options = {}) {
 
   // Keep a one-time copy of the old Windows snapshot before introducing an
   // overlay. Never replace an existing backup or rewrite user configuration.
-  const backup = join(agentDir, 'models.json.grapher-backup');
+  const backup = join(agentDir, 'models.json.pi-n-backup');
   try {
     copyFileSync(target, backup, constants.COPYFILE_EXCL);
     chmodSync(backup, 0o600);

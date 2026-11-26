@@ -174,8 +174,8 @@ pub(super) fn is_excluded_project_path(rel_path: &str) -> bool {
         || lower == ".pi"
         || lower.starts_with(".git/")
         || lower == ".git"
-        || lower.starts_with(".grapher/")
-        || lower == ".grapher"
+        || lower.starts_with(".pi-n/")
+        || lower == ".pi-n"
         || lower.starts_with(".gemini/")
         || lower == ".gemini"
         || lower.starts_with(".codex/")
@@ -315,13 +315,13 @@ pub(super) fn list_skills(
     search_dirs.push((repo_path.join(".pi").join("skills"), "workspace"));
     search_dirs.push((repo_path.join("skills"), "workspace"));
 
-    // 2. Grapher 宿主内置技能规范 (Grapher Host App: .agents/skills, .pi/skills, skills)
+    // 2. Pi^n 宿主内置技能规范 (Pi^n Host App: .agents/skills, .pi/skills, skills)
     {
-        let grapher_root = crate::native::installation_root();
-        if !crate::path_identity::same_path(&grapher_root, &repo_path) {
-            search_dirs.push((grapher_root.join(".agents").join("skills"), "builtin"));
-            search_dirs.push((grapher_root.join(".pi").join("skills"), "builtin"));
-            search_dirs.push((grapher_root.join("skills"), "builtin"));
+        let pi_n_root = crate::native::installation_root();
+        if !crate::path_identity::same_path(&pi_n_root, &repo_path) {
+            search_dirs.push((pi_n_root.join(".agents").join("skills"), "builtin"));
+            search_dirs.push((pi_n_root.join(".pi").join("skills"), "builtin"));
+            search_dirs.push((pi_n_root.join("skills"), "builtin"));
         }
     }
 
@@ -331,7 +331,7 @@ pub(super) fn list_skills(
     }
     if let Some(ref home) = home_dir {
         search_dirs.push((
-            home.join(".grapher").join("pi-agent").join("skills"),
+            home.join(".pi-n").join("pi-agent").join("skills"),
             "global",
         ));
         search_dirs.push((home.join(".pi").join("agent").join("skills"), "global"));
@@ -460,7 +460,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn skill_discovery_reads_large_document_metadata_under_a_memory_limit() {
-        const FIXTURE_PATH: &str = "GRAPHER_TEST_LARGE_SKILL_PATH";
+        const FIXTURE_PATH: &str = "PI_N_TEST_LARGE_SKILL_PATH";
         if let Some(path) = std::env::var_os(FIXTURE_PATH) {
             let mut original = std::mem::MaybeUninit::<libc::rlimit>::uninit();
             assert_eq!(
@@ -541,7 +541,7 @@ mod tests {
             time::{Duration, Instant},
         };
 
-        const FIXTURE_PATH: &str = "GRAPHER_TEST_SKILL_FIFO";
+        const FIXTURE_PATH: &str = "PI_N_TEST_SKILL_FIFO";
         if let Some(path) = std::env::var_os(FIXTURE_PATH) {
             assert!(parse_skill_markdown(Path::new(&path)).is_none());
             return;

@@ -1,4 +1,4 @@
-// Grapher-owned launch boundary. Applied before extension/MCP factories, not
+// Pi^n-owned launch boundary. Applied before extension/MCP factories, not
 // merely in one Bash subprocess. Hooks are part of the frozen native policy,
 // not a frontend/user environment-selection surface.
 import { readFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
@@ -13,7 +13,7 @@ let deviceEnvironment = {};
 let businessNodeEnvironment = {};
 const runtimePathKey = key => /^(HOME|USERPROFILE|APPDATA|LOCALAPPDATA|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|TMPDIR|TMP|TEMP|XDG_RUNTIME_DIR|npm_config_cache|PIP_CACHE_DIR|CONDA_ENVS_PATH|CONDA_PKGS_DIRS)$/i.test(key);
 const workspaceBindingKey = key => runtimePathKey(key) || /^(GIT_CONFIG_GLOBAL|GIT_CEILING_DIRECTORIES)$/i.test(key);
-let runtimeEnvironment = process.env.GRAPHER_EXECUTION_KIND === 'graph'
+let runtimeEnvironment = process.env.PI_N_EXECUTION_KIND === 'graph'
   ? Object.fromEntries(Object.entries(process.env).filter(([key]) => workspaceBindingKey(key))) : {};
 export function managedLaunch() { return active; }
 
@@ -102,7 +102,7 @@ function bindBashPath(path, { launch = active, entries = bashPathEntries(path, l
   if (process.platform === 'win32') {
     // Convert separate arguments in ONE process. cygpath -p does not honor
     // native PATH quotes and drops empty entries; '.' retains cwd semantics.
-    return `__grapher_path=$(/usr/bin/cygpath -u -- ${entries.map(quote).join(' ')}) || exit $?\ncase "$__grapher_path" in *:*) printf '%s\\n' 'Native PATH entry cannot be represented in Bash' >&2; exit 1;; esac\nexport PATH="\${__grapher_path//$'\\n'/:}"\nunset __grapher_path\n`;
+    return `__pi_n_path=$(/usr/bin/cygpath -u -- ${entries.map(quote).join(' ')}) || exit $?\ncase "$__pi_n_path" in *:*) printf '%s\\n' 'Native PATH entry cannot be represented in Bash' >&2; exit 1;; esac\nexport PATH="\${__pi_n_path//$'\\n'/:}"\nunset __pi_n_path\n`;
   }
   return `export PATH=${quote(path)}\n`;
 }
@@ -110,29 +110,29 @@ function bindBashPath(path, { launch = active, entries = bashPathEntries(path, l
 // quote ';' directories and can absolutize relative entries. Capture Bash's
 // list separately. Keep original native spellings, and convert only new
 // absolute entries in one trusted converter call; relative entries stay relative.
-const hookPathMarker = '\0GRAPHER_HOOK_PATH\0';
+const hookPathMarker = '\0PI_N_HOOK_PATH\0';
 const captureHookPath = process.platform !== 'win32' ? '' : `
-__grapher_hook_native=''
-__grapher_hook_absolute=()
+__pi_n_hook_native=''
+__pi_n_hook_absolute=()
 if [ "\${PATH+x}" = x ]; then
   case "$PATH" in *$'\\n'*|*$'\\r'*) \\builtin printf '%s\\n' 'Invalid activation PATH entry' >&2; exit 1;; esac
-  __grapher_hook_remaining="$PATH:"
-  while [ -n "$__grapher_hook_remaining" ]; do
-    __grapher_hook_entry="\${__grapher_hook_remaining%%:*}"
-    __grapher_hook_remaining="\${__grapher_hook_remaining#*:}"
-    case "$__grapher_hook_entry" in
-      /*) case ":$__grapher_hook_initial_path:" in
-        *":$__grapher_hook_entry:"*) ;;
-        *) __grapher_hook_absolute+=("$__grapher_hook_entry");;
+  __pi_n_hook_remaining="$PATH:"
+  while [ -n "$__pi_n_hook_remaining" ]; do
+    __pi_n_hook_entry="\${__pi_n_hook_remaining%%:*}"
+    __pi_n_hook_remaining="\${__pi_n_hook_remaining#*:}"
+    case "$__pi_n_hook_entry" in
+      /*) case ":$__pi_n_hook_initial_path:" in
+        *":$__pi_n_hook_entry:"*) ;;
+        *) __pi_n_hook_absolute+=("$__pi_n_hook_entry");;
       esac;;
     esac
   done
-  if [ "\${#__grapher_hook_absolute[@]}" -gt 0 ]; then
-    __grapher_hook_native=$(/usr/bin/cygpath -w -- "\${__grapher_hook_absolute[@]}") || exit $?
+  if [ "\${#__pi_n_hook_absolute[@]}" -gt 0 ]; then
+    __pi_n_hook_native=$(/usr/bin/cygpath -w -- "\${__pi_n_hook_absolute[@]}") || exit $?
   fi
 fi
-\\builtin printf '\\0GRAPHER_HOOK_PATH\\0%s\\0%s\\0%s\\0%s\\0' "$__grapher_hook_initial_path" "\${PATH+x}" "\${PATH-}" "$__grapher_hook_native"
-unset __grapher_hook_initial_path __grapher_hook_native __grapher_hook_absolute __grapher_hook_remaining __grapher_hook_entry
+\\builtin printf '\\0PI_N_HOOK_PATH\\0%s\\0%s\\0%s\\0%s\\0' "$__pi_n_hook_initial_path" "\${PATH+x}" "\${PATH-}" "$__pi_n_hook_native"
+unset __pi_n_hook_initial_path __pi_n_hook_native __pi_n_hook_absolute __pi_n_hook_remaining __pi_n_hook_entry
 `;
 function capturedHookPath(output, original, initialNative = original) {
   let offset = output.lastIndexOf(hookPathMarker);
@@ -177,32 +177,32 @@ export function managedBashCommand(command, workspaceCwd) {
   const restoreWorkspace = restoreBashCwd(workspaceCwd);
   if (!active) return restoreWorkspace + command;
   let observer = '';
-  if (process.env.GRAPHER_ENVIRONMENT_DISCOVERY) {
-    const helper = process.env.GRAPHER_ENVIRONMENT_HELPER;
-    const context = process.env.GRAPHER_ENVIRONMENT_DISCOVERY;
+  if (process.env.PI_N_ENVIRONMENT_DISCOVERY) {
+    const helper = process.env.PI_N_ENVIRONMENT_HELPER;
+    const context = process.env.PI_N_ENVIRONMENT_DISCOVERY;
     if (!helper || !isAbsolute(helper) || !isAbsolute(context)) throw new Error('Missing native environment observer binding');
     // Instrument native tool argv/resolution, never parse model Shell text.
     // Each invocation is scoped to this Bash; temporary exports are not L.
-    observer = `__grapher_env_tool() { local __grapher_tool="$1"; shift; local __grapher_exe; __grapher_exe=$(type -P "$__grapher_tool") || return 127; ${quote(helper.replaceAll('\\', '/'))} --grapher-env-tool ${quote(context.replaceAll('\\', '/'))} "$__grapher_tool" "$__grapher_exe" "$@"; }\n`;
+    observer = `__pi_n_env_tool() { local __pi_n_tool="$1"; shift; local __pi_n_exe; __pi_n_exe=$(type -P "$__pi_n_tool") || return 127; ${quote(helper.replaceAll('\\', '/'))} --pi-n-env-tool ${quote(context.replaceAll('\\', '/'))} "$__pi_n_tool" "$__pi_n_exe" "$@"; }\n`;
     for (const tool of ['python', 'python3', 'pip', 'pip3', 'conda']) {
       // Provenance must not replace business wrappers/activation functions.
       // Delay parsing the definition so an existing alias cannot expand inside
       // a skipped function declaration (BASH_ENV may enable expand_aliases).
-      const definition = `${tool}() { __grapher_env_tool ${tool} "$@"; }`;
+      const definition = `${tool}() { __pi_n_env_tool ${tool} "$@"; }`;
       observer += `case "$(type -t ${tool} 2>/dev/null || true)" in\nfunction|alias) ;;\n*) eval ${quote(definition)} ;;\nesac\n`;
     }
   }
   return restoreWorkspace + bindBashPath(activePath) + observer + command;
 }
 
-export function applyLaunchBinding(file = process.env.GRAPHER_LAUNCH_BINDING) {
+export function applyLaunchBinding(file = process.env.PI_N_LAUNCH_BINDING) {
   if (!file) return;
   const launch = JSON.parse(readFileSync(file, 'utf8'));
   // Runtime-owned identity/policy variables. PYTHONDONTWRITEBYTECODE is a host
   // invariant (no interpreter bytecode inside the project tree that `stage_scoped`
   // would then force-collect into Git), so declared variables and activation
   // hooks may neither set nor delete it.
-  const protectedKeys = key => /^(GRAPHER_|PI_|GIT_)/i.test(key)
+  const protectedKeys = key => /^(PI_N_|PI_|GIT_)/i.test(key)
     || key.toUpperCase() === 'PYTHONDONTWRITEBYTECODE'
     || /^(PATH|NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|OLDPWD|GLOBIGNORE)$/i.test(key);
   if (!isNativeAbsolute(launch.entry) ||
@@ -220,14 +220,14 @@ export function applyLaunchBinding(file = process.env.GRAPHER_LAUNCH_BINDING) {
     if (key.toUpperCase() === 'PATH') delete process.env[key];
   }
   process.env.PATH = joinNativePath(launch.path);
-  const loaders = JSON.parse(process.env.GRAPHER_BUSINESS_LOADER_ENV || '{}');
-  delete process.env.GRAPHER_BUSINESS_LOADER_ENV;
+  const loaders = JSON.parse(process.env.PI_N_BUSINESS_LOADER_ENV || '{}');
+  delete process.env.PI_N_BUSINESS_LOADER_ENV;
   for (const [key, value] of Object.entries(loaders)) {
     if (!/^(LD_|DYLD_)/i.test(key) || typeof value !== 'string') throw new Error('Invalid transient business loader binding');
     process.env[key] = value;
   }
-  const nodeEnvironment = JSON.parse(process.env.GRAPHER_BUSINESS_NODE_ENV || '{}');
-  delete process.env.GRAPHER_BUSINESS_NODE_ENV;
+  const nodeEnvironment = JSON.parse(process.env.PI_N_BUSINESS_NODE_ENV || '{}');
+  delete process.env.PI_N_BUSINESS_NODE_ENV;
   if (!nodeEnvironment || typeof nodeEnvironment !== 'object' || Array.isArray(nodeEnvironment)) throw new Error('Invalid transient business Node binding');
   businessNodeEnvironment = {};
   for (const [name, value] of Object.entries(nodeEnvironment)) {
@@ -237,12 +237,12 @@ export function applyLaunchBinding(file = process.env.GRAPHER_LAUNCH_BINDING) {
   }
   for (const [key, value] of Object.entries(launch.variables)) process.env[key] = value;
   runtimeEnvironment = Object.fromEntries(Object.entries(launch.variables).filter(([key]) => runtimePathKey(key)));
-  if (process.env.GRAPHER_EXECUTION_KIND === 'graph') {
+  if (process.env.PI_N_EXECUTION_KIND === 'graph') {
     for (const [key, value] of Object.entries(process.env)) {
       if (runtimePathKey(key) || /^(GIT_CONFIG_GLOBAL|GIT_CEILING_DIRECTORIES)$/i.test(key)) runtimeEnvironment[key] = value;
     }
   }
-  const device = process.env.GRAPHER_ACCELERATOR_BINDING && JSON.parse(process.env.GRAPHER_ACCELERATOR_BINDING);
+  const device = process.env.PI_N_ACCELERATOR_BINDING && JSON.parse(process.env.PI_N_ACCELERATOR_BINDING);
   deviceEnvironment = {};
   if (device) {
     if (device.backend !== 'cuda' || !Array.isArray(device.ids) || !device.ids.length || device.ids.some(id => !/^GPU-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))) {
@@ -255,14 +255,14 @@ export function applyLaunchBinding(file = process.env.GRAPHER_LAUNCH_BINDING) {
   }
   if (launch.hook) {
     const node = process.execPath.replaceAll('\\', '/');
-    const capture = `process.stdout.write('\\0GRAPHER_ENV\\0'+JSON.stringify(process.env)+'\\0')`;
+    const capture = `process.stdout.write('\\0PI_N_ENV\\0'+JSON.stringify(process.env)+'\\0')`;
     const hookEntries = bashPathEntries(process.env.PATH, launch);
     // Do not use an env/python/node found on the business PATH for capture.
     const output = spawnSync(launch.shell, ['--noprofile', '--norc', '-c',
-      `${restoreBashCwd(process.cwd())}${bindBashPath(process.env.PATH, { launch, entries: hookEntries })}${process.platform === 'win32' ? '__grapher_hook_initial_path=$PATH\n' : ''}${launch.hook}\n__grapher_status=$?\nif [ "$__grapher_status" -ne 0 ]; then exit "$__grapher_status"; fi\nwhile IFS= read -r __grapher_key; do\ncase "$__grapher_key" in\n[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]|[Nn][Oo][Dd][Ee]_[Pp][Aa][Tt][Hh]|[Bb][Aa][Ss][Hh]_[Ee][Nn][Vv]|[Ee][Nn][Vv]) unset "$__grapher_key";;\nesac\ndone < <(compgen -e)\n${captureHookPath}${quote(node)} -e ${quote(capture)}`],
+      `${restoreBashCwd(process.cwd())}${bindBashPath(process.env.PATH, { launch, entries: hookEntries })}${process.platform === 'win32' ? '__pi_n_hook_initial_path=$PATH\n' : ''}${launch.hook}\n__pi_n_status=$?\nif [ "$__pi_n_status" -ne 0 ]; then exit "$__pi_n_status"; fi\nwhile IFS= read -r __pi_n_key; do\ncase "$__pi_n_key" in\n[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]|[Nn][Oo][Dd][Ee]_[Pp][Aa][Tt][Hh]|[Bb][Aa][Ss][Hh]_[Ee][Nn][Vv]|[Ee][Nn][Vv]) unset "$__pi_n_key";;\nesac\ndone < <(compgen -e)\n${captureHookPath}${quote(node)} -e ${quote(capture)}`],
     { cwd: process.cwd(), env: { ...process.env }, encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
     if (output.error || output.status !== 0) throw new Error('Declared native activation hook failed; no fallback');
-    const marker = '\0GRAPHER_ENV\0';
+    const marker = '\0PI_N_ENV\0';
     const start = output.stdout.lastIndexOf(marker);
     const end = output.stdout.indexOf('\0', start + marker.length);
     if (start < 0 || end < 0) throw new Error('Native hook did not produce a complete environment');
@@ -300,10 +300,10 @@ export function applyLaunchBinding(file = process.env.GRAPHER_LAUNCH_BINDING) {
 // Pi prepends its managed search-bin directory in getShellEnv(). For managed
 // business execution, preserve the configured PATH after that second processing.
 //
-// The model's shell is the one place Grapher's own control paths must not appear:
-// a single `env` otherwise hands the agent the Run's `data/` and `.grapher-state/`
+// The model's shell is the one place Pi^n's own control paths must not appear:
+// a single `env` otherwise hands the agent the Run's `data/` and `.pi-n-state/`
 // layout, which it can then walk into (other nodes' sessions, graph Git, the
-// install directory). Grapher-owned keys, Pi session paths and selected editor
+// install directory). Pi^n-owned keys, Pi session paths and selected editor
 // breadcrumbs are dropped; temp bindings use safe cache scratch when available.
 //
 // The host Git credential helper (GIT_ASKPASS and the VSCODE_GIT_ASKPASS_* the
@@ -311,7 +311,7 @@ export function applyLaunchBinding(file = process.env.GRAPHER_LAUNCH_BINDING) {
 // private remote must still work. Only path-free editor breadcrumbs are dropped.
 // (Git for Windows re-injects PLINK_PROTOCOL=ssh at shell startup; it carries no
 // path, so it is left alone rather than fought.)
-const grapherInternalKey = /^GRAPHER_/i;
+const piNInternalKey = /^PI_N_/i;
 const hiddenModelKeys = new Set([
   // Pi session/credential paths and identity the shell never needs.
   'PI_SESSION_FILE', 'PI_SESSION_ID', 'PI_CODING_AGENT_DIR',
@@ -330,7 +330,7 @@ function hasDataPathComponent(value) {
   return dataPathComponent.test(normalized);
 }
 function modelShellScratch(env) {
-  for (const key of ['XDG_CACHE_HOME', 'GRAPHER_CACHE_DIR']) {
+  for (const key of ['XDG_CACHE_HOME', 'PI_N_CACHE_DIR']) {
     const value = env[key];
     if (typeof value === 'string' && value && !value.includes('\0') && !hasDataPathComponent(value)) {
       return `${value.replace(/[\\/]+$/, '')}/tmp`;
@@ -338,11 +338,11 @@ function modelShellScratch(env) {
   }
   return undefined;
 }
-/** Strip Grapher-owned and selected Pi paths; returns an optional temp scratch to create. */
+/** Strip Pi^n-owned and selected Pi paths; returns an optional temp scratch to create. */
 export function scrubModelShellEnvironment(env, { useCacheScratch = true } = {}) {
   const scratch = useCacheScratch ? modelShellScratch(env) : undefined;
   for (const key of Object.keys(env)) {
-    if (grapherInternalKey.test(key) || hiddenModelKeys.has(key.toUpperCase())) delete env[key];
+    if (piNInternalKey.test(key) || hiddenModelKeys.has(key.toUpperCase())) delete env[key];
   }
   for (const key of ['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR']) {
     if (scratch) env[key] = scratch;
@@ -360,7 +360,7 @@ export function managedBusinessEnvironment(environment = process.env) {
   return env;
 }
 /**
- * Build the model's shell environment. `managed` marks a Grapher role process
+ * Build the model's shell environment. `managed` marks a Pi^n role process
  * (always true from the workspace policy); the unmanaged compatibility process
  * passes nothing and keeps the historical no-op behavior.
  */
@@ -376,9 +376,9 @@ export function managedBashOptions(options, managed = false) {
   }
   Object.assign(env, runtimeEnvironment, deviceEnvironment);
   const originalTemp = Object.fromEntries(['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR'].map(key => [key, env[key]]));
-  const sourceNativeNode = process.env.GRAPHER_MODE === 'node'
-    && process.env.GRAPHER_AGENT_KIND === 'node'
-    && process.env.GRAPHER_EXECUTION_KIND === 'source';
+  const sourceNativeNode = process.env.PI_N_MODE === 'node'
+    && process.env.PI_N_AGENT_KIND === 'node'
+    && process.env.PI_N_EXECUTION_KIND === 'source';
   const scratch = scrubModelShellEnvironment(env, {
     // A source-direct Graph Node Agent keeps host temp variables like Serial.
     // Private Graph and Planner roles bind a safe Run-cache scratch instead.

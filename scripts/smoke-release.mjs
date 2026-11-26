@@ -9,22 +9,22 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { root, lock } from './pi-baseline.mjs';
 
 const [artifact, platform, arch] = process.argv.slice(2);
-const directory = mkdtempSync(join(tmpdir(), 'grapher-smoke-'));
+const directory = mkdtempSync(join(tmpdir(), 'pi-n-smoke-'));
 const extracted = join(directory, 'Relocated 安装 # %');
 mkdirSync(extracted);
-const installation = join(extracted, `grapher-${platform}-${arch}`);
+const installation = join(extracted, `pi-n-${platform}-${arch}`);
 const home = join(directory, 'home');
 mkdirSync(home);
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   /^(PATH|SystemRoot|windir|COMSPEC|PATHEXT|TMPDIR|TEMP|TMP|APPDATA|LOCALAPPDATA)$/i.test(key)));
 Object.assign(env, {
   HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: join(directory, 'agent'),
-  GRAPHER_GLOBAL_PI_AGENT_DIR: join(directory, 'global'), GRAPHER_ISOLATED_PI_MODELS: '1',
-  GRAPHER_DATA_DIR: join(directory, 'data'), GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtimes'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'),
+  PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global'), PI_N_ISOLATED_PI_MODELS: '1',
+  PI_N_DATA_DIR: join(directory, 'data'), PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtimes'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
   // All relocated smoke children share one verified baseline and V8 compile
   // cache. Without this, every Pi subprocess rescans the bundled runtime and
   // recompiles the TypeScript source graph on Intel macOS.
-  GRAPHER_BASELINE_CONTEXT: 'release-smoke', GRAPHER_RUNTIME_CACHE_DIR: join(directory, 'runtime-cache'),
+  PI_N_BASELINE_CONTEXT: 'release-smoke', PI_N_RUNTIME_CACHE_DIR: join(directory, 'runtime-cache'),
   PI_OFFLINE: '1',
 });
 let child;
@@ -56,8 +56,8 @@ const run = (script, args = [], options = {}) => execFileSync(process.execPath, 
 try {
   if (platform === 'windows') {
     execFileSync('powershell.exe', ['-NoProfile', '-Command',
-      'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($env:GRAPHER_PACKAGE_ARCHIVE, $env:GRAPHER_PACKAGE_EXTRACT)'], {
-      env: { ...process.env, GRAPHER_PACKAGE_ARCHIVE: resolve(artifact), GRAPHER_PACKAGE_EXTRACT: extracted }, stdio: 'inherit',
+      'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($env:PI_N_PACKAGE_ARCHIVE, $env:PI_N_PACKAGE_EXTRACT)'], {
+      env: { ...process.env, PI_N_PACKAGE_ARCHIVE: resolve(artifact), PI_N_PACKAGE_EXTRACT: extracted }, stdio: 'inherit',
     });
   } else {
     execFileSync('tar', ['xzf', resolve(artifact), '-C', extracted], { stdio: 'inherit' });
@@ -101,7 +101,7 @@ try {
   await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
   const port = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
-  env.GRAPHER_PORT = String(port);
+  env.PI_N_PORT = String(port);
 
   // The packaged launcher must refuse to start without its runtime
   // prerequisites and explain exactly what to install, instead of crashing.
@@ -157,7 +157,7 @@ try {
   }
   // This unique file proves Rust serves the relocated package, not CI's dist.
   writeFileSync(join(installation, 'dist/release-smoke.txt'), 'relocated-release');
-  child = spawn(join(installation, platform === 'windows' ? 'grapher.exe' : 'grapher'), [], {
+  child = spawn(join(installation, platform === 'windows' ? 'pi-n.exe' : 'pi-n'), [], {
     cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', value => { logs += value; });
@@ -191,7 +191,7 @@ try {
   assert.ok(catalog.providers.length > 0 && catalog.models.length > 0);
   const extensions = await api('pi_extensions', { version: 1, operation: 'catalog' });
   for (const [id, enabled] of [
-    ['npm:pi-trim', true], ['npm:pi-continuity', true], ['npm:pi-simple-timeout', true], ['npm:pi-better-web-search', false],
+    ['npm:pi-trim', true], ['npm:pi-continuity', true], ['npm:pi-simple-timeout', true], ['npm:pi-better-web-search', true],
   ]) {
     const extension = extensions.extensions.find(value => value.id === id);
     assert.ok(extension?.bundled, `${id} must be bundled`);
@@ -207,7 +207,7 @@ try {
   await new Promise(resolve => launcherListener.listen(0, '127.0.0.1', resolve));
   const launcherPort = launcherListener.address().port;
   await new Promise(resolve => launcherListener.close(resolve));
-  const launcherEnvFull = { ...env, GRAPHER_PORT: String(launcherPort), GRAPHER_DATA_DIR: join(directory, 'launcher-data') };
+  const launcherEnvFull = { ...env, PI_N_PORT: String(launcherPort), PI_N_DATA_DIR: join(directory, 'launcher-data') };
   launcher = spawn(process.platform === 'win32' ? 'cmd.exe' : join(installation, 'start.sh'),
     process.platform === 'win32' ? ['/d', '/c', join(installation, 'start.bat')] : [], {
     cwd: directory, env: launcherEnvFull, stdio: ['ignore', 'pipe', 'pipe'],

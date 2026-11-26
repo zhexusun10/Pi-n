@@ -1,4 +1,4 @@
-//! Projection of Pi events into Grapher's display log, never back into Pi.
+//! Projection of Pi events into Pi^n's display log, never back into Pi.
 //! Cumulative progress snapshots are redundant with the start/end records and
 //! can otherwise turn a single long-running tool into hundreds of MB of logs.
 use serde_json::{json, Value};
@@ -69,13 +69,17 @@ impl ToolOutputProjection {
         // Pi repeats tool results in message and aggregate lifecycle records.
         // Limit every copy, not just tool_execution_end, while retaining errors,
         // assistant replies, exit status and timing for runtime consumers.
+        let is_aggregate_event = matches!(
+            event["type"].as_str(),
+            Some("agent_end" | "turn_end")
+        );
         if let Some(message) = event.get_mut("message") {
-            limit_message(message);
+            limit_message(message, is_aggregate_event);
         }
         for key in ["messages", "toolResults"] {
             if let Some(messages) = event.get_mut(key).and_then(Value::as_array_mut) {
                 for message in messages {
-                    limit_message(message);
+                    limit_message(message, true);
                 }
             }
         }
@@ -86,16 +90,35 @@ impl ToolOutputProjection {
     }
 }
 
-fn limit_message(message: &mut Value) {
+fn limit_message(message: &mut Value, strip_non_tool_media: bool) {
     if message["role"] == "toolResult" {
         limit_result(message);
+    } else if strip_non_tool_media {
+        if let Some(content) = message.get_mut("content") {
+            strip_media_data(content);
+        }
     }
 }
 
 fn limit_result(result: &mut Value) {
+    if let Some(object) = result.as_object_mut() {
+        // `structuredContent` duplicates raw bash output or base64 image
+        // payloads already summarized in `content` and is never read by the UI.
+        object.remove("structuredContent");
+        if let Some(truncation) = object
+            .get_mut("details")
+            .and_then(|d| d.get_mut("truncation"))
+            .and_then(Value::as_object_mut)
+        {
+            // Keep boolean/counter metadata (`truncated`, `totalLines`, ...),
+            // but drop the redundant raw `content` copy.
+            truncation.remove("content");
+        }
+    }
     let Some(content) = result.get_mut("content") else {
         return;
     };
+    strip_media_data(content);
     if !limit_content(content) {
         return;
     }
@@ -108,6 +131,26 @@ fn limit_result(result: &mut Value) {
     }
     // This is a display-log projection, not the tool's own truncation signal.
     details["displayTruncated"] = true.into();
+}
+
+/// Remove inline base64 media payloads (e.g. `read` on PNG/JPEG screenshots or
+/// user images duplicated inside `agent_end.messages`) while preserving part
+/// type and MIME metadata. Never called on top-level `role: "user"` messages so
+/// user screenshot bubbles keep rendering normally.
+fn strip_media_data(content: &mut Value) {
+    let Some(parts) = content.as_array_mut() else {
+        return;
+    };
+    for part in parts {
+        let Some(obj) = part.as_object_mut() else {
+            continue;
+        };
+        let is_media = obj.get("type").and_then(Value::as_str) != Some("text");
+        if is_media && obj.get("data").and_then(Value::as_str).is_some() {
+            obj.remove("data");
+            obj.insert("omitted".into(), true.into());
+        }
+    }
 }
 
 /// Bound every `args`/`arguments` subtree in place and mark its owner so the UI
@@ -375,5 +418,75 @@ mod tests {
                 assert_eq!(event, original);
             }
         }
+    }
+
+    #[test]
+    fn tool_output_projection_strips_tool_and_aggregate_base64_images_but_keeps_user_turns() {
+        let huge_b64 = "QAUAFAB".repeat(50_000);
+        let mut read_end = json!({
+            "type": "tool_execution_end",
+            "toolCallId": "img-1",
+            "toolName": "read",
+            "isError": false,
+            "result": {
+                "content": [
+                    { "type": "text", "text": "Read image file [image/jpeg]" },
+                    { "type": "image", "mimeType": "image/jpeg", "data": huge_b64 }
+                ],
+                "structuredContent": { "type": "image", "mimeType": "image/jpeg", "data": huge_b64 },
+                "details": { "truncation": { "truncated": true, "content": "X".repeat(60_000) } }
+            }
+        });
+        assert!(ToolOutputProjection::default().project(&mut read_end));
+        assert!(read_end["result"].get("structuredContent").is_none());
+        assert!(read_end["result"]["details"]["truncation"].get("content").is_none());
+        assert_eq!(read_end["result"]["details"]["truncation"]["truncated"], true);
+        assert_eq!(read_end["result"]["content"][0]["text"], "Read image file [image/jpeg]");
+        assert!(read_end["result"]["content"][1].get("data").is_none());
+        assert_eq!(read_end["result"]["content"][1]["omitted"], true);
+        assert_eq!(read_end["result"]["content"][1]["mimeType"], "image/jpeg");
+        assert!(read_end.to_string().len() < 1024);
+
+        // Top-level user message preserves pasted screenshot data so the UI renders it.
+        let mut user_msg = json!({
+            "type": "message_end",
+            "message": {
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "Look at this screenshot" },
+                    { "type": "image", "mimeType": "image/png", "data": huge_b64 }
+                ]
+            }
+        });
+        assert!(ToolOutputProjection::default().project(&mut user_msg));
+        assert_eq!(user_msg["message"]["content"][1]["data"], huge_b64);
+
+        // Aggregate agent_end strips duplicated base64 from both user and toolResult messages.
+        let mut agent_end = json!({
+            "type": "agent_end",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "Look at this screenshot" },
+                        { "type": "image", "mimeType": "image/png", "data": huge_b64 }
+                    ]
+                },
+                {
+                    "role": "toolResult",
+                    "toolCallId": "img-1",
+                    "content": [
+                        { "type": "text", "text": "Read image file [image/jpeg]" },
+                        { "type": "image", "mimeType": "image/jpeg", "data": huge_b64 }
+                    ]
+                }
+            ]
+        });
+        assert!(ToolOutputProjection::default().project(&mut agent_end));
+        assert!(agent_end["messages"][0]["content"][1].get("data").is_none());
+        assert_eq!(agent_end["messages"][0]["content"][1]["omitted"], true);
+        assert!(agent_end["messages"][1]["content"][1].get("data").is_none());
+        assert_eq!(agent_end["messages"][1]["content"][1]["omitted"], true);
+        assert!(agent_end.to_string().len() < 1024);
     }
 }

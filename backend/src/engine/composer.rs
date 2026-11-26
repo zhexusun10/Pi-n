@@ -200,7 +200,7 @@ pub fn command_request(text: &str, commands: &Value) -> Result<Value, String> {
         .split_once(char::is_whitespace)
         .unwrap_or((&text[1..], ""));
     if blocked(name) {
-        return Err("This command is managed by Grapher and is not available here".into());
+        return Err("This command is managed by Pi^n and is not available here".into());
     }
     match name {
         // /compact is supplied by the trusted adapter extension. Its handler
@@ -370,7 +370,7 @@ sys.stdin.read()
                     tools: None,
                     session_id: None,
                     extra_args: vec![],
-                    environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                    environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                     system_prompt: None,
                     images: None,
                 },

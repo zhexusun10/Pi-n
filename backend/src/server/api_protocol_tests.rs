@@ -162,7 +162,7 @@ fn http_receipts_prevent_repeated_writes_before_service_creation_and_expose_mach
             .unwrap();
         let body = body.to_string();
         let token = token
-            .map(|token| format!("X-Grapher-Operation: {token}\r\n"))
+            .map(|token| format!("X-Pi-N-Operation: {token}\r\n"))
             .unwrap_or_default();
         write!(socket,"POST /api/{command} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\n{token}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
         let mut response = String::new();
@@ -181,10 +181,10 @@ fn http_receipts_prevent_repeated_writes_before_service_creation_and_expose_mach
     let body = json!({"runId":run,"title":"First title","detail":"metadata"});
     let (headers, first) = post("composer_rename", body.clone(), Some(&token));
     assert!(headers.starts_with("HTTP/1.1 200"), "{first}");
-    assert!(headers.contains("X-Grapher-Instance:"));
+    assert!(headers.contains("X-Pi-N-Instance:"));
     let count = service.runtime.lock().unwrap().state.events.len();
     let (headers, second) = post("composer_rename", body, Some(&token));
-    assert!(headers.contains("X-Grapher-Replayed: 1"));
+    assert!(headers.contains("X-Pi-N-Replayed: 1"));
     assert_eq!(second, first);
     assert_eq!(service.runtime.lock().unwrap().state.events.len(), count);
     let (headers, conflict) = post(

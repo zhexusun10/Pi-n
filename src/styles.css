@@ -155,10 +155,11 @@ h3 {
   background: transparent;
 }
 
-/* Independent desktop titlebar strip (macOS overlay & Windows borderless):
-   sits above the background/app-shell in flex flow so the landing background
-   starts cleanly below it rather than being clipped or covered, and collapses
-   automatically in fullscreen. Browser mode is unaffected. */
+/* Desktop titlebar strip (macOS transparent overlay & Windows borderless):
+   on macOS it floats transparently over the top inset so landing backgrounds
+   extend to the top edge of the window behind the traffic lights; on Windows
+   it stays in flex flow above the background/app-shell. Collapses automatically
+   in fullscreen; browser mode is unaffected. */
 .desktop-titlebar {
   flex: 0 0 var(--desktop-titlebar-inset, 32px);
   height: var(--desktop-titlebar-inset, 32px);
@@ -171,6 +172,15 @@ h3 {
   z-index: 15;
   -webkit-user-select: none;
   user-select: none;
+}
+
+.desktop-titlebar.is-macos {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  flex: none;
+  background: transparent;
 }
 
 .desktop-titlebar.is-windows {
@@ -234,9 +244,18 @@ h3 {
   height: 100dvh;
   min-height: 0;
   overflow: clip;
+  position: relative;
   background: var(--bg-canvas);
   display: flex;
   flex-direction: column;
+}
+
+/* Reserve the macOS transparent overlay titlebar inset inside the shell so
+   full-bleed landing backgrounds extend to the top edge while the sidebar and
+   workspace remain below the traffic lights. */
+.has-desktop-titlebar .app-shell.is-tauri-macos {
+  padding-top: var(--desktop-titlebar-inset, 32px);
+  box-sizing: border-box;
 }
 
 .app-background-root>.w-full {
@@ -660,7 +679,7 @@ h3 {
   }
 
   .has-desktop-titlebar .app-shell.is-tauri-macos .sidebar:not(.is-collapsed) {
-    top: 0;
+    top: var(--desktop-titlebar-inset, 32px);
   }
 }
 
@@ -696,12 +715,20 @@ h3 {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  letter-spacing: -0.6px;
-  font-weight: 700;
+  height: 26px;
+  line-height: 1;
   color: var(--text-primary);
   padding: 0;
+  user-select: none;
+}
+
+.brand-mark {
+  display: block;
+  flex-shrink: 0;
+}
+
+.brand-mark-exp {
+  fill: var(--pi-ink, #262B34);
 }
 
 .version {
@@ -1562,13 +1589,6 @@ h3 {
   filter: none;
 }
 
-.sidebar-bottom-btn.active {
-  background: var(--brand-subtle);
-  color: var(--text-primary);
-  border-color: var(--brand-border);
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.06);
-}
-
 .sidebar-bottom-btn:focus-visible {
   outline: 2px solid var(--brand-default);
   outline-offset: 2px;
@@ -1809,6 +1829,39 @@ h3 {
   mask-image: radial-gradient(ellipse 50% 50% at center, white 0%, rgba(255, 255, 255, 0.72) 30%, rgba(255, 255, 255, 0.34) 65%, rgba(255, 255, 255, 0.24) 100%, transparent 145%);
 }
 
+/* Three-colour notebook grid in the icon palette, laid out from the exact
+   centre of its box: a yellow vertical and a blue horizontal line cross at the
+   midpoint, and each direction cycles yellow/blue/coral outwards from there. */
+.landing-page-grid,
+.settings-background-preview.settings-background-preview-grid {
+  --grid-cell: 60px;
+  --grid-alpha: 62%;
+  --grid-coral: color-mix(in srgb, var(--pi-coral) var(--grid-alpha), transparent);
+  --grid-blue: color-mix(in srgb, var(--pi-blue) var(--grid-alpha), transparent);
+  --grid-yellow: color-mix(in srgb, var(--pi-yellow) var(--grid-alpha), transparent);
+  --grid-period: calc(var(--grid-cell) * 3);
+  /* A tile positioned at 50% + period/2 starts exactly at the centre line. */
+  --grid-origin: calc(50% + var(--grid-period) / 2);
+  background-image:
+    linear-gradient(90deg, var(--grid-yellow) 0 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-blue) 0 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-coral) 0 1px, transparent 1px),
+    linear-gradient(180deg, var(--grid-blue) 0 1px, transparent 1px),
+    linear-gradient(180deg, var(--grid-coral) 0 1px, transparent 1px),
+    linear-gradient(180deg, var(--grid-yellow) 0 1px, transparent 1px);
+  background-size:
+    var(--grid-period) 100%, var(--grid-period) 100%, var(--grid-period) 100%,
+    100% var(--grid-period), 100% var(--grid-period), 100% var(--grid-period);
+  background-position:
+    var(--grid-origin) 0,
+    calc(var(--grid-origin) + var(--grid-cell)) 0,
+    calc(var(--grid-origin) + var(--grid-cell) * 2) 0,
+    0 var(--grid-origin),
+    0 calc(var(--grid-origin) + var(--grid-cell)),
+    0 calc(var(--grid-origin) + var(--grid-cell) * 2);
+  background-repeat: repeat-x, repeat-x, repeat-x, repeat-y, repeat-y, repeat-y;
+}
+
 /* Copy fade/exit motion must not overwrite the responsive horizontal placement. */
 .landing-title-copy {
   display: flex;
@@ -1878,6 +1931,15 @@ h3 {
   margin-left: 2px;
 }
 
+.landing-brand-mark {
+  display: inline-block;
+  height: 0.72em;
+  width: auto;
+  vertical-align: -0.02em;
+  margin: 0 0.02em 0 0.04em;
+  color: var(--text-primary);
+}
+
 .landing-subtitle {
   font-size: clamp(15px, 1.35vw, 19.5px);
   line-height: 1.4;
@@ -1894,6 +1956,11 @@ h3 {
   user-select: none;
   cursor: default;
   pointer-events: none;
+}
+
+.landing-subtitle-key {
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .prompt-box-attachment-error {
@@ -1935,7 +2002,7 @@ h3 {
 /* ChatGPT Prompt Box 全新独立与缩放组件 */
 .prompt-box-container {
   width: 100%;
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   border: 1px solid var(--border-default);
   box-shadow: var(--surface-card-shadow);
   transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1951,13 +2018,13 @@ h3 {
   max-width: 680px;
   border-radius: 26px;
   padding: 10px 14px 10px 14px;
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   border: 1px solid var(--border-default);
 }
 
 .prompt-box-container.compact {
   max-width: 100%;
-  border-radius: 18px;
+  border-radius: var(--radius-surface);
   padding: 6px 10px 6px 10px;
   background: var(--bg-canvas);
 }
@@ -1979,7 +2046,7 @@ h3 {
 .prompt-box-container.landing:focus-within,
 .prompt-box-container.landing:focus-visible,
 .prompt-box-container.landing:hover {
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   border-color: var(--border-default) !important;
 }
 
@@ -1997,7 +2064,7 @@ h3 {
 .prompt-box-container.disabled {
   opacity: 0.62;
   cursor: not-allowed;
-  background: var(--bg-surface-secondary, rgba(0, 0, 0, 0.02));
+  background: var(--bg-canvas);
   border-color: var(--border-subtle, rgba(0, 0, 0, 0.08)) !important;
 }
 
@@ -2017,7 +2084,7 @@ h3 {
 .prompt-box-container.dragging-over {
   border-color: var(--brand-default, #2563eb) !important;
   border-style: dashed !important;
-  background: color-mix(in srgb, var(--brand-subtle, rgba(37, 99, 235, 0.08)) 60%, var(--bg-surface)) !important;
+  background: color-mix(in srgb, var(--brand-subtle, rgba(37, 99, 235, 0.08)) 60%, var(--bg-canvas)) !important;
   box-shadow: 0 0 0 2px var(--brand-border, rgba(37, 99, 235, 0.25)), 0 6px 24px rgba(37, 99, 235, 0.15) !important;
 }
 
@@ -2030,7 +2097,7 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   pointer-events: none;
   color: var(--brand-default, #2563eb);
   font-weight: 500;

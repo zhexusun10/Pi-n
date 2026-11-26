@@ -383,7 +383,7 @@ fn retry_termination(mut terminate: impl FnMut() -> std::io::Result<()>) -> std:
 }
 
 /// Darwin returns EPERM instead of ESRCH when a process group contains only
-/// zombies (for example the leader was already reaped by `wait`). Grapher's
+/// zombies (for example the leader was already reaped by `wait`). Pi^n's
 /// own descendants stay under the same UID, so a live child remains signalable;
 /// the EPERM outcome means no writer under this lifecycle boundary is left to
 /// terminate. Linux may still report success for zombie-only groups; its live

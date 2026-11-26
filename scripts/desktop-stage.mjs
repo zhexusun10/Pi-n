@@ -46,7 +46,7 @@ export const DESKTOP_TARGETS = {
     platform: 'darwin',
     arch: 'arm64',
     rustTriple: 'aarch64-apple-darwin',
-    backendBinary: 'grapher',
+    backendBinary: 'pi-n',
     nodeRelPath: 'node/bin/node',
     nodeArchive: `node-v${PINNED_NODE_VERSION}-darwin-arm64.tar.gz`,
     nodeArchiveEntry: `node-v${PINNED_NODE_VERSION}-darwin-arm64/bin/node`,
@@ -58,7 +58,7 @@ export const DESKTOP_TARGETS = {
     platform: 'darwin',
     arch: 'x64',
     rustTriple: 'x86_64-apple-darwin',
-    backendBinary: 'grapher',
+    backendBinary: 'pi-n',
     nodeRelPath: 'node/bin/node',
     nodeArchive: `node-v${PINNED_NODE_VERSION}-darwin-x64.tar.gz`,
     nodeArchiveEntry: `node-v${PINNED_NODE_VERSION}-darwin-x64/bin/node`,
@@ -70,7 +70,7 @@ export const DESKTOP_TARGETS = {
     platform: 'win32',
     arch: 'x64',
     rustTriple: 'x86_64-pc-windows-msvc',
-    backendBinary: 'grapher.exe',
+    backendBinary: 'pi-n.exe',
     nodeRelPath: 'node/node.exe',
     nodeArchive: `node-v${PINNED_NODE_VERSION}-win-x64.zip`,
     nodeArchiveEntry: `node-v${PINNED_NODE_VERSION}-win-x64/node.exe`,
@@ -150,14 +150,14 @@ export function dereferenceSymlinksInPlace(directory) {
           }
           const resolvedTarget = realpathSync.native(fullPath);
           if (targetStat.isDirectory()) {
-            const tempCopy = `${fullPath}.grapher-deref-${process.pid}`;
+            const tempCopy = `${fullPath}.pi-n-deref-${process.pid}`;
             rmSync(tempCopy, { recursive: true, force: true });
             cpSync(resolvedTarget, tempCopy, { recursive: true, dereference: true });
             rmSync(fullPath, { force: true });
             renameSync(tempCopy, fullPath);
             walk(fullPath);
           } else if (targetStat.isFile()) {
-            const tempCopy = `${fullPath}.grapher-deref-${process.pid}`;
+            const tempCopy = `${fullPath}.pi-n-deref-${process.pid}`;
             rmSync(tempCopy, { force: true });
             cpSync(resolvedTarget, tempCopy, { dereference: true });
             rmSync(fullPath, { force: true });
@@ -213,7 +213,7 @@ export function ensureBundleableGitMetadata(piDir) {
   }
   const headsDir = join(gitDir, 'refs', 'heads');
   mkdirSync(headsDir, { recursive: true });
-  writeFileSync(join(headsDir, 'grapher-baseline'), `${head}\n`);
+  writeFileSync(join(headsDir, 'pi-n-baseline'), `${head}\n`);
 }
 
 const NODE_MODULES_BLOAT_FILE = /(?:\.d\.[cm]?ts|\.map|\.(?:md|markdown))$/i;
@@ -289,7 +289,7 @@ const RUNTIME_SCRIPTS = [
  * - Prunes `.d.ts`, `.map`, and `.md` bloat inside `node_modules`
  * - Materializes lightweight workspace binding stubs (`package.json` only) instead of
  *   duplicating `pi/packages/*` into `pi/node_modules/@earendil-works/*`
- * - Seals the resulting `pi/` tree with `.grapher-bundled-manifest.json`
+ * - Seals the resulting `pi/` tree with `.pi-n-bundled-manifest.json`
  */
 export function stageLeanPiRuntime({
   sourceRoot = root,
@@ -407,7 +407,7 @@ export function stageLeanPiRuntime({
   }
 
   writeFileSync(
-    join(destNodeModules, '.grapher-pi-dependencies.json'),
+    join(destNodeModules, '.pi-n-pi-dependencies.json'),
     `${JSON.stringify({ ...depHashes, mode: PI_DEPENDENCIES_MODE_RUNTIME_ONLY })}\n`,
   );
 
@@ -428,11 +428,11 @@ export function stageLeanPiRuntime({
 export function verifyStagedRuntimeWithNode(nodePath, stagedRuntime, env = process.env) {
   const cleanEnv = { ...env, NODE_OPTIONS: '', NODE_PATH: '' };
   for (const key of [
-    'GRAPHER_BASELINE_CONTEXT',
-    'GRAPHER_VERIFIED_BASELINE',
-    'GRAPHER_INSTALLATION_ROOT',
-    'GRAPHER_TRUSTED_NODE',
-    'GRAPHER_TRUSTED_GIT',
+    'PI_N_BASELINE_CONTEXT',
+    'PI_N_VERIFIED_BASELINE',
+    'PI_N_INSTALLATION_ROOT',
+    'PI_N_TRUSTED_NODE',
+    'PI_N_TRUSTED_GIT',
   ]) {
     delete cleanEnv[key];
   }
@@ -451,7 +451,7 @@ export function verifyStagedRuntimeWithNode(nodePath, stagedRuntime, env = proce
   if (!/^[a-f0-9]{64}$/.test(cacheKey)) {
     throw new Error(`Unexpected staged runtime cache key: ${cacheKey}`);
   }
-  const probeDir = mkdtempSync(join(tmpdir(), 'grapher-stage-probe-'));
+  const probeDir = mkdtempSync(join(tmpdir(), 'pi-n-stage-probe-'));
   try {
     const version = execFileSync(
       nodePath,
@@ -464,8 +464,8 @@ export function verifyStagedRuntimeWithNode(nodePath, stagedRuntime, env = proce
           HOME: probeDir,
           USERPROFILE: probeDir,
           PI_CODING_AGENT_DIR: join(probeDir, 'agent'),
-          GRAPHER_GLOBAL_PI_AGENT_DIR: join(probeDir, 'global'),
-          GRAPHER_ISOLATED_PI_MODELS: '1',
+          PI_N_GLOBAL_PI_AGENT_DIR: join(probeDir, 'global'),
+          PI_N_ISOLATED_PI_MODELS: '1',
           PI_OFFLINE: '1',
         },
         timeout: 60000,
@@ -524,7 +524,7 @@ async function acquirePinnedNodeArchive(target, cacheDir) {
 }
 
 function extractNodeBinary(archivePath, target, destinationFile) {
-  const extractDir = mkdtempSync(join(tmpdir(), 'grapher-node-extract-'));
+  const extractDir = mkdtempSync(join(tmpdir(), 'pi-n-node-extract-'));
   try {
     mkdirSync(dirname(destinationFile), { recursive: true });
     if (target.nodeArchive.endsWith('.tar.gz')) {
@@ -538,13 +538,13 @@ function extractNodeBinary(archivePath, target, destinationFile) {
           [
             '-NoProfile',
             '-Command',
-            'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($env:GRAPHER_NODE_ZIP, $env:GRAPHER_NODE_EXTRACT)',
+            'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($env:PI_N_NODE_ZIP, $env:PI_N_NODE_EXTRACT)',
           ],
           {
             env: {
               ...process.env,
-              GRAPHER_NODE_ZIP: archivePath,
-              GRAPHER_NODE_EXTRACT: extractDir,
+              PI_N_NODE_ZIP: archivePath,
+              PI_N_NODE_EXTRACT: extractDir,
             },
             stdio: 'inherit',
           },
@@ -654,7 +654,7 @@ function buildBackendRelease(target, env) {
     '--manifest-path',
     'backend/Cargo.toml',
     '--bin',
-    'grapher',
+    'pi-n',
   ];
   if (!hostTargetMatches(target)) {
     args.push('--target', target.rustTriple);
@@ -666,7 +666,7 @@ function buildBackendRelease(target, env) {
 export async function stageDesktopResources({
   targetSpec,
   skipBuild = false,
-  explicitNodeBinary = process.env.GRAPHER_DESKTOP_NODE_BINARY || null,
+  explicitNodeBinary = process.env.PI_N_DESKTOP_NODE_BINARY || null,
   resourcesDir = join(root, 'src-tauri', 'resources'),
   cacheDir = join(root, '.tmp', 'desktop-node-cache'),
   env: baseEnv = process.env,
@@ -696,7 +696,7 @@ export async function stageDesktopResources({
   verifyBaseline({ installationRoot: root });
   verifyPiDependencies(root);
 
-  const stagingTemp = mkdtempSync(join(tmpdir(), 'grapher-desktop-stage-'));
+  const stagingTemp = mkdtempSync(join(tmpdir(), 'pi-n-desktop-stage-'));
   try {
     console.log('[desktop:stage] Staging lean production Pi/engine runtime...');
     const stagedRoot = join(stagingTemp, 'resources');
@@ -761,7 +761,7 @@ export async function stageDesktopResources({
     });
 
     writeFileSync(
-      join(stagedRuntime, '.grapher-desktop-stage.json'),
+      join(stagedRuntime, '.pi-n-desktop-stage.json'),
       `${JSON.stringify(
         {
           version: appVersion,
@@ -808,7 +808,7 @@ export async function stageDesktopResources({
 }
 
 function parseCliArgs(argv) {
-  const options = { targetSpec: null, skipBuild: false, explicitNodeBinary: process.env.GRAPHER_DESKTOP_NODE_BINARY || null };
+  const options = { targetSpec: null, skipBuild: false, explicitNodeBinary: process.env.PI_N_DESKTOP_NODE_BINARY || null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--target' && argv[i + 1]) {

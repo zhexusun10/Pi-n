@@ -12,7 +12,7 @@ test('extension settings use local JSON POSTs and return the persisted remove/ad
     assert.equal(init?.cache, 'no-store');
     const headers = new Headers(init?.headers);
     assert.equal(headers.get('Content-Type'), 'application/json');
-    assert.match(headers.get('X-Grapher-Request-Id')!, /^[0-9a-f-]{36}$/i);
+    assert.match(headers.get('X-Pi-N-Request-Id')!, /^[0-9a-f-]{36}$/i);
     const body = JSON.parse(String(init?.body));
     requests.push(body);
     if (body.operation === 'set_enabled') extension.enabled = body.enabled;

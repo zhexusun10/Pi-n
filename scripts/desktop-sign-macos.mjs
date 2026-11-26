@@ -1,5 +1,5 @@
-// macOS inside-out nested Mach-O executable signing and verification for Grapher.app.
-// Ensures bundled Node.js, the `grapher` backend binary, and any native `.node`/`.dylib`/`.so`
+// macOS inside-out nested Mach-O executable signing and verification for Pi^n.app.
+// Ensures bundled Node.js, the `pi-n` backend binary, and any native `.node`/`.dylib`/`.so`
 // modules inside `Contents/Resources/` are signed with exact entitlements before signing `.app`.
 import { execFileSync } from 'node:child_process';
 import {
@@ -73,7 +73,7 @@ export function isMachOBinary(filePath) {
  * with `codesign` would dirty `git status` and fail `pi-baseline.mjs verify`.
  *
  * Lean desktop bundles omit `runtime/pi/.git` and verify `runtime/pi/` via
- * `.grapher-pi-runtime-manifest.json`, so native prebuilds such as
+ * `.pi-n-pi-runtime-manifest.json`, so native prebuilds such as
  * `darwin-platform.node` MUST be signed for Apple notarization and the bundled
  * manifest re-sealed before signing the outer `.app` bundle.
  */
@@ -89,7 +89,7 @@ export function isTrackedPiCheckoutFile(filePath) {
 }
 
 /**
- * Re-seal `Contents/Resources/runtime/pi/.grapher-pi-runtime-manifest.json`
+ * Re-seal `Contents/Resources/runtime/pi/.pi-n-pi-runtime-manifest.json`
  * after signing nested Mach-O binaries (such as `darwin-platform.node`) so
  * bundled Pi integrity verification matches the signed bytes and the outer
  * `.app` signature covers the updated manifest.
@@ -220,7 +220,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     }
   }
   if (!appPath) {
-    console.error('Usage: node scripts/desktop-sign-macos.mjs <Grapher.app> [--identity <id>]');
+    console.error('Usage: node scripts/desktop-sign-macos.mjs <Pi^n.app> [--identity <id>]');
     process.exit(2);
   }
   try {

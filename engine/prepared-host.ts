@@ -7,22 +7,22 @@ import { flushRuntimeCompileCache } from '../scripts/pi-baseline.mjs';
 
 const roles = new Set(['partition', 'planner', 'node']);
 const bindingEnvironment = new Set([
-  'GRAPHER_MODE', 'GRAPHER_AGENT_KIND', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_SOURCE_ALIAS', 'GRAPHER_SOURCE_CASE_INSENSITIVE',
-  'GRAPHER_WORKSPACE_ROOT', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_GRAPH_PATH', 'GRAPHER_UNREMOVABLE_NODES',
-  'GRAPHER_PLANNER_RUN_ID', 'GRAPHER_ACTIVE_RUN_ID', 'GRAPHER_PLANNER_FOLLOWUP', 'GRAPHER_PLANNER_WORKSPACES', 'GRAPHER_PLANNER_WORKSPACES_FILE', 'GRAPHER_PLANNER_WRITE_TOOLS', 'GRAPHER_NODE_EXECUTION_ID',
-  'GRAPHER_COMPILER_PATH', 'PI_CODING_AGENT_DIR', 'GRAPHER_TRUSTED_GIT', 'GRAPHER_BASELINE_CONTEXT', 'GRAPHER_VERIFIED_BASELINE', 'GRAPHER_LAUNCH_BINDING', 'GRAPHER_UPSTREAM_PI_MODELS',
-  'GRAPHER_ENVIRONMENT_DATA', 'GRAPHER_CONTINUE_INTERRUPTED', 'GRAPHER_FEEDBACK_SOURCE', 'GRAPHER_FEEDBACK_ENABLED', 'GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS', 'PYTHONDONTWRITEBYTECODE',
+  'PI_N_MODE', 'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_N_SOURCE_ALIAS', 'PI_N_SOURCE_CASE_INSENSITIVE',
+  'PI_N_WORKSPACE_ROOT', 'PI_N_ORIGINAL_ROOT', 'PI_N_GRAPH_PATH', 'PI_N_UNREMOVABLE_NODES',
+  'PI_N_PLANNER_RUN_ID', 'PI_N_ACTIVE_RUN_ID', 'PI_N_PLANNER_FOLLOWUP', 'PI_N_PLANNER_WORKSPACES', 'PI_N_PLANNER_WORKSPACES_FILE', 'PI_N_PLANNER_WRITE_TOOLS', 'PI_N_NODE_EXECUTION_ID',
+  'PI_N_COMPILER_PATH', 'PI_CODING_AGENT_DIR', 'PI_N_TRUSTED_GIT', 'PI_N_BASELINE_CONTEXT', 'PI_N_VERIFIED_BASELINE', 'PI_N_LAUNCH_BINDING', 'PI_N_UPSTREAM_PI_MODELS',
+  'PI_N_ENVIRONMENT_DATA', 'PI_N_CONTINUE_INTERRUPTED', 'PI_N_FEEDBACK_SOURCE', 'PI_N_FEEDBACK_ENABLED', 'PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS', 'PYTHONDONTWRITEBYTECODE',
   'TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR',
 ]);
 const clearedEnvironment = new Set([
-  'PI_MODEL', 'PI_THINKING', 'PI_PROVIDER', 'PI_REASONING_LEVEL', 'PI_SESSION_ID', 'PI_SESSION_FILE', 'GRAPHER_NODE_NAME',
+  'PI_MODEL', 'PI_THINKING', 'PI_PROVIDER', 'PI_REASONING_LEVEL', 'PI_SESSION_ID', 'PI_SESSION_FILE', 'PI_N_NODE_NAME',
   'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_COUNT',
-  'GIT_CONFIG_PARAMETERS', 'GIT_CEILING_DIRECTORIES', 'GRAPHER_LAUNCH_BINDING', 'GRAPHER_SOURCE_CASE_INSENSITIVE',
-  'GRAPHER_BASELINE_CONTEXT', 'GRAPHER_VERIFIED_BASELINE',
-  'GRAPHER_RUNTIME_CACHE_DIR',
-  'GRAPHER_AGENT_KIND', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_FEEDBACK_SOURCE', 'GRAPHER_FEEDBACK_ENABLED',
-  'GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS',
+  'GIT_CONFIG_PARAMETERS', 'GIT_CEILING_DIRECTORIES', 'PI_N_LAUNCH_BINDING', 'PI_N_SOURCE_CASE_INSENSITIVE',
+  'PI_N_BASELINE_CONTEXT', 'PI_N_VERIFIED_BASELINE',
+  'PI_N_RUNTIME_CACHE_DIR',
+  'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_N_FEEDBACK_SOURCE', 'PI_N_FEEDBACK_ENABLED',
+  'PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS',
 ]);
 const valueArguments = new Set([
   '--mode', '--model', '--thinking', '--session-id', '--session-dir', '--system-prompt',
@@ -71,7 +71,7 @@ const respond = (command: any, success: boolean, error?: string) => new Promise<
 function validateBinding(value: any, role: string, cwd: string): asserts value is {
   args: string[]; environment: Record<string, string | null>; cwd: string;
 } {
-  if (value?.type !== 'grapher_bind' || value.role !== role || typeof value.cwd !== 'string' || !samePath(value.cwd, cwd)) {
+  if (value?.type !== 'pi_n_bind' || value.role !== role || typeof value.cwd !== 'string' || !samePath(value.cwd, cwd)) {
     throw new Error('Prepared process role/project mismatch');
   }
   if (!Array.isArray(value.args) || !value.args.every((arg: unknown) => typeof arg === 'string' && !arg.includes('\0'))) {
@@ -94,14 +94,14 @@ function validateBinding(value: any, role: string, cwd: string): asserts value i
     if (clearedEnvironment.has(key) && entry === null) continue;
     if (!bindingEnvironment.has(key) || typeof entry !== 'string' || entry.includes('\0')) throw new Error(`Unsupported task environment: ${key}`);
   }
-  if (value.environment.GRAPHER_MODE !== role || value.environment.GRAPHER_EXECUTION_KIND !== 'source') throw new Error('Task role/source binding required');
-  if (role === 'node' && !['serial', 'node'].includes(value.environment.GRAPHER_AGENT_KIND ?? '')) {
+  if (value.environment.PI_N_MODE !== role || value.environment.PI_N_EXECUTION_KIND !== 'source') throw new Error('Task role/source binding required');
+  if (role === 'node' && !['serial', 'node'].includes(value.environment.PI_N_AGENT_KIND ?? '')) {
     throw new Error('Node agent identity required');
   }
-  if (role !== 'node' && value.environment.GRAPHER_AGENT_KIND != null) {
+  if (role !== 'node' && value.environment.PI_N_AGENT_KIND != null) {
     throw new Error('Only Node roles may bind a node agent identity');
   }
-  for (const key of ['GRAPHER_WORKSPACE_ROOT', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS']) {
+  for (const key of ['PI_N_WORKSPACE_ROOT', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS']) {
     if (!value.environment[key] || !samePath(value.environment[key], cwd)) throw new Error(`Invalid ${key}`);
   }
 }
@@ -110,14 +110,14 @@ export async function bindPreparedHost(role: string): Promise<string[] | null> {
   if (!roles.has(role)) throw new Error('Unsupported prepared role');
   const cwd = process.cwd();
   // Do not inherit an outer Run's identity. Factories are only loaded after bind.
-  for (const key of ['GRAPHER_AGENT_KIND', 'GRAPHER_GRAPH_PATH', 'GRAPHER_UNREMOVABLE_NODES', 'GRAPHER_PLANNER_RUN_ID', 'GRAPHER_ACTIVE_RUN_ID', 'GRAPHER_PLANNER_FOLLOWUP', 'GRAPHER_PLANNER_WORKSPACES', 'GRAPHER_PLANNER_WORKSPACES_FILE', 'GRAPHER_PLANNER_WRITE_TOOLS', 'GRAPHER_NODE_EXECUTION_ID', 'GRAPHER_NODE_NAME', 'GRAPHER_COMPILER_PATH', 'GRAPHER_ENVIRONMENT_DATA', 'GRAPHER_CONTINUE_INTERRUPTED', 'GRAPHER_FEEDBACK_SOURCE', 'GRAPHER_FEEDBACK_ENABLED', 'GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS']) delete process.env[key];
+  for (const key of ['PI_N_AGENT_KIND', 'PI_N_GRAPH_PATH', 'PI_N_UNREMOVABLE_NODES', 'PI_N_PLANNER_RUN_ID', 'PI_N_ACTIVE_RUN_ID', 'PI_N_PLANNER_FOLLOWUP', 'PI_N_PLANNER_WORKSPACES', 'PI_N_PLANNER_WORKSPACES_FILE', 'PI_N_PLANNER_WRITE_TOOLS', 'PI_N_NODE_EXECUTION_ID', 'PI_N_NODE_NAME', 'PI_N_COMPILER_PATH', 'PI_N_ENVIRONMENT_DATA', 'PI_N_CONTINUE_INTERRUPTED', 'PI_N_FEEDBACK_SOURCE', 'PI_N_FEEDBACK_ENABLED', 'PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS']) delete process.env[key];
   await preparePiCli();
   flushRuntimeCompileCache();
   const first = await controlLine();
   if (first === null) return null;
   const prepare = JSON.parse(first);
-  if (prepare.type !== 'grapher_prepare' || prepare.role !== role) {
-    await respond(prepare, false, 'Expected matching grapher_prepare');
+  if (prepare.type !== 'pi_n_prepare' || prepare.role !== role) {
+    await respond(prepare, false, 'Expected matching pi_n_prepare');
     throw new Error('Invalid preparation handshake');
   }
   await respond(prepare, true);

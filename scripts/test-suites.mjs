@@ -8,8 +8,8 @@ const sourceTests = (...names) => ['scripts/node-ts.mjs', '--test', ...files(nam
 const tsxTests = (...names) => ['--import', 'tsx', '--test', ...files(names)];
 const cargo = (command, ...args) => ['scripts/cargo.mjs', command, '--manifest-path', 'backend/Cargo.toml', ...args];
 const desktopCargo = (command, ...args) => ['scripts/cargo.mjs', command, '--manifest-path', 'src-tauri/Cargo.toml', ...args];
-const productionBuild = cargo('build', '--bin', 'grapher');
-const headlessBuild = cargo('build', '--no-default-features', '--bin', 'grapher');
+const productionBuild = cargo('build', '--bin', 'pi-n');
+const headlessBuild = cargo('build', '--no-default-features', '--bin', 'pi-n');
 const verifyPi = ['scripts/pi-baseline.mjs', 'verify'];
 
 // Each array is passed directly to the current Node executable, without a shell.
@@ -36,7 +36,7 @@ export const suites = {
       ),
       tsxTests(
         'model-settings.test.ts', 'transcript-cache.test.ts', 'thinking-transcript.test.ts',
-        'markdown-code-copy.test.ts', 'math-markdown.test.ts', 'markdown-safety.test.ts',
+        'markdown-code-copy.test.ts', 'markdown-image-stack.test.ts', 'math-markdown.test.ts', 'markdown-safety.test.ts',
         'transcript-coalescing.test.ts', 'transcript-compaction.test.ts', 'transcript-settle.test.ts',
         'attachment-card.test.ts', 'frontend-performance.test.ts', 'execution-time-took.test.ts',
         'session-token-usage.test.ts', 'updater.test.ts', 'autostart.test.ts', 'external-link.test.ts',
@@ -45,7 +45,7 @@ export const suites = {
     ],
   },
   ui: {
-    description: 'Fast mocked-API feature browser flows; Chromium/GRAPHER_BROWSER_CHANNEL, no production build.',
+    description: 'Fast mocked-API feature browser flows; Chromium/PI_N_BROWSER_CHANNEL, no production build.',
     steps: [uiTests(
       'background-settings-ui.test.mjs', 'workspace-ui.test.mjs', 'workspace-search-ui.test.mjs', 'sidebar-copy-prompt-ui.test.mjs',
       'manual-node-ui.test.mjs', 'workspace-changes-ui.test.mjs', 'bootstrap-settings-ui.test.mjs',
@@ -56,11 +56,11 @@ export const suites = {
     )],
   },
   'ui:audit': {
-    description: 'Deep mocked-API transcript/history/audit browser suites; Chromium/GRAPHER_BROWSER_CHANNEL, no production build.',
+    description: 'Deep mocked-API transcript/history/audit browser suites; Chromium/PI_N_BROWSER_CHANNEL, no production build.',
     steps: [uiTests('frontend-audit.test.mjs', 'conversation-history-ui.test.mjs')],
   },
   'ui-polish': {
-    description: 'Opt-in bilingual home/settings viewport sweep; optional GRAPHER_UI_SCREENSHOTS output.',
+    description: 'Opt-in bilingual home/settings viewport sweep; optional PI_N_UI_SCREENSHOTS output.',
     steps: [nodeTests('ui-polish.test.mjs')],
   },
   bundle: {
@@ -171,7 +171,7 @@ export const suites = {
   },
   concurrent: {
     description: 'Fixture backend build and concurrent HTTP runs; /bin/sh, skipped on Windows.',
-    steps: [cargo('build', '--no-default-features', '--features', 'fixture', '--bin', 'grapher'),
+    steps: [cargo('build', '--no-default-features', '--features', 'fixture', '--bin', 'pi-n'),
       ['scripts/concurrent-runs.test.mjs']],
   },
   'conversation-acceptance': {

@@ -64,9 +64,9 @@ impl Runtime {
             return false;
         };
         match kind {
-            "grapher_process_started"
-            | "grapher_session_resumed"
-            | "grapher_process_exited"
+            "pi_n_process_started"
+            | "pi_n_session_resumed"
+            | "pi_n_process_exited"
             | "response"
             | "agent_start"
             | "turn_start" => true,

@@ -18,7 +18,7 @@ fn source(temp: &tempfile::TempDir) -> PathBuf {
 
 fn slot(temp: &tempfile::TempDir, name: &str) -> PathBuf {
     temp.path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join("48b8e1d1-2428-42a2-9b28-9d90f631f9d1")
         .join(name)
 }

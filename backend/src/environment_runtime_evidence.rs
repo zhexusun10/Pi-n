@@ -14,7 +14,7 @@ mod resolution;
 #[path = "environment_runtime_selectors.rs"]
 mod selectors;
 
-pub(super) const MARKER: &[u8] = b"\0GRAPHER_NATIVE_FILES\0";
+pub(super) const MARKER: &[u8] = b"\0PI_N_NATIVE_FILES\0";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -249,7 +249,7 @@ impl RuntimeEvidence {
             }
             // If both spellings conceal the bucket name, the backend-supplied
             // S still identifies its owner Run. Require the same physical Run
-            // as W, not merely a directory named .grapher-state elsewhere.
+            // as W, not merely a directory named .pi-n-state elsewhere.
             if workspace_bucket.is_none() {
                 if let Some((_, state)) = roots.iter().find(|(label, _)| *label == "state") {
                     let state_container = state.parent().and_then(Path::parent);
@@ -257,7 +257,7 @@ impl RuntimeEvidence {
                     if state.file_name().is_some_and(|name| name == "process")
                         && state_container.is_some_and(|path| {
                             path.file_name()
-                                .is_some_and(|name| name == ".grapher-state")
+                                .is_some_and(|name| name == ".pi-n-state")
                         })
                         && workspace
                             .parent()

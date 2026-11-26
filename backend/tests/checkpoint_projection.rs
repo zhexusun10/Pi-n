@@ -1,4 +1,4 @@
-use grapher::{model::*, snapshot_view::snapshot_metadata};
+use pi_n::{model::*, snapshot_view::snapshot_metadata};
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -29,7 +29,7 @@ fn execution(id: &str, node: &str) -> Execution {
 fn compact_checkpoints_preserve_business_history_without_materializing_streams() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("events.sqlite");
-    let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+    let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
     assert!(runtime.store.load("missing").is_err());
     runtime.state.run_id = "run".into();
     let config = serde_json::from_value(serde_json::json!({
@@ -183,7 +183,7 @@ fn corrupted_checkpoint_recovers_delivered_heads_by_current_event_replay() {
 
 fn assert_current_delivered_heads_replayed() {
     let temp = TempDir::new().unwrap();
-    let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+    let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
     runtime.state.run_id = "run".into();
     runtime
         .emit(EventKind::Created {
@@ -251,7 +251,7 @@ fn assert_current_delivered_heads_replayed() {
         .unwrap();
     drop(connection);
 
-    let replayed = grapher::runtime::Runtime::open(temp.path()).unwrap();
+    let replayed = pi_n::runtime::Runtime::open(temp.path()).unwrap();
     assert_eq!(replayed.state.published_heads, vec![delivered]);
     let connection = Connection::open(temp.path().join("events.sqlite")).unwrap();
     let reopened_events: Vec<(i64, String)> = connection

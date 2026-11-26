@@ -534,9 +534,9 @@ mod tests {
             .current_dir(repo)
             .args([
                 "-c",
-                "user.name=Grapher Test",
+                "user.name=Pi^n Test",
                 "-c",
-                "user.email=test@grapher.invalid",
+                "user.email=test@pi-n.invalid",
                 "commit",
                 "-m",
                 msg,

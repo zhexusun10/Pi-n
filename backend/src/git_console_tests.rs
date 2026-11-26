@@ -39,7 +39,7 @@ fn host_git_is_isolated_from_console_control_events() {
             "--nocapture",
         ])
         .env(
-            "GRAPHER_GIT_CONSOLE_TEST_PARENT",
+            "PI_N_GIT_CONSOLE_TEST_PARENT",
             std::process::id().to_string(),
         )
         // CREATE_NEW_CONSOLE: never broadcast to the test runner or backend.
@@ -66,7 +66,7 @@ fn probe_alias(script: &Path, arguments: &[&Path]) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "alias.grapher-console-probe=!powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{}' {arguments}",
+        "alias.pi-n-console-probe=!powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{}' {arguments}",
         path(script)
     )
 }
@@ -92,7 +92,7 @@ fn wait_for(path: &Path) {
 #[test]
 #[ignore = "only run in the new console created by host_git_is_isolated_from_console_control_events"]
 fn git_console_probe() {
-    let parent: u32 = std::env::var("GRAPHER_GIT_CONSOLE_TEST_PARENT")
+    let parent: u32 = std::env::var("PI_N_GIT_CONSOLE_TEST_PARENT")
         .expect("console probe must be launched by its parent test")
         .parse()
         .unwrap();
@@ -134,7 +134,7 @@ Set-Content -LiteralPath $Survived -Value survived -NoNewline
     let mut command = Command::new("git");
     crate::native::clear_git_environment(&mut command);
     let mut unprotected = command
-        .args(["-c", &alias, "grapher-console-probe"])
+        .args(["-c", &alias, "pi-n-console-probe"])
         .current_dir(temp.path())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -156,7 +156,7 @@ Set-Content -LiteralPath $Survived -Value survived -NoNewline
     let survived = temp.path().join("survived-protected");
     let alias = probe_alias(&wait, &[&ready, &release, &survived]);
     let protected = std::thread::spawn(move || {
-        git(&temp_path, &["-c", &alias, "grapher-console-probe"]).unwrap();
+        git(&temp_path, &["-c", &alias, "pi-n-console-probe"]).unwrap();
     });
     wait_for(&ready);
     assert_eq!(
@@ -197,7 +197,7 @@ Set-Content -LiteralPath $Survived -Value survived -NoNewline
         };
         // Bounded even if the signal thread fails. No real repository, hooks,
         // running services, or source/runtime files are involved.
-        git(temp.path(), &["-c", &alias, "grapher-console-probe"]).unwrap();
+        git(temp.path(), &["-c", &alias, "pi-n-console-probe"]).unwrap();
         signal.join().unwrap().unwrap();
         assert_eq!(
             fs::read_to_string(&survived).unwrap(),

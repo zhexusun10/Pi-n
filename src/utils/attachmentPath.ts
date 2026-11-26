@@ -11,7 +11,7 @@ const MANAGED_ATTACHMENT_MENTION_RE = new RegExp(
 );
 
 /** Verify that a backend-returned attachment path points strictly into
- * Grapher's external `attachment-inputs/` store with no traversal segments. */
+ * Pi^n's external `attachment-inputs/` store with no traversal segments. */
 export function isManagedAttachmentPath(path: unknown): path is string {
   if (typeof path !== "string" || !MANAGED_ATTACHMENT_PATH_RE.test(path)) {
     return false;

@@ -109,7 +109,7 @@ export const AutostartSettings: React.FC<AutostartSettingsProps> = ({
             <strong>{t("当前为浏览器模式")}</strong>
             <p>
               {t(
-                "登录时自动启动仅在 Grapher 桌面端（macOS / Windows）中可用。浏览器模式不会修改系统启动项。",
+                "开机自启动仅在 Pi^n 桌面端（macOS / Windows）中可用。",
               )}
             </p>
           </div>
@@ -124,7 +124,7 @@ export const AutostartSettings: React.FC<AutostartSettingsProps> = ({
               <strong>{t("登录时自动启动")}</strong>
               <small id={descId}>
                 {t(
-                  "登录当前用户账户时自动启动 Grapher（仅当前用户生效，不安装提权系统服务；更改立即生效）。",
+                  "开机登录时自动启动 Pi^n，随时快速进入工作状态。",
                 )}
               </small>
             </span>

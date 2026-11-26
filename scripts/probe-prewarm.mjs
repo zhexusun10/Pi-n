@@ -17,7 +17,7 @@ const runs = process.argv[2] === '--runs' ? Number(process.argv[3]) : 3;
 assert.ok(Number.isInteger(runs) && runs >= 1 && runs <= 10, 'Usage: probe-prewarm.mjs [--runs 1..10]');
 verifyBaseline();
 verifyPiDependencies(root);
-const directory = await mkdtemp(join(tmpdir(), 'grapher-prewarm-probe-'));
+const directory = await mkdtemp(join(tmpdir(), 'pi-n-prewarm-probe-'));
 
 async function sample(kind, index) {
   const own = join(directory, `${kind}-${index}`);
@@ -37,7 +37,7 @@ async function sample(kind, index) {
     args = ['--import', pathToFileURL(join(source, 'packages/coding-agent/src/experimental/source-resolver.ts')).href,
       join(root, 'scripts/fixtures/prewarm-core-probe.ts')];
   } else if (kind === 'process') {
-    args = [join(root, 'engine/entrypoint.mjs'), '--grapher-prewarm', role];
+    args = [join(root, 'engine/entrypoint.mjs'), '--pi-n-prewarm', role];
   } else if (serial) {
     args = [join(root, 'engine/entrypoint.mjs'), ...taskArgs];
   } else {
@@ -49,12 +49,12 @@ async function sample(kind, index) {
   const started = performance.now();
   const child = spawn(process.execPath, args, {
     cwd: repository, detached: process.platform !== 'win32',
-    env: { ...process.env, PI_CODING_AGENT_DIR: agent, GRAPHER_ISOLATED_PI_MODELS: '1',
-      GRAPHER_RUNTIME_CACHE_DIR: undefined, GRAPHER_BASELINE_CONTEXT: undefined, GRAPHER_VERIFIED_BASELINE: undefined,
-      PI_OFFLINE: '1', GRAPHER_GLOBAL_PI_AGENT_DIR: join(own, 'global-agent'), GRAPHER_MODE: role,
-      ...(serial ? { GRAPHER_AGENT_KIND: 'serial', GRAPHER_ACTIVE_RUN_ID: `probe-${kind}-${index}` } : {}),
-      GRAPHER_EXECUTION_KIND: 'source', GRAPHER_SOURCE_ALIAS: repository,
-      GRAPHER_WORKSPACE_ROOT: repository, GRAPHER_ORIGINAL_ROOT: repository },
+    env: { ...process.env, PI_CODING_AGENT_DIR: agent, PI_N_ISOLATED_PI_MODELS: '1',
+      PI_N_RUNTIME_CACHE_DIR: undefined, PI_N_BASELINE_CONTEXT: undefined, PI_N_VERIFIED_BASELINE: undefined,
+      PI_OFFLINE: '1', PI_N_GLOBAL_PI_AGENT_DIR: join(own, 'global-agent'), PI_N_MODE: role,
+      ...(serial ? { PI_N_AGENT_KIND: 'serial', PI_N_ACTIVE_RUN_ID: `probe-${kind}-${index}` } : {}),
+      PI_N_EXECUTION_KIND: 'source', PI_N_SOURCE_ALIAS: repository,
+      PI_N_WORKSPACE_ROOT: repository, PI_N_ORIGINAL_ROOT: repository },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const closed = once(child, 'close');
@@ -96,13 +96,13 @@ async function sample(kind, index) {
     let taskStarted = started;
     let preparationMs = 0;
     if (kind === 'process') {
-      await probe('prepare', { type: 'grapher_prepare', role });
+      await probe('prepare', { type: 'pi_n_prepare', role });
       preparationMs = performance.now() - started;
       taskStarted = performance.now();
-      await probe('bind', { type: 'grapher_bind', role, cwd: repository, args: taskArgs,
-        environment: { GRAPHER_MODE: role, GRAPHER_AGENT_KIND: 'serial', GRAPHER_EXECUTION_KIND: 'source',
-          GRAPHER_SOURCE_ALIAS: repository, GRAPHER_WORKSPACE_ROOT: repository, GRAPHER_ORIGINAL_ROOT: repository,
-          GRAPHER_ACTIVE_RUN_ID: `probe-${kind}-${index}` } });
+      await probe('bind', { type: 'pi_n_bind', role, cwd: repository, args: taskArgs,
+        environment: { PI_N_MODE: role, PI_N_AGENT_KIND: 'serial', PI_N_EXECUTION_KIND: 'source',
+          PI_N_SOURCE_ALIAS: repository, PI_N_WORKSPACE_ROOT: repository, PI_N_ORIGINAL_ROOT: repository,
+          PI_N_ACTIVE_RUN_ID: `probe-${kind}-${index}` } });
     } else if (kind === 'session') {
       await probe('prepare-session');
       preparationMs = performance.now() - started;

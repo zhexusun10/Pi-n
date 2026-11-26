@@ -45,7 +45,7 @@ function spawnInherited(command, args, env) {
 async function runViteForDesktop() {
   const env = {
     ...loadDevEnvironment(root, process.env),
-    GRAPHER_DESKTOP_DEV: '1',
+    PI_N_DESKTOP_DEV: '1',
   };
   return spawnInherited(
     process.execPath,
@@ -57,7 +57,7 @@ async function runViteForDesktop() {
 async function runDesktopDev(extraArgs) {
   const env = toolchainEnv({
     ...loadDevEnvironment(root, process.env),
-    GRAPHER_DESKTOP_DEV: '1',
+    PI_N_DESKTOP_DEV: '1',
   });
   await ensureDependencies({ installationRoot: root, env });
   const cargo = findCargoExecutable(env) ?? 'cargo';
@@ -65,7 +65,7 @@ async function runDesktopDev(extraArgs) {
     console.log('[desktop:dev] Building debug backend binary...');
     execFileSync(
       cargo,
-      ['build', '--locked', '--manifest-path', 'backend/Cargo.toml', '--bin', 'grapher'],
+      ['build', '--locked', '--manifest-path', 'backend/Cargo.toml', '--bin', 'pi-n'],
       { cwd: root, env, stdio: 'inherit' },
     );
     recordDevBuildStamp(root, env);

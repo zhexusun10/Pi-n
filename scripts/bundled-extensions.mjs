@@ -1,4 +1,4 @@
-// These packages are installed at the Grapher root, not by pi:setup.
+// These packages are installed at the Pi^n root, not by pi:setup.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -27,6 +27,6 @@ export function missingBundledExtensions(root) {
 export function verifyBundledExtensions(root) {
   const missing = missingBundledExtensions(root);
   if (missing.length) {
-    throw new Error(`Bundled Pi extensions are missing or outdated (${missing.join(', ')}); run npm ci --ignore-scripts in ${root}, then restart Grapher`);
+    throw new Error(`Bundled Pi extensions are missing or outdated (${missing.join(', ')}); run npm ci --ignore-scripts in ${root}, then restart Pi^n`);
   }
 }

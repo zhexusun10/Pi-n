@@ -25,7 +25,7 @@ const catalog = { providers: [{ id: "test", name: "Test", methods: [], configure
 before(async () => {
   server = await createServer({ cacheDir: "node_modules/.vite-bootstrap-settings", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
   await server.listen(); origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
@@ -34,13 +34,13 @@ describe("bootstrap settings", { concurrency: 2 }, () => {
 async function app(handler, projects = [{ id: repository, path: repository, name: "Responsiveness", lastOpened: 1 }], cachedRuns, connectedEvents = false, reducedMotion = "reduce", storageHints = {}, sessionHints = {}) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: "en-US", reducedMotion });
   await context.addInitScript(({ projects, config, cachedRuns, connectedEvents, storageHints, sessionHints }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_data_path", "/mock");
-    const scoped = key => ["grapher_workspace_runs", "grapher_run_labels", "grapher_run_modes", "grapher_config"].includes(key)
-      ? `grapher-format-1:/mock:${key}` : key;
-    if (projects !== null) localStorage.setItem("grapher_projects", JSON.stringify(projects));
-    if (cachedRuns) localStorage.setItem(scoped("grapher_workspace_runs"), JSON.stringify(cachedRuns));
-    localStorage.setItem(scoped("grapher_config"), JSON.stringify({ ...config, model: "stale/browser-model" }));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_data_path", "/mock");
+    const scoped = key => ["pi_n_workspace_runs", "pi_n_run_labels", "pi_n_run_modes", "pi_n_config"].includes(key)
+      ? `pi-n-format-1:/mock:${key}` : key;
+    if (projects !== null) localStorage.setItem("pi_n_projects", JSON.stringify(projects));
+    if (cachedRuns) localStorage.setItem(scoped("pi_n_workspace_runs"), JSON.stringify(cachedRuns));
+    localStorage.setItem(scoped("pi_n_config"), JSON.stringify({ ...config, model: "stale/browser-model" }));
     for (const [key, value] of Object.entries(storageHints)) localStorage.setItem(scoped(key), JSON.stringify(value));
     for (const [key, value] of Object.entries(sessionHints)) sessionStorage.setItem(key, JSON.stringify(value));
     if (connectedEvents) {
@@ -70,7 +70,7 @@ async function app(handler, projects = [{ id: repository, path: repository, name
       repository_status: { repository, valid: true, error: null }, list_plannings: [], list_files: { files: [] }, list_skills: { skills: [] },
       provider_auth: catalog, extension_command: { instance: "standalone", commands: [] }, pi_extensions: { globalDirectory: "mock", extensions: [] }, environment_capabilities: { platform: "windows", arch: "x86_64", nativeWorkspace: true } };
     if (!Object.hasOwn(defaults, command)) errors.push(`Unexpected API: ${command}`);
-    await route.fulfill({ headers: connectedEvents ? { "x-grapher-events": "1" } : {}, json: { result: defaults[command] ?? null } });
+    await route.fulfill({ headers: connectedEvents ? { "x-pi-n-events": "1" } : {}, json: { result: defaults[command] ?? null } });
   });
   const page = await context.newPage(); page.setDefaultTimeout(8_000);
   // Cold Vite transforms can be slower than an individual UI action when
@@ -148,17 +148,17 @@ test("workspace selection survives reload without repository detection", { timeo
     await page.locator('[data-run-id="fast"]').waitFor();
     assert.equal(await active.getAttribute("aria-label"), `${info.name}\n${repository}`);
     await page.getByRole("button", { name: `Second\n${second}`, exact: true }).click();
-    await page.waitForFunction(second => localStorage.getItem("grapher_last_workspace") === second, second);
+    await page.waitForFunction(second => localStorage.getItem("pi_n_last_workspace") === second, second);
     assert.deepEqual(await page.locator(".project-workspace-item strong").allTextContents(), [info.name, "Second"]);
 
     // Windows aliases use the same workspace identity. Keep bootstrap pending
     // to check the first paint separately from the authoritative restore.
-    await page.evaluate(() => localStorage.setItem("grapher_last_workspace", "\\\\?\\c:\\projects\\second\\"));
+    await page.evaluate(() => localStorage.setItem("pi_n_last_workspace", "\\\\?\\c:\\projects\\second\\"));
     holdBootstrap = true;
     await page.reload({ waitUntil: "domcontentloaded" });
     await until(() => !!pendingBootstrap);
     assert.equal(await active.getAttribute("aria-label"), `Second\n${second}`);
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_last_workspace")), "\\\\?\\c:\\projects\\second\\");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_last_workspace")), "\\\\?\\c:\\projects\\second\\");
     holdBootstrap = false;
     await pendingBootstrap.fulfill({ json: { result: response } });
     await page.locator('[data-run-id="second-run"]').waitFor();
@@ -168,13 +168,13 @@ test("workspace selection survives reload without repository detection", { timeo
     // Missing, archived and pre-feature preferences all retain the old fallback.
     for (const lastWorkspace of ["/removed", "/archived", null]) {
       await page.evaluate(value => {
-        if (value === null) localStorage.removeItem("grapher_last_workspace");
-        else localStorage.setItem("grapher_last_workspace", value);
+        if (value === null) localStorage.removeItem("pi_n_last_workspace");
+        else localStorage.setItem("pi_n_last_workspace", value);
       }, lastWorkspace);
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.locator('[data-run-id="fast"]').waitFor();
       assert.equal(await active.getAttribute("aria-label"), `${info.name}\n${repository}`);
-      await page.waitForFunction(repository => localStorage.getItem("grapher_last_workspace") === repository, repository);
+      await page.waitForFunction(repository => localStorage.getItem("pi_n_last_workspace") === repository, repository);
     }
     assert.equal(calls.filter(call => call.command === "detect_repository").length, 0);
     assert.deepEqual(errors, []);
@@ -195,9 +195,9 @@ test("a missing workspace is retired after switching without repository detectio
     await page.locator('[data-run-id="fast"]').waitFor();
     await page.getByRole("button", { name: `Missing\n${missing}`, exact: true }).click();
     await page.getByRole("button", { name: `Missing\n${missing}`, exact: true }).waitFor({ state: "detached" });
-    await page.waitForFunction(repository => localStorage.getItem("grapher_last_workspace") === repository, repository);
+    await page.waitForFunction(repository => localStorage.getItem("pi_n_last_workspace") === repository, repository);
     assert.equal(await page.locator('.project-workspace-item[aria-current="true"]').getAttribute("aria-label"), `${info.name}\n${repository}`);
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher_projects")).map(project => project.path)), [repository]);
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi_n_projects")).map(project => project.path)), [repository]);
     assert.equal(calls.filter(call => call.command === "detect_repository" || call.command === "delete_workspace").length, 0);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -327,9 +327,9 @@ test("corrupt browser hints cannot crash startup or prevent authoritative settin
   const { context, page, errors } = await app(async () => false,
     [null, 42, { path: 123 }, { path: repository, name: { invalid: true }, lastOpened: "invalid" }],
     { [repository]: [null, "fast", 7] }, false, "reduce", {
-      grapher_config: { repository: null, roleModels: { planner: null }, thinkingLevel: {} },
-      grapher_run_labels: { fast: { invalid: "React child" } },
-      grapher_run_modes: ["serial"],
+      pi_n_config: { repository: null, roleModels: { planner: null }, thinkingLevel: {} },
+      pi_n_run_labels: { fast: { invalid: "React child" } },
+      pi_n_run_modes: ["serial"],
     });
   try {
     await page.locator('[data-run-id="fast"]').waitFor();
@@ -341,7 +341,7 @@ test("corrupt browser hints cannot crash startup or prevent authoritative settin
 
 test("a corrupt Provider cache cannot crash the landing composer or prevent a fresh catalog", { timeout: 30_000 }, async () => {
   const { context, page, errors } = await app(async () => false, undefined, undefined, false, "reduce", {}, {
-    grapher_provider_catalog_cache: { ...catalog, models: [null] },
+    pi_n_provider_catalog_cache: { ...catalog, models: [null] },
   });
   try {
     await page.locator('[data-run-id="fast"]').waitFor();
@@ -497,7 +497,7 @@ test("prewarmed summaries render every sidebar card without histories or reposit
     assert.equal(await page.locator('[data-run-id="blank"] .is-resolving').count(), 0, "a blank title is resolved");
     assert.equal(calls.filter(call => call.command === "history").length, 0);
     assert.equal(calls.filter(call => call.command === "detect_repository").length, 0, "restoring a workspace needs no repository detection");
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_workspace_runs"))), {
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"))), {
       [repository]: ["slow", "blank"], "/other": ["foreign"],
     });
     assert.deepEqual(errors, []);
@@ -516,7 +516,7 @@ test("sidebar summaries seed live status and watchdogs without polling settled R
   }));
   const { context, page, errors, calls } = await app(async (route, command, body) => {
     if (command === "bootstrap") {
-      await route.fulfill({ headers: { "x-grapher-events": "1" }, json: { result: {
+      await route.fulfill({ headers: { "x-pi-n-events": "1" }, json: { result: {
         ...bootstrap, snapshot: empty, conversations: summaries, runs: Object.keys(snapshots),
       } } });
       return true;
@@ -685,7 +685,7 @@ test("paused sidebar cards stop pulsing after writers drain even with dirty desc
       const snapshot = snapshots[body.runId];
       result = { version: JSON.stringify(snapshot), snapshot };
     } else return false;
-    await route.fulfill({ headers: { "x-grapher-events": "1" }, json: { result } });
+    await route.fulfill({ headers: { "x-pi-n-events": "1" }, json: { result } });
     return true;
   }, undefined, undefined, true);
   try {
@@ -743,7 +743,7 @@ test("first-launch workspace discovery is asynchronous and restores the detected
     assert.equal(await page.locator(".sidebar-skeleton-wrap").count(), 0, "discovery cannot block the sidebar");
     await discovery.fulfill({ json: { result: { path: "/discovered", name: "Discovered workspace" } } });
     await page.locator('[data-run-id="discovered"]').waitFor();
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).repository), "/discovered");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).repository), "/discovered");
     assert.equal(calls.filter(call => call.command === "save_config").length, 0, "discovery must not overwrite model defaults");
     assert.equal(await page.locator(".project-workspace-item").count(), 1);
     assert.deepEqual(errors, []);
@@ -767,10 +767,10 @@ test("first-launch discovery cannot be overwritten by an older settings response
     await until(() => !!saving);
     assert.equal(saving.config.maxFeedback, 3, "saving preserves the configured feedback budget");
     await discovery.fulfill({ json: { result: { path: "/discovered", name: "Discovered" } } });
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).repository === "/discovered");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).repository === "/discovered");
     await saving.route.fulfill({ json: { result: { ...fresh, config: saving.config } } });
     await page.waitForFunction(() => document.querySelector(".save-config-btn")?.disabled === false);
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).repository), "/discovered");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).repository), "/discovered");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -783,7 +783,7 @@ test("first-launch discovery never restores a deliberately empty workspace list"
     return true;
   }, []);
   try {
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).repository === "");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).repository === "");
     assert.equal(calls.filter(call => call.command === "detect_repository").length, 0);
     assert.equal(await page.locator(".project-workspace-item").count(), 0);
     assert.deepEqual(errors, []);
@@ -1061,13 +1061,13 @@ test("a stalled settings save releases busy state, preserves its draft and can r
     await page.clock.fastForward(15_001);
     await page.waitForFunction(() => document.querySelector(".save-config-btn")?.disabled === false);
     assert.equal(await nodeModel(page).inputValue(), "test/new", "timed-out save retains the model draft");
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).model), "test/old");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/old");
     assert.match(await page.locator(".settings-modal").innerText(), /Saving settings timed out/);
     stall = false;
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     assert.equal(saves, 2);
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).model), "test/new", "Settings outside a conversation commits global defaults");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/new", "Settings outside a conversation commits global defaults");
     await openSettings(page);
     assert.equal(await nodeModel(page).inputValue(), "test/new", "the accepted draft remains visible in Settings");
     assert.deepEqual(errors, []);
@@ -1548,7 +1548,7 @@ test("saving an incompatible legacy level updates defaults to the Pi-adjusted va
     await page.locator('[data-run-id="fast"]').waitFor(); await openSettings(page);
     const thinking = page.locator(".role-model-group").nth(0).locator("select").nth(1);
     assert.equal(await thinking.inputValue(), "high");
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).thinkingLevel), "max", "opening settings must not persist corrections");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).thinkingLevel), "max", "opening settings must not persist corrections");
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     assert.equal(saved.thinkingLevel, "high");
@@ -1597,7 +1597,7 @@ test("Settings edits the conversation profile even while a node with an override
     assert.equal(current.nodes.a.modelConfig.model, "test/new", "an explicit node override remains independent");
     assert.equal(current.modelConfig.roleModels.nodeAgent.model, "test/plain");
     assert.equal(current.config.model, "test/old", "original execution config remains historical");
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).model), "test/old", "conversation edits do not change global defaults");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/old", "conversation edits do not change global defaults");
     await page.locator('.graph-canvas .react-flow__node[data-id="b"]').click();
     await openSettings(page);
     assert.equal(await nodeModel(page).inputValue(), "test/plain", "the same Run profile appears from another node");
@@ -1777,7 +1777,7 @@ test("home slash model changes are reflected in Settings without writing global 
     assert.equal(await page.locator(".role-model-group").nth(1).locator("select").first().inputValue(), "test/new");
     assert.equal(await nodeModel(page).inputValue(), "test/old");
     assert.equal(calls.filter(call => call.command === "save_config").length, 0);
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_config")).model), "test/old");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/old");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -1875,7 +1875,7 @@ test("synchronous preflight rejection on landing keeps the composer draft and av
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await page.getByRole("alert").filter({ hasText: /Configure a model for/i }).waitFor();
     assert.equal(await composer.inputValue(), "Keep this landing draft");
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher_landing_goal_drafts"))["/responsiveness"]), "Keep this landing draft");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi_n_landing_goal_drafts"))["/responsiveness"]), "Keep this landing draft");
     assert.equal(calls.filter(call => call.command === "plan_goal").length, 0);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }

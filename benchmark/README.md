@@ -1,6 +1,6 @@
 # Harbor adapter
 
-`benchmark.harbor_agent:GrapherAgent` integrates Grapher as a Harbor custom installed agent. Harbor and benchmark datasets are separate dependencies.
+`benchmark.harbor_agent:PiNAgent` integrates Pi^n as a Harbor custom installed agent. Harbor and benchmark datasets are separate dependencies.
 
 See the canonical [Harbor evaluation guide](../docs/benchmarks/harbor.md) for task-image setup, Linux namespace requirements, credentials, options, evidence, and comparability.
 

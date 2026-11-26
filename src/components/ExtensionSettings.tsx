@@ -14,9 +14,10 @@ export function ExtensionItem({ extension, disabled, onToggle, statusNote }: {
   extension: PiExtension; disabled: boolean; onToggle: (extension: PiExtension) => void; statusNote?: string;
 }) {
   const bundledDescriptions: Record<string, string> = {
-    'npm:pi-continuity': t('更稳健的循环工程：自动恢复意外的流式中断、消息截断、网络断连，以及 API 5 小时/每周额度限制。'),
-    'npm:pi-simple-timeout': t('为 bash 工具提供可配置的默认超时（默认 180 秒），并在触发默认超时时明确标注；可通过 /timeout 随时调整或关闭。'),
-    'npm:pi-better-web-search': t('支持已配置的专用搜索 API 和已认证的兼容 Provider；仅在有可用搜索接口时注册 web_search 工具。'),
+    'npm:pi-trim': t('精简冗余系统提示词，节省 Token 消耗，让模型更专注于你的任务。'),
+    'npm:pi-continuity': t('自动从流式中断、网络波动或额度限制中无缝恢复，让长任务稳定跑完。'),
+    'npm:pi-simple-timeout': t('为 Bash 命令设置默认超时（180 秒），避免任务卡死。'),
+    'npm:pi-better-web-search': t('提供网页搜索与内容抓取能力，默认启用keenable公共端点。'),
   };
   const description = extension.bundled
     ? `${extension.source}${bundledDescriptions[extension.id] ? ` · ${bundledDescriptions[extension.id]}` : ''}`
@@ -185,9 +186,7 @@ export function ExtensionSettings({ disabled = false }: { disabled?: boolean }) 
       <Puzzle size={16} /><h4 id="extension-settings-title">{t('Pi 全局扩展')}</h4>
       <button type="button" className="icon-button" aria-label={t('刷新扩展')} disabled={busy || disabled} onClick={() => void update()}><RefreshCw size={14} /></button>
     </div>
-    <p className="section-desc">{t('移除仅在 Grapher 中停用，不卸载全局扩展；检测到的外部全局扩展默认不挂载，需在待选列表中手动添加。')}</p>
-    <p className="section-desc">{t('pi-trim 对所有角色生效；pi-continuity 与 pi-simple-timeout 默认启用，对 Planner、Node Agent 和 Merger 生效；pi-better-web-search 默认停用，需在设置中手动启用且仅对 Planner、Node Agent 生效；其他外部扩展默认不挂载，手动添加后仅对 Planner、Node Agent 生效，MCP 和 Skill 同样仅对 Planner、Node Agent 生效。')}</p>
-    {catalog && <code className="extension-settings-directory">{catalog.globalDirectory}</code>}
+    <p className="section-desc">{t('按需启用内置与全局扩展，增强 Agent 能力；移除仅在 Pi^n 中停用，不会卸载原扩展。')}</p>
     {busy && <p role="status" className="section-desc">{t('正在读取扩展…')}</p>}
     {error && <p role="alert" className="settings-language-error">{localizeError(error)}</p>}
     {catalog && <>

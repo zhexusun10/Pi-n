@@ -114,7 +114,7 @@ fn workspace_plan_with_stale(
                             checkout: None,
                         } = target
                         {
-                            if bucket == ".grapher-worktrees"
+                            if bucket == ".pi-n-worktrees"
                                 && owner == id
                                 && crate::path_identity::same_path(owner_parent, parent)
                             {
@@ -142,7 +142,7 @@ fn workspace_plan_with_stale(
         detached_receipts,
         ..Default::default()
     };
-    for name in [".grapher-worktrees"] {
+    for name in [".pi-n-worktrees"] {
         let Some(directory) = real_child_path(parent, &parent.join(name), false)? else {
             continue;
         };
@@ -251,12 +251,12 @@ pub fn cleanup_workspaces(args: Vec<String>) -> Result<(), String> {
         .or_else(|_| {
             root_raw
                 .canonicalize()
-                .map_err(|error| format!("Cannot open Grapher data directory: {error}"))
+                .map_err(|error| format!("Cannot open Pi^n data directory: {error}"))
         })?;
     let database = root.join("events.sqlite");
     if !database.is_file() {
         return Err(format!(
-            "Grapher database not found: {}",
+            "Pi^n database not found: {}",
             database.display()
         ));
     }
@@ -446,7 +446,7 @@ mod tests {
                     id,
                     &BTreeSet::from([crate::cleanup::Target::Workspace {
                         parent: temp.path().canonicalize().unwrap(),
-                        bucket: ".grapher-worktrees".into(),
+                        bucket: ".pi-n-worktrees".into(),
                         owner: id.clone(),
                         checkout: None,
                     }]),
@@ -454,10 +454,10 @@ mod tests {
                 .unwrap();
         }
         store.delete_run(&deleted_id).unwrap();
-        let ws = temp.path().join(".grapher-worktrees");
+        let ws = temp.path().join(".pi-n-worktrees");
         let legacy = temp
             .path()
-            .join(".grapher-workspaces")
+            .join(".pi-n-workspaces")
             .join(&alias_id)
             .join(&attempt_id);
         for path in [
@@ -562,7 +562,7 @@ mod tests {
         fs::create_dir(&source).unwrap();
         let store = Store::open(&root.join("events.sqlite")).unwrap();
         let parent = temp.path().canonicalize().unwrap();
-        let ws = parent.join(".grapher-worktrees");
+        let ws = parent.join(".pi-n-worktrees");
         let config: Config = serde_json::from_value(
             serde_json::json!({"repository": source, "model":"test", "maxParallel":1}),
         )
@@ -598,7 +598,7 @@ mod tests {
                     &id,
                     &BTreeSet::from([crate::cleanup::Target::Workspace {
                         parent: parent.clone(),
-                        bucket: ".grapher-worktrees".into(),
+                        bucket: ".pi-n-worktrees".into(),
                         owner: id.clone(),
                         checkout: None,
                     }]),

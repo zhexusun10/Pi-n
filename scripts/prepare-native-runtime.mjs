@@ -1,5 +1,5 @@
 // Host-only preparation. Backends cache this verified copy by content, shared
-// across projects and processes, including when Grapher hosts itself.
+// across projects and processes, including when Pi^n hosts itself.
 import { createHash } from 'node:crypto';
 import { cpSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -11,7 +11,7 @@ import { root, source, verifyBaseline } from './pi-baseline.mjs';
 import { verifyPiDependencies } from './pi-dependencies.mjs';
 import { bundledExtensionNames, verifyBundledExtensions } from './bundled-extensions.mjs';
 
-const BUNDLED_PI_MANIFEST_FILE = '.grapher-bundled-manifest.json';
+const BUNDLED_PI_MANIFEST_FILE = '.pi-n-bundled-manifest.json';
 
 // Fail before the expensive Pi copy when an existing checkout needs npm ci.
 verifyBundledExtensions(root);
@@ -43,7 +43,7 @@ async function computeCacheKey(input, { verifyCachedDeps = false } = {}) {
         items.push({ type: 'dir', name });
         try {
           for (const child of readdirSync(path).sort()) {
-            if (child !== 'node_modules' && child !== '.git' && !child.startsWith('.grapher-masks-')) {
+            if (child !== 'node_modules' && child !== '.git' && !child.startsWith('.pi-n-masks-')) {
               collect(join(path, child), `${name}/${child}`);
             }
           }
@@ -64,7 +64,7 @@ async function computeCacheKey(input, { verifyCachedDeps = false } = {}) {
       items.push({ type: 'dir', name });
       const children = readdirSync(path, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       for (const child of children) {
-        if (child.name !== 'node_modules' && child.name !== '.git' && !child.name.startsWith('.grapher-masks-')) {
+        if (child.name !== 'node_modules' && child.name !== '.git' && !child.name.startsWith('.pi-n-masks-')) {
           collect(join(path, child.name), `${name}/${child.name}`, child);
         }
       }
@@ -78,7 +78,7 @@ async function computeCacheKey(input, { verifyCachedDeps = false } = {}) {
   for (const script of ['pi-baseline.mjs', 'pi-dependencies.mjs', 'bundled-extensions.mjs', 'cargo.mjs', 'model-data-manifest.mjs', 'prepare-native-runtime.mjs']) collect(join(input, 'scripts', script), `scripts/${script}`);
   for (const name of bundledExtensionNames) collect(join(input, 'node_modules', name), `node_modules/${name}`);
 
-  const hash = createHash('sha256').update(`grapher-native-runtime-v2:${process.platform}:${process.arch}:${process.versions.modules}\n`);
+  const hash = createHash('sha256').update(`pi-n-native-runtime-v2:${process.platform}:${process.arch}:${process.versions.modules}\n`);
   const BATCH = 32;
   for (let offset = 0; offset < items.length; offset += BATCH) {
     const slice = items.slice(offset, offset + BATCH);
@@ -132,22 +132,22 @@ if (process.argv[2] === '--cache-key-session') {
   process.exit(0);
 }
 
-const runtimeParent = process.env.GRAPHER_NATIVE_RUNTIME_PARENT
-  ? resolve(process.env.GRAPHER_NATIVE_RUNTIME_PARENT)
+const runtimeParent = process.env.PI_N_NATIVE_RUNTIME_PARENT
+  ? resolve(process.env.PI_N_NATIVE_RUNTIME_PARENT)
   : tmpdir();
 mkdirSync(runtimeParent, { recursive: true });
 // The backend creates and leases its destination before starting this copy.
 // Standalone verification/tests retain the temporary-directory behavior.
-const destination = process.env.GRAPHER_NATIVE_RUNTIME_DIR
-  ? resolve(process.env.GRAPHER_NATIVE_RUNTIME_DIR)
-  : mkdtempSync(join(runtimeParent, 'grapher-native-engine-'));
-if (process.env.GRAPHER_NATIVE_RUNTIME_DIR) {
+const destination = process.env.PI_N_NATIVE_RUNTIME_DIR
+  ? resolve(process.env.PI_N_NATIVE_RUNTIME_DIR)
+  : mkdtempSync(join(runtimeParent, 'pi-n-native-engine-'));
+if (process.env.PI_N_NATIVE_RUNTIME_DIR) {
   // Do not let a misconfigured environment turn the failure cleanup below
   // into recursive deletion of the source or an existing engine installation.
-  if (!/^grapher-native-engine-[0-9a-f-]{36}$/i.test(basename(destination))
+  if (!/^pi-n-native-engine-[0-9a-f-]{36}$/i.test(basename(destination))
     || realpathSync.native(dirname(destination)) !== realpathSync.native(runtimeParent)
     || !lstatSync(destination).isDirectory() || lstatSync(destination).isSymbolicLink()
-    || readdirSync(destination).some(name => !['runtime.lock', '.grapher-native-runtime.json'].includes(name))) {
+    || readdirSync(destination).some(name => !['runtime.lock', '.pi-n-native-runtime.json'].includes(name))) {
     throw new Error('Native runtime destination must be an empty, leased child of its runtime parent');
   }
 }
@@ -167,7 +167,7 @@ try {
     filter: process.platform === 'win32' ? () => true : undefined,
   };
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  const gitExecutable = process.env.GRAPHER_TRUSTED_GIT || 'git';
+  const gitExecutable = process.env.PI_N_TRUSTED_GIT || 'git';
   const usesBundledManifest = !existsSync(join(source, '.git')) && existsSync(join(source, BUNDLED_PI_MANIFEST_FILE));
   if (usesBundledManifest) {
     // Bundled desktop runtimes omit .git and verify against their sealed SHA-256 manifest.

@@ -71,7 +71,7 @@ export function composePlanningOutput(ids: string[], segments: ReadonlyMap<strin
   return ids.flatMap(planningId => {
     const window = segments.get(planningId);
     if (!window) return [];
-    const marker = JSON.stringify({ type: "grapher_planning_source", planningId, startOffset: window.start });
+    const marker = JSON.stringify({ type: "pi_n_planning_source", planningId, startOffset: window.start });
     return [`${marker}\n${renderTranscriptWindow(window)}`];
   }).join("\n");
 }

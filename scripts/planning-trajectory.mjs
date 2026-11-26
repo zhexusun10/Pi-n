@@ -9,8 +9,8 @@ const reports = files.map(file => {
   const events = fs.readFileSync(file, 'utf8').split('\n').flatMap(line => {
     try { return [JSON.parse(line)]; } catch { return []; }
   });
-  const start = events.find(e => e.type === 'grapher_process_started');
-  const end = events.findLast(e => e.type === 'grapher_process_exited');
+  const start = events.find(e => e.type === 'pi_n_process_started');
+  const end = events.findLast(e => e.type === 'pi_n_process_exited');
   const origin = start?.timestamp;
   const pending = new Map();
   const calls = [];
@@ -23,7 +23,7 @@ const reports = files.map(file => {
   let firstAssistantAt = null;
   const usage = {};
   for (const e of events) {
-    const at = e.grapherReceivedAt ?? e.timestamp;
+    const at = e.piNReceivedAt ?? e.timestamp;
     if (firstAssistantAt === null && ['message_update', 'message_end'].includes(e.type) && e.message?.role !== 'user') firstAssistantAt = at;
     if (e.type === 'tool_execution_start') {
       const call = { id: e.toolCallId, name: e.toolName, startMs: at - origin, endMs: null, durationMs: null, isError: null, args: e.args };

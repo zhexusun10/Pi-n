@@ -132,14 +132,14 @@ fn merger_continuation_external_attachment_never_touches_project_files() {
             crate::attachment_inputs::store(&root, Some(&run), &attachment, "input.txt", b"content")
                 .unwrap();
         let display = crate::attachment_inputs::display_path(&stored);
-        // Even if the user has a file literally named `grapher-attachments`,
+        // Even if the user has a file literally named `pi-n-attachments`,
         // external attachments never touch the project directory.
-        fs::write(source.join("grapher-attachments"), b"existing user file").unwrap();
+        fs::write(source.join("pi-n-attachments"), b"existing user file").unwrap();
         let snapshot = continue_with(&service, &run, &previous, format!("Read @{display}"))
             .unwrap();
         assert!(!snapshot.mergers.is_empty());
         assert_eq!(
-            fs::read(source.join("grapher-attachments")).unwrap(),
+            fs::read(source.join("pi-n-attachments")).unwrap(),
             b"existing user file"
         );
         assert_eq!(fs::read(&stored).unwrap(), b"content");
@@ -231,7 +231,7 @@ fn merger_continuation_stale_or_duplicate_completion_does_not_revive_nodes() {
 #[test]
 fn merger_continuation_worker_start_failure_is_terminal_after_restart() {
     let (_temp, service, run, previous, _source) =
-        setup_with_command("merge:task", "grapher-nonexistent-fixture-process");
+        setup_with_command("merge:task", "pi-n-nonexistent-fixture-process");
     let root = service.runtime.lock().unwrap().root.clone();
     continue_with(&service, &run, &previous, "repair".into()).unwrap();
     wait_for_worker(&service);

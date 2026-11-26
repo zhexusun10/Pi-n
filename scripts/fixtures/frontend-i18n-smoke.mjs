@@ -7,7 +7,7 @@ import { createServer } from "vite";
 // A fresh process models a fresh page load, including module-level status labels.
 const language = process.argv[2];
 const preference = process.argv[3] || "auto";
-const stored = new Map(preference === "auto" ? [] : [["grapher_language_v1", preference]]);
+const stored = new Map(preference === "auto" ? [] : [["pi_n_language_v1", preference]]);
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: {
@@ -96,12 +96,13 @@ try {
     if (locale === "en") assert.doesNotMatch(html, /\p{Script=Han}/u, `${name} has untranslated UI copy`);
     if (name === "SettingsModal") {
       assert.ok(html.includes("Settings"));
-      assert.ok(html.includes(`>${locale === "en" ? "Provider configuration" : "Provider配置"}</h4>`));
+      assert.ok(html.includes(`>${locale === "en" ? "Provider authentication" : "Provider 认证"}</h5>`));
+      assert.ok(!html.includes("Provider配置") && !html.includes("Provider configuration"));
       assert.ok(html.includes(`>${locale === "en" ? "Model configuration" : "模型配置"}</h4>`));
-      assert.ok(html.includes(`>${locale === "en" ? "Harness settings" : "Harness设置"}</h4>`));
+      assert.ok(html.includes(`>${locale === "en" ? "Compile mode settings" : "Compile模式设置"}</h4>`));
       assert.ok(html.includes(`>${locale === "en" ? "UI settings" : "UI设置"}</h4>`));
       assert.ok(html.includes(`>${locale === "en" ? "Desktop settings" : "桌面设置"}</h4>`));
-      assert.ok(html.includes(t("登录时自动启动仅在 Grapher 桌面端（macOS / Windows）中可用。浏览器模式不会修改系统启动项。")));
+      assert.ok(html.includes(t("开机自启动仅在 Pi^n 桌面端（macOS / Windows）中可用。")));
       assert.ok(html.includes(t("界面语言")));
       assert.ok(html.includes(`value="${preference}" selected=""`));
       assert.ok(!html.includes('role="alertdialog"'), "confirmation is not shown before a language change");
@@ -116,7 +117,7 @@ try {
       assert.match(copy, locale === "en" ? /private source snapshot/i : /私有源快照/);
       assert.match(copy, locale === "en" ? /does not stage, commit, move your branch, or replace your index/i : /不会暂存、提交或移动你的分支与索引/);
       assert.match(copy, locale === "en" ? /without creating a commit/i : /不创建提交/);
-      assert.match(copy, locale === "en" ? /Git\/Grapher internals are excluded/i : /Git\/Grapher 内部文件除外/);
+      assert.match(copy, locale === "en" ? /Git\/Pi\^n internals are excluded/i : /Git\/Pi\^n 内部文件除外/);
     }
     if (name === "Sidebar") assert.ok(html.includes(t("暂无工作区")));
     if (name === "GraphWorkbench") {

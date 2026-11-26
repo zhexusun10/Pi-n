@@ -1,6 +1,6 @@
 import { workspaceKey } from "./workspaceConversations";
 
-export const LANDING_GOAL_STORAGE_KEY = "grapher_landing_goal_drafts";
+export const LANDING_GOAL_STORAGE_KEY = "pi_n_landing_goal_drafts";
 
 export function landingDraftKey(repository?: string): string {
   return repository ? workspaceKey(repository) : "__unbound__";

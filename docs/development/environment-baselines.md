@@ -23,19 +23,19 @@ large application or arbitrary venv/Conda relocation test.
 
 Optional environment variables:
 
-- `GRAPHER_ENV_PROBE_PROJECTS=node,python,cargo`: explicit subset for focused
+- `PI_N_ENV_PROBE_PROJECTS=node,python,cargo`: explicit subset for focused
   checks; omitted profiles are not validated.
-- `GRAPHER_ENV_PROBE_FILES=128`: 1–4096 distinct roughly 4-KiB Node dependency
+- `PI_N_ENV_PROBE_FILES=128`: 1–4096 distinct roughly 4-KiB Node dependency
   payloads. Compare separate runs/sizes; there are no timing thresholds.
-- `GRAPHER_ENV_TEST_PARENT`: short disposable parent, particularly on Windows.
-- `GRAPHER_ENV_PROBE_REPORT`: **new** JSON report path; refuses to overwrite an
+- `PI_N_ENV_TEST_PARENT`: short disposable parent, particularly on Windows.
+- `PI_N_ENV_PROBE_REPORT`: **new** JSON report path; refuses to overwrite an
   existing report. Reports contain local paths/interpreter identities, not an
   environment-variable or HOME inventory. Keep machine reports in CI artifacts,
   not versioned per-run diaries.
-- `GRAPHER_ENV_PROBE_UV`: optional explicit installed uv executable. Otherwise
+- `PI_N_ENV_PROBE_UV`: optional explicit installed uv executable. Otherwise
   checks PATH for uv. An invalid explicit executable fails. Missing uv is
   recorded as **NOT RUN**, not replaced by a passing Python invocation.
-- `GRAPHER_ENV_PROBE_REQUIRE_UV=1`: requires the Python profile and real uv
+- `PI_N_ENV_PROBE_REQUIRE_UV=1`: requires the Python profile and real uv
   coverage. CI provisions pinned uv explicitly and uses this setting.
 
 | Profile | Actual execution and evidence |
@@ -150,7 +150,7 @@ Test-runner `CARGO_TARGET_DIR` cannot redirect the source fixture's owned output
 A future Runtime implementation must separate necessary read-only discovery inputs,
 private writable state, rebuildable caches and transient credential helpers,
 without another parent/environment selector, a language-name admission table,
-or project-specific Grapher setup. The original business commands must remain
+or project-specific Pi^n setup. The original business commands must remain
 unchanged. Neither declarations nor byte queries prove compatibility. Generic
 source-HOME discovery is not implemented. Cross-layout rebuilding of an existing
 fixed-layout private environment is an explicit non-goal, not a remaining Runtime
@@ -247,7 +247,7 @@ view. These synthetic storage distributions are not actual environment reuse or
 native sandbox acceptance. The real Python profile above supplies independent
 venv/package/bytecode/rebuild evidence.
 
-`GRAPHER_ENV_SEAL_PROBE_REPORT` optionally names a **new** JSON report (existing
+`PI_N_ENV_SEAL_PROBE_REPORT` optionally names a **new** JSON report (existing
 paths are refused). Reports contain the individual samples, not a timing pass
 threshold. The comparison uses warm caches and Cargo's test profile; it does not
 measure allocated/unique physical blocks, child-process/host-wide resources or

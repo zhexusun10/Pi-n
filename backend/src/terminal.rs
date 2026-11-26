@@ -20,8 +20,8 @@ use std::{
     },
 };
 
-pub const DESKTOP_TERMINAL_OUTPUT_EVENT: &str = "grapher://terminal-output";
-pub const DESKTOP_TERMINAL_EXIT_EVENT: &str = "grapher://terminal-exit";
+pub const DESKTOP_TERMINAL_OUTPUT_EVENT: &str = "pi-n://terminal-output";
+pub const DESKTOP_TERMINAL_EXIT_EVENT: &str = "pi-n://terminal-exit";
 
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
@@ -35,7 +35,7 @@ const MAX_TERMINAL_SESSIONS: usize = 32;
 
 fn is_internal_control_env_key(key: &str) -> bool {
     let upper = key.to_ascii_uppercase();
-    upper.starts_with("GRAPHER_")
+    upper.starts_with("PI_N_")
         || matches!(
             upper.as_str(),
             "PI_SESSION_FILE"
@@ -257,7 +257,7 @@ impl TerminalManager {
         cmd.cwd(&cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-        cmd.env("GRAPHER_TERMINAL", "1");
+        cmd.env("PI_N_TERMINAL", "1");
         #[cfg(unix)]
         if std::env::var_os("LANG").is_none() {
             cmd.env("LANG", "en_US.UTF-8");
@@ -281,7 +281,7 @@ impl TerminalManager {
         let writer_killed = Arc::clone(&killed);
         let writer_exited = Arc::clone(&child_exited);
         if let Err(error) = std::thread::Builder::new()
-            .name("grapher-pty-write".into())
+            .name("pi-n-pty-write".into())
             .spawn(move || {
                 while let Ok(bytes) = input_rx.recv() {
                     let mut offset = 0;
@@ -347,7 +347,7 @@ impl TerminalManager {
         let output_session_id = session_id.clone();
         let output_sink = Arc::clone(&sink);
         let reader_thread = std::thread::Builder::new()
-            .name(format!("grapher-pty-read-{}", &session_id[..8]))
+            .name(format!("pi-n-pty-read-{}", &session_id[..8]))
             .spawn(move || {
                 let mut buf = [0u8; READ_CHUNK_BYTES];
                 #[cfg(unix)]
@@ -425,7 +425,7 @@ impl TerminalManager {
         let wait_session_ref = Arc::clone(&session);
         let wait_sink = sink;
         let waiter_thread = std::thread::Builder::new()
-            .name(format!("grapher-pty-wait-{}", &session_id[..8]))
+            .name(format!("pi-n-pty-wait-{}", &session_id[..8]))
             .spawn(move || {
                 let exit_code = match child.wait() {
                     Ok(status) => Some(status.exit_code() as i32),
@@ -798,7 +798,7 @@ mod tests {
             .resize_session(&info.session_id, 110, 32)
             .expect("resize PTY");
         manager
-            .write_session(&info.session_id, "echo GRAPHER_PTY_PROBE\r")
+            .write_session(&info.session_id, "echo PI_N_PTY_PROBE\r")
             .expect("write command");
 
         let deadline = Instant::now() + Duration::from_secs(8);
@@ -812,7 +812,7 @@ mod tests {
                 .filter(|event| event.session_id == info.session_id)
                 .flat_map(|event| decode_base64_for_test(&event.data))
                 .collect();
-            if String::from_utf8_lossy(&combined).contains("GRAPHER_PTY_PROBE") {
+            if String::from_utf8_lossy(&combined).contains("PI_N_PTY_PROBE") {
                 saw_marker = true;
                 break;
             }
@@ -842,7 +842,7 @@ mod tests {
             .unwrap();
         prepare_test_terminal(&manager, &sink, &info);
         manager
-            .write_session(&info.session_id, "echo GRAPHER_FINAL_OUTPUT\rexit\r")
+            .write_session(&info.session_id, "echo PI_N_FINAL_OUTPUT\rexit\r")
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(8);
         while sink.exits.lock().unwrap().is_empty() {
@@ -859,7 +859,7 @@ mod tests {
             .iter()
             .flat_map(|e| decode_base64_for_test(&e.data))
             .collect();
-        assert!(String::from_utf8_lossy(&output).contains("GRAPHER_FINAL_OUTPUT"));
+        assert!(String::from_utf8_lossy(&output).contains("PI_N_FINAL_OUTPUT"));
         assert_eq!(manager.active_count(), 0);
     }
 

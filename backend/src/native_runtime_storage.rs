@@ -10,8 +10,8 @@ use std::{
 };
 use uuid::Uuid;
 
-const PREFIX: &str = "grapher-native-engine-";
-const MARKER: &str = ".grapher-native-runtime.json";
+const PREFIX: &str = "pi-n-native-engine-";
+const MARKER: &str = ".pi-n-native-runtime.json";
 const LEASE: &str = "runtime.lock";
 
 fn runtime_name(name: &str) -> bool {
@@ -205,7 +205,7 @@ pub(crate) fn create(parent: &Path) -> Result<NativeRuntime, String> {
         let lease = acquire(&directory)?;
         fs::write(
             directory.join(MARKER),
-            r#"{"kind":"grapher-native-runtime","version":1}"#,
+            r#"{"kind":"pi-n-native-runtime","version":1}"#,
         )
         .map_err(|error| error.to_string())?;
         Ok(NativeRuntime {
@@ -218,7 +218,7 @@ pub(crate) fn create(parent: &Path) -> Result<NativeRuntime, String> {
     if result.is_err() {
         if let Err(error) = fs::remove_dir_all(&directory) {
             eprintln!(
-                "[Grapher] Cannot remove failed runtime allocation {}: {error}",
+                "[Pi^n] Cannot remove failed runtime allocation {}: {error}",
                 directory.display()
             );
         }
@@ -242,11 +242,11 @@ impl Preparation {
     }
     fn commit_shared(mut self, key: &str) -> Result<NativeRuntime, String> {
         let runtime = self.0.as_mut().expect("uncommitted preparation");
-        let marker = runtime.directory.join(".grapher-native-runtime.tmp");
+        let marker = runtime.directory.join(".pi-n-native-runtime.tmp");
         fs::write(
             &marker,
             serde_json::to_vec(&serde_json::json!({
-                "kind": "grapher-native-runtime", "version": 2, "ready": true, "cacheKey": key,
+                "kind": "pi-n-native-runtime", "version": 2, "ready": true, "cacheKey": key,
             }))
             .map_err(|error| error.to_string())?,
         )
@@ -267,7 +267,7 @@ impl Drop for Preparation {
     fn drop(&mut self) {
         if let Some(runtime) = self.0.take() {
             if let Err(error) = remove(&runtime) {
-                eprintln!("[Grapher] {error}");
+                eprintln!("[Pi^n] {error}");
             }
         }
     }
@@ -322,7 +322,7 @@ fn unused_locked(parent: &Path, keep_key: Option<&str>) -> Result<Vec<NativeRunt
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
             let Some(value) = value.filter(|value| {
-                value["kind"] == "grapher-native-runtime"
+                value["kind"] == "pi-n-native-runtime"
                     && matches!(value["version"].as_u64(), Some(1 | 2))
             }) else {
                 continue;
@@ -381,7 +381,7 @@ pub(crate) fn get_or_prepare_verified(
     // Reap failed/old preparations and obsolete versions, never live readers.
     for copy in unused_locked(&parent, Some(key))? {
         if let Err(error) = remove(&copy) {
-            eprintln!("[Grapher] {error}");
+            eprintln!("[Pi^n] {error}");
         }
     }
     for entry in fs::read_dir(&parent).map_err(|error| error.to_string())? {
@@ -400,7 +400,7 @@ pub(crate) fn get_or_prepare_verified(
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
         if !value.is_some_and(|value| {
-            value["kind"] == "grapher-native-runtime"
+            value["kind"] == "pi-n-native-runtime"
                 && value["version"] == 2
                 && value["ready"] == true
                 && value["cacheKey"].as_str() == Some(key)
@@ -530,7 +530,7 @@ pub(crate) fn remove(runtime: &NativeRuntime) -> Result<(), String> {
             if runtime.directory.is_dir() && !runtime.directory.join(MARKER).exists() {
                 let _ = fs::write(
                     runtime.directory.join(MARKER),
-                    r#"{"kind":"grapher-native-runtime","version":1}"#,
+                    r#"{"kind":"pi-n-native-runtime","version":1}"#,
                 );
             }
             Err(format!(
@@ -760,7 +760,7 @@ mod tests {
         fs::create_dir_all(stale_path.join("pi/node_modules/dependency")).unwrap();
         fs::write(stale_path.join("pi/node_modules/dependency/file"), "copy").unwrap();
         drop(stale);
-        let unknown = parent.join("grapher-native-engine-unknown");
+        let unknown = parent.join("pi-n-native-engine-unknown");
         fs::create_dir(&unknown).unwrap();
         let candidates = unused(&parent).unwrap();
         assert_eq!(candidates.len(), 1);
@@ -831,7 +831,7 @@ mod tests {
     #[test]
     fn unmarked_engines_are_preserved_even_with_a_complete_layout() {
         let temp = tempfile::tempdir().unwrap();
-        let legacy = temp.path().join("grapher-native-engine-old");
+        let legacy = temp.path().join("pi-n-native-engine-old");
         for path in ["engine", "scripts", "pi/.git"] {
             fs::create_dir_all(legacy.join(path)).unwrap();
         }
@@ -842,7 +842,7 @@ mod tests {
         ] {
             fs::write(legacy.join(path), "fixture").unwrap();
         }
-        let unknown = temp.path().join("grapher-native-engine-userdata");
+        let unknown = temp.path().join("pi-n-native-engine-userdata");
         fs::create_dir(&unknown).unwrap();
         assert!(unused(temp.path()).unwrap().is_empty());
         assert!(legacy.exists());

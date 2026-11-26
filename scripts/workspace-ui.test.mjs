@@ -62,7 +62,7 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
   };
   const empty = { ...makeSnapshot("", repositoryA, ""), config: null, phase: "draft" };
   const info = repository => ({ path: repository, name: repository.includes("Beta") ? "Beta" : "Alpha", branch: "main", head: "", clean: true });
-  const bootstrap = { config, snapshot: empty, runs: ["run-a", "run-b"], conversations: fixtureSummaries([snapshots["run-a"], snapshots["run-b"]]), repositoryInfo: info(repositoryA), dataPath: "/mock/.grapher" };
+  const bootstrap = { config, snapshot: empty, runs: ["run-a", "run-b"], conversations: fixtureSummaries([snapshots["run-a"], snapshots["run-b"]]), repositoryInfo: info(repositoryA), dataPath: "/mock/.pi-n" };
   const errors = [];
   let releasePlanning;
   let planningRequested = false;
@@ -72,22 +72,22 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
   try {
     await server.listen();
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, locale: "en-US", reducedMotion: "no-preference" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([
         { id: repositoryA, path: repositoryA, name: "Alpha", branch: "main", clean: true, lastOpened: 2 },
         { id: repositoryB, path: repositoryB, name: "Beta", branch: "main", clean: true, lastOpened: 1 },
       ]));
       // Unversioned hints are ignored; the current index supplies ownership.
-      localStorage.setItem("grapher_workspace_runs", JSON.stringify({
+      localStorage.setItem("pi_n_workspace_runs", JSON.stringify({
         [repositoryA]: ["run-a", "run-b", "pending-stale"],
         [repositoryB]: ["run-b", "run-a"],
         "\\\\?\\C:\\Projects\\Alpha": ["run-a"],
       }));
-      localStorage.setItem("grapher_run_labels", JSON.stringify({ "run-a": "Alpha conversation", "run-b": "Beta conversation" }));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_run_labels", JSON.stringify({ "run-a": "Alpha conversation", "run-b": "Beta conversation" }));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repositoryA, repositoryB, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -126,7 +126,7 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
     page.on("pageerror", error => errors.push(String(error)));
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.waitForFunction(() => {
-      const index = JSON.parse(localStorage.getItem("grapher-format-1:/mock/.grapher:grapher_workspace_runs"));
+      const index = JSON.parse(localStorage.getItem("pi-n-format-1:/mock/.pi-n:pi_n_workspace_runs"));
       return index?.["c:/projects/alpha"]?.join() === "run-a" && index?.["c:/projects/beta"]?.join() === "run-b";
     });
     assert.deepEqual(await page.locator(".runs-list [data-run-id]").evaluateAll(cards => cards.map(card => card.dataset.runId)), ["run-a"]);
@@ -331,7 +331,7 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
     assert.equal(await page.locator(".run-item.chosen").count(), 0);
     await page.locator('[data-run-id="run-b"]').waitFor();
     assert.equal(await page.locator('.runs-list [data-run-id="run-a"]').count(), 0);
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock/.grapher:grapher_workspace_runs"))), {
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock/.pi-n:pi_n_workspace_runs"))), {
       "c:/projects/alpha": ["run-a"], "c:/projects/beta": ["run-b"],
     });
 
@@ -360,7 +360,7 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
     await page.locator('[data-run-id="run-b"]').click();
     await page.locator(".chat-messages-stream", { hasText: "Beta conversation" }).waitFor();
     releasePlanning();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock/.grapher:grapher_workspace_runs"))["c:/projects/alpha"]?.includes("new-a"));
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock/.pi-n:pi_n_workspace_runs"))["c:/projects/alpha"]?.includes("new-a"));
     assert.deepEqual(await page.locator(".runs-list [data-run-id]").evaluateAll(cards => cards.map(card => card.dataset.runId)), ["run-b"]);
     assert.ok((await page.locator(".chat-messages-stream").innerText()).includes("Beta conversation"));
     assert.ok(!(await page.locator(".chat-messages-stream").innerText()).includes("Detached Alpha"));
@@ -399,20 +399,20 @@ test("workspace removal commits backend deletion before pruning indexes and surv
   try {
     await server.listen();
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ locale: "en-US", reducedMotion: "no-preference" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
       if (localStorage.getItem("deletion-fixture-seeded")) return;
       localStorage.setItem("deletion-fixture-seeded", "true");
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([
         { id: repositoryA, path: repositoryA, name: "Alpha", branch: "main", clean: true, lastOpened: 2 },
         { id: repositoryB, path: repositoryB, name: "Beta", branch: "main", clean: true, lastOpened: 1 },
       ]));
-      localStorage.setItem("grapher_workspace_runs", JSON.stringify({ [repositoryA]: ["run-a"], [repositoryB]: ["run-b"] }));
-      localStorage.setItem("grapher_run_labels", JSON.stringify({ "run-a": "Alpha conversation", "run-b": "Beta conversation", "server-only-a": "old hidden label" }));
-      localStorage.setItem("grapher_run_modes", JSON.stringify({ "run-a": "graph", "run-b": "graph", "server-only-a": "graph" }));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_workspace_runs", JSON.stringify({ [repositoryA]: ["run-a"], [repositoryB]: ["run-b"] }));
+      localStorage.setItem("pi_n_run_labels", JSON.stringify({ "run-a": "Alpha conversation", "run-b": "Beta conversation", "server-only-a": "old hidden label" }));
+      localStorage.setItem("pi_n_run_modes", JSON.stringify({ "run-a": "graph", "run-b": "graph", "server-only-a": "graph" }));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repositoryA, repositoryB, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -422,7 +422,7 @@ test("workspace removal commits backend deletion before pruning indexes and surv
         case "bootstrap": case "save_config":
           // Keep a stale backend default after removing the final entry: an
           // explicitly empty browser workspace list must not be repopulated.
-          result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo: info(repositoryA), dataPath: "/mock/.grapher" }; break;
+          result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo: info(repositoryA), dataPath: "/mock/.pi-n" }; break;
         case "get_file_changes": result = fixtureFileChanges(body); break;
         case "extension_command": result = { instance: "standalone", commands: [] }; break;
         case "load_run": case "history": case "snapshot": result = snapshots[body.runId] || empty; break;
@@ -479,13 +479,13 @@ test("workspace removal commits backend deletion before pruning indexes and surv
     await page.locator('[data-run-id="run-b"]').click();
     await page.locator(".chat-messages-stream", { hasText: "Beta conversation" }).waitFor();
     releaseDeletion();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem("grapher_projects")).length === 1);
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("pi_n_projects")).length === 1);
     assert.ok((await page.locator(".chat-messages-stream").innerText()).includes("Beta conversation"));
-    for (const key of ["grapher-format-1:/mock/.grapher:grapher_run_labels", "grapher-format-1:/mock/.grapher:grapher_run_modes"]) {
+    for (const key of ["pi-n-format-1:/mock/.pi-n:pi_n_run_labels", "pi-n-format-1:/mock/.pi-n:pi_n_run_modes"]) {
       const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
       assert.deepEqual(Object.keys(saved), ["run-b"]);
     }
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock/.grapher:grapher_workspace_runs"))), { "c:/projects/beta": ["run-b"] });
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock/.pi-n:pi_n_workspace_runs"))), { "c:/projects/beta": ["run-b"] });
     await page.evaluate(() => {
       window.workspaceScrollbarFrames = [];
       window.sampleWorkspaceScrollbar = true;
@@ -503,7 +503,7 @@ test("workspace removal commits backend deletion before pruning indexes and surv
       requestAnimationFrame(sample);
     });
     await remove("Beta");
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem("grapher_projects")).length === 0);
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("pi_n_projects")).length === 0);
     await page.waitForTimeout(300);
     const workspaceScrollbarFrames = await page.evaluate(() => {
       window.sampleWorkspaceScrollbar = false;
@@ -515,7 +515,7 @@ test("workspace removal commits backend deletion before pruning indexes and surv
     await page.reload({ waitUntil: "networkidle" });
     assert.equal(await page.locator(".project-workspace-item").count(), 0);
     assert.equal(await page.locator(".runs-list [data-run-id]").count(), 0);
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock/.grapher:grapher_workspace_runs"))), {});
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock/.pi-n:pi_n_workspace_runs"))), {});
     assert.deepEqual(errors, []);
   } finally {
     releaseDeletion();
@@ -541,12 +541,12 @@ test("workspace size warning appears after background Run completion and stays d
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Alpha", lastOpened: 1 }]));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Alpha", lastOpened: 1 }]));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repository, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -554,7 +554,7 @@ test("workspace size warning appears after background Run completion and stays d
       const finished = state.phase === "completed";
       let result;
       switch (command) {
-        case "bootstrap": result = { config, snapshot: state, runs: [state.runId], conversations: fixtureSummaries([state]), repositoryInfo: info, dataPath: "/mock/.grapher" }; break;
+        case "bootstrap": result = { config, snapshot: state, runs: [state.runId], conversations: fixtureSummaries([state]), repositoryInfo: info, dataPath: "/mock/.pi-n" }; break;
         case "get_file_changes": result = fixtureFileChanges(body); break;
         case "extension_command": result = { instance: "standalone", commands: [] }; break;
         case "load_run": case "snapshot": case "history": result = state; break;
@@ -623,18 +623,18 @@ test("removing active workspace returns to home landing page instead of switchin
   try {
     await server.listen();
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([
         { id: repositoryA, path: repositoryA, name: "Alpha", branch: "main", clean: true, lastOpened: 2 },
         { id: repositoryB, path: repositoryB, name: "Beta", branch: "main", clean: true, lastOpened: 1 },
       ]));
-      localStorage.setItem("grapher_workspace_runs", JSON.stringify({ [repositoryA]: ["run-a"], [repositoryB]: ["run-b"] }));
-      localStorage.setItem("grapher_run_labels", JSON.stringify({ "run-a": "Alpha conversation", "run-b": "Beta conversation" }));
-      localStorage.setItem("grapher_run_modes", JSON.stringify({ "run-a": "graph", "run-b": "graph" }));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_workspace_runs", JSON.stringify({ [repositoryA]: ["run-a"], [repositoryB]: ["run-b"] }));
+      localStorage.setItem("pi_n_run_labels", JSON.stringify({ "run-a": "Alpha conversation", "run-b": "Beta conversation" }));
+      localStorage.setItem("pi_n_run_modes", JSON.stringify({ "run-a": "graph", "run-b": "graph" }));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repositoryA, repositoryB, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -642,7 +642,7 @@ test("removing active workspace returns to home landing page instead of switchin
       let result;
       switch (command) {
         case "bootstrap": case "save_config":
-          result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo: info(repositoryA), dataPath: "/mock/.grapher" }; break;
+          result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo: info(repositoryA), dataPath: "/mock/.pi-n" }; break;
         case "get_file_changes": result = fixtureFileChanges(body); break;
         case "extension_command": result = { instance: "standalone", commands: [] }; break;
         case "load_run": case "history": case "snapshot": result = snapshots[body.runId] || empty; break;
@@ -686,8 +686,8 @@ test("removing active workspace returns to home landing page instead of switchin
     await page.waitForFunction(() => document.querySelectorAll(".project-workspace-item").length === 1);
     assert.equal(await page.locator(".project-workspace-item").count(), 1);
     assert.equal(await page.locator(".project-workspace-item.active").count(), 0);
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher_projects")).map(p => p.name)), ["Beta"]);
-    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("grapher-format-1:/mock/.grapher:grapher_config")).repository), "");
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi_n_projects")).map(p => p.name)), ["Beta"]);
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock/.pi-n:pi_n_config")).repository), "");
 
     // Switching to Beta still starts at home; the user opens its conversation explicitly.
     await page.locator(".project-workspace-item", { hasText: "Beta" }).click();
@@ -726,24 +726,24 @@ test("home composer accepts dragged image attachments and preserves them across 
   try {
     await server.listen();
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([
         { id: repositoryA, path: repositoryA, name: "Alpha", branch: "main", clean: true, lastOpened: 2 },
         { id: repositoryB, path: repositoryB, name: "Beta", branch: "main", clean: true, lastOpened: 1 },
       ]));
-      localStorage.setItem("grapher_workspace_runs", JSON.stringify({
+      localStorage.setItem("pi_n_workspace_runs", JSON.stringify({
         [repositoryA]: ["run-a"],
         [repositoryB]: ["run-b"],
       }));
-      localStorage.setItem("grapher_run_labels", JSON.stringify({
+      localStorage.setItem("pi_n_run_labels", JSON.stringify({
         "run-a": "Alpha history conversation",
         "run-b": "Beta history conversation",
       }));
-      localStorage.setItem("grapher_run_modes", JSON.stringify({ "run-a": "graph", "run-b": "graph" }));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_run_modes", JSON.stringify({ "run-a": "graph", "run-b": "graph" }));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repositoryA, repositoryB, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -751,7 +751,7 @@ test("home composer accepts dragged image attachments and preserves them across 
       let result;
       switch (command) {
         case "bootstrap": case "save_config":
-          result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo: info(repositoryA), dataPath: "/mock/.grapher" }; break;
+          result = { config, snapshot: empty, runs: Object.keys(snapshots), conversations: fixtureSummaries(Object.values(snapshots)), repositoryInfo: info(repositoryA), dataPath: "/mock/.pi-n" }; break;
         case "get_file_changes": result = fixtureFileChanges(body); break;
         case "extension_command": result = { instance: "standalone", commands: [] }; break;
         case "load_run": case "history": case "snapshot": result = snapshots[body.runId] || empty; break;

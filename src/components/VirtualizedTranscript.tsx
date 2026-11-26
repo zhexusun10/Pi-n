@@ -132,7 +132,7 @@ function getScrollParent(node: HTMLElement | null): HTMLElement | null {
   return getScrollParent(node.parentElement);
 }
 
-const PLANNING_MARKER_PREFIX = '{"type":"grapher_planning_source"';
+const PLANNING_MARKER_PREFIX = '{"type":"pi_n_planning_source"';
 
 interface PlanningSegment { source: string; startOffset: number; text: string; }
 
@@ -169,7 +169,7 @@ function freshSegmentState(segment: PlanningSegment): SegmentParseState {
 }
 
 /** Split a composed planning transcript into per-revision segments. The
- * composition always opens with a grapher_planning_source marker line and
+ * composition always opens with a pi_n_planning_source marker line and
  * every further marker starts its own line; content lines between markers
  * belong to the preceding revision. Returns null for non-composed output. */
 function splitPlanningSegments(output: string): PlanningSegment[] | null {
@@ -189,7 +189,7 @@ function splitPlanningSegments(output: string): PlanningSegment[] | null {
       let startOffset = 0;
       try {
         const marker = JSON.parse(line);
-        if (marker?.type === "grapher_planning_source") {
+        if (marker?.type === "pi_n_planning_source") {
           if (typeof marker.planningId === "string" && marker.planningId) source = marker.planningId;
           if (typeof marker.startOffset === "number") startOffset = marker.startOffset;
         }

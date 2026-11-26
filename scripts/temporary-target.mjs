@@ -7,14 +7,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const markerName = '.grapher-temporary-target.json';
+const markerName = '.pi-n-temporary-target.json';
 
 export async function createTemporaryTarget({ env = process.env, parent = tmpdir(), warn = console.warn } = {}) {
   if (env.CARGO_TARGET_DIR) {
     const directory = resolve(env.CARGO_TARGET_DIR);
     return { directory, owned: false, env: { ...env, CARGO_TARGET_DIR: directory }, cleanup: async () => true };
   }
-  const directory = await mkdtemp(join(await realpath(parent), 'grapher-rust-'));
+  const directory = await mkdtemp(join(await realpath(parent), 'pi-n-rust-'));
   const canonical = await realpath(directory);
   const marker = join(directory, markerName);
   const identity = { version: 1, owner: randomUUID() };

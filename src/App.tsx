@@ -406,8 +406,8 @@ export default function App() {
             runLabelsRef.current[runId]
             || snapshot?.title
             || snapshot?.graph?.originalGoal
-            || "Grapher";
-          const title = formatNotificationBody(rawTitle, 80) || "Grapher";
+            || "Pi^n";
+          const title = formatNotificationBody(rawTitle, 80) || "Pi^n";
           await sendCompletionNotification({
             title,
             body: finalOutput || fallbackBody,
@@ -704,12 +704,12 @@ export default function App() {
   const [revertedPlannerSteers, setRevertedPlannerSteers] = useState<ReadonlySet<string>>(() => new Set());
   const planningAbortControllerRef = useRef<AbortController | null>(null);
 
-  // 规划路由模式选择：graph (默认，Planner跳过Partitioner) / serial (单Agent跳过Partitioner) / auto (Partitioner评估)
+  // 规划路由模式选择：serial (默认 Direct，单Agent跳过Partitioner) / graph (Compile，Planner跳过Partitioner) / auto (Partitioner评估)
   const [selectedPlanMode, setPlanMode] = useState<PlanMode>(() => {
     const saved = readStorageString(STORAGE_KEYS.planMode);
-    return saved === "serial" || saved === "graph" || saved === "auto" ? saved : "graph";
+    return saved === "serial" || saved === "graph" || saved === "auto" ? saved : "serial";
   });
-  const planMode = hideAutoMode && selectedPlanMode === "auto" ? "graph" : selectedPlanMode;
+  const planMode = hideAutoMode && selectedPlanMode === "auto" ? "serial" : selectedPlanMode;
 
   useEffect(() => {
     if (planMode === selectedPlanMode) return;
@@ -718,7 +718,7 @@ export default function App() {
   }, [planMode, selectedPlanMode]);
 
   const handlePlanModeChange = useCallback((mode: PlanMode) => {
-    const nextMode = hideAutoMode && mode === "auto" ? "graph" : mode;
+    const nextMode = hideAutoMode && mode === "auto" ? "serial" : mode;
     setPlanMode(nextMode);
     writeStorageString(STORAGE_KEYS.planMode, nextMode);
   }, [hideAutoMode]);
@@ -1748,8 +1748,8 @@ export default function App() {
     const shortId = runId.slice(0, 8);
     if (targetRouteType === "serial") {
       setConfirmModal({
-        title: t("删除 Serial 对话"),
-        message: t("确定删除 Serial 对话「Serial {0}」吗？", shortId),
+        title: t("删除 Direct 对话"),
+        message: t("确定删除 Direct 对话「Direct {0}」吗？", shortId),
         detail: t("对话 ID: {0}\n删除后该对话的消息历史与事件记录将被彻底清除，不会删除源项目代码文件。", runId),
         confirmText: t("删除对话"),
         danger: true,
@@ -1759,9 +1759,9 @@ export default function App() {
     }
     if (targetRouteType === "graph") {
       setConfirmModal({
-        title: t("删除 Graph 对话"),
-        message: t("确定删除 Graph 对话「Graph {0}」吗？", shortId),
-        detail: t("对话 ID: {0}\n删除后该次运行的执行拓扑图、节点记录与事件日志将被彻底清除；如果这是该项目最后一条 Graph 对话，对应的外置影子仓库也会一并清理。", runId),
+        title: t("删除 Compile 对话"),
+        message: t("确定删除 Compile 对话「Compile {0}」吗？", shortId),
+        detail: t("对话 ID: {0}\n删除后该次运行的执行拓扑图、节点记录与事件日志将被彻底清除；如果这是该项目最后一条 Compile 对话，对应的外置影子仓库也会一并清理。", runId),
         confirmText: t("删除对话"),
         danger: true,
         onConfirm: () => handleDeleteRun(runId),
@@ -1991,7 +1991,7 @@ export default function App() {
     // approved graph may preview.
     const liveRevision = isContinuing && state.approved && (active || state.phase === "running");
     const requestedMode = mode || (isContinuing ? "graph" : planMode);
-    const effectiveMode = hideAutoMode && requestedMode === "auto" ? "graph" : requestedMode;
+    const effectiveMode = hideAutoMode && requestedMode === "auto" ? "serial" : requestedMode;
     const targetRepo = config.repository;
     if (!targetRepo) {
       setModal("settings");
@@ -3728,7 +3728,6 @@ export default function App() {
             onNewConversation={actions.newConversation}
             onOpenSearch={handleOpenSearch}
             onOpenSettings={actions.openSettings}
-            isSettingsOpen={modal === "settings"}
             hasUpdateAvailable={
               updater.snapshot.supported &&
               (updater.snapshot.status === "available" ||

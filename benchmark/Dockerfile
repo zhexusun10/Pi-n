@@ -1,13 +1,13 @@
-# Reproducible Grapher *base* for Harbor task images. Does not copy the build
+# Reproducible Pi^n *base* for Harbor task images. Does not copy the build
 # context (and thus cannot accidentally ship .env, model keys or local edits).
-# Build: docker build -f benchmark/Dockerfile --build-arg GRAPHER_COMMIT=<sha> -t grapher-harbor:<sha> benchmark
+# Build: docker build -f benchmark/Dockerfile --build-arg PI_N_COMMIT=<sha> -t pi-n-harbor:<sha> benchmark
 # Task images must retain their own dependencies/files and use the SAME image
 # configuration when comparing agent harnesses. User namespaces must also be
 # allowed by the outer Harbor environment; an image alone cannot enable them.
 FROM node:22.19.0-bookworm
 
-ARG GRAPHER_REPOSITORY=https://github.com/zhexusun10/grapher.git
-ARG GRAPHER_COMMIT
+ARG PI_N_REPOSITORY=https://github.com/zhexusun10/pi-n.git
+ARG PI_N_COMMIT
 ARG RUST_VERSION=1.98.1
 
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
@@ -16,17 +16,17 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_VERSION}"
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN test -n "${GRAPHER_COMMIT}" \
-    && git clone "${GRAPHER_REPOSITORY}" /installed-agent/grapher \
-    && git -C /installed-agent/grapher checkout --detach "${GRAPHER_COMMIT}" \
-    && git -C /installed-agent/grapher submodule update --init --recursive \
-    && cd /installed-agent/grapher \
+RUN test -n "${PI_N_COMMIT}" \
+    && git clone "${PI_N_REPOSITORY}" /installed-agent/pi-n \
+    && git -C /installed-agent/pi-n checkout --detach "${PI_N_COMMIT}" \
+    && git -C /installed-agent/pi-n submodule update --init --recursive \
+    && cd /installed-agent/pi-n \
     && npm run pi:setup \
-    && cargo build --release --manifest-path backend/Cargo.toml --bin grapher \
+    && cargo build --release --manifest-path backend/Cargo.toml --bin pi-n \
     && node scripts/pi-baseline.mjs verify \
-    && test -x backend/target/release/grapher \
+    && test -x backend/target/release/pi-n \
     && test -x /usr/bin/bwrap \
-    && test "$(backend/target/release/grapher --build-identity)" = "${GRAPHER_COMMIT}" \
+    && test "$(backend/target/release/pi-n --build-identity)" = "${PI_N_COMMIT}" \
     && test -z "$(git status --porcelain --untracked-files=normal)"
 
 # These checksums bind both supported image architectures to fixed upstream tools.
@@ -42,12 +42,12 @@ RUN set -eu; \
     esac; \
     fd_asset="fd-v10.2.0-${arch}-unknown-linux-musl"; \
     rg_asset="ripgrep-14.1.1-${rg_platform}"; \
-    curl -fsSL "https://github.com/sharkdp/fd/releases/download/v10.2.0/${fd_asset}.tar.gz" -o /tmp/grapher-fd.tar.gz; \
-    echo "$fd_sha  /tmp/grapher-fd.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/grapher-fd.tar.gz -C /usr/local/bin --strip-components=1 "$fd_asset/fd"; \
-    curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/${rg_asset}.tar.gz" -o /tmp/grapher-rg.tar.gz; \
-    echo "$rg_sha  /tmp/grapher-rg.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/grapher-rg.tar.gz -C /usr/local/bin --strip-components=1 "$rg_asset/rg"; \
-    rm /tmp/grapher-fd.tar.gz /tmp/grapher-rg.tar.gz; \
+    curl -fsSL "https://github.com/sharkdp/fd/releases/download/v10.2.0/${fd_asset}.tar.gz" -o /tmp/pi-n-fd.tar.gz; \
+    echo "$fd_sha  /tmp/pi-n-fd.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/pi-n-fd.tar.gz -C /usr/local/bin --strip-components=1 "$fd_asset/fd"; \
+    curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/${rg_asset}.tar.gz" -o /tmp/pi-n-rg.tar.gz; \
+    echo "$rg_sha  /tmp/pi-n-rg.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/pi-n-rg.tar.gz -C /usr/local/bin --strip-components=1 "$rg_asset/rg"; \
+    rm /tmp/pi-n-fd.tar.gz /tmp/pi-n-rg.tar.gz; \
     fd --version | grep -F 'fd 10.2.0'; \
     rg --version | grep -F 'ripgrep 14.1.1'

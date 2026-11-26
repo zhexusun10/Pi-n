@@ -1,5 +1,5 @@
 //! Metadata replay must not allocate in proportion to current execution logs.
-use grapher::{model::*, store::Store};
+use pi_n::{model::*, store::Store};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tempfile::TempDir;

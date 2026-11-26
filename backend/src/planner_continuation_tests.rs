@@ -20,8 +20,8 @@ import fs from 'node:fs'; import path from 'node:path';
 let input=''; for await (const chunk of process.stdin) input += chunk;
 const arg = name => process.argv[process.argv.indexOf(name)+1];
 const dir=arg('--session-dir'), id=arg('--session-id');
-if (process.env.GRAPHER_CONTINUE_INTERRUPTED !== 'true') {
-  fs.writeFileSync(path.join(dir, `test_${id}.jsonl`), JSON.stringify({type:'session',version:3,grapherFormat:1,grapherRunId:process.env.GRAPHER_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n'+
+if (process.env.PI_N_CONTINUE_INTERRUPTED !== 'true') {
+  fs.writeFileSync(path.join(dir, `test_${id}.jsonl`), JSON.stringify({type:'session',version:3,piNFormat:1,piNRunId:process.env.PI_N_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n'+
     JSON.stringify({type:'message',id:'request',parentId:null,message:{role:'user',content:'retained turn'}})+'\n');
   process.exit(1);
 }
@@ -188,15 +188,15 @@ let input=''; for await (const chunk of process.stdin) input += chunk;
 const arg = name => process.argv[process.argv.indexOf(name)+1];
 const dir=arg('--session-dir'), id=arg('--session-id');
 const session=path.join(dir, `test_${id}.jsonl`);
-const graph=JSON.parse(fs.readFileSync(process.env.GRAPHER_GRAPH_PATH, 'utf8'));
-if (process.env.GRAPHER_CONTINUE_INTERRUPTED !== 'true') {
-  fs.writeFileSync(session, JSON.stringify({type:'session',version:3,grapherFormat:1,grapherRunId:process.env.GRAPHER_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n'+
+const graph=JSON.parse(fs.readFileSync(process.env.PI_N_GRAPH_PATH, 'utf8'));
+if (process.env.PI_N_CONTINUE_INTERRUPTED !== 'true') {
+  fs.writeFileSync(session, JSON.stringify({type:'session',version:3,piNFormat:1,piNRunId:process.env.PI_N_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n'+
     JSON.stringify({type:'message',id:'original',parentId:null,message:{role:'user',content:'retained request'}})+'\n');
   graph.nodes.push({id:'partial',task:'retained draft'});
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
   process.exit(1);
 }
-if (input !== '__grapher_continue_interrupted__') throw Error('unexpected prompt');
+if (input !== '__pi_n_continue_interrupted__') throw Error('unexpected prompt');
 const history=fs.readFileSync(session,'utf8');
 if (JSON.parse(history.split('\n')[0]).cwd !== process.cwd() || !history.includes('retained request'))
   throw Error('lost session or cwd');
@@ -470,17 +470,17 @@ let input=''; for await (const chunk of process.stdin) input += chunk;
 const arg = name => process.argv[process.argv.indexOf(name)+1];
 const dir=arg('--session-dir'), id=arg('--session-id');
 const session=path.join(dir, `test_${id}.jsonl`);
-const graph=JSON.parse(fs.readFileSync(process.env.GRAPHER_GRAPH_PATH,'utf8'));
-if (process.env.GRAPHER_CONTINUE_INTERRUPTED !== 'true') {
-  fs.writeFileSync(session, JSON.stringify({type:'session',version:3,grapherFormat:1,grapherRunId:process.env.GRAPHER_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n'+
+const graph=JSON.parse(fs.readFileSync(process.env.PI_N_GRAPH_PATH,'utf8'));
+if (process.env.PI_N_CONTINUE_INTERRUPTED !== 'true') {
+  fs.writeFileSync(session, JSON.stringify({type:'session',version:3,piNFormat:1,piNRunId:process.env.PI_N_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n'+
     JSON.stringify({type:'message',id:'revision',parentId:null,message:{role:'user',content:'revision'}})+'\n');
   graph.nodes.push({id:'partial',task:'retained'});
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH,JSON.stringify(graph)); process.exit(1);
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH,JSON.stringify(graph)); process.exit(1);
 }
-if (input !== '__grapher_continue_interrupted__') throw Error('unexpected prompt');
+if (input !== '__pi_n_continue_interrupted__') throw Error('unexpected prompt');
 if (!fs.existsSync(session) || !graph.nodes.some(node => node.id === 'partial')) throw Error('missing history or draft');
 graph.nodes.push({id:'finished',task:'done'});
-fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH,JSON.stringify(graph));
+fs.writeFileSync(process.env.PI_N_GRAPH_PATH,JSON.stringify(graph));
 console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'done'}]}}));
 "#).unwrap();
     let config: Config = serde_json::from_value(serde_json::json!({
@@ -597,34 +597,34 @@ let input = ''; for await (const chunk of process.stdin) input += chunk;
 const arg = name => process.argv[process.argv.indexOf(name) + 1];
 const directory = arg('--session-dir'), id = arg('--session-id');
 const session = path.join(directory, `test_${id}.jsonl`);
-const graph = JSON.parse(fs.readFileSync(process.env.GRAPHER_GRAPH_PATH, 'utf8'));
-if (process.env.GRAPHER_CONTINUE_INTERRUPTED !== 'true') {
+const graph = JSON.parse(fs.readFileSync(process.env.PI_N_GRAPH_PATH, 'utf8'));
+if (process.env.PI_N_CONTINUE_INTERRUPTED !== 'true') {
   if (fs.existsSync(session)) {
     if (input !== 'revision') throw Error(`unexpected revision: ${input}`);
     fs.appendFileSync(session, JSON.stringify({type:'message',id:'revision',parentId:'original',message:{role:'user',content:'revision'}})+'\n');
     graph.nodes.push({id:'revision-partial',task:'retained revision'});
-    fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+    fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
     process.exit(1);
   }
-  fs.writeFileSync(session, JSON.stringify({type:'session', version:3, grapherFormat:1, grapherRunId:process.env.GRAPHER_ACTIVE_RUN_ID, id, cwd:process.cwd()})+'\n'+
+  fs.writeFileSync(session, JSON.stringify({type:'session', version:3, piNFormat:1, piNRunId:process.env.PI_N_ACTIVE_RUN_ID, id, cwd:process.cwd()})+'\n'+
     JSON.stringify({type:'message',id:'original',parentId:null,message:{role:'user',content:'original goal'}})+'\n');
   graph.nodes.push({id:'before',task:'retained'});
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
   console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'partial'}]}}));
   process.exit(1);
 }
-if (input !== '__grapher_continue_interrupted__') throw Error(`unexpected prompt: ${input}`);
+if (input !== '__pi_n_continue_interrupted__') throw Error(`unexpected prompt: ${input}`);
 if (!fs.readFileSync(session, 'utf8').includes('original goal')) throw Error('missing session history');
 if (graph.nodes[0]?.id !== 'before') throw Error('missing retained draft');
 const failOnce = path.join(path.dirname(process.argv[1]), 'fail-once');
 if (fs.existsSync(failOnce)) {
   fs.unlinkSync(failOnce);
   graph.nodes.push({id:'retry',task:'retained after second failure'});
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
   process.exit(1);
 }
 graph.nodes.push({id:graph.nodes.some(node => node.id === 'after') ? 'revision-finished' : 'after',task:'finished'});
-fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
 console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'done'}]}}));
 "#).unwrap();
     let config: Config = serde_json::from_value(serde_json::json!({
@@ -900,5 +900,5 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
     let session = fs::read_to_string(session_dir.join(format!("test_{}.jsonl", run_id))).unwrap();
     assert_eq!(session.matches("original goal").count(), 1);
     assert_eq!(session.matches("\"content\":\"revision\"").count(), 2);
-    assert!(!session.contains("__grapher_continue_interrupted__"));
+    assert!(!session.contains("__pi_n_continue_interrupted__"));
 }

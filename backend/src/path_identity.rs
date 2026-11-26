@@ -21,11 +21,11 @@ fn metadata_name(value: String) -> String {
     value
 }
 
-/// Whether a directory entry is Grapher/Git metadata that ordinary snapshots
+/// Whether a directory entry is Pi^n/Git metadata that ordinary snapshots
 /// must never copy. Windows and default macOS volumes fold case.
 pub(crate) fn is_runtime_metadata_name(name: &OsStr) -> bool {
     let name = metadata_name(name.to_string_lossy().into_owned());
-    name == ".git" || name.starts_with(".grapher")
+    name == ".git" || name.starts_with(".pi-n")
 }
 
 pub(crate) fn is_runtime_metadata_path(path: &Path) -> bool {
@@ -684,7 +684,7 @@ pub(crate) fn ensure_windows_path(path: &Path, label: &str) -> Result<(), String
     let length = path.to_string_lossy().encode_utf16().count();
     if length > 240 {
         return Err(format!(
-            "{label} path is {length} UTF-16 units and may exceed Windows, Node and Git command-line limits: {}. Use GRAPHER_CACHE_DIR/GRAPHER_WORKSPACE_PARENT with a shorter parent.",
+            "{label} path is {length} UTF-16 units and may exceed Windows, Node and Git command-line limits: {}. Use PI_N_CACHE_DIR/PI_N_WORKSPACE_PARENT with a shorter parent.",
             path.display()
         ));
     }
@@ -704,10 +704,10 @@ mod tests {
     fn runtime_metadata_names_are_portable() {
         for name in [
             ".git",
-            ".grapher",
-            ".grapher-worktrees",
-            ".grapher-workspaces",
-            ".grapher-path-audit",
+            ".pi-n",
+            ".pi-n-worktrees",
+            ".pi-n-workspaces",
+            ".pi-n-path-audit",
         ] {
             assert!(is_runtime_metadata_name(OsStr::new(name)));
             #[cfg(any(windows, target_os = "macos"))]
@@ -971,6 +971,6 @@ mod tests {
         let long = PathBuf::from(format!(r"C:\{}", "a".repeat(250)));
         let error = ensure_windows_path(&long, "Workspace").unwrap_err();
         assert!(error.contains("Workspace path is"));
-        assert!(error.contains("GRAPHER_CACHE_DIR/GRAPHER_WORKSPACE_PARENT"));
+        assert!(error.contains("PI_N_CACHE_DIR/PI_N_WORKSPACE_PARENT"));
     }
 }

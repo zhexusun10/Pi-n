@@ -22,8 +22,8 @@ pub struct RuntimeLock {
 #[cfg(windows)]
 static PROCESS_LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-/// Acquire the exact exclusive runtime lock used by the Grapher backend
-/// (`<root>/runtime.lock` via `flock` on Unix and `Local\GrapherRuntime-<hash>`
+/// Acquire the exact exclusive runtime lock used by the Pi^n backend
+/// (`<root>/runtime.lock` via `flock` on Unix and `Local\PiNRuntime-<hash>`
 /// named mutex on Windows).
 pub fn acquire_runtime(root: &Path) -> Result<RuntimeLock, String> {
     let lock_path = root.join("runtime.lock");
@@ -31,21 +31,21 @@ pub fn acquire_runtime(root: &Path) -> Result<RuntimeLock, String> {
     acquire_lock_file(
         root,
         &lock_path,
-        "Local\\GrapherRuntime",
-        "Another Grapher instance owns this runtime. Close it before migrating or opening this data directory.",
+        "Local\\PiNRuntime",
+        "Another Pi^n instance owns this runtime. Close it before migrating or opening this data directory.",
     )
 }
 
 /// Acquire an exclusive migration guard lock under the desktop `app_data_dir()`
 /// so concurrent first launches cannot race while publishing `data`.
 pub fn acquire_migration_guard(parent: &Path) -> Result<RuntimeLock, String> {
-    let lock_path = parent.join(".grapher-migration.lock");
+    let lock_path = parent.join(".pi-n-migration.lock");
     reject_symlink_lock_file(&lock_path)?;
     acquire_lock_file(
         parent,
         &lock_path,
-        "Local\\GrapherDesktopMigration",
-        "Another Grapher desktop launch is currently initializing this app-data directory.",
+        "Local\\PiNDesktopMigration",
+        "Another Pi^n desktop launch is currently initializing this app-data directory.",
     )
 }
 

@@ -22,7 +22,7 @@ export function plannerUserTurns(output: string): string[] {
   for (const line of output.split("\n")) {
     // Each planning revision is a separate JSONL stream. An interrupted user
     // start in one revision cannot consume an end-only turn in the next one.
-    if (line.startsWith('{"type":"grapher_planning_source"')) {
+    if (line.startsWith('{"type":"pi_n_planning_source"')) {
       pendingStart = false;
       started.clear();
       continue;

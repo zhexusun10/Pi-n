@@ -1,9 +1,9 @@
 //! Correlate one feedback user turn without depending on Pi's image/input normalization.
-//! The envelope lives in Pi's durable history, not model context or Grapher's display log.
+//! The envelope lives in Pi's durable history, not model context or Pi^n's display log.
 use serde_json::Value;
 
-const OPEN: &str = "\n\n<grapher-feedback-id>";
-const CLOSE: &str = "</grapher-feedback-id>";
+const OPEN: &str = "\n\n<pi-n-feedback-id>";
+const CLOSE: &str = "</pi-n-feedback-id>";
 
 pub(crate) fn prompt(text: &str, delivery_id: Option<&str>) -> String {
     match delivery_id {
@@ -98,8 +98,8 @@ mod tests {
             "review screenshot\n\n[Image: original 3000x2000, displayed at 2000x1333.]"
         );
         assert_eq!(
-            strip("literal\n\n<grapher-feedback-id>not-an-id</grapher-feedback-id>"),
-            "literal\n\n<grapher-feedback-id>not-an-id</grapher-feedback-id>"
+            strip("literal\n\n<pi-n-feedback-id>not-an-id</pi-n-feedback-id>"),
+            "literal\n\n<pi-n-feedback-id>not-an-id</pi-n-feedback-id>"
         );
     }
 

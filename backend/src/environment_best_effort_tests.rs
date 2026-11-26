@@ -479,7 +479,7 @@ fn root_qualified_discovery_refuses_to_hide_authored_tracked_environment_files()
         &config,
     )
     .unwrap();
-    let project = temp.path().join(".grapher-worktrees/ownership/slot");
+    let project = temp.path().join(".pi-n-worktrees/ownership/slot");
     fs::create_dir_all(project.join("authored-env")).unwrap();
     git2::Repository::init(&project).unwrap();
     fs::write(

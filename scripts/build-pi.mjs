@@ -39,7 +39,7 @@ export function verifyBuildScripts(directory) {
 
 // Upstream's root build order is not dependency-safe: chord depends on
 // pi-telemetry, so typechecking chord first resolves a stale telemetry copy or
-// fails outright. Order Grapher's per-package builds by workspace dependencies.
+// fails outright. Order Pi^n's per-package builds by workspace dependencies.
 export function resolveBuildOrder(directory) {
   const packages = new Map(corePackages.map(name => {
     const pkg = JSON.parse(readFileSync(join(directory, 'packages', name, 'package.json'), 'utf8'));
@@ -102,7 +102,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const run = (cwd, ...args) => execFileSync(process.execPath, args, { cwd, stdio: 'inherit', env: toolchainEnv() });
     run(join(source, 'packages/ai'), join(source, 'packages/ai/scripts/check-model-data.ts'));
     // A failed or interrupted rebuild must not retain a previous success stamp.
-    rmSync(join(source, 'node_modules/.grapher-pi-build.json'), { force: true });
+    rmSync(join(source, 'node_modules/.pi-n-pi-build.json'), { force: true });
     // Don't let deleted outputs from the previous Pi revision survive rebuilding.
     for (const name of corePackages) rmSync(join(source, 'packages', name, 'dist'), { recursive: true, force: true });
     for (const name of resolveBuildOrder(source)) {

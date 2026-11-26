@@ -486,7 +486,7 @@ def build_wheel(wheel_directory,config_settings=None,metadata_directory=None):
                 put(root, "bytecode_only.py", "VALUE='sourceless'\n");
                 output(Command::new(&interpreter_path).current_dir(root).args(["-I", "-c", "import py_compile,pathlib;py_compile.compile('bytecode_only.py',cfile='bytecode_only.pyc',doraise=True);pathlib.Path('bytecode_only.py').unlink()"]));
                 put(root, "app.py", "import json,sys,sysconfig,offline_local,bytecode_only\nassert bytecode_only.VALUE=='sourceless'\nprint(json.dumps(dict(value=offline_local.VALUE,prefix=sys.prefix,basePrefix=sys.base_prefix,python=sys.executable,abi=sysconfig.get_config_var('SOABI') or sys.implementation.cache_tag)))\n");
-                let explicit = std::env::var_os("GRAPHER_ENV_PROBE_UV");
+                let explicit = std::env::var_os("PI_N_ENV_PROBE_UV");
                 let uv = PathBuf::from(explicit.as_deref().unwrap_or(std::ffi::OsStr::new("uv")));
                 let available = Command::new(&uv)
                     .arg("--version")
@@ -494,7 +494,7 @@ def build_wheel(wheel_directory,config_settings=None,metadata_directory=None):
                     .is_ok_and(|out| out.status.success());
                 assert!(
                     explicit.is_none() || available,
-                    "Explicit GRAPHER_ENV_PROBE_UV is unavailable"
+                    "Explicit PI_N_ENV_PROBE_UV is unavailable"
                 );
                 if !available {
                     gaps.push("uv not installed: real uv invocation NOT RUN (pip PEP-517 and direct venv interpreter run independently)".into());
@@ -551,17 +551,17 @@ def build_wheel(wheel_directory,config_settings=None,metadata_directory=None):
 #[test]
 #[ignore = "opt-in offline real-tool project cost baseline; not native sandbox acceptance"]
 fn environment_project_baseline() {
-    let parent = std::env::var_os("GRAPHER_ENV_TEST_PARENT")
+    let parent = std::env::var_os("PI_N_ENV_TEST_PARENT")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
     fs::create_dir_all(&parent).unwrap();
-    let files: usize = std::env::var("GRAPHER_ENV_PROBE_FILES")
+    let files: usize = std::env::var("PI_N_ENV_PROBE_FILES")
         .unwrap_or_else(|_| "128".into())
         .parse()
         .unwrap();
     assert!((1..=4096).contains(&files));
     let requested =
-        std::env::var("GRAPHER_ENV_PROBE_PROJECTS").unwrap_or_else(|_| "node,python,cargo".into());
+        std::env::var("PI_N_ENV_PROBE_PROJECTS").unwrap_or_else(|_| "node,python,cargo".into());
     let selected: Vec<_> = requested.split(',').collect();
     assert!(
         !selected.is_empty()
@@ -961,7 +961,7 @@ fn environment_project_baseline() {
             }
         };
         report["totalAttemptMs"] = json!(started.elapsed().as_secs_f64() * 1000.0);
-        println!("GRAPHER_ENVIRONMENT_PROBE {}", report);
+        println!("PI_N_ENVIRONMENT_PROBE {}", report);
         reports.push(report);
     }
     let failed: Vec<_> = reports
@@ -969,7 +969,7 @@ fn environment_project_baseline() {
         .filter(|report| report["componentStatus"] == "failed")
         .map(|report| report["project"].as_str().unwrap())
         .collect();
-    if std::env::var_os("GRAPHER_ENV_PROBE_REQUIRE_UV").is_some() && !selected.contains(&"python") {
+    if std::env::var_os("PI_N_ENV_PROBE_REQUIRE_UV").is_some() && !selected.contains(&"python") {
         gaps.push("Required uv invocation NOT RUN: Python profile was not selected".into());
     }
     let status = if !failed.is_empty() {
@@ -981,7 +981,7 @@ fn environment_project_baseline() {
     };
     let report = json!({"schema":1,"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,
         "componentStatus":status,"requestedProjects":selected,"profiles":reports,"failedProjects":failed,"validationGaps":gaps});
-    if let Some(path) = std::env::var_os("GRAPHER_ENV_PROBE_REPORT") {
+    if let Some(path) = std::env::var_os("PI_N_ENV_PROBE_REPORT") {
         use std::io::Write;
         let mut file = fs::OpenOptions::new()
             .create_new(true)
@@ -991,13 +991,13 @@ fn environment_project_baseline() {
         file.write_all(serde_json::to_string_pretty(&report).unwrap().as_bytes())
             .unwrap();
     }
-    println!("GRAPHER_ENVIRONMENT_PROBE_SUMMARY {}", report);
+    println!("PI_N_ENVIRONMENT_PROBE_SUMMARY {}", report);
     assert!(
         failed.is_empty(),
         "Project baseline failed (report retained): {failed:?}"
     );
     assert!(
-        std::env::var_os("GRAPHER_ENV_PROBE_REQUIRE_UV").is_none()
+        std::env::var_os("PI_N_ENV_PROBE_REQUIRE_UV").is_none()
             || selected.contains(&"python") && gaps.is_empty(),
         "Required native tool coverage missing: {gaps:?}"
     );

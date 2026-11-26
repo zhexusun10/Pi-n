@@ -18,7 +18,7 @@ before(async () => {
   server = await createServer({ cacheDir: "node_modules/.vite-background-settings", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
@@ -29,7 +29,7 @@ async function openSettings(page) {
 }
 
 const paths = page => page.locator(".app-background-root > .relative > .absolute .floating-path");
-const dots = page => page.locator(".landing-title-dot-pattern svg:has(pattern)");
+const grid = page => page.locator(".app-background-root .landing-page-grid");
 
 test("Harness defaults keep Feedback opt-in and saved choices survive reload", { timeout: 90_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
@@ -37,8 +37,8 @@ test("Harness defaults keep Feedback opt-in and saved choices survive reload", {
   delete savedConfig.autoApprove;
   const errors = [], saves = [];
   await context.addInitScript(({ repository }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Harness defaults", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Harness defaults", lastOpened: 1 }]));
   }, { repository });
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -60,7 +60,7 @@ test("Harness defaults keep Feedback opt-in and saved choices survive reload", {
   page.setDefaultTimeout(10_000);
   page.on("pageerror", error => errors.push(String(error)));
   const modes = page.locator(".landing-screen .prompt-box-mode-btn");
-  const harnessCard = page.getByRole("region", { name: "Harness settings", exact: true });
+  const harnessCard = page.getByRole("region", { name: "Compile mode settings", exact: true });
   const uiCard = page.getByRole("region", { name: "UI settings", exact: true });
   const defaultOnHarnessLabels = ["Auto approve Planner graphs", "Post-task Planner review",
     "Isolate parallel node workspaces", "Mount Planner write and edit tools"];
@@ -71,8 +71,8 @@ test("Harness defaults keep Feedback opt-in and saved choices survive reload", {
   const maxFeedbackInput = harnessCard.getByRole("spinbutton", { name: "Feedback budget", exact: true });
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded" });
-    await modes.filter({ hasText: "Graph" }).waitFor();
-    assert.deepEqual(await modes.allTextContents(), ["Serial", "Graph"]);
+    await modes.filter({ hasText: "Compile" }).waitFor();
+    assert.deepEqual(await modes.allTextContents(), ["Direct", "Compile"]);
     await openSettings(page);
     for (const label of defaultOnHarnessLabels) assert.equal(await checkbox(label).isChecked(), true, label);
     assert.equal(await hideAuto.isChecked(), true, "Hide Auto mode");
@@ -93,7 +93,7 @@ test("Harness defaults keep Feedback opt-in and saved choices survive reload", {
     assert.equal(saves[0].maxParallel, 20);
     assert.equal(saves[0].maxFeedback, 4);
     assert.equal(saves[0].feedbackEnabled, false);
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_hide_auto_mode_v1")), "1");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_hide_auto_mode_v1")), "1");
 
     await openSettings(page);
     for (const label of defaultOnHarnessLabels) await checkbox(label).uncheck();
@@ -131,7 +131,7 @@ test("Harness defaults keep Feedback opt-in and saved choices survive reload", {
     assert.equal(await maxFeedbackInput.isEnabled(), true);
     assert.equal(await maxParallelInput.inputValue(), "24");
     assert.equal(await maxFeedbackInput.inputValue(), "16");
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_hide_auto_mode_v1")), "0");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_hide_auto_mode_v1")), "0");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -142,10 +142,10 @@ test("hiding Auto stages with Settings, preserves Partitioner and submits only v
   let savedConfig = { ...config, roleModels: { partitioner } }, failSave = true;
   const errors = [], saves = [];
   await context.addInitScript(({ repository }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Auto visibility", lastOpened: 1 }]));
-    if (!localStorage.getItem("grapher_plan_mode")) localStorage.setItem("grapher_plan_mode", "auto");
-    if (localStorage.getItem("grapher_hide_auto_mode_v1") === null) localStorage.setItem("grapher_hide_auto_mode_v1", "0");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Auto visibility", lastOpened: 1 }]));
+    if (!localStorage.getItem("pi_n_plan_mode")) localStorage.setItem("pi_n_plan_mode", "auto");
+    if (localStorage.getItem("pi_n_hide_auto_mode_v1") === null) localStorage.setItem("pi_n_hide_auto_mode_v1", "0");
   }, { repository });
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
@@ -180,7 +180,7 @@ test("hiding Auto stages with Settings, preserves Partitioner and submits only v
     assert.equal(await modes.filter({ hasText: "Auto" }).getAttribute("aria-pressed"), "true");
     await openSettings(page);
     assert.equal(await toggle.isChecked(), false);
-    const planningCard = page.getByRole("region", { name: "Harness settings", exact: true });
+    const planningCard = page.getByRole("region", { name: "Compile mode settings", exact: true });
     assert.deepEqual(await planningCard.getByRole("checkbox").evaluateAll(inputs => inputs.map(input => input.getAttribute("aria-label"))), [
       "Auto approve Planner graphs", "Post-task Planner review",
       "Isolate parallel node workspaces", "Mount Planner write and edit tools", "Enable Feedback",
@@ -206,24 +206,24 @@ test("hiding Auto stages with Settings, preserves Partitioner and submits only v
     await page.getByRole("alert").filter({ hasText: "Mock save failed" }).waitFor();
     assert.equal(await toggle.isChecked(), true);
     assert.equal(await modes.filter({ hasText: "Auto" }).count(), 1, "a failed save leaves Auto available");
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_hide_auto_mode_v1")), "0");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_hide_auto_mode_v1")), "0");
 
     failSave = false;
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
-    assert.deepEqual(await modes.allTextContents(), ["Serial", "Graph"]);
-    assert.equal(await modes.filter({ hasText: "Graph" }).getAttribute("aria-pressed"), "true");
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_hide_auto_mode_v1")), "1");
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_plan_mode")), "graph");
+    assert.deepEqual(await modes.allTextContents(), ["Direct", "Compile"]);
+    assert.equal(await modes.filter({ hasText: "Direct" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_hide_auto_mode_v1")), "1");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_plan_mode")), "serial");
     assert.equal(await page.locator(".landing-screen textarea").inputValue(), "Keep this mode draft");
     assert.equal(await page.evaluate(() => window.originalComposer === document.querySelector(".landing-screen textarea")), true);
     assert.deepEqual(savedConfig.roleModels.partitioner, partitioner);
 
-    await page.evaluate(() => localStorage.setItem("grapher_plan_mode", "auto"));
+    await page.evaluate(() => localStorage.setItem("pi_n_plan_mode", "auto"));
     await page.reload({ waitUntil: "domcontentloaded" });
-    await modes.filter({ hasText: "Graph" }).waitFor();
+    await modes.filter({ hasText: "Direct" }).waitFor();
     assert.equal(await modes.filter({ hasText: "Auto" }).count(), 0, "the preference survives reload");
-    await page.waitForFunction(() => localStorage.getItem("grapher_plan_mode") === "graph");
+    await page.waitForFunction(() => localStorage.getItem("pi_n_plan_mode") === "serial");
     await openSettings(page);
     assert.equal(await toggle.isChecked(), true);
     assert.equal(await partitionerSettings.count(), 0);
@@ -231,9 +231,9 @@ test("hiding Auto stages with Settings, preserves Partitioner and submits only v
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     const request = page.waitForRequest("**/api/plan_goal_stream");
     const response = page.waitForResponse("**/api/plan_goal_stream");
-    await page.locator(".landing-screen textarea").fill("Use the visible Graph mode");
+    await page.locator(".landing-screen textarea").fill("Use the visible Direct mode");
     await page.locator(".landing-screen textarea").press("Enter");
-    assert.equal((await request).postDataJSON().mode, "graph", "a stale stored Auto mode must not reach the backend");
+    assert.equal((await request).postDataJSON().mode, "serial", "a stale stored Auto mode must not reach the backend");
     await response;
 
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -244,13 +244,13 @@ test("hiding Auto stages with Settings, preserves Partitioner and submits only v
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     assert.equal(await modes.filter({ hasText: "Auto" }).count(), 1, "turning off the option restores Auto");
-    assert.equal(await modes.filter({ hasText: "Graph" }).getAttribute("aria-pressed"), "true");
-    await modes.filter({ hasText: "Serial" }).click();
+    assert.equal(await modes.filter({ hasText: "Direct" }).getAttribute("aria-pressed"), "true");
+    await modes.filter({ hasText: "Compile" }).click();
     await openSettings(page);
     await toggle.check();
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
-    assert.equal(await modes.filter({ hasText: "Serial" }).getAttribute("aria-pressed"), "true", "an explicit Serial choice is preserved");
+    assert.equal(await modes.filter({ hasText: "Compile" }).getAttribute("aria-pressed"), "true", "an explicit Compile choice is preserved");
     assert.equal(await modes.filter({ hasText: "Auto" }).count(), 0);
     assert.ok(saves.every(saved => !("hideAutoMode" in saved)), "visibility stays out of backend configuration");
     assert.ok(saves.every(saved => JSON.stringify(saved.roleModels.partitioner) === JSON.stringify(partitioner)), "hiding Partitioner never removes its saved settings");
@@ -263,10 +263,10 @@ test("home background saves only after acceptance, persists, and preserves the a
   let failSave = true;
   const errors = [], saves = [];
   await context.addInitScript(({ repository, config }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Background", lastOpened: 1 }]));
-    localStorage.setItem("grapher_data_path", "/mock");
-    localStorage.setItem("grapher-format-1:/mock:grapher_config", JSON.stringify(config));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Background", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_data_path", "/mock");
+    localStorage.setItem("pi-n-format-1:/mock:pi_n_config", JSON.stringify(config));
   }, { repository, config });
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -290,9 +290,9 @@ test("home background saves only after acceptance, persists, and preserves the a
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded" });
     await page.locator(".landing-screen textarea").fill("Keep this draft");
-    await dots(page).waitFor();
+    await grid(page).waitFor();
     assert.equal(await paths(page).count(), 0);
-    assert.equal(await dots(page).count(), 1, "the static dot pattern is the default");
+    assert.equal(await grid(page).count(), 1, "the tri-color grid is the default");
     await page.evaluate(() => { window.originalComposer = document.querySelector(".landing-screen textarea"); });
 
     await openSettings(page);
@@ -301,9 +301,12 @@ test("home background saves only after acceptance, persists, and preserves the a
       "reasoning display and home background share the UI settings card");
     const backgroundOptions = uiCard.getByRole("group", { name: "Home background", exact: true });
     const animated = backgroundOptions.getByRole("radio", { name: /Animated paths/ });
-    const pattern = backgroundOptions.getByRole("radio", { name: /Dot pattern/ });
+    const pattern = backgroundOptions.getByRole("radio", { name: /Tri-color grid/ });
+    const dotOption = backgroundOptions.getByRole("radio", { name: /Dot pattern/ });
     assert.equal(await pattern.isChecked(), true);
-    assert.deepEqual(await page.locator('input[name="landing-background"]').evaluateAll(inputs => inputs.map(input => input.value)), ["dots", "paths"], "the default option appears first");
+    assert.deepEqual(await page.locator('input[name="landing-background"]').evaluateAll(inputs => inputs.map(input => input.value)), ["grid", "dots", "paths"], "the default option appears first");
+    const optionTops = await page.locator(".settings-background-option").evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().top)));
+    assert.equal(new Set(optionTops).size, 1, "the three background options share one row");
     const radioBorder = radio => radio.evaluate(input => getComputedStyle(input).borderColor);
     const originalBorder = await radioBorder(pattern);
     assert.equal(originalBorder, await radioBorder(animated), "selected and unselected radio outlines match");
@@ -317,9 +320,9 @@ test("home background saves only after acceptance, persists, and preserves the a
     }), true, "the selected radio keeps its blue dot");
     await animated.check();
     assert.equal(await radioBorder(animated), originalBorder, "the outline stays unchanged after selection");
-    assert.equal(await dots(page).count(), 1, "a draft does not change the live background");
+    assert.equal(await grid(page).count(), 1, "a draft does not change the live background");
     assert.equal(await paths(page).count(), 0);
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_landing_background_v1")), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_landing_background_v1")), null);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await openSettings(page);
@@ -328,31 +331,31 @@ test("home background saves only after acceptance, persists, and preserves the a
     await page.locator(".save-config-btn").click();
     await page.getByRole("alert").filter({ hasText: "Mock save failed" }).waitFor();
     assert.equal(await animated.isChecked(), true, "a failed save keeps the draft for retry");
-    assert.equal(await dots(page).count(), 1);
+    assert.equal(await grid(page).count(), 1);
     assert.equal(await paths(page).count(), 0);
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_landing_background_v1")), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_landing_background_v1")), null);
 
     failSave = false;
     await pattern.check();
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
-    await dots(page).waitFor();
+    await grid(page).waitFor();
     assert.equal(await paths(page).count(), 0);
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_landing_background_v1")), "dots");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_landing_background_v1")), "grid");
     assert.ok(saves.every(saved => !("landingBackground" in saved)), "display preferences stay out of backend configuration");
     assert.equal(await page.evaluate(() => window.originalComposer === document.querySelector(".landing-screen textarea")), true);
     assert.equal(await page.locator(".landing-screen textarea").inputValue(), "Keep this draft");
 
     await page.locator('[data-run-id="saved"]').click();
     await page.waitForFunction(() => !document.querySelector(".app-background-root").classList.contains("landing-active"));
-    await dots(page).waitFor({ state: "detached" });
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".landing-page-grid").parentElement).opacity === "0");
     assert.equal(await page.locator(".main").evaluate(element => getComputedStyle(element).overflow), "hidden", "the workbench retains its clipping");
     await page.getByRole("button", { name: "New conversation", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".app-background-root").classList.contains("landing-active"));
-    await dots(page).waitFor();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".landing-page-grid").parentElement).opacity === "1");
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    await dots(page).waitFor();
+    await grid(page).waitFor();
     await openSettings(page);
     assert.equal(await pattern.isChecked(), true, "the selection survives a reload");
     await page.setViewportSize({ width: 390, height: 844 });
@@ -361,11 +364,13 @@ test("home background saves only after acceptance, persists, and preserves the a
     assert.ok(radioBox && radioBox.x >= 0 && radioBox.x + radioBox.width <= 390, "options remain reachable on narrow screens");
     await pattern.focus();
     await page.keyboard.press("ArrowRight");
+    assert.equal(await dotOption.isChecked(), true, "native radio options support keyboard navigation");
+    await page.keyboard.press("ArrowRight");
     assert.equal(await animated.isChecked(), true, "native radio options support keyboard navigation");
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await paths(page).first().waitFor();
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_landing_background_v1")), "paths");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_landing_background_v1")), "paths");
 
     assert.deepEqual(errors, []);
   } finally {
@@ -391,10 +396,10 @@ test("execution graph overview defaults off, sits between UI sections, and commi
   let failSave = true;
   const errors = [], saves = [];
   await context.addInitScript(({ repository, config }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Overview", lastOpened: 1 }]));
-    localStorage.setItem("grapher_data_path", "/mock");
-    localStorage.setItem("grapher-format-1:/mock:grapher_config", JSON.stringify(config));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Overview", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_data_path", "/mock");
+    localStorage.setItem("pi-n-format-1:/mock:pi_n_config", JSON.stringify(config));
   }, { repository, config });
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -445,7 +450,7 @@ test("execution graph overview defaults off, sits between UI sections, and commi
 
     await overviewToggle.check();
     assert.equal(await page.locator(".plan-summary-card").count(), 0, "staging the toggle does not show the overview before save");
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_execution_overview_v1")), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_execution_overview_v1")), null);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await openSettings(page);
@@ -456,13 +461,13 @@ test("execution graph overview defaults off, sits between UI sections, and commi
     await page.getByRole("alert").filter({ hasText: "Mock save failed" }).waitFor();
     assert.equal(await overviewToggle.isChecked(), true, "a failed save keeps the draft for retry");
     assert.equal(await page.locator(".plan-summary-card").count(), 0);
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_execution_overview_v1")), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_execution_overview_v1")), null);
 
     failSave = false;
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await page.locator(".plan-summary-card").waitFor();
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_execution_overview_v1")), "1");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_execution_overview_v1")), "1");
     assert.ok(saves.every(saved => !("executionOverview" in saved)), "display preferences stay out of backend configuration");
 
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -474,7 +479,7 @@ test("execution graph overview defaults off, sits between UI sections, and commi
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await page.locator(".plan-summary-card").waitFor({ state: "detached" });
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_execution_overview_v1")), "0");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_execution_overview_v1")), "0");
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -529,13 +534,13 @@ test("completion notifications default to on, notify with agent final output whe
   }) + "\n";
 
   await context.addInitScript(({ repository, otherRepository }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([
       { id: repository, path: repository, name: "Notify", lastOpened: 1 },
       { id: otherRepository, path: otherRepository, name: "Other", lastOpened: 0 },
     ]));
-    localStorage.setItem("grapher_workspace_runs", JSON.stringify({ [repository]: ["notify-run"] }));
-    localStorage.setItem("grapher_run_labels", JSON.stringify({ "notify-run": "Refactor parser" }));
+    localStorage.setItem("pi_n_workspace_runs", JSON.stringify({ [repository]: ["notify-run"] }));
+    localStorage.setItem("pi_n_run_labels", JSON.stringify({ "notify-run": "Refactor parser" }));
     window.__sentNotifications = [];
     window.__notificationInstances = [];
     window.__unfocused = false;
@@ -645,7 +650,7 @@ test("completion notifications default to on, notify with agent final output whe
     await soundToggle.uncheck();
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_completion_notification_sound_v1")), "0");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_completion_notification_sound_v1")), "0");
 
     // Complete another running turn while unfocused: notification should now be silent.
     runPhase = "running";
@@ -669,7 +674,7 @@ test("completion notifications default to on, notify with agent final output whe
     assert.equal(await soundToggle.isDisabled(), true, "sound toggle disables when notifications are off");
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_completion_notifications_v1")), "0");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_completion_notifications_v1")), "0");
 
     // Reload with the disabled preference persisted, then complete another running turn while unfocused.
     runPhase = "running";
@@ -743,10 +748,10 @@ test("completion notification fires for the currently viewed conversation when h
   }) + "\n";
 
   await context.addInitScript(({ repository }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "HiddenNotify", lastOpened: 1 }]));
-    localStorage.setItem("grapher_workspace_runs", JSON.stringify({ [repository]: ["viewed-notify-run"] }));
-    localStorage.setItem("grapher_run_labels", JSON.stringify({ "viewed-notify-run": "Hidden active run" }));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "HiddenNotify", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_workspace_runs", JSON.stringify({ [repository]: ["viewed-notify-run"] }));
+    localStorage.setItem("pi_n_run_labels", JSON.stringify({ "viewed-notify-run": "Hidden active run" }));
     window.__sentNotifications = [];
     window.__docHidden = false;
     Object.defineProperty(document, "hidden", { configurable: true, get: () => window.__docHidden });

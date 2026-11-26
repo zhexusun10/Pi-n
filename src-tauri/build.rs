@@ -162,14 +162,19 @@ fn main() {
         let manifest_dir = std::path::PathBuf::from(
             std::env::var("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"),
         );
-        let objc_src = manifest_dir
+        let notif_objc = manifest_dir
             .join("objc")
             .join("macos_notifications.m");
-        println!("cargo:rerun-if-changed={}", objc_src.display());
+        let window_objc = manifest_dir
+            .join("objc")
+            .join("macos_window.m");
+        println!("cargo:rerun-if-changed={}", notif_objc.display());
+        println!("cargo:rerun-if-changed={}", window_objc.display());
         cc::Build::new()
-            .file(&objc_src)
+            .file(&notif_objc)
+            .file(&window_objc)
             .flag("-fobjc-arc")
-            .compile("grapher_macos_notifications");
+            .compile("pi_n_macos_native");
         println!("cargo:rustc-link-lib=framework=UserNotifications");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=AppKit");
@@ -186,7 +191,7 @@ fn main() {
     println!("cargo:rerun-if-changed=permissions");
     println!("cargo:rerun-if-changed=capabilities");
     println!("cargo:rerun-if-changed=tauri.conf.json");
-    println!("cargo:rerun-if-env-changed=GRAPHER_UPDATER_PUBKEY");
+    println!("cargo:rerun-if-env-changed=PI_N_UPDATER_PUBKEY");
     println!("cargo:rerun-if-env-changed=TAURI_UPDATER_PUBKEY");
 
     if let Ok(conf_text) = std::fs::read_to_string("tauri.conf.json") {
@@ -194,7 +199,7 @@ fn main() {
             validate_optional_updater_pubkey(&pubkey, "plugins.updater.pubkey in tauri.conf.json");
         }
     }
-    for var in ["GRAPHER_UPDATER_PUBKEY", "TAURI_UPDATER_PUBKEY"] {
+    for var in ["PI_N_UPDATER_PUBKEY", "TAURI_UPDATER_PUBKEY"] {
         if let Ok(value) = std::env::var(var) {
             validate_optional_updater_pubkey(&value, var);
         }

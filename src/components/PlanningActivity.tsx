@@ -287,6 +287,14 @@ function PlanningHistory({ runId = "", planningIds, onReady, onOutputChange, onL
       const seg = segments.current.get(id);
       if (!seg || normalizeTranscriptProjection(seg) !== "summary") return false;
       const proj: TranscriptProjectionMode | undefined = id !== activeLiveId && !cardsUnsupported ? "cards" : undefined;
+      if (id === activeLiveId) {
+        const cachedLive = transcriptFromCache(planningTranscriptCache.get(planningTranscriptKey(runId, id, false)));
+        if (cachedLive && cachedLive.end >= seg.end) {
+          publish(id, cachedLive);
+          return false;
+        }
+        return true;
+      }
       return !planningTranscriptCache.get(planningTranscriptKey(runId, id, proj ?? false))
         && !planningTranscriptCache.get(planningTranscriptKey(runId, id, false));
     });
@@ -295,20 +303,25 @@ function PlanningHistory({ runId = "", planningIds, onReady, onOutputChange, onL
     const signal = combineAbortSignals(abort.signal, lifetime.current);
     for (const id of targets) {
       const seg = segments.current.get(id)!;
-      const proj: TranscriptProjectionMode | undefined = id !== activeLiveId && !cardsUnsupported ? "cards" : undefined;
+      const isLive = id === activeLiveId;
+      const proj: TranscriptProjectionMode | undefined = !isLive && !cardsUnsupported ? "cards" : undefined;
       const limit = proj === "cards" ? SUMMARY_OLDER_TRANSCRIPT_BYTES : OLDER_TRANSCRIPT_BYTES;
-      void runtimeService.getPlanningOutput(id, "planner", 0, signal, true, seg.end, limit, proj ?? false)
+      void runtimeService.getPlanningOutput(id, "planner", 0, signal, true, isLive ? undefined : seg.end, limit, proj ?? false)
         .then(page => {
           if (signal.aborted || page.planningId !== id || page.role !== "planner") return;
-          const win = windowFromPage(page, !page.running && id !== activeLiveId);
+          const win = windowFromPage(page, !page.running && !isLive);
           const actualProj = normalizeTranscriptProjection(win);
           if (proj === "cards" && actualProj !== "cards") setCardsUnsupported(true);
-          planningTranscriptCache.set(planningTranscriptKey(runId, id, actualProj ?? false), cacheTranscriptWindow(win));
+          if (isLive && actualProj === undefined) {
+            publish(id, win);
+          } else {
+            planningTranscriptCache.set(planningTranscriptKey(runId, id, actualProj ?? false), cacheTranscriptWindow(win));
+          }
         })
         .catch(() => { /* Best-effort transition prefetch. */ });
     }
     return () => abort.abort();
-  }, [cardsTransition, key, runId, activeLiveId, cardsUnsupported, lifetime]);
+  }, [cardsTransition, key, runId, activeLiveId, cardsUnsupported, lifetime, publish]);
 
   // Planner turns are separate logs. Without this, opening a reviewed Run
   // whose latest turn fills two viewports would mount only the review and hide

@@ -8,13 +8,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bundledTrim, bundledContinuity, bundledSimpleTimeout, bundledWebSearch, continuityId, simpleTimeoutId, simpleTimeoutName, extensionCatalog, executionResources, setExtensionEnabled, trimId, webSearchId, webSearchExtension, workspacePolicyName } from '../engine/global-extensions.ts';
 import workspacePolicy from '../engine/prompt-extension.ts';
-import { loadGrapherMcpConfig } from '../engine/mcp-config.ts';
+import { loadPiNMcpConfig } from '../engine/mcp-config.ts';
 import { DefaultPackageManager, loadMcpConfig } from '../engine/pi-compat.ts';
 import { buildSystemPromptState, normalizeBuildSystemPromptOptions, diffSystemPromptSections } from '../pi/packages/coding-agent/src/core/system-prompt.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 function fixture() {
-  const base = mkdtempSync(join(tmpdir(), 'grapher-global-extensions-'));
+  const base = mkdtempSync(join(tmpdir(), 'pi-n-global-extensions-'));
   const global = join(base, 'global');
   const own = join(base, 'own');
   const workspace = join(base, 'workspace');
@@ -22,11 +22,11 @@ function fixture() {
   const extension = join(global, 'extensions/probe.ts');
   writeFileSync(extension, 'throw new Error("Discovery must not execute extensions");');
   writeFileSync(join(global, 'skills/probe/SKILL.md'), '---\nname: global-skill\ndescription: global skill probe\n---\nUse the probe.\n');
-  const previous = process.env.GRAPHER_GLOBAL_PI_AGENT_DIR;
-  process.env.GRAPHER_GLOBAL_PI_AGENT_DIR = global;
+  const previous = process.env.PI_N_GLOBAL_PI_AGENT_DIR;
+  process.env.PI_N_GLOBAL_PI_AGENT_DIR = global;
   return { base, global, own, workspace, extension, close() {
-    if (previous === undefined) delete process.env.GRAPHER_GLOBAL_PI_AGENT_DIR;
-    else process.env.GRAPHER_GLOBAL_PI_AGENT_DIR = previous;
+    if (previous === undefined) delete process.env.PI_N_GLOBAL_PI_AGENT_DIR;
+    else process.env.PI_N_GLOBAL_PI_AGENT_DIR = previous;
     rmSync(base, { recursive: true, force: true });
   } };
 }
@@ -64,7 +64,7 @@ test('task discovery overlaps global and local reads without running factories',
 test('global auto-discovery defaults external extensions to disabled and persists add/remove without editing global settings/files', async () => {
   const f = fixture();
   try {
-    const settings = JSON.stringify({ packages: ['npm:missing-grapher-extension-probe'] });
+    const settings = JSON.stringify({ packages: ['npm:missing-pi-n-extension-probe'] });
     writeFileSync(join(f.global, 'settings.json'), settings);
     let catalog = await extensionCatalog(f.own);
     assert.equal(catalog.globalDirectory, f.global);
@@ -136,7 +136,7 @@ test('only pi-trim reaches Partitioner; Merger loads continuity and simple-timeo
 test('mandatory workspace policy reuses native ESM code but binds fresh tools and paths for each task', async () => {
   const f = fixture();
   const cwd = process.cwd();
-  const keys = ['GRAPHER_MODE', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS'];
+  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
     const project = join(f.base, 'project');
@@ -146,7 +146,7 @@ test('mandatory workspace policy reuses native ESM code but binds fresh tools an
     writeFileSync(join(project, 'file.txt'), 'SOURCE MUST NOT BE READ');
     writeFileSync(join(f.workspace, 'file.txt'), 'FIRST WORKSPACE');
     writeFileSync(join(second, 'file.txt'), 'SECOND WORKSPACE');
-    Object.assign(process.env, { GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'graph', GRAPHER_ORIGINAL_ROOT: project, GRAPHER_SOURCE_ALIAS: project });
+    Object.assign(process.env, { PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'graph', PI_N_ORIGINAL_ROOT: project, PI_N_SOURCE_ALIAS: project });
     const bound = [];
     for (const workspace of [f.workspace, second]) {
       process.chdir(workspace);
@@ -173,14 +173,14 @@ test('mandatory workspace policy reuses native ESM code but binds fresh tools an
 });
 
 test('execution path guidance directly follows existing prompts without a blank line', async () => {
-  const keys = ['GRAPHER_MODE', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS', 'GRAPHER_FEEDBACK_SOURCE'];
+  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS', 'PI_N_FEEDBACK_SOURCE'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const guideline = 'Use project-root-relative paths in Bash commands and project files.';
   try {
     for (const role of ['node', 'merger', 'planner', 'partition']) {
       for (const kind of ['source', 'graph']) {
-        Object.assign(process.env, { GRAPHER_MODE: role, GRAPHER_EXECUTION_KIND: kind,
-          GRAPHER_ORIGINAL_ROOT: process.cwd(), GRAPHER_SOURCE_ALIAS: process.cwd() });
+        Object.assign(process.env, { PI_N_MODE: role, PI_N_EXECUTION_KIND: kind,
+          PI_N_ORIGINAL_ROOT: process.cwd(), PI_N_SOURCE_ALIAS: process.cwd() });
         const hooks = new Map<string, any>();
         workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
         const hook = hooks.get('before_agent_start');
@@ -200,7 +200,7 @@ test('execution path guidance directly follows existing prompts without a blank 
         assert.ok(hook, `${role}/${kind}: prompt hook registered`);
         // Serial is a normal Pi source session, not a mapped execution.
         const serial = role === 'node' && kind === 'source';
-        process.env.GRAPHER_FEEDBACK_SOURCE = serial ? 'true' : 'false';
+        process.env.PI_N_FEEDBACK_SOURCE = serial ? 'true' : 'false';
         for (const preceding of ['', 'Task instructions.', 'Task instructions.\n\n']) {
           const expected = preceding.trimEnd() ? `${preceding.trimEnd()}\n${guideline}` : guideline;
           const options = { appendSystemPrompt: preceding, forceSystemPrompt: undefined };
@@ -229,16 +229,16 @@ test('execution path guidance directly follows existing prompts without a blank 
 });
 
 test('graph node removes the concise rule and replaces the default rule in model requests without changing other roles or stored messages', async () => {
-  const keys = ['GRAPHER_MODE', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS', 'GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS'];
+  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS', 'PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const oldRule = '- Show file paths clearly when working with files';
   const conciseRule = '- Be concise in your responses';
   const newRule = '- Use project-root-relative paths in Bash commands and project files.';
   try {
-    delete process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
+    delete process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
     for (const [role, kind] of [['node', 'graph'], ['node', 'source'], ['planner', 'graph'], ['merger', 'graph']]) {
-      Object.assign(process.env, { GRAPHER_MODE: role, GRAPHER_EXECUTION_KIND: kind,
-        GRAPHER_ORIGINAL_ROOT: process.cwd(), GRAPHER_SOURCE_ALIAS: process.cwd() });
+      Object.assign(process.env, { PI_N_MODE: role, PI_N_EXECUTION_KIND: kind,
+        PI_N_ORIGINAL_ROOT: process.cwd(), PI_N_SOURCE_ALIAS: process.cwd() });
       const hooks = new Map<string, any>();
       workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
       const hook = hooks.get('context_with_system');
@@ -271,11 +271,11 @@ test('graph node removes the concise rule and replaces the default rule in model
       assert.equal(result.messages[2].sections.obsolete, null);
       assert.strictEqual(result.messages[3], messages[3]);
       assert.equal(await hook({ messages: result.messages }), undefined, 'projection is idempotent');
-      process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS = 'previous agent environment hint';
+      process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS = 'previous agent environment hint';
       const hinted = { appendSystemPrompt: 'Existing user addendum.', forceSystemPrompt: undefined };
       await hooks.get('before_agent_start')({ systemPromptOptions: hinted });
       assert.equal(hinted.appendSystemPrompt, 'Existing user addendum.\nprevious agent environment hint');
-      delete process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
+      delete process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
     }
   } finally {
     for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
@@ -283,17 +283,17 @@ test('graph node removes the concise rule and replaces the default rule in model
 });
 
 test('feedback protocol is a per-turn system rule, scoped to the feedback source and removable on revision', async () => {
-  const keys = ['GRAPHER_MODE', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS', 'GRAPHER_FEEDBACK_SOURCE', 'GRAPHER_CONTINUE_INTERRUPTED'];
+  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS', 'PI_N_FEEDBACK_SOURCE', 'PI_N_CONTINUE_INTERRUPTED'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const rule = 'End your response with exactly one standalone final line:\n<ACCEPT>\nor\n<FEEDBACK>\nIf sending <FEEDBACK>, clearly describe the additional instruction for the target before the marker.';
   try {
-    Object.assign(process.env, { GRAPHER_EXECUTION_KIND: 'graph', GRAPHER_ORIGINAL_ROOT: process.cwd(), GRAPHER_SOURCE_ALIAS: process.cwd() });
+    Object.assign(process.env, { PI_N_EXECUTION_KIND: 'graph', PI_N_ORIGINAL_ROOT: process.cwd(), PI_N_SOURCE_ALIAS: process.cwd() });
     let withFeedback: ReturnType<typeof buildSystemPromptState> | undefined;
     for (const [role, enabled, continuation] of [
       ['node', 'true', 'false'], ['node', 'true', 'true'], ['node', 'false', 'false'],
       ['planner', 'true', 'false'], ['merger', 'true', 'false'], ['partition', 'true', 'false'],
     ]) {
-      Object.assign(process.env, { GRAPHER_MODE: role, GRAPHER_FEEDBACK_SOURCE: enabled, GRAPHER_CONTINUE_INTERRUPTED: continuation });
+      Object.assign(process.env, { PI_N_MODE: role, PI_N_FEEDBACK_SOURCE: enabled, PI_N_CONTINUE_INTERRUPTED: continuation });
       const hooks = new Map<string, any>();
       workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
       const options = normalizeBuildSystemPromptOptions({ cwd: process.cwd() });
@@ -308,7 +308,7 @@ test('feedback protocol is a per-turn system rule, scoped to the feedback source
         assert.ok(update?.rules && !update.rules.includes(rule), 'removing an edge updates the persisted rules section');
       }
     }
-    Object.assign(process.env, { GRAPHER_MODE: 'node', GRAPHER_FEEDBACK_SOURCE: 'true', GRAPHER_CONTINUE_INTERRUPTED: 'false' });
+    Object.assign(process.env, { PI_N_MODE: 'node', PI_N_FEEDBACK_SOURCE: 'true', PI_N_CONTINUE_INTERRUPTED: 'false' });
     const hooks = new Map<string, any>();
     workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
     const custom = normalizeBuildSystemPromptOptions({ cwd: process.cwd(), customPrompt: 'Custom identity', sections: { rules: '- Existing custom rule' } });
@@ -323,21 +323,21 @@ test('feedback protocol is a per-turn system rule, scoped to the feedback source
 });
 
 test('extension-supplied rules retain graph path guidance and the feedback protocol', async () => {
-  const keys = ['GRAPHER_MODE', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS', 'GRAPHER_FEEDBACK_SOURCE'];
+  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS', 'PI_N_FEEDBACK_SOURCE'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const pathRule = '- Use project-root-relative paths in Bash commands and project files.';
   const oldPathRule = '- Show file paths clearly when working with files';
   const feedbackRule = 'End your response with exactly one standalone final line:';
   try {
-    Object.assign(process.env, { GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'graph',
-      GRAPHER_ORIGINAL_ROOT: process.cwd(), GRAPHER_SOURCE_ALIAS: process.cwd() });
+    Object.assign(process.env, { PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'graph',
+      PI_N_ORIGINAL_ROOT: process.cwd(), PI_N_SOURCE_ALIAS: process.cwd() });
     for (const [existing, feedback] of [
       ['- Extension rule', 'true'],
       [`- Extension rule\n${oldPathRule}`, 'true'],
       [`- Extension rule\n${pathRule}`, 'true'],
       ['- Extension rule', 'false'],
     ]) {
-      process.env.GRAPHER_FEEDBACK_SOURCE = feedback;
+      process.env.PI_N_FEEDBACK_SOURCE = feedback;
       const hooks = new Map<string, any>();
       workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
       const options = normalizeBuildSystemPromptOptions({ cwd: process.cwd(), sections: { rules: existing } });
@@ -352,7 +352,7 @@ test('extension-supplied rules retain graph path guidance and the feedback proto
     }
     // Serial and non-node roles must not get the Graph-specific replacement.
     for (const [role, kind] of [['node', 'source'], ['planner', 'graph'], ['merger', 'graph']]) {
-      Object.assign(process.env, { GRAPHER_MODE: role, GRAPHER_EXECUTION_KIND: kind, GRAPHER_FEEDBACK_SOURCE: 'false' });
+      Object.assign(process.env, { PI_N_MODE: role, PI_N_EXECUTION_KIND: kind, PI_N_FEEDBACK_SOURCE: 'false' });
       const hooks = new Map<string, any>();
       workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
       const options = normalizeBuildSystemPromptOptions({ cwd: process.cwd(), sections: { rules: oldPathRule } });
@@ -365,16 +365,16 @@ test('extension-supplied rules retain graph path guidance and the feedback proto
 });
 
 test('previous agent environment hints are appended to system prompt guidance when present', async () => {
-  const previousMode = process.env.GRAPHER_MODE;
-  const previousKind = process.env.GRAPHER_EXECUTION_KIND;
-  const previousRoot = process.env.GRAPHER_ORIGINAL_ROOT;
-  const previousAlias = process.env.GRAPHER_SOURCE_ALIAS;
-  const previousHints = process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
+  const previousMode = process.env.PI_N_MODE;
+  const previousKind = process.env.PI_N_EXECUTION_KIND;
+  const previousRoot = process.env.PI_N_ORIGINAL_ROOT;
+  const previousAlias = process.env.PI_N_SOURCE_ALIAS;
+  const previousHints = process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
   const hint = 'previous agent used: conda name:ml (conda)';
   try {
-    Object.assign(process.env, { GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'graph',
-      GRAPHER_ORIGINAL_ROOT: process.cwd(), GRAPHER_SOURCE_ALIAS: process.cwd() });
-    process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS = hint;
+    Object.assign(process.env, { PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'graph',
+      PI_N_ORIGINAL_ROOT: process.cwd(), PI_N_SOURCE_ALIAS: process.cwd() });
+    process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS = hint;
     const hooks = new Map<string, any>();
     workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
     const hook = hooks.get('before_agent_start');
@@ -384,9 +384,9 @@ test('previous agent environment hints are appended to system prompt guidance wh
     assert.equal(options.appendSystemPrompt, `Base instructions.\n${hint}`,
       'default graph rules already carry the path convention; only hints are appended');
   } finally {
-    for (const [key, value] of [['GRAPHER_MODE', previousMode], ['GRAPHER_EXECUTION_KIND', previousKind],
-      ['GRAPHER_ORIGINAL_ROOT', previousRoot], ['GRAPHER_SOURCE_ALIAS', previousAlias],
-      ['GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS', previousHints]] as const) {
+    for (const [key, value] of [['PI_N_MODE', previousMode], ['PI_N_EXECUTION_KIND', previousKind],
+      ['PI_N_ORIGINAL_ROOT', previousRoot], ['PI_N_SOURCE_ALIAS', previousAlias],
+      ['PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS', previousHints]] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
@@ -430,7 +430,7 @@ test('bundled continuity defaults on, supports persistent removal/restore and ob
   } finally { f.close(); }
 });
 
-test('bundled web search defaults off, persists opt-in for Planner/Node only and obeys exclusion flags', async () => {
+test('bundled web search defaults on for Planner/Node only, persists disable/enable and obeys exclusion flags', async () => {
   const f = fixture();
   try {
     const initial = (await extensionCatalog(f.own)).extensions.find(extension => extension.id === webSearchId)!;
@@ -438,13 +438,7 @@ test('bundled web search defaults off, persists opt-in for Planner/Node only and
     assert.equal(initial.path, bundledWebSearch);
     assert.equal(initial.bundled, true);
     assert.equal(initial.required, false);
-    assert.equal(initial.enabled, false);
-    for (const role of ['partition', 'merger', 'planner', 'node']) {
-      assert.ok(!(await executionResources([], f.own, role)).extensionFactories.includes(webSearchExtension));
-    }
-    const enabled = await setExtensionEnabled(f.own, webSearchId, true);
-    assert.equal(enabled.extensions.find(extension => extension.id === webSearchId)?.enabled, true);
-    assert.equal(JSON.parse(readFileSync(join(f.own, 'extensions.json'), 'utf8')).overrides[webSearchId], true);
+    assert.equal(initial.enabled, true);
     for (const role of ['planner', 'node']) {
       assert.equal((await executionResources([], f.own, role)).extensionFactories.filter(factory => factory === webSearchExtension).length, 1);
       for (const flag of ['--no-extensions', '-ne']) {
@@ -460,18 +454,24 @@ test('bundled web search defaults off, persists opt-in for Planner/Node only and
     for (const role of ['partition', 'merger', 'planner', 'node']) {
       assert.ok(!(await executionResources([], f.own, role)).extensionFactories.includes(webSearchExtension));
     }
+    const enabled = await setExtensionEnabled(f.own, webSearchId, true);
+    assert.equal(enabled.extensions.find(extension => extension.id === webSearchId)?.enabled, true);
+    assert.equal(JSON.parse(readFileSync(join(f.own, 'extensions.json'), 'utf8')).overrides[webSearchId], true);
+    for (const role of ['planner', 'node']) {
+      assert.equal((await executionResources([], f.own, role)).extensionFactories.filter(factory => factory === webSearchExtension).length, 1);
+    }
     assert.ok(existsSync(bundledWebSearch), 'removal must not uninstall the bundled package');
   } finally { f.close(); }
 });
 
-test('web search Keenable public opt-in persists, clears on disable, and reports dedicated API presence', async () => {
+test('web search Keenable public defaults on, persists opt-out, clears on disable, and reports dedicated API presence', async () => {
   const f = fixture();
-  const envKeys = ['KEENABLE_API_KEY', 'EXA_API_KEY', 'PARALLEL_API_KEY', 'PERPLEXITY_API_KEY', 'PI_BETTER_WEB_SEARCH_AUTH', 'PI_BETTER_WEB_SEARCH_SETTINGS', 'GRAPHER_ISOLATED_PI_SEARCH'];
+  const envKeys = ['KEENABLE_API_KEY', 'EXA_API_KEY', 'PARALLEL_API_KEY', 'PERPLEXITY_API_KEY', 'PI_BETTER_WEB_SEARCH_AUTH', 'PI_BETTER_WEB_SEARCH_SETTINGS', 'PI_N_ISOLATED_PI_SEARCH'];
   const before = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
   for (const key of envKeys) delete process.env[key];
   try {
     const initial = await extensionCatalog(f.own);
-    assert.deepEqual(initial.webSearch, { keenablePublic: false, hasDedicatedApi: false });
+    assert.deepEqual(initial.webSearch, { keenablePublic: true, hasDedicatedApi: false });
 
     const withPublic = await setExtensionEnabled(f.own, webSearchId, true, { keenablePublic: true });
     assert.deepEqual(withPublic.webSearch, { keenablePublic: true, hasDedicatedApi: false });
@@ -516,6 +516,7 @@ test('web search Keenable public opt-in persists, clears on disable, and reports
     // Enabling with keenablePublic: false keeps it disabled.
     const enableOnly = await setExtensionEnabled(f.own, webSearchId, true, { keenablePublic: false });
     assert.equal(enableOnly.webSearch.keenablePublic, false);
+    assert.equal(JSON.parse(readFileSync(join(f.own, 'extensions.json'), 'utf8')).webSearch?.keenablePublic, false);
   } finally {
     for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     f.close();
@@ -527,22 +528,26 @@ test('MCP is available only to allowed roles and respects global/dedicated built
   try {
     for (const role of ['planner', 'node']) {
       const resources = await executionResources([], f.own, role);
-      assert.ok(resources.extensionFactories.some(factory => typeof factory === 'object' && factory.name === 'grapher-mcp'));
+      assert.ok(resources.extensionFactories.some(factory => typeof factory === 'object' && factory.name === 'pi-n-mcp'));
     }
     writeFileSync(join(f.global, 'settings.json'), JSON.stringify({ extensions: ['-builtin:mcp'] }));
     for (const role of ['planner', 'node', 'partition', 'merger']) {
       const factories = (await executionResources([], f.own, role)).extensionFactories;
-      assert.ok(!factories.some(factory => typeof factory === 'object' && factory.name === 'grapher-mcp'));
+      assert.ok(!factories.some(factory => typeof factory === 'object' && factory.name === 'pi-n-mcp'));
       assert.deepEqual(
         factories.map(factory => typeof factory === 'object' ? factory.name : ''),
-        role === 'partition' ? [workspacePolicyName] : [workspacePolicyName, simpleTimeoutName],
+        role === 'partition'
+          ? [workspacePolicyName]
+          : role === 'merger'
+            ? [workspacePolicyName, simpleTimeoutName]
+            : [workspacePolicyName, webSearchExtension.name, simpleTimeoutName],
       );
     }
     writeFileSync(join(f.global, 'settings.json'), '{}');
     writeFileSync(join(f.own, 'settings.json'), JSON.stringify({ extensions: ['-builtin:mcp'] }));
     assert.deepEqual(
       (await executionResources([], f.own, 'node')).extensionFactories.map(factory => typeof factory === 'object' ? factory.name : ''),
-      [workspacePolicyName, simpleTimeoutName],
+      [workspacePolicyName, webSearchExtension.name, simpleTimeoutName],
     );
     const withoutExtensions = await executionResources(['--no-extensions'], f.own, 'node');
     assert.ok(!withoutExtensions.args.includes(f.extension));
@@ -670,17 +675,17 @@ test('Pi 1.0.1 project MCP overrides apply to external globals without moving cr
     writeFileSync(globalFile, JSON.stringify(globalConfig));
     writeFileSync(projectFile, JSON.stringify(projectConfig));
     const options = { globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true };
-    const loaded = loadGrapherMcpConfig(options);
+    const loaded = loadPiNMcpConfig(options);
     assert.deepEqual(loaded.errors, []);
     assert.equal(loaded.projectConfig, projectFile);
     assert.deepEqual(loaded.servers, [{ name: 'docs', config: { ...globalConfig.mcpServers.docs, ...projectConfig.mcpServers.docs },
       scope: 'global', source: globalFile, override: projectFile }]);
-    const untrusted = loadGrapherMcpConfig({ ...options, projectTrusted: false });
+    const untrusted = loadPiNMcpConfig({ ...options, projectTrusted: false });
     assert.equal(untrusted.projectConfig, undefined);
     assert.deepEqual(untrusted.servers[0].config, globalConfig.mcpServers.docs);
     assert.equal(readFileSync(globalFile, 'utf8'), JSON.stringify(globalConfig));
     assert.equal(readFileSync(projectFile, 'utf8'), JSON.stringify(projectConfig));
-    assert.equal(existsSync(join(f.own, 'mcp.json')), false, 'global credentials must not be copied into Grapher config');
+    assert.equal(existsSync(join(f.own, 'mcp.json')), false, 'global credentials must not be copied into Pi^n config');
   } finally { f.close(); }
 });
 
@@ -698,7 +703,7 @@ test('MCP precedence is global, dedicated, then trusted project; overrides inher
     writeFileSync(projectFile, JSON.stringify({ autoEnableCodemode: true, mcpServers: {
       shared: { enabled: false }, globalOnly: { command: 'project-replacement' }, ownOnly: { exposure: 'direct' },
     } }));
-    const loaded = loadGrapherMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true });
+    const loaded = loadPiNMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true });
     assert.deepEqual(loaded.errors, []);
     assert.equal(loaded.autoEnableCodemode, true);
     assert.deepEqual(loaded.servers[0].config, { command: 'dedicated', args: ['own-arg'], env: { TOKEN: '${TOKEN}' }, enabled: false });
@@ -707,7 +712,7 @@ test('MCP precedence is global, dedicated, then trusted project; overrides inher
     assert.equal(loaded.servers[1].scope, 'project');
     assert.deepEqual(loaded.servers[1].config, { command: 'project-replacement' });
     assert.equal(loaded.servers[2].config.exposure, 'direct');
-    const untrusted = loadGrapherMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: false });
+    const untrusted = loadPiNMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: false });
     assert.equal(untrusted.autoEnableCodemode, false);
     assert.equal(untrusted.servers[0].config.enabled, undefined);
   } finally { f.close(); }
@@ -720,12 +725,12 @@ test('MCP deduplicates symlinked global/dedicated directories and strips UTF-8 B
     writeFileSync(join(f.own, 'mcp.json'), '{not-json');
     const link = join(f.base, 'global-link');
     symlinkSync(f.own, link, process.platform === 'win32' ? 'junction' : 'dir');
-    const loaded = loadGrapherMcpConfig({ globalDir: link, agentDir: f.own, cwd: f.workspace, projectTrusted: false });
+    const loaded = loadPiNMcpConfig({ globalDir: link, agentDir: f.own, cwd: f.workspace, projectTrusted: false });
     assert.equal(loaded.errors.length, 1, 'identical symlinked agent directories must only be loaded once');
 
     writeFileSync(join(f.own, 'mcp.json'), JSON.stringify({ mcpServers: { docs: { command: 'docs-cmd' } } }));
     writeFileSync(join(f.workspace, '.pi/mcp.json'), '\uFEFF' + JSON.stringify({ mcpServers: { docs: { enabled: false } } }));
-    const bomLoaded = loadGrapherMcpConfig({ globalDir: link, agentDir: f.own, cwd: f.workspace, projectTrusted: true });
+    const bomLoaded = loadPiNMcpConfig({ globalDir: link, agentDir: f.own, cwd: f.workspace, projectTrusted: true });
     assert.deepEqual(bomLoaded.errors, []);
     assert.equal(bomLoaded.servers.length, 1);
     assert.equal(bomLoaded.servers[0].config.enabled, false);
@@ -751,13 +756,13 @@ test('MCP rejects invalid project overrides and provider-auth injection without 
     ];
     for (const config of cases) {
       writeFileSync(join(f.workspace, '.pi/mcp.json'), JSON.stringify(config));
-      const loaded = loadGrapherMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true });
+      const loaded = loadPiNMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true });
       assert.equal(loaded.errors.length, 1, JSON.stringify(config));
       assert.deepEqual(loaded.servers.map(server => server.config), [base]);
       assert.equal(loaded.servers[0].override, undefined);
     }
     writeFileSync(join(f.workspace, '.pi/mcp.json'), '{');
-    assert.equal(loadGrapherMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true }).errors.length, 1);
+    assert.equal(loadPiNMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: true }).errors.length, 1);
   } finally { f.close(); }
 });
 
@@ -766,7 +771,7 @@ test('MCP namespace collisions across global and dedicated directories are rejec
   try {
     writeFileSync(join(f.global, 'mcp.json'), JSON.stringify({ mcpServers: { 'my-server': { command: 'global' } } }));
     writeFileSync(join(f.own, 'mcp.json'), JSON.stringify({ mcpServers: { my_server: { command: 'dedicated' } } }));
-    const loaded = loadGrapherMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: false });
+    const loaded = loadPiNMcpConfig({ globalDir: f.global, agentDir: f.own, cwd: f.workspace, projectTrusted: false });
     assert.equal(loaded.servers.length, 1);
     assert.match(loaded.errors[0], /conflicts with "my-server"/);
   } finally { f.close(); }
@@ -785,7 +790,7 @@ test('layered MCP loading matches upstream for a single agent directory, includi
         writeFileSync(join(f.workspace, '.pi/mcp.json'), JSON.stringify({ autoEnableCodemode: true, mcpServers: {
           docs: patch, extra: { command: 'extra' }, missing: { enabled: false },
         } }));
-        assert.deepEqual(loadGrapherMcpConfig({ globalDir: f.global, agentDir: f.global, cwd: f.workspace, projectTrusted }),
+        assert.deepEqual(loadPiNMcpConfig({ globalDir: f.global, agentDir: f.global, cwd: f.workspace, projectTrusted }),
           loadMcpConfig({ agentDir: f.global, cwd: f.workspace, projectTrusted }));
       }
     }
@@ -797,7 +802,7 @@ test('prepared native runtime includes continuity and respects the same removabl
   try {
     const runtime = execFileSync(process.execPath, [join(root, 'scripts/prepare-native-runtime.mjs')], {
       cwd: root, encoding: 'utf8', timeout: 60000,
-      env: { ...process.env, GRAPHER_NATIVE_RUNTIME_PARENT: f.base },
+      env: { ...process.env, PI_N_NATIVE_RUNTIME_PARENT: f.base },
     }).trim();
     assert.ok(existsSync(join(runtime, 'node_modules/pi-continuity/extensions/index.ts')));
     assert.ok(existsSync(join(runtime, 'node_modules/pi-continuity/lib/continuity.ts')));
@@ -807,7 +812,7 @@ test('prepared native runtime includes continuity and respects the same removabl
     const result = join(f.base, 'native-commands.json');
     writeFileSync(f.extension, `import { writeFileSync } from 'node:fs';
 export default function (pi) {
-  pi.on('session_start', () => writeFileSync(process.env.GRAPHER_TEST_RESULT, JSON.stringify({
+  pi.on('session_start', () => writeFileSync(process.env.PI_N_TEST_RESULT, JSON.stringify({
     commands: pi.getCommands().map(c => c.name), tools: pi.getAllTools().map(t => t.name),
   })));
 }`);
@@ -819,8 +824,8 @@ export default function (pi) {
       await setExtensionEnabled(f.own, webSearchId, enabled);
       const output = execFileSync(process.execPath, [join(runtime, 'engine/entrypoint.mjs'), '--mode', 'rpc', '--no-session', '--no-context-files'], {
         cwd: f.workspace, encoding: 'utf8', timeout: 20000, input: '{"id":"ready","type":"get_state"}\n',
-        env: { ...process.env, PI_CODING_AGENT_DIR: f.own, GRAPHER_GLOBAL_PI_AGENT_DIR: f.global,
-          GRAPHER_MODE: 'node', GRAPHER_TEST_RESULT: result, GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
+        env: { ...process.env, PI_CODING_AGENT_DIR: f.own, PI_N_GLOBAL_PI_AGENT_DIR: f.global,
+          PI_N_MODE: 'node', PI_N_TEST_RESULT: result, PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
       });
       assert.ok(output.includes('"success":true'), output);
       const state = JSON.parse(readFileSync(result, 'utf8'));
@@ -855,8 +860,8 @@ test('production RPC handles MCP status and extension dialogs without model call
     await setExtensionEnabled(f.own, probe.id, true);
     child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--mode', 'rpc', '--no-session', '--no-context-files'], {
       cwd: f.workspace, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PI_CODING_AGENT_DIR: f.own, GRAPHER_GLOBAL_PI_AGENT_DIR: f.global,
-        GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'source', GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
+      env: { ...process.env, PI_CODING_AGENT_DIR: f.own, PI_N_GLOBAL_PI_AGENT_DIR: f.global,
+        PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'source', PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
     });
     let stderr = '';
     child.stderr!.on('data', data => { stderr = (stderr + data).slice(-4000); });
@@ -923,7 +928,7 @@ test('production launcher loads selected extensions/tools/skills for Planner and
     writeFileSync(f.extension, `import { writeFileSync } from 'node:fs';
 export default function (pi) {
   pi.registerTool({ name: 'global_probe', label: 'Probe', description: 'Global extension tool', parameters: {type:'object',properties:{}}, async execute() {return {content:[{type:'text',text:'ok'}],details:{}}} });
-  pi.on('session_start', (_event, ctx) => writeFileSync(process.env.GRAPHER_TEST_RESULT, JSON.stringify({ tools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name), prompt: ctx.getSystemPrompt() })));
+  pi.on('session_start', (_event, ctx) => writeFileSync(process.env.PI_N_TEST_RESULT, JSON.stringify({ tools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name), prompt: ctx.getSystemPrompt() })));
 }`);
     const probe = (await extensionCatalog(f.own)).extensions.find(extension => !extension.bundled)!;
     await setExtensionEnabled(f.own, probe.id, true);
@@ -937,10 +942,10 @@ export default function (pi) {
       const output = execFileSync(process.execPath, [join(root, 'engine/entrypoint.mjs'), ...args], {
         cwd: f.workspace, encoding: 'utf8', timeout: 20000,
         input: '{"id":"ready","type":"get_state"}\n',
-        env: { ...process.env, PI_CODING_AGENT_DIR: f.own, GRAPHER_GLOBAL_PI_AGENT_DIR: f.global,
-          GRAPHER_MODE: role, GRAPHER_TEST_RESULT: result, GRAPHER_ISOLATED_PI_MODELS: '1',
-          GRAPHER_EXECUTION_KIND: 'source', PI_OFFLINE: '1',
-          ...(role === 'planner' ? { GRAPHER_PLANNER_WRITE_TOOLS: 'true' } : {}) },
+        env: { ...process.env, PI_CODING_AGENT_DIR: f.own, PI_N_GLOBAL_PI_AGENT_DIR: f.global,
+          PI_N_MODE: role, PI_N_TEST_RESULT: result, PI_N_ISOLATED_PI_MODELS: '1',
+          PI_N_EXECUTION_KIND: 'source', PI_OFFLINE: '1',
+          ...(role === 'planner' ? { PI_N_PLANNER_WRITE_TOOLS: 'true' } : {}) },
       });
       assert.ok(output.includes('"success":true'), output);
       const allowed = role === 'planner' || role === 'node';

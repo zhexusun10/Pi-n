@@ -7,7 +7,7 @@ export const MAX_SPLIT_RATIO = 0.85;
 export const GRAPH_COLLAPSE_OVERSHOOT_PX = 48;
 const MIN_GRAPH_PANE_WIDTH = 320;
 
-export const SPLIT_RATIO_STORAGE_KEY = "grapher_workbench_split_ratio";
+export const SPLIT_RATIO_STORAGE_KEY = "pi_n_workbench_split_ratio";
 
 export function getStoredRatio(storage?: Pick<Storage, "getItem">): number {
   try {

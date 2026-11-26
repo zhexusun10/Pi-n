@@ -14,7 +14,7 @@ import { patchPicomatch, verifyPicomatchPatch, patchedAdvisoryUrl } from './patc
 import { piBuildArtifacts, piBuildReady, recordPiBuild } from './pi-build-state.mjs';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-deps-安装 # %-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-deps-安装 # %-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, content) => {
     const target = join(root, path);
@@ -126,7 +126,7 @@ for (const { name, entry } of bundledExtensions) {
     assert.deepEqual(missingBundledExtensions(f.root), [name]);
     assert.throws(() => verifyBundledExtensions(f.root), error =>
       error.message.includes(name) && error.message.includes('npm ci --ignore-scripts') &&
-      error.message.includes('restart Grapher'));
+      error.message.includes('restart Pi^n'));
   });
 
   test(`${name} must have the selected version, package metadata and entrypoint`, t => {
@@ -166,7 +166,7 @@ export function verifyPiDependencies() { throw new Error('Pi dependency verifica
   const runtimeParent = join(f.root, 'runtimes');
   const result = spawnSync(process.execPath, [join(f.root, 'scripts/prepare-native-runtime.mjs')], {
     cwd: f.root, encoding: 'utf8', timeout: 10000,
-    env: { ...process.env, GRAPHER_NATIVE_RUNTIME_PARENT: runtimeParent },
+    env: { ...process.env, PI_N_NATIVE_RUNTIME_PARENT: runtimeParent },
   });
   assert.equal(result.status, 1, result.stderr);
   assert.equal(result.stdout, '');
@@ -192,7 +192,7 @@ function installPiFixture(f) {
     f.write(`pi/node_modules/${name}/package.json`, JSON.stringify({ name, version }));
   }
   f.write('engine/pi-dependencies/package-lock.json', JSON.stringify({ name: manifest.name, version, lockfileVersion: 3, packages }));
-  f.write('pi/node_modules/.grapher-pi-dependencies.json', JSON.stringify(dependencyProfileHashes(f.root)));
+  f.write('pi/node_modules/.pi-n-pi-dependencies.json', JSON.stringify(dependencyProfileHashes(f.root)));
   const content = '{}\n';
   const hash = createHash('sha256').update(content).digest('hex');
   f.write('engine/pi-lock.json', JSON.stringify({ modelData: { '.manifest.json': hash } }));
@@ -218,7 +218,7 @@ export function verifyBaseline() {}
 `);
   f.write('scripts/cargo.mjs', '');
   f.write('scripts/model-data-manifest.mjs', '');
-  const cached = mkdtempSync(join(tmpdir(), 'grapher-dependency-cache-'));
+  const cached = mkdtempSync(join(tmpdir(), 'pi-n-dependency-cache-'));
   t.after(() => rmSync(cached, { recursive: true, force: true }));
   cpSync(f.root, cached, { recursive: true, filter: process.platform === 'win32' ? () => true : undefined });
   const key = copy => spawnSync(process.execPath, [join(f.root, 'scripts/prepare-native-runtime.mjs'), '--cache-key', ...(copy ? [copy] : [])], {
@@ -252,7 +252,7 @@ export function verifyBaseline() {}
     assert.throws(() => verifyPiDependencies(f.root, { installationRoot: cached }), pattern);
   };
   for (const [path, content, pattern] of [
-    ['pi/node_modules/.grapher-pi-dependencies.json', null, /Pi dependencies are missing or use an unreviewed install/],
+    ['pi/node_modules/.pi-n-pi-dependencies.json', null, /Pi dependencies are missing or use an unreviewed install/],
     ['pi/node_modules/typescript/package.json', '{"version":"0.0.0"}', /Installed Pi dependency mismatch: node_modules\/typescript/],
     ['pi/node_modules/@fixture/agent/package.json', '{"name":"@fixture/agent","version":"1.2.3","changed":true}', /Pi workspace binding mismatch/],
   ]) {
@@ -328,7 +328,7 @@ test('PATH helpers keep the launcher-delivered key casing for Windows spawn sear
 });
 
 test('findCargoExecutable answers identically for either PATH key casing', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-cargo-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-cargo-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const cargoName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
   writeFileSync(join(dir, cargoName), '');
@@ -401,7 +401,7 @@ test('missing, interrupted or stale Pi artifacts rebuild without reinstalling re
     assert.equal(piBuildReady(f.root), false, path);
     f.write(`pi/${path}`, '');
   }
-  for (const path of ['pi/node_modules/.grapher-pi-build.json', 'pi/packages/ai/src/providers/data/.manifest.json']) {
+  for (const path of ['pi/node_modules/.pi-n-pi-build.json', 'pi/packages/ai/src/providers/data/.manifest.json']) {
     rmSync(join(f.root, path));
     const calls = [];
     await bootstrap(f, (command, args) => {

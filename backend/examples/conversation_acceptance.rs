@@ -1,8 +1,8 @@
 //! Run only against an acceptance COPY. No mutation of a user's source DB.
 //! cargo run --release --features acceptance --example conversation_acceptance -- DB RUN_ID [BUDGET_MS]
 #[cfg(feature = "acceptance")]
-use grapher::model::LOG_TEXT_DESERIALIZED_BYTES;
-use grapher::store::Store;
+use pi_n::model::LOG_TEXT_DESERIALIZED_BYTES;
+use pi_n::store::Store;
 use serde_json::json;
 use std::{
     alloc::{GlobalAlloc, Layout, System},

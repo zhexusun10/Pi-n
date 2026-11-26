@@ -28,7 +28,7 @@ const interruptedTool = [
 test("a clean process exit never invents a tool result for a generated call", () => {
   const output = [
     JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "toolcall_start", contentIndex: 0, id: "call", toolName: "bash" } }),
-    JSON.stringify({ type: "grapher_process_exited", success: true }),
+    JSON.stringify({ type: "pi_n_process_exited", success: true }),
   ].join("\n") + "\n";
   const html = renderToStaticMarkup(createElement(VirtualizedTranscript, { output, inline: true }));
   assert.match(html, /interrupted/);
@@ -96,11 +96,11 @@ test("settleInterruptedItems rewrites only running items and keeps array identit
 
 test("a composed Planner replay settles older turns while the newest one is live", () => {
   const composed = [
-    { type: "grapher_planning_source", planningId: "review" },
+    { type: "pi_n_planning_source", planningId: "review" },
     start(),
     // The killed review persisted only the start of its last tool call.
     { type: "message_update", assistantMessageEvent: { type: "toolcall_start", contentIndex: 0, id: "review-edge", toolName: "edit_graph" } },
-    { type: "grapher_planning_source", planningId: "next" },
+    { type: "pi_n_planning_source", planningId: "next" },
     start(),
     { type: "tool_execution_start", toolCallId: "next-node", toolName: "edit_graph", args: { nodes: [] } },
   ].map(line).join("");
@@ -130,7 +130,7 @@ test("a settled transcript with no visible items marks data-transcript-empty eve
   }));
   assert.doesNotMatch(emptyLive, /data-transcript-empty="true"/);
   const metadataOnlySettled = renderToStaticMarkup(createElement(VirtualizedTranscript, {
-    output: line({ type: "grapher_process_started", pid: 123 }), inline: true, settled: true,
+    output: line({ type: "pi_n_process_started", pid: 123 }), inline: true, settled: true,
   }));
   assert.match(metadataOnlySettled, /data-transcript-empty="true"/);
 });

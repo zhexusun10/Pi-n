@@ -1008,14 +1008,14 @@ pub fn tool(args: Vec<String>) -> Result<i32, String> {
             return Err("Unsupported native Conda Bash hook protocol".into());
         }
         let quote = |value: &str| format!("'{}'", value.replace('\\', "/").replace('\'', "'\\''"));
-        let helper = std::env::var_os("GRAPHER_ENVIRONMENT_HELPER")
+        let helper = std::env::var_os("PI_N_ENVIRONMENT_HELPER")
             .map(PathBuf::from)
             .unwrap_or(std::env::current_exe().map_err(|e| e.to_string())?);
         // A supported Conda hook replaces `conda()`. Keep observing actual
         // native argv through its documented executable delegate, not a Shell
         // command parser or replay of arbitrary activation/export text.
         print!(
-            "{hook}\n__conda_exe() {{ {} --grapher-env-tool {} conda {} \"$@\"; }}\n",
+            "{hook}\n__conda_exe() {{ {} --pi-n-env-tool {} conda {} \"$@\"; }}\n",
             quote(&text(&helper)),
             quote(&text(&file)),
             quote(&text(&requested))
@@ -1246,7 +1246,7 @@ for filename in sorted(files):
  digests[filename]=digest.hexdigest()
 if record_files:
  evidence={'schema':selector_schema,'files':native_blobs,'references':references} if record_selectors else native_blobs
- sys.stdout.write('\0GRAPHER_NATIVE_FILES\0'+json.dumps(evidence,sort_keys=True)+'\0')
+ sys.stdout.write('\0PI_N_NATIVE_FILES\0'+json.dumps(evidence,sort_keys=True)+'\0')
 print(json.dumps({'version':sys.version,'abi':sysconfig.get_config_var('SOABI'),'platform':sysconfig.get_platform(),'machine':platform.machine(),'bits':struct.calcsize('P')*8,'openssl':ssl.OPENSSL_VERSION,'zlib':zlib.ZLIB_RUNTIME_VERSION,'nativeFiles':digests},sort_keys=True))
 "#;
     // Keep the probe's argv/environment unchanged: ordinary .pth startup code
@@ -2677,7 +2677,7 @@ mod tests {
 
     #[test]
     fn conda_prefix_receipt_uses_actual_cwd_not_a_same_named_state_scope() {
-        const CHILD: &str = "GRAPHER_TEST_CONDA_PREFIX_OBSERVATION";
+        const CHILD: &str = "PI_N_TEST_CONDA_PREFIX_OBSERVATION";
         if let Ok(args) = std::env::var(CHILD) {
             assert_eq!(tool(serde_json::from_str(&args).unwrap()).unwrap(), 0);
             return;

@@ -20,19 +20,19 @@ jobs:
           - os: ubuntu-22.04
             platform: linux
             arch: x64
-            artifact: grapher-linux-x64.tar.gz
+            artifact: pi-n-linux-x64.tar.gz
           - os: macos-15
             platform: macos
             arch: arm64
-            artifact: grapher-macos-arm64.tar.gz
+            artifact: pi-n-macos-arm64.tar.gz
           - os: macos-15-intel
             platform: macos
             arch: x64
-            artifact: grapher-macos-x64.tar.gz
+            artifact: pi-n-macos-x64.tar.gz
           - os: windows-latest
             platform: windows
             arch: x64
-            artifact: grapher-windows-x64.zip
+            artifact: pi-n-windows-x64.zip
     steps:
       - uses: actions/checkout@v5
         with:
@@ -63,7 +63,7 @@ jobs:
       - name: Build frontend
         run: npm run build
       - name: Build release binary
-        run: cargo build --release --manifest-path backend/Cargo.toml --bin grapher
+        run: cargo build --release --manifest-path backend/Cargo.toml --bin pi-n
       - name: Create relocatable distribution
         run: node scripts/package-release.mjs ${{ matrix.platform }} ${{ matrix.arch }} ${{ matrix.artifact }}
       - name: Smoke-test extracted archive outside the checkout
@@ -121,7 +121,7 @@ jobs:
         shell: bash
         env:
           DESKTOP_TARGET: ${{ matrix.target }}
-          GRAPHER_UPDATER_PUBKEY: ${{ vars.GRAPHER_UPDATER_PUBKEY }}
+          PI_N_UPDATER_PUBKEY: ${{ vars.PI_N_UPDATER_PUBKEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -164,8 +164,8 @@ jobs:
           set -euo pipefail
           umask 077
           if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            CERT_PATH="${RUNNER_TEMP}/grapher-signing-cert.p12"
-            KEYCHAIN_PATH="${RUNNER_TEMP}/grapher-signing.keychain-db"
+            CERT_PATH="${RUNNER_TEMP}/pi-n-signing-cert.p12"
+            KEYCHAIN_PATH="${RUNNER_TEMP}/pi-n-signing.keychain-db"
             KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
             CERT_PATH="$CERT_PATH" node --input-type=module -e "
               import { writeFileSync } from 'node:fs';
@@ -186,7 +186,7 @@ jobs:
             done < <(security list-keychains -d user)
             security list-keychains -d user -s "$KEYCHAIN_PATH" "${existing_keychains[@]}"
             rm -f "$CERT_PATH"
-            echo "GRAPHER_MACOS_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+            echo "PI_N_MACOS_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
             echo "signing_ready=true" >> "$GITHUB_OUTPUT"
             echo "Configured temporary macOS signing keychain for Developer ID signing."
           else
@@ -224,7 +224,7 @@ jobs:
             Add-Content -Path $env:GITHUB_OUTPUT -Value "signing_mode=sign-command"
             Write-Host "Configured optional Windows Authenticode signing via custom WINDOWS_SIGN_COMMAND."
           } elseif ($env:WINDOWS_CERTIFICATE -and $env:WINDOWS_CERTIFICATE.Trim() -and $env:WINDOWS_CERTIFICATE_PASSWORD -and $env:WINDOWS_CERTIFICATE_PASSWORD.Trim()) {
-            $pfxPath = Join-Path $env:RUNNER_TEMP "grapher-signing-cert.pfx"
+            $pfxPath = Join-Path $env:RUNNER_TEMP "pi-n-signing-cert.pfx"
             try {
               $raw = ($env:WINDOWS_CERTIFICATE -replace '\s+', '')
               [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($raw))
@@ -232,7 +232,7 @@ jobs:
               $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePw
               $thumbprint = $cert.Thumbprint.ToUpperInvariant()
               Add-Content -Path $env:GITHUB_ENV -Value "WINDOWS_CERTIFICATE_THUMBPRINT=$thumbprint"
-              Add-Content -Path $env:GITHUB_ENV -Value "GRAPHER_IMPORTED_WINDOWS_CERT_THUMBPRINT=$thumbprint"
+              Add-Content -Path $env:GITHUB_ENV -Value "PI_N_IMPORTED_WINDOWS_CERT_THUMBPRINT=$thumbprint"
               Add-Content -Path $env:GITHUB_OUTPUT -Value "signing_ready=true"
               Add-Content -Path $env:GITHUB_OUTPUT -Value "signing_mode=pfx"
               $preview = "$($thumbprint.Substring(0, 8))...$($thumbprint.Substring($thumbprint.Length - 4))"
@@ -260,7 +260,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           DESKTOP_TARGET: ${{ matrix.target }}
-          GRAPHER_UPDATER_PUBKEY: ${{ vars.GRAPHER_UPDATER_PUBKEY }}
+          PI_N_UPDATER_PUBKEY: ${{ vars.PI_N_UPDATER_PUBKEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ steps.macos-signing.outputs.signing_ready == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
@@ -281,20 +281,20 @@ jobs:
         if: always() && matrix.platform == 'macos'
         shell: bash
         run: |
-          if [ -n "${GRAPHER_MACOS_KEYCHAIN:-}" ]; then
-            security delete-keychain "$GRAPHER_MACOS_KEYCHAIN" 2>/dev/null || true
+          if [ -n "${PI_N_MACOS_KEYCHAIN:-}" ]; then
+            security delete-keychain "$PI_N_MACOS_KEYCHAIN" 2>/dev/null || true
           fi
-          rm -f "${RUNNER_TEMP}/grapher-signing-cert.p12" "${RUNNER_TEMP}/apple-notary-key.p8"
+          rm -f "${RUNNER_TEMP}/pi-n-signing-cert.p12" "${RUNNER_TEMP}/apple-notary-key.p8"
       - name: Clean up temporary Windows signing material
         if: always() && matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $pfxPath = Join-Path $env:RUNNER_TEMP "grapher-signing-cert.pfx"
+          $pfxPath = Join-Path $env:RUNNER_TEMP "pi-n-signing-cert.pfx"
           if (Test-Path $pfxPath) {
             Remove-Item -Force $pfxPath -ErrorAction SilentlyContinue
           }
-          if ($env:GRAPHER_IMPORTED_WINDOWS_CERT_THUMBPRINT) {
-            $certPath = "Cert:\CurrentUser\My\$($env:GRAPHER_IMPORTED_WINDOWS_CERT_THUMBPRINT)"
+          if ($env:PI_N_IMPORTED_WINDOWS_CERT_THUMBPRINT) {
+            $certPath = "Cert:\CurrentUser\My\$($env:PI_N_IMPORTED_WINDOWS_CERT_THUMBPRINT)"
             if (Test-Path $certPath) {
               Remove-Item -Force $certPath -ErrorAction SilentlyContinue
             }
@@ -331,24 +331,24 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
           cat <<EOF > release-notes.md
-          # Grapher ${RELEASE_TAG}
+          # Pi^n ${RELEASE_TAG}
 
           ### Desktop App (Recommended)
 
           | Platform | Download |
           | --- | --- |
-          | macOS (Apple Silicon) | [Grapher_${VERSION}_aarch64.dmg](${BASE_URL}/Grapher_${VERSION}_aarch64.dmg) |
-          | macOS (Intel) | [Grapher_${VERSION}_x64.dmg](${BASE_URL}/Grapher_${VERSION}_x64.dmg) |
-          | Windows (x64) | [Grapher_${VERSION}_x64-setup.exe](${BASE_URL}/Grapher_${VERSION}_x64-setup.exe) |
+          | macOS (Apple Silicon) | [Pi-n_${VERSION}_aarch64.dmg](${BASE_URL}/Pi-n_${VERSION}_aarch64.dmg) |
+          | macOS (Intel) | [Pi-n_${VERSION}_x64.dmg](${BASE_URL}/Pi-n_${VERSION}_x64.dmg) |
+          | Windows (x64) | [Pi-n_${VERSION}_x64-setup.exe](${BASE_URL}/Pi-n_${VERSION}_x64-setup.exe) |
 
           *(Includes the bundled Rust backend, pinned Pi/engine runtime, and Node.js runtime. Existing desktop installs can also update directly via **Settings → Software Update**.)*
 
           ### CLI / Browser Archives
 
-          - **Linux (x64):** [grapher-linux-x64.tar.gz](${BASE_URL}/grapher-linux-x64.tar.gz)
-          - **macOS (Apple Silicon):** [grapher-macos-arm64.tar.gz](${BASE_URL}/grapher-macos-arm64.tar.gz)
-          - **macOS (Intel):** [grapher-macos-x64.tar.gz](${BASE_URL}/grapher-macos-x64.tar.gz)
-          - **Windows (x64):** [grapher-windows-x64.zip](${BASE_URL}/grapher-windows-x64.zip)
+          - **Linux (x64):** [pi-n-linux-x64.tar.gz](${BASE_URL}/pi-n-linux-x64.tar.gz)
+          - **macOS (Apple Silicon):** [pi-n-macos-arm64.tar.gz](${BASE_URL}/pi-n-macos-arm64.tar.gz)
+          - **macOS (Intel):** [pi-n-macos-x64.tar.gz](${BASE_URL}/pi-n-macos-x64.tar.gz)
+          - **Windows (x64):** [pi-n-windows-x64.zip](${BASE_URL}/pi-n-windows-x64.zip)
 
           *(Requires Node.js 22.19+ and Git on \`PATH\`.)*
 
@@ -361,7 +361,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GRAPHER_UPDATER_PUBKEY: ${{ vars.GRAPHER_UPDATER_PUBKEY }}
+          PI_N_UPDATER_PUBKEY: ${{ vars.PI_N_UPDATER_PUBKEY }}
         run: |
           set -euo pipefail
           node scripts/desktop-updater-manifest.mjs \
@@ -404,7 +404,7 @@ jobs:
               fi
             done
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
-            gh release edit "$RELEASE_TAG" --draft --title "Grapher $RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}"
+            gh release edit "$RELEASE_TAG" --draft --title "Pi^n $RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}"
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Grapher $RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}" release-assets/*
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Pi^n $RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}" release-assets/*
           fi

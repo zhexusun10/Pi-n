@@ -130,7 +130,7 @@ test('mutations reuse a stable operation identity and expose uncertain outcomes 
   globalThis.fetch = async (_url, init) => {
     headers.push(new Headers(init?.headers));
     if (fail) throw new TypeError('lost response');
-    return response(null, { 'x-grapher-instance': instance });
+    return response(null, { 'x-pi-n-instance': instance });
   };
   try {
     await jsonRequest('snapshot');
@@ -138,11 +138,11 @@ test('mutations reuse a stable operation identity and expose uncertain outcomes 
     fail = true;
     await assert.rejects(jsonRequest('control', { action: 'pause' }, { operationKey: 'same-action' }), error => {
       const unknown = error as Error & { operationId: string; outcomeUnknown: boolean };
-      return unknown.outcomeUnknown && unknown.operationId === headers[1].get('X-Grapher-Operation');
+      return unknown.outcomeUnknown && unknown.operationId === headers[1].get('X-Pi-N-Operation');
     });
-    assert.equal(headers[1].get('X-Grapher-Operation'), headers[2].get('X-Grapher-Operation'));
-    assert.notEqual(headers[1].get('X-Grapher-Request-Id'), headers[2].get('X-Grapher-Request-Id'));
-    assert.ok(headers[1].get('X-Grapher-Operation')?.startsWith(instance + ':'));
+    assert.equal(headers[1].get('X-Pi-N-Operation'), headers[2].get('X-Pi-N-Operation'));
+    assert.notEqual(headers[1].get('X-Pi-N-Request-Id'), headers[2].get('X-Pi-N-Request-Id'));
+    assert.ok(headers[1].get('X-Pi-N-Operation')?.startsWith(instance + ':'));
   } finally { globalThis.fetch = original; resetApiBaseForTest(); }
 });
 
@@ -185,8 +185,8 @@ test('a late response from the previous desktop backend cannot replace the curre
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url.includes(':1421/')) { started.resolve(); return lateResponse.promise; }
-    if (url.endsWith('/control')) operationId = new Headers(init?.headers).get('X-Grapher-Operation');
-    return response(null, { 'x-grapher-instance': newInstance });
+    if (url.endsWith('/control')) operationId = new Headers(init?.headers).get('X-Pi-N-Operation');
+    return response(null, { 'x-pi-n-instance': newInstance });
   };
   try {
     const oldRead = jsonRequest('snapshot');
@@ -194,7 +194,7 @@ test('a late response from the previous desktop backend cannot replace the curre
     port = 1422;
     invalidateBackendBaseUrl();
     await jsonRequest('snapshot');
-    lateResponse.resolve(response(null, { 'x-grapher-instance': oldInstance }));
+    lateResponse.resolve(response(null, { 'x-pi-n-instance': oldInstance }));
     await oldRead;
     await jsonRequest('control', { action: 'pause' });
     assert.ok(operationId?.startsWith(newInstance + ':'), `write used stale epoch: ${operationId}`);
@@ -215,7 +215,7 @@ test('a late transport failure cannot invalidate an already connected replacemen
   const started = Promise.withResolvers<void>();
   globalThis.fetch = async input => {
     if (String(input).includes(':1421/')) { started.resolve(); return lateFailure.promise; }
-    return response('replacement', { 'x-grapher-instance': '77777777-7777-4777-8777-777777777777' });
+    return response('replacement', { 'x-pi-n-instance': '77777777-7777-4777-8777-777777777777' });
   };
   try {
     const oldRead = jsonRequest('snapshot');
@@ -276,11 +276,11 @@ test('an interrupted stream from the old backend cannot tear down its replacemen
       plans++;
       return new Response(new ReadableStream<Uint8Array>({ start(controller) {
         streamController = controller; started.resolve();
-      } }), { headers: { 'Content-Type': 'text/event-stream', 'x-grapher-instance': oldInstance } });
+      } }), { headers: { 'Content-Type': 'text/event-stream', 'x-pi-n-instance': oldInstance } });
     }
-    if (url.endsWith('/control')) operationId = new Headers(init?.headers).get('X-Grapher-Operation');
+    if (url.endsWith('/control')) operationId = new Headers(init?.headers).get('X-Pi-N-Operation');
     return response(url.endsWith('/operation_status') ? { state: 'unknown', response: null } : null,
-      { 'x-grapher-instance': url.includes(':1421/') ? oldInstance : newInstance });
+      { 'x-pi-n-instance': url.includes(':1421/') ? oldInstance : newInstance });
   };
   try {
     await jsonRequest('snapshot');
@@ -321,9 +321,9 @@ test('a lost write response is recovered with a receipt read without submitting 
   let operationId = '';
   globalThis.fetch = async (url, init) => {
     const command = String(url).split('/').at(-1)!; calls.push(command);
-    if (command === 'snapshot') return response(emptySnapshot, { 'x-grapher-instance': instance });
+    if (command === 'snapshot') return response(emptySnapshot, { 'x-pi-n-instance': instance });
     if (command === 'control') {
-      operationId = new Headers(init?.headers).get('X-Grapher-Operation')!;
+      operationId = new Headers(init?.headers).get('X-Pi-N-Operation')!;
       throw new TypeError('response lost after commit');
     }
     assert.equal(command, 'operation_status');
@@ -353,7 +353,7 @@ test('a truncated write response recovers from the receipt and revalidates the r
       assert.equal(JSON.parse(String(init?.body)).runId, runId);
       return response({ ...emptySnapshot, runId, phase: 'completed' });
     }
-    return response(emptySnapshot, { 'x-grapher-instance': '33333333-3333-4333-8333-333333333333' });
+    return response(emptySnapshot, { 'x-pi-n-instance': '33333333-3333-4333-8333-333333333333' });
   };
   try {
     await runtimeService.snapshot();
@@ -375,10 +375,10 @@ test('an interrupted Planner response recovers its completed receipt without sta
         const command = String(url).split('/').at(-1)!;
         calls.push(command);
         if (calls.length === 1) return response(emptySnapshot, {
-          'x-grapher-instance': '44444444-4444-4444-8444-444444444444',
+          'x-pi-n-instance': '44444444-4444-4444-8444-444444444444',
         });
         if (command === 'plan_goal_stream') {
-          operationId = new Headers(init?.headers).get('X-Grapher-Operation');
+          operationId = new Headers(init?.headers).get('X-Pi-N-Operation');
           return new Response(new ReadableStream({ start(controller) {
             if (failure === 'read-error') controller.error(new TypeError('stream response lost'));
             else controller.close();
@@ -411,10 +411,10 @@ test('an interrupted Planner with no receipt retains its operation identity and 
   globalThis.fetch = async (url, init) => {
     const command = String(url).split('/').at(-1)!;
     if (command === 'snapshot') return response(emptySnapshot, {
-      'x-grapher-instance': '55555555-5555-4555-8555-555555555555',
+      'x-pi-n-instance': '55555555-5555-4555-8555-555555555555',
     });
     if (command === 'operation_status') return response({ state: 'unknown', response: null });
-    operationId = new Headers(init?.headers).get('X-Grapher-Operation');
+    operationId = new Headers(init?.headers).get('X-Pi-N-Operation');
     return new Response('', { headers: { 'Content-Type': 'text/event-stream' } });
   };
   try {
@@ -436,7 +436,7 @@ test('cancelling a Planner stream preserves the cancellation reason without quer
     const command = String(url).split('/').at(-1)!;
     calls.push(command);
     if (command === 'snapshot') return response(emptySnapshot, {
-      'x-grapher-instance': '66666666-6666-4666-8666-666666666666',
+      'x-pi-n-instance': '66666666-6666-4666-8666-666666666666',
     });
     return new Response(new ReadableStream({ start(stream) {
       controller.abort(cancelled);

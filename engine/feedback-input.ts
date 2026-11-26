@@ -1,7 +1,7 @@
 // Private turn identity is durable in Pi, but is never part of model context.
 // Pi can append image normalization hints after the envelope, so it need not be
 // the last line. Only a complete reserved UUID line is removed.
-const marker = /\n\n<grapher-feedback-id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}<\/grapher-feedback-id>(?=\n|$)/g;
+const marker = /\n\n<pi-n-feedback-id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}<\/pi-n-feedback-id>(?=\n|$)/g;
 
 export function feedbackInputContext<T extends { role: string; content?: unknown }>(messages: T[]): T[] {
   return messages.map(message => {

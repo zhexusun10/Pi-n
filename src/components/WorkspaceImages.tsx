@@ -54,13 +54,20 @@ export function useWorkspaceImages(root: RefObject<HTMLDivElement | null>, html:
     let disposed = false;
     const failed = (image: HTMLImageElement) => {
       if (disposed || !container.contains(image)) return;
+      const message = `${t("无法加载图片")} · ${image.alt || image.dataset.workspacePath || ""}`;
+      if (image.dataset.managedImage === "true") {
+        image.removeAttribute("aria-busy");
+        image.dispatchEvent(new CustomEvent("pi-n:image-error", { detail: { message } }));
+        notifyTranscriptContentGrowth(container);
+        return;
+      }
       const fallback = document.createElement("span");
       fallback.className = "markdown-image-error";
       // Keep failed paths referenced while their fallback remains mounted.
       if (image.dataset.workspacePath) fallback.dataset.workspacePath = image.dataset.workspacePath;
       fallback.setAttribute("role", "img");
-      fallback.textContent = `${t("无法加载图片")} · ${image.alt || image.dataset.workspacePath || ""}`;
-      fallback.setAttribute("aria-label", fallback.textContent);
+      fallback.textContent = message;
+      fallback.setAttribute("aria-label", message);
       image.replaceWith(fallback);
       notifyTranscriptContentGrowth(container);
     };

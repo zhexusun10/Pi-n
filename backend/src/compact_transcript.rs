@@ -5,13 +5,13 @@
 //!   thinking prose, large tool arguments, and streaming updates while retaining
 //!   assistant text, user turns (with exact original byte offsets), error
 //!   diagnostics, lifecycle markers, minimal tool metadata, and exact raw byte
-//!   ranges (`grapherRawRange`) for targeted on-demand hydration.
+//!   ranges (`piNRawRange`) for targeted on-demand hydration.
 //! - `CardShell` (`projection="cards"`, expanded settled cards): strips streaming
 //!   noise (`tool_execution_update`, `thinking_delta`, `toolcall_delta`,
 //!   `message_update.partial`, and streaming deltas subsumed by `message_end`),
 //!   keeps small cards (`<= CARD_SHELL_INLINE_BYTES`) inline, and projects large
 //!   tool/thinking bodies as lightweight shells with header flags and exact
-//!   `grapherRawRange` spans for single-card hydration.
+//!   `piNRawRange` spans for single-card hydration.
 //! - `hydrate_raw_slice`: materializes selected raw byte ranges on demand with
 //!   server-side 100 KiB display truncation matching the frontend preview cap.
 
@@ -26,7 +26,7 @@ const MAX_SPLIT_LINE_CARRY_BYTES: usize = 4 * 1024 * 1024;
 /// Matches `TOOL_OUTPUT_PREVIEW_BYTES` in `src/services/toolOutput.ts`.
 pub const DISPLAY_TOOL_PREVIEW_BYTES: usize = 100 * 1024;
 /// Small cards stay inline in `CardShell` mode so expanding them requires zero
-/// round trips; larger payloads hydrate on demand via `grapherRawRange`.
+/// round trips; larger payloads hydrate on demand via `piNRawRange`.
 pub const CARD_SHELL_INLINE_BYTES: usize = 1536;
 const DISPLAY_ELLIPSIS: &str = "\n...";
 
@@ -184,7 +184,7 @@ fn detect_subcommand_warning(text: &str) -> bool {
     if text.is_empty() {
         return false;
     }
-    if text.contains("[grapher:step_error") || contains_word_prefix(text, "AssertionError:") {
+    if text.contains("[pi-n:step_error") || contains_word_prefix(text, "AssertionError:") {
         return true;
     }
     let bytes = text.as_bytes();
@@ -425,7 +425,7 @@ fn compact_tool_call_block(
     );
     out.insert("arguments".into(), args);
     if omitted {
-        out.insert("grapherBodyOmitted".into(), Value::Bool(true));
+        out.insert("piNBodyOmitted".into(), Value::Bool(true));
     }
     (Value::Object(out), omitted)
 }
@@ -492,9 +492,9 @@ fn compact_assistant_message(
                                 part_out.insert("type".into(), Value::String("thinking".into()));
                                 part_out.insert("thinking".into(), Value::String(String::new()));
                                 if omitted {
-                                    part_out.insert("grapherBodyOmitted".into(), Value::Bool(true));
+                                    part_out.insert("piNBodyOmitted".into(), Value::Bool(true));
                                     part_out.insert(
-                                        "grapherThinkingChars".into(),
+                                        "piNThinkingChars".into(),
                                         Value::Number((trimmed_chars as u64).into()),
                                     );
                                 }
@@ -573,19 +573,19 @@ fn compact_tool_result_message(
             out.insert("content".into(), truncate_result_content(content, CARD_SHELL_INLINE_BYTES));
         }
     } else if !text.is_empty() {
-        out.insert("grapherBodyOmitted".into(), Value::Bool(true));
+        out.insert("piNBodyOmitted".into(), Value::Bool(true));
         out.insert(
-            "grapherRawRange".into(),
+            "piNRawRange".into(),
             json!([raw_range[0] as u64, raw_range[1] as u64]),
         );
         if detect_tool_truncated(Some(msg), &text) {
-            out.insert("grapherTruncated".into(), Value::Bool(true));
+            out.insert("piNTruncated".into(), Value::Bool(true));
         }
         if detect_subcommand_warning(&text) {
-            out.insert("grapherSubcommandWarning".into(), Value::Bool(true));
+            out.insert("piNSubcommandWarning".into(), Value::Bool(true));
         }
         if detect_interrupted_output(&text) {
-            out.insert("grapherInterrupted".into(), Value::Bool(true));
+            out.insert("piNInterrupted".into(), Value::Bool(true));
         }
     }
     Value::Object(out)
@@ -700,7 +700,7 @@ fn compact_message_update(
             out.insert("assistantMessageEvent".into(), Value::Object(inner_out));
             if omitted {
                 out.insert(
-                    "grapherRawRange".into(),
+                    "piNRawRange".into(),
                     json!([raw_range[0] as u64, raw_range[1] as u64]),
                 );
             }
@@ -798,6 +798,58 @@ enum CompactLineResult {
     AssistantMessageEnd(String, AssistantEndSummary),
 }
 
+fn looks_like_truncated_jsonl_event(trimmed: &str) -> bool {
+    if trimmed.len() <= 2048 {
+        return false;
+    }
+    let Some(rest) = trimmed.strip_prefix("{\"") else {
+        return false;
+    };
+    // Match `{"<key>":` regardless of serde_json's alphabetical key ordering
+    // (e.g. `piNReceivedAt`, `durationMs`, `assistantMessageEvent`, `args`, `type`).
+    let Some(quote_end) = rest.find('"') else {
+        return false;
+    };
+    if quote_end == 0 || quote_end > 64 {
+        return false;
+    }
+    if !rest[..quote_end]
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return false;
+    }
+    rest[quote_end + 1..].trim_start().starts_with(':')
+}
+
+fn is_fast_droppable_json_line(trimmed: &str) -> bool {
+    // Fast pre-checks for the highest-volume droppable events to avoid parsing
+    // megabytes of stdout progress, reasoning deltas, or aggregate turn/agent
+    // snapshots. Account for both `"type"`-first fixtures and serde_json's
+    // alphabetical key order (`piNReceivedAt` / `assistantMessageEvent` first,
+    // `"type"` near the end).
+    if trimmed.starts_with(r#"{"type":"tool_execution_update""#)
+        || trimmed.starts_with(r#"{"type": "tool_execution_update""#)
+        || trimmed.ends_with(r#","type":"tool_execution_update"}"#)
+        || trimmed.ends_with(r#","type":"turn_end"}"#)
+        || trimmed.ends_with(r#","type":"agent_end"}"#)
+        || trimmed.ends_with(r#","type":"agent_end","willRetry":false}"#)
+        || trimmed.ends_with(r#","type":"agent_end","willRetry":true}"#)
+    {
+        return true;
+    }
+    let is_message_update = trimmed.starts_with(r#"{"type":"message_update""#)
+        || trimmed.starts_with(r#"{"type": "message_update""#)
+        || (trimmed.starts_with(r#"{"assistantMessageEvent":"#)
+            && trimmed.ends_with(r#","type":"message_update"}"#));
+    is_message_update
+        && !trimmed.contains(r#""text_delta""#)
+        && !trimmed.contains(r#""thinking_start""#)
+        && !trimmed.contains(r#""thinking_end""#)
+        && !trimmed.contains(r#""toolcall_start""#)
+        && !trimmed.contains(r#""toolcall_end""#)
+}
+
 fn compact_json_line(
     trimmed: &str,
     raw_line_start: usize,
@@ -805,30 +857,14 @@ fn compact_json_line(
     projection: TranscriptProjection,
 ) -> CompactLineResult {
     let raw_range = [raw_line_start, raw_line_end];
-    // Fast pre-checks for the highest-volume droppable events to avoid parsing
-    // megabytes of stdout progress or reasoning token deltas.
-    if trimmed.starts_with(r#"{"type":"tool_execution_update""#)
-        || trimmed.starts_with(r#"{"type": "tool_execution_update""#)
-    {
-        return CompactLineResult::Drop;
-    }
-    if (trimmed.starts_with(r#"{"type":"message_update""#)
-        || trimmed.starts_with(r#"{"type": "message_update""#))
-        && !trimmed.contains(r#""text_delta""#)
-        && !trimmed.contains(r#""thinking_start""#)
-        && !trimmed.contains(r#""thinking_end""#)
-        && !trimmed.contains(r#""toolcall_start""#)
-        && !trimmed.contains(r#""toolcall_end""#)
-    {
+    if is_fast_droppable_json_line(trimmed) {
         return CompactLineResult::Drop;
     }
 
     let Ok(mut parsed) = serde_json::from_str::<Value>(trimmed) else {
         // Never dump truncated multi-kilobyte JSONL event fragments into the
         // transcript as assistant plaintext.
-        if (trimmed.starts_with(r#"{"type":"#) || trimmed.starts_with(r#"{"type": "#))
-            && trimmed.len() > 2048
-        {
+        if looks_like_truncated_jsonl_event(trimmed) {
             return CompactLineResult::Drop;
         }
         return CompactLineResult::Emit(trimmed.to_string());
@@ -862,9 +898,9 @@ fn compact_json_line(
             let (args, omitted) = compact_args_for(obj.get("args"), projection);
             out.insert("args".into(), args);
             if omitted {
-                out.insert("grapherBodyOmitted".into(), Value::Bool(true));
+                out.insert("piNBodyOmitted".into(), Value::Bool(true));
                 out.insert(
-                    "grapherRawRange".into(),
+                    "piNRawRange".into(),
                     json!([raw_line_start as u64, raw_line_end as u64]),
                 );
             }
@@ -917,19 +953,19 @@ fn compact_json_line(
                     );
                 }
             } else if !text.is_empty() {
-                out.insert("grapherBodyOmitted".into(), Value::Bool(true));
+                out.insert("piNBodyOmitted".into(), Value::Bool(true));
                 out.insert(
-                    "grapherRawRange".into(),
+                    "piNRawRange".into(),
                     json!([raw_line_start as u64, raw_line_end as u64]),
                 );
                 if detect_tool_truncated(result_obj, &text) {
-                    out.insert("grapherTruncated".into(), Value::Bool(true));
+                    out.insert("piNTruncated".into(), Value::Bool(true));
                 }
                 if detect_subcommand_warning(&text) {
-                    out.insert("grapherSubcommandWarning".into(), Value::Bool(true));
+                    out.insert("piNSubcommandWarning".into(), Value::Bool(true));
                 }
                 if detect_interrupted_output(&text) {
-                    out.insert("grapherInterrupted".into(), Value::Bool(true));
+                    out.insert("piNInterrupted".into(), Value::Bool(true));
                 }
             }
             if !result_out.is_empty() {
@@ -950,7 +986,7 @@ fn compact_json_line(
                     // Preserve user messages verbatim with exact original byte offset
                     // so inline steer matching and message editing remain byte-accurate.
                     obj.insert(
-                        "grapherByteOffset".into(),
+                        "piNByteOffset".into(),
                         Value::Number((raw_line_start as u64).into()),
                     );
                     serde_json::to_string(&parsed)
@@ -991,7 +1027,7 @@ fn compact_json_line(
                     }
                     if summary.has_raw_range {
                         out.insert(
-                            "grapherRawRange".into(),
+                            "piNRawRange".into(),
                             json!([raw_line_start as u64, raw_line_end as u64]),
                         );
                     }
@@ -1011,9 +1047,9 @@ fn compact_json_line(
         | "compaction"
         | "compaction_start"
         | "compaction_end"
-        | "grapher_process_started"
-        | "grapher_process_exited"
-        | "grapher_planning_source"
+        | "pi_n_process_started"
+        | "pi_n_process_exited"
+        | "pi_n_planning_source"
         | "session" => CompactLineResult::Emit(trimmed.to_string()),
         _ => CompactLineResult::Drop,
     }
@@ -1058,13 +1094,13 @@ pub fn compact_transcript_chunk_with_options(
 
         if in_final_response {
             if trimmed.starts_with('{')
-                && trimmed.contains(r#""grapher_planning_source""#)
+                && trimmed.contains(r#""pi_n_planning_source""#)
                 && serde_json::from_str::<Value>(trimmed)
                     .ok()
                     .and_then(|v| {
                         v.get("type")
                             .and_then(Value::as_str)
-                            .map(|t| t == "grapher_planning_source")
+                            .map(|t| t == "pi_n_planning_source")
                     })
                     .unwrap_or(false)
             {
@@ -1212,18 +1248,42 @@ where
     let mut cursor = end;
     let mut tail_carry = String::new();
     let mut tail_carry_bytes = 0usize;
+    let mut discarding_oversized_line = false;
     let mut chunks: Vec<String> = Vec::new();
     let mut compacted_bytes = 0usize;
     let mut raw_scanned = 0usize;
 
-    while cursor > 0 && compacted_bytes < compact_limit && raw_scanned < MAX_COMPACT_RAW_SCAN_BYTES
+    while cursor > 0
+        && (compacted_bytes < compact_limit || discarding_oversized_line)
+        && raw_scanned < MAX_COMPACT_RAW_SCAN_BYTES
     {
         let (chunk_start, raw) = read_raw_tail(cursor, COMPACT_RAW_CHUNK_BYTES)?;
         if chunk_start >= cursor || raw.is_empty() {
             break;
         }
         raw_scanned += cursor - chunk_start;
-        let combined = if tail_carry.is_empty() {
+
+        let combined = if discarding_oversized_line {
+            // The line whose tail exceeded MAX_SPLIT_LINE_CARRY_BYTES extends
+            // leftward into `raw`. Drop everything after the last newline in
+            // `raw` so its truncated prefix is never emitted as plaintext.
+            let Some(last_nl) = raw.rfind('\n') else {
+                cursor = chunk_start;
+                if chunk_start == 0 {
+                    break;
+                }
+                continue;
+            };
+            discarding_oversized_line = false;
+            if compacted_bytes >= compact_limit {
+                // We already satisfied the page budget and just aligned to the
+                // start of the skipped oversized line.
+                cursor = chunk_start + last_nl + 1;
+                tail_carry_bytes = 0;
+                break;
+            }
+            raw[..=last_nl].to_string()
+        } else if tail_carry.is_empty() {
             raw
         } else {
             let mut merged = String::with_capacity(raw.len() + tail_carry.len());
@@ -1263,10 +1323,14 @@ where
             if prefix_len <= MAX_SPLIT_LINE_CARRY_BYTES {
                 tail_carry = combined[..prefix_len].to_string();
                 tail_carry_bytes = prefix_len;
+            } else {
+                discarding_oversized_line = true;
             }
         } else if combined.len() <= MAX_SPLIT_LINE_CARRY_BYTES {
             tail_carry = combined;
             tail_carry_bytes = tail_carry.len();
+        } else {
+            discarding_oversized_line = true;
         }
         cursor = chunk_start;
     }
@@ -1342,7 +1406,7 @@ pub fn hydrate_raw_slice(raw: &str, base_offset: usize) -> String {
                     }
                 }
                 next.insert(
-                    "grapherRawRange".into(),
+                    "piNRawRange".into(),
                     json!([line_start as u64, line_end as u64]),
                 );
                 Some(Value::Object(next))
@@ -1372,7 +1436,7 @@ pub fn hydrate_raw_slice(raw: &str, base_offset: usize) -> String {
                     next.insert("result".into(), Value::Object(result_next));
                 }
                 next.insert(
-                    "grapherRawRange".into(),
+                    "piNRawRange".into(),
                     json!([line_start as u64, line_end as u64]),
                 );
                 Some(Value::Object(next))
@@ -1410,7 +1474,7 @@ pub fn hydrate_raw_slice(raw: &str, base_offset: usize) -> String {
                 Some(json!({
                     "type": "message_update",
                     "assistantMessageEvent": Value::Object(inner_next),
-                    "grapherRawRange": [line_start as u64, line_end as u64],
+                    "piNRawRange": [line_start as u64, line_end as u64],
                 }))
             }
             "message_end" | "message" => {
@@ -1474,7 +1538,7 @@ pub fn hydrate_raw_slice(raw: &str, base_offset: usize) -> String {
                         Some(json!({
                             "type": kind,
                             "message": Value::Object(msg_next),
-                            "grapherRawRange": [line_start as u64, line_end as u64],
+                            "piNRawRange": [line_start as u64, line_end as u64],
                         }))
                     }
                     "toolResult" => {
@@ -1494,7 +1558,7 @@ pub fn hydrate_raw_slice(raw: &str, base_offset: usize) -> String {
                         Some(json!({
                             "type": kind,
                             "message": Value::Object(msg_next),
-                            "grapherRawRange": [line_start as u64, line_end as u64],
+                            "piNRawRange": [line_start as u64, line_end as u64],
                         }))
                     }
                     _ => None,
@@ -1577,9 +1641,9 @@ mod tests {
         assert!(!compacted.contains("WWWW"));
         assert!(compacted.contains("Updated src/app.ts cleanly."));
         assert!(compacted.contains(r#""path":"src/app.ts""#));
-        assert!(compacted.contains(r#""grapherByteOffset":100"#));
-        assert!(compacted.contains(r#""grapherRawRange":"#));
-        assert!(compacted.contains(r#""grapherBodyOmitted":true"#));
+        assert!(compacted.contains(r#""piNByteOffset":100"#));
+        assert!(compacted.contains(r#""piNRawRange":"#));
+        assert!(compacted.contains(r#""piNBodyOmitted":true"#));
     }
 
     #[test]
@@ -1717,8 +1781,8 @@ mod tests {
         assert!(projected.contains("short thought"));
         assert!(!projected.contains("XXXX"));
         assert!(!projected.contains("RRRR"));
-        assert!(projected.contains(r#""grapherSubcommandWarning":true"#));
-        assert!(projected.contains(r#""grapherThinkingChars":4000"#));
+        assert!(projected.contains(r#""piNSubcommandWarning":true"#));
+        assert!(projected.contains(r#""piNThinkingChars":4000"#));
 
         // Hydrate the exact big tool_execution_end line and verify server-side truncation.
         let big_line: Value = projected
@@ -1726,7 +1790,7 @@ mod tests {
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .find(|v| v["toolCallId"] == "big-1")
             .unwrap();
-        let range = big_line["grapherRawRange"].as_array().unwrap();
+        let range = big_line["piNRawRange"].as_array().unwrap();
         let start = range[0].as_u64().unwrap() as usize;
         let end = range[1].as_u64().unwrap() as usize;
         let hydrated = hydrate_raw_slice(&raw[start..end], start);
@@ -1820,5 +1884,76 @@ mod tests {
         })
         .unwrap();
         assert!(start < blob.len());
+    }
+
+    #[test]
+    fn compact_tail_pages_drops_over_4mb_jsonl_line_without_leaking_prefix() {
+        let before_msg = serde_json::to_string(&json!({
+            "piNReceivedAt": 1000,
+            "type": "message_end",
+            "message": { "role": "assistant", "content": [{ "type": "text", "text": "Before giant line" }] }
+        }))
+        .unwrap();
+        // Exceeds MAX_SPLIT_LINE_CARRY_BYTES (4 MiB) and uses alphabetical key
+        // ordering (`piNReceivedAt` before `type`), matching real persisted logs.
+        let oversized_agent_end = format!(
+            r#"{{"piNReceivedAt":2000,"messages":[{{"content":[{{"data":"{}","mimeType":"image/jpeg","type":"image"}}],"role":"toolResult"}}],"type":"agent_end","willRetry":false}}"#,
+            "QAUAFAB".repeat(700_000)
+        );
+        assert!(oversized_agent_end.len() > MAX_SPLIT_LINE_CARRY_BYTES);
+        let after_msg = "── Final response ──\nClean final summary\n";
+
+        let raw = format!("{before_msg}\n{oversized_agent_end}\n{after_msg}");
+        let (compacted, start) = compact_tail_pages_with_options(
+            raw.len(),
+            64 * 1024,
+            TranscriptProjection::CardShell,
+            true,
+            |before, limit| {
+                let s = before.saturating_sub(limit);
+                Ok((s, raw[s..before].to_string()))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(start, 0);
+        assert!(compacted.contains("Before giant line"));
+        assert!(compacted.contains("Clean final summary"));
+        assert!(!compacted.contains("QAUAFAB"));
+        assert!(!compacted.contains("piNReceivedAt"));
+    }
+
+    #[test]
+    fn compact_json_line_drops_truncated_alphabetical_events_and_fast_drops_sorted_noise() {
+        let truncated_alpha = format!(
+            r#"{{"piNReceivedAt":1795587678477,"messages":[{{"data":"{}"#,
+            "A".repeat(4000)
+        );
+        assert!(compact_transcript_chunk(&truncated_alpha, 0, false).is_empty());
+
+        let sorted_turn_end = serde_json::to_string(&json!({
+            "piNReceivedAt": 100,
+            "message": { "role": "assistant", "content": [{ "type": "text", "text": "ignored" }] },
+            "toolResults": [],
+            "type": "turn_end"
+        }))
+        .unwrap();
+        let sorted_thinking_delta = serde_json::to_string(&json!({
+            "assistantMessageEvent": { "contentIndex": 0, "delta": "reasoning", "type": "thinking_delta" },
+            "piNReceivedAt": 101,
+            "type": "message_update"
+        }))
+        .unwrap();
+        let sorted_text_delta = serde_json::to_string(&json!({
+            "assistantMessageEvent": { "contentIndex": 0, "delta": "visible", "type": "text_delta" },
+            "piNReceivedAt": 102,
+            "type": "message_update"
+        }))
+        .unwrap();
+        let chunk = format!("{sorted_turn_end}\n{sorted_thinking_delta}\n{sorted_text_delta}\n");
+        let compacted = compact_transcript_chunk(&chunk, 0, false);
+        assert!(!compacted.contains("turn_end"));
+        assert!(!compacted.contains("reasoning"));
+        assert!(compacted.contains("visible"));
     }
 }

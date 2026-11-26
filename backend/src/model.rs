@@ -542,7 +542,7 @@ pub(crate) fn record_context_usage(
     peak: &mut usize,
     snapshot: &mut Option<SessionContext>,
 ) -> bool {
-    if value.get("type").and_then(|v| v.as_str()) != Some("grapher_context_usage") {
+    if value.get("type").and_then(|v| v.as_str()) != Some("pi_n_context_usage") {
         return false;
     }
     let count = |key: &str| {
@@ -922,7 +922,7 @@ pub enum EventKind {
     PlanningFailed {
         planning: PlanningSummary,
     },
-    /// A Planner steer has been accepted by Grapher, but not necessarily by Pi.
+    /// A Planner steer has been accepted by Pi^n, but not necessarily by Pi.
     PlannerSteerSubmitted {
         planning_id: String,
         request_id: String,
@@ -1171,7 +1171,7 @@ pub enum EventKind {
         node: String,
         instruction: String,
         /// Transport identity survives input rewriting; extension-owned input
-        /// may have no Grapher request ID.
+        /// may have no Pi^n request ID.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1519,7 +1519,7 @@ fn fold_execution_metric_event(
         .and_then(|kind| kind.as_str())
         .unwrap_or_default()
     {
-        "grapher_process_exited" => {
+        "pi_n_process_exited" => {
             if let Some(elapsed) = value.get("elapsedMs").and_then(|v| v.as_f64()) {
                 metrics.duration_seconds += elapsed / 1000.0;
             }
@@ -1572,7 +1572,7 @@ fn fold_execution_metric_event(
                 }
             }
         }
-        "grapher_context_usage" => {
+        "pi_n_context_usage" => {
             record_context_usage(
                 value,
                 &mut metrics.context_tokens,
@@ -1645,7 +1645,7 @@ pub(crate) fn parse_execution_metric_lines<'a>(
     let mut observed_thinking = None;
 
     for line in lines {
-        if !line_advances_live_metrics(line) && !line.contains("\"grapher_process_exited\"") {
+        if !line_advances_live_metrics(line) && !line.contains("\"pi_n_process_exited\"") {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) {
@@ -2338,7 +2338,7 @@ pub fn now() -> u64 {
 /// them cannot move usage, model/thinking or tool counters, so it can skip JSON
 /// parsing even when it is a large tool payload.
 const LIVE_METRIC_MARKERS: [&str; 7] = [
-    "\"grapher_context_usage\"",
+    "\"pi_n_context_usage\"",
     "\"message_start\"",
     "\"message_end\"",
     "\"model_change\"",
@@ -2386,8 +2386,8 @@ pub fn append_live_output(execution: &mut Execution, text: &str) {
         // The lifecycle record may itself span multiple output messages.
         if let Some(line) = execution.output.split_once('\n').map(|(line, _)| line) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                if value["type"] == "grapher_process_started"
-                    || value["type"] == "grapher_session_resumed"
+                if value["type"] == "pi_n_process_started"
+                    || value["type"] == "pi_n_session_resumed"
                 {
                     execution.pid = value["pid"].as_u64();
                 }
@@ -3782,7 +3782,7 @@ mod metrics_tests {
             "{\"type\":\"tool_execution_end\",\"isError\",\n",
             "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input\":40,\"cacheRead\":1960,\"output\":10}}}",
             "\n{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input\":0,\"output\":3}}}",
-            "\n{\"type\":\"grapher_process_exited\",\"elapsedMs\":10}",
+            "\n{\"type\":\"pi_n_process_exited\",\"elapsedMs\":10}",
             "\n[stderr] prefer the last real prompt\n",
         );
         assert_eq!(

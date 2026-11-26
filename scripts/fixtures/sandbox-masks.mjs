@@ -20,7 +20,7 @@ export function removeSandboxMasks(runtimeParent) {
     let entries;
     try { entries = readdirSync(directory); } catch { continue; }
     for (const name of entries) {
-      if (!name.startsWith('.grapher-masks-')) continue;
+      if (!name.startsWith('.pi-n-masks-')) continue;
       const staging = join(directory, name);
       // Restore owner access to the mask children (each is an unreadable bind
       // source, or execute-only when it carries an allowed exception).

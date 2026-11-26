@@ -32,7 +32,7 @@ fn configure_author(repo: &Path) {
 }
 fn slot(temp: &tempfile::TempDir, name: &str) -> PathBuf {
     temp.path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(RUN_ID)
         .join(name)
 }
@@ -157,7 +157,7 @@ fn complete_project_view_keeps_dirty_index_names_bytes_and_native_git() {
         (".venv/project-owned", "not runtime\n"),
         (".agent-home/native", "native home\n"),
         (".runtime-cache/native", "native cache\n"),
-        (".grapher-project/config", "project config\n"),
+        (".pi-n-project/config", "project config\n"),
     ] {
         fs::create_dir_all(source.join(path).parent().unwrap()).unwrap();
         fs::write(source.join(path), value).unwrap();
@@ -198,7 +198,7 @@ fn complete_project_view_keeps_dirty_index_names_bytes_and_native_git() {
         ".venv/project-owned",
         ".agent-home/native",
         ".runtime-cache/native",
-        ".grapher-project/config",
+        ".pi-n-project/config",
     ] {
         assert_eq!(
             bytes(&target.join(file)),
@@ -596,7 +596,7 @@ fn legacy_foreign_ownership_is_inherited_without_privileged_chown() {
     fs::write(&upstream_file, "task output").unwrap();
     #[cfg(target_os = "macos")]
     {
-        let xattr = std::ffi::CString::new("com.example.grapher-test").unwrap();
+        let xattr = std::ffi::CString::new("com.example.pi-n-test").unwrap();
         let upstream_path = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(
             upstream_file.as_os_str(),
         ))
@@ -2390,7 +2390,7 @@ fn old_unhashed_state_directories_are_never_read_or_rewritten() {
     let base = workspace::snapshot_repository(&source).unwrap();
     let target = slot(&temp, "state-legacy");
     let run = target.parent().unwrap();
-    let old = run.join(".grapher-state").join("state-legacy");
+    let old = run.join(".pi-n-state").join("state-legacy");
     fs::create_dir_all(&old).unwrap();
     fs::write(old.join("keep.txt"), "old data").unwrap();
     workspace::prepare(&source, &target, &base, &[]).unwrap();
@@ -3476,42 +3476,42 @@ fn poisoned_unrecorded_shadow_head_recovers_prior_recorded_ancestor_for_composit
 }
 
 #[test]
-fn untracked_grapher_runtime_directory_is_excluded_from_byte_snapshots_and_preparation() {
+fn untracked_pi_n_runtime_directory_is_excluded_from_byte_snapshots_and_preparation() {
     let temp = tempfile::tempdir().unwrap();
     let repo = source(&temp);
-    fs::create_dir_all(repo.join(".grapher/shadow_repos/nested/.git")).unwrap();
-    fs::write(repo.join(".grapher/events.sqlite-shm"), b"initial-shm").unwrap();
-    fs::write(repo.join(".grapher/events.sqlite-wal"), b"initial-wal").unwrap();
+    fs::create_dir_all(repo.join(".pi-n/shadow_repos/nested/.git")).unwrap();
+    fs::write(repo.join(".pi-n/events.sqlite-shm"), b"initial-shm").unwrap();
+    fs::write(repo.join(".pi-n/events.sqlite-wal"), b"initial-wal").unwrap();
     fs::write(
-        repo.join(".grapher/shadow_repos/nested/.git/HEAD"),
+        repo.join(".pi-n/shadow_repos/nested/.git/HEAD"),
         "ref: refs/heads/main\n",
     )
     .unwrap();
-    fs::create_dir_all(repo.join(".grapher-project")).unwrap();
-    fs::write(repo.join(".grapher-project/config"), "keep me\n").unwrap();
+    fs::create_dir_all(repo.join(".pi-n-project")).unwrap();
+    fs::write(repo.join(".pi-n-project/config"), "keep me\n").unwrap();
 
     let view_before = inspect(&repo).unwrap();
     assert!(
         !view_before
             .entries
             .keys()
-            .any(|key| key == ".grapher" || key.starts_with(".grapher/")),
-        "untracked .grapher runtime dir must not enter project view"
+            .any(|key| key == ".pi-n" || key.starts_with(".pi-n/")),
+        "untracked .pi-n runtime dir must not enter project view"
     );
-    assert!(view_before.entries.contains_key(".grapher-project/config"));
+    assert!(view_before.entries.contains_key(".pi-n-project/config"));
 
     let base = workspace::snapshot_repository(&repo).unwrap();
-    // Mutating another Grapher instance's live SQLite WAL/SHM files inside
-    // `.grapher/` must not invalidate snapshot binding or preparation.
-    fs::write(repo.join(".grapher/events.sqlite-shm"), b"mutated-shm").unwrap();
-    fs::write(repo.join(".grapher/events.sqlite-wal"), b"mutated-wal").unwrap();
+    // Mutating another Pi^n instance's live SQLite WAL/SHM files inside
+    // `.pi-n/` must not invalidate snapshot binding or preparation.
+    fs::write(repo.join(".pi-n/events.sqlite-shm"), b"mutated-shm").unwrap();
+    fs::write(repo.join(".pi-n/events.sqlite-wal"), b"mutated-wal").unwrap();
     assert_eq!(inspect(&repo).unwrap(), view_before);
 
     let target = slot(&temp, "node-without-runtime-dir");
     workspace::prepare(&repo, &target, &base, &[]).unwrap();
-    assert!(!target.join(".grapher").exists());
+    assert!(!target.join(".pi-n").exists());
     assert_eq!(
-        fs::read_to_string(target.join(".grapher-project/config")).unwrap(),
+        fs::read_to_string(target.join(".pi-n-project/config")).unwrap(),
         "keep me\n"
     );
 }
@@ -3520,27 +3520,27 @@ fn untracked_grapher_runtime_directory_is_excluded_from_byte_snapshots_and_prepa
 fn view_unobservable_preserves_directories_with_tracked_descendants_in_reserved_or_generated_dirs() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    fs::create_dir_all(root.join("dir_reserved/.grapher")).unwrap();
-    fs::write(root.join("dir_reserved/.grapher/tracked.txt"), "keep").unwrap();
-    fs::write(root.join("dir_reserved/.grapher/events.sqlite-shm"), "tmp").unwrap();
+    fs::create_dir_all(root.join("dir_reserved/.pi-n")).unwrap();
+    fs::write(root.join("dir_reserved/.pi-n/tracked.txt"), "keep").unwrap();
+    fs::write(root.join("dir_reserved/.pi-n/events.sqlite-shm"), "tmp").unwrap();
 
     fs::create_dir_all(root.join("dir_generated/__pycache__")).unwrap();
     fs::write(root.join("dir_generated/__pycache__/tracked.pyc"), "keep").unwrap();
 
-    fs::create_dir_all(root.join("dir_untracked/.grapher")).unwrap();
-    fs::write(root.join("dir_untracked/.grapher/events.sqlite-shm"), "tmp").unwrap();
+    fs::create_dir_all(root.join("dir_untracked/.pi-n")).unwrap();
+    fs::write(root.join("dir_untracked/.pi-n/events.sqlite-shm"), "tmp").unwrap();
     fs::create_dir_all(root.join("dir_untracked/__pycache__")).unwrap();
     fs::write(root.join("dir_untracked/__pycache__/ephemeral.pyc"), "tmp").unwrap();
 
     let tracked = std::collections::BTreeSet::from([
-        "dir_reserved/.grapher/tracked.txt".to_string(),
+        "dir_reserved/.pi-n/tracked.txt".to_string(),
         "dir_generated/__pycache__/tracked.pyc".to_string(),
     ]);
     let index = workspace::TrackedPathIndex::new(root, &tracked);
 
     assert!(
         !view_unobservable(root, Path::new("dir_reserved"), &index).unwrap(),
-        "directory with tracked file inside .grapher must stay observable"
+        "directory with tracked file inside .pi-n must stay observable"
     );
     assert!(
         !view_unobservable(root, Path::new("dir_generated"), &index).unwrap(),

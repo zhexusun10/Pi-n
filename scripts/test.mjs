@@ -47,10 +47,10 @@ export function checkInventory({ directory = root, catalog = suites } = {}) {
   return { suites: Object.keys(catalog).length, tests: registered.size };
 }
 
-const PRESERVED_TEST_GRAPHER_KEYS = new Set([
-  'GRAPHER_BROWSER_CHANNEL',
-  'GRAPHER_UI_SCREENSHOTS',
-  'GRAPHER_ENV_SEAL_PROBE_REPORT',
+const PRESERVED_TEST_PI_N_KEYS = new Set([
+  'PI_N_BROWSER_CHANNEL',
+  'PI_N_UI_SCREENSHOTS',
+  'PI_N_ENV_SEAL_PROBE_REPORT',
 ]);
 
 export function sanitizedTestEnv(source = process.env) {
@@ -58,10 +58,10 @@ export function sanitizedTestEnv(source = process.env) {
   for (const key of Object.keys(env)) {
     const upper = key.toUpperCase();
     if (
-      upper.startsWith('GRAPHER_') &&
-      !PRESERVED_TEST_GRAPHER_KEYS.has(upper) &&
-      !upper.startsWith('GRAPHER_ENV_PROBE_') &&
-      !upper.startsWith('GRAPHER_ENV_TEST_')
+      upper.startsWith('PI_N_') &&
+      !PRESERVED_TEST_PI_N_KEYS.has(upper) &&
+      !upper.startsWith('PI_N_ENV_PROBE_') &&
+      !upper.startsWith('PI_N_ENV_TEST_')
     ) {
       delete env[key];
     } else if (/^PI_(?:SESSION_ID|SESSION_FILE|CODING_AGENT_DIR|CODING_AGENT|MODEL|PROVIDER|REASONING_LEVEL|THINKING)$/i.test(key)) {

@@ -1,4 +1,4 @@
-const steerMarker = /\n\n<grapher-steer-id>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})<\/grapher-steer-id>$/;
+const steerMarker = /\n\n<pi-n-steer-id>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})<\/pi-n-steer-id>$/;
 const piImageDimensionHint = /(?:\r?\n){1,2}\[Image: original \d+x\d+, displayed at \d+x\d+\.(?: Multiply coordinates by [\d.]+ to map to original image\.)?\]$/;
 const piSkillExpansion = /^<skill name="([^"]+)" location="[^"]+">[\s\S]*?\r?\n<\/skill>(?:\r?\n\r?\n([\s\S]*))?$/;
 

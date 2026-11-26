@@ -2,7 +2,7 @@
 //!
 //! Replaces legacy `NSUserNotificationCenter` (deprecated in macOS 11 and
 //! silently suppressed on modern macOS when no `UNUserNotificationCenter`
-//! authorization was requested) so Grapher:
+//! authorization was requested) so Pi^n:
 //! - registers with macOS Notification Center and prompts for permission on
 //!   first launch after installation (`UNAuthorizationStatusNotDetermined`),
 //! - delivers banners with sound via `UNUserNotificationCenter`,
@@ -70,10 +70,10 @@ type StatusCallback = extern "C" fn(ctx: *mut c_void, status: i32);
 type DeliverCallback = extern "C" fn(ctx: *mut c_void, result: i32, error_msg: *const c_char);
 
 extern "C" {
-    fn grapher_macos_init_notifications() -> bool;
-    fn grapher_macos_get_permission_status(ctx: *mut c_void, cb: StatusCallback);
-    fn grapher_macos_request_permission(ctx: *mut c_void, cb: StatusCallback);
-    fn grapher_macos_send_notification(
+    fn pi_n_macos_init_notifications() -> bool;
+    fn pi_n_macos_get_permission_status(ctx: *mut c_void, cb: StatusCallback);
+    fn pi_n_macos_request_permission(ctx: *mut c_void, cb: StatusCallback);
+    fn pi_n_macos_send_notification(
         title_utf8: *const c_char,
         body_utf8: *const c_char,
         run_id_utf8: *const c_char,
@@ -84,7 +84,7 @@ extern "C" {
 }
 
 #[no_mangle]
-pub extern "C" fn grapher_macos_notification_clicked(run_id_utf8: *const c_char) {
+pub extern "C" fn pi_n_macos_notification_clicked(run_id_utf8: *const c_char) {
     let run_id = if run_id_utf8.is_null() {
         None
     } else {
@@ -183,7 +183,7 @@ extern "C" fn on_deliver_callback(ctx: *mut c_void, result: i32, error_msg: *con
 /// user (`UNAuthorizationStatusNotDetermined`).
 pub fn init_and_request_permission_on_startup(app_handle: &tauri::AppHandle) {
     let _ = APP_HANDLE.set(app_handle.clone());
-    let available = unsafe { grapher_macos_init_notifications() };
+    let available = unsafe { pi_n_macos_init_notifications() };
     if !available {
         return;
     }
@@ -198,15 +198,15 @@ pub fn init_and_request_permission_on_startup(app_handle: &tauri::AppHandle) {
         let status = request_permission().await;
         match status {
             MacosNotificationPermission::Granted => {
-                eprintln!("[grapher-desktop] macOS notification permission is authorized");
+                eprintln!("[Pi^n-desktop] macOS notification permission is authorized");
             }
             MacosNotificationPermission::Denied => {
                 eprintln!(
-                    "[grapher-desktop] macOS notification permission is denied (can be enabled in System Settings -> Notifications -> Grapher)"
+                    "[Pi^n-desktop] macOS notification permission is denied (can be enabled in System Settings -> Notifications -> Pi^n)"
                 );
             }
             MacosNotificationPermission::Prompt => {
-                eprintln!("[grapher-desktop] macOS notification permission remains undecided");
+                eprintln!("[Pi^n-desktop] macOS notification permission remains undecided");
             }
             MacosNotificationPermission::Unavailable => {}
         }
@@ -216,7 +216,7 @@ pub fn init_and_request_permission_on_startup(app_handle: &tauri::AppHandle) {
 pub async fn permission_status() -> MacosNotificationPermission {
     let (future, ctx) = CallbackFuture::<MacosNotificationPermission>::new();
     unsafe {
-        grapher_macos_get_permission_status(ctx, on_status_callback);
+        pi_n_macos_get_permission_status(ctx, on_status_callback);
     }
     future.await
 }
@@ -224,7 +224,7 @@ pub async fn permission_status() -> MacosNotificationPermission {
 pub async fn request_permission() -> MacosNotificationPermission {
     let (future, ctx) = CallbackFuture::<MacosNotificationPermission>::new();
     unsafe {
-        grapher_macos_request_permission(ctx, on_status_callback);
+        pi_n_macos_request_permission(ctx, on_status_callback);
     }
     future.await
 }
@@ -243,7 +243,7 @@ pub async fn send_notification(
         .and_then(|value| CString::new(value).ok());
     let (future, ctx) = CallbackFuture::<MacosNotificationDelivery>::new();
     unsafe {
-        grapher_macos_send_notification(
+        pi_n_macos_send_notification(
             title_cstr.as_ptr(),
             body_cstr.as_ptr(),
             run_id_cstr
@@ -258,7 +258,7 @@ pub async fn send_notification(
 }
 
 /// Opens macOS System Settings directly to the Notifications pane so the user
-/// can enable notifications for Grapher if permission was previously denied.
+/// can enable notifications for Pi^n if permission was previously denied.
 pub fn open_notification_settings() -> Result<(), String> {
     let mut child = std::process::Command::new("/usr/bin/open")
         .arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
@@ -268,7 +268,7 @@ pub fn open_notification_settings() -> Result<(), String> {
         .spawn()
         .map_err(|error| format!("Failed to open macOS Notification Settings: {error}"))?;
     std::thread::Builder::new()
-        .name("grapher-open-macos-notification-settings".to_string())
+        .name("pi-n-open-macos-notification-settings".to_string())
         .spawn(move || {
             let _ = child.wait();
         })
@@ -294,13 +294,13 @@ mod tests {
 
     #[test]
     fn unbundled_test_binary_reports_unavailable_without_panicking() {
-        assert!(!unsafe { grapher_macos_init_notifications() });
+        assert!(!unsafe { pi_n_macos_init_notifications() });
         let status = tauri::async_runtime::block_on(permission_status());
         assert_eq!(status, MacosNotificationPermission::Unavailable);
         let requested = tauri::async_runtime::block_on(request_permission());
         assert_eq!(requested, MacosNotificationPermission::Unavailable);
         let delivery = tauri::async_runtime::block_on(send_notification(
-            "Grapher",
+            "Pi^n",
             "Test body",
             Some("run-123"),
             false,

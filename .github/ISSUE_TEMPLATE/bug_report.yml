@@ -1,16 +1,16 @@
 name: Bug report
-description: Report a reproducible problem with Grapher.
+description: Report a reproducible problem with Pi^n.
 title: "[Bug]: "
 body:
   - type: markdown
     attributes:
       value: |
-        For vulnerabilities, use [private reporting](https://github.com/zhexusun10/grapher/security/advisories/new), not this form.
+        For vulnerabilities, use [private reporting](https://github.com/zhexusun10/pi-n/security/advisories/new), not this form.
         Reproduce in a disposable project. Remove credentials, private code, prompts, and personal paths from logs.
   - type: input
     id: revision
     attributes:
-      label: Grapher revision
+      label: Pi^n revision
       description: Output of git rev-parse HEAD, or a release tag.
       placeholder: Commit SHA or tag
     validations:

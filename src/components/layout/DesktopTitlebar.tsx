@@ -43,7 +43,7 @@ export function useDesktopTitlebar(): DesktopTitlebarState {
 
   useEffect(() => {
     if (platform !== "windows") return;
-    if ((window as { __GRAPHER_START_HIDDEN__?: boolean }).__GRAPHER_START_HIDDEN__) return;
+    if ((window as { __PI_N_START_HIDDEN__?: boolean }).__PI_N_START_HIDDEN__) return;
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     // Windows starts hidden and borderless. Reveal only after React has
@@ -59,7 +59,7 @@ export function useDesktopTitlebar(): DesktopTitlebarState {
           retryTimer = setTimeout(() => { void reveal(attempt + 1); }, attempt === 0 ? 150 : 500);
         } else {
           // The native startup watchdog can still reveal a failed renderer.
-          console.error("Failed to show the Grapher window", error);
+          console.error("Failed to show the Pi^n window", error);
         }
       }
     };

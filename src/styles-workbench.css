@@ -459,7 +459,8 @@
   line-height: 1.65;
 }
 
-.node-task-content .markdown-content > :first-child {
+.node-task-content .markdown-content > :first-child,
+.node-task-content .markdown-content > .markdown-blocks-host:first-child > :first-child {
   margin-top: 0;
 }
 
@@ -714,7 +715,7 @@
   padding: 10px 14px;
   background: var(--brand-subtle);
   border: 1px solid var(--brand-border);
-  border-radius: 12px 12px 2px 12px;
+  border-radius: 12px;
   color: var(--text-primary);
   font-size: 15px;
   line-height: 1.6;
@@ -1331,7 +1332,7 @@ button.session-label-toggle:focus-visible {
   margin: 12px 0;
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
-  border-radius: 18px;
+  border-radius: var(--radius-surface);
   overflow: hidden;
   box-shadow: var(--surface-card-shadow);
   position: relative;
@@ -1362,8 +1363,8 @@ button.session-label-toggle:focus-visible {
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
-  border-top-left-radius: 18px;
-  border-bottom-left-radius: 18px;
+  border-top-left-radius: var(--radius-surface);
+  border-bottom-left-radius: var(--radius-surface);
   /* Keep a moving composer visible across split/full-width panes. The outer
    * workbench still clips the workspace's rounded border and viewport. */
   overflow: visible;
@@ -2865,7 +2866,7 @@ button.session-label-toggle:focus-visible {
 
 .settings-background-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   min-width: 0;
   margin: 10px 0 2px;
@@ -2905,6 +2906,10 @@ button.session-label-toggle:focus-visible {
   overflow: hidden;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-default);
+}
+
+.settings-background-preview.settings-background-preview-grid {
+  --grid-cell: 20px;
 }
 
 .settings-background-preview-paths svg {
@@ -2993,6 +2998,21 @@ button.session-label-toggle:focus-visible {
   font-size: 13.5px;
   font-weight: 600;
   margin: 0;
+  line-height: 1.2;
+}
+
+.settings-card-title-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 4px;
+  min-width: 0;
+}
+
+.settings-card-inline-desc {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
   line-height: 1.2;
 }
 

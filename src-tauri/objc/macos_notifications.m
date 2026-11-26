@@ -6,23 +6,23 @@
 #include <stdio.h>
 
 // Status codes shared with src-tauri/src/macos_notifications.rs.
-static const int32_t GRAPHER_NOTIF_STATUS_UNAVAILABLE = -1;
-static const int32_t GRAPHER_NOTIF_STATUS_NOT_DETERMINED = 0;
-static const int32_t GRAPHER_NOTIF_STATUS_DENIED = 1;
-static const int32_t GRAPHER_NOTIF_STATUS_AUTHORIZED = 2;
+static const int32_t PI_N_NOTIF_STATUS_UNAVAILABLE = -1;
+static const int32_t PI_N_NOTIF_STATUS_NOT_DETERMINED = 0;
+static const int32_t PI_N_NOTIF_STATUS_DENIED = 1;
+static const int32_t PI_N_NOTIF_STATUS_AUTHORIZED = 2;
 
 // Delivery result codes shared with src-tauri/src/macos_notifications.rs.
-static const int32_t GRAPHER_NOTIF_DELIVER_ERROR = -2;
-static const int32_t GRAPHER_NOTIF_DELIVER_UNAVAILABLE = -1;
-static const int32_t GRAPHER_NOTIF_DELIVER_DENIED = 0;
-static const int32_t GRAPHER_NOTIF_DELIVER_SENT = 1;
+static const int32_t PI_N_NOTIF_DELIVER_ERROR = -2;
+static const int32_t PI_N_NOTIF_DELIVER_UNAVAILABLE = -1;
+static const int32_t PI_N_NOTIF_DELIVER_DENIED = 0;
+static const int32_t PI_N_NOTIF_DELIVER_SENT = 1;
 
-extern void grapher_macos_notification_clicked(const char *run_id_utf8);
+extern void pi_n_macos_notification_clicked(const char *run_id_utf8);
 
-typedef void (*GrapherStatusCallback)(void *ctx, int32_t status);
-typedef void (*GrapherDeliverCallback)(void *ctx, int32_t result, const char *error_msg);
+typedef void (*PiNStatusCallback)(void *ctx, int32_t status);
+typedef void (*PiNDeliverCallback)(void *ctx, int32_t result, const char *error_msg);
 
-static bool grapher_has_valid_app_bundle(void) {
+static bool pi_n_has_valid_app_bundle(void) {
     NSBundle *bundle = [NSBundle mainBundle];
     if (bundle == nil) {
         return false;
@@ -39,26 +39,26 @@ static int32_t map_authorization_status(UNAuthorizationStatus status) {
     switch (status) {
         case UNAuthorizationStatusAuthorized:
         case UNAuthorizationStatusProvisional:
-            return GRAPHER_NOTIF_STATUS_AUTHORIZED;
+            return PI_N_NOTIF_STATUS_AUTHORIZED;
         case UNAuthorizationStatusDenied:
-            return GRAPHER_NOTIF_STATUS_DENIED;
+            return PI_N_NOTIF_STATUS_DENIED;
         case UNAuthorizationStatusNotDetermined:
         default:
-            return GRAPHER_NOTIF_STATUS_NOT_DETERMINED;
+            return PI_N_NOTIF_STATUS_NOT_DETERMINED;
     }
 }
 
-@interface GrapherNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
+@interface PiNNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 + (instancetype)sharedDelegate;
 @end
 
-@implementation GrapherNotificationDelegate
+@implementation PiNNotificationDelegate
 
 + (instancetype)sharedDelegate {
-    static GrapherNotificationDelegate *instance = nil;
+    static PiNNotificationDelegate *instance = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        instance = [[GrapherNotificationDelegate alloc] init];
+        instance = [[PiNNotificationDelegate alloc] init];
     });
     return instance;
 }
@@ -68,7 +68,7 @@ static int32_t map_authorization_status(UNAuthorizationStatus status) {
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
     (void)center;
     // The Rust command already suppresses notifications when the main window is
-    // visible and focused. Allow banners even while Grapher remains the active
+    // visible and focused. Allow banners even while Pi^n remains the active
     // app (for example after hiding the main window on close), and respect the
     // per-notification sound preference.
     UNNotificationPresentationOptions options =
@@ -98,7 +98,7 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
             [NSApp activateIgnoringOtherApps:YES];
         }
 #pragma clang diagnostic pop
-        grapher_macos_notification_clicked(runId ? runId.UTF8String : NULL);
+        pi_n_macos_notification_clicked(runId ? runId.UTF8String : NULL);
     });
     completionHandler();
 }
@@ -106,7 +106,7 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
 @end
 
 static UNUserNotificationCenter *safe_notification_center(void) {
-    if (!grapher_has_valid_app_bundle()) {
+    if (!pi_n_has_valid_app_bundle()) {
         return nil;
     }
     @try {
@@ -114,31 +114,31 @@ static UNUserNotificationCenter *safe_notification_center(void) {
         if (center != nil) {
             static dispatch_once_t delegateToken;
             dispatch_once(&delegateToken, ^{
-                center.delegate = [GrapherNotificationDelegate sharedDelegate];
+                center.delegate = [PiNNotificationDelegate sharedDelegate];
             });
         }
         return center;
     } @catch (NSException *exception) {
         fprintf(
             stderr,
-            "[grapher-desktop] UNUserNotificationCenter unavailable: %s\n",
+            "[Pi^n-desktop] UNUserNotificationCenter unavailable: %s\n",
             exception.reason ? exception.reason.UTF8String : "unknown exception"
         );
         return nil;
     }
 }
 
-bool grapher_macos_init_notifications(void) {
+bool pi_n_macos_init_notifications(void) {
     @autoreleasepool {
         return safe_notification_center() != nil;
     }
 }
 
-void grapher_macos_get_permission_status(void *ctx, GrapherStatusCallback cb) {
+void pi_n_macos_get_permission_status(void *ctx, PiNStatusCallback cb) {
     @autoreleasepool {
         UNUserNotificationCenter *center = safe_notification_center();
         if (center == nil) {
-            cb(ctx, GRAPHER_NOTIF_STATUS_UNAVAILABLE);
+            cb(ctx, PI_N_NOTIF_STATUS_UNAVAILABLE);
             return;
         }
         [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
@@ -161,12 +161,12 @@ static void request_authorization_on_main(
             if (error != nil) {
                 fprintf(
                     stderr,
-                    "[grapher-desktop] Failed to request macOS notification permission: %s\n",
+                    "[Pi^n-desktop] Failed to request macOS notification permission: %s\n",
                     error.localizedDescription.UTF8String
                 );
             }
             if (granted) {
-                completion(GRAPHER_NOTIF_STATUS_AUTHORIZED);
+                completion(PI_N_NOTIF_STATUS_AUTHORIZED);
                 return;
             }
             [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
@@ -176,16 +176,16 @@ static void request_authorization_on_main(
     });
 }
 
-void grapher_macos_request_permission(void *ctx, GrapherStatusCallback cb) {
+void pi_n_macos_request_permission(void *ctx, PiNStatusCallback cb) {
     @autoreleasepool {
         UNUserNotificationCenter *center = safe_notification_center();
         if (center == nil) {
-            cb(ctx, GRAPHER_NOTIF_STATUS_UNAVAILABLE);
+            cb(ctx, PI_N_NOTIF_STATUS_UNAVAILABLE);
             return;
         }
         [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
             int32_t current = map_authorization_status(settings.authorizationStatus);
-            if (current != GRAPHER_NOTIF_STATUS_NOT_DETERMINED) {
+            if (current != PI_N_NOTIF_STATUS_NOT_DETERMINED) {
                 cb(ctx, current);
                 return;
             }
@@ -203,7 +203,7 @@ static void deliver_un_notification(
     NSString * _Nullable runId,
     bool playSound,
     void *ctx,
-    GrapherDeliverCallback cb
+    PiNDeliverCallback cb
 ) {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = title;
@@ -220,34 +220,34 @@ static void deliver_un_notification(
     [center addNotificationRequest:request withCompletionHandler:^(NSError * _Nullable error) {
         if (error != nil) {
             const char *msg = error.localizedDescription.UTF8String;
-            cb(ctx, GRAPHER_NOTIF_DELIVER_ERROR, msg ? msg : "Failed to deliver notification");
+            cb(ctx, PI_N_NOTIF_DELIVER_ERROR, msg ? msg : "Failed to deliver notification");
         } else {
-            cb(ctx, GRAPHER_NOTIF_DELIVER_SENT, NULL);
+            cb(ctx, PI_N_NOTIF_DELIVER_SENT, NULL);
         }
     }];
 }
 
-void grapher_macos_send_notification(
+void pi_n_macos_send_notification(
     const char *title_utf8,
     const char *body_utf8,
     const char *run_id_utf8,
     bool play_sound,
     void *ctx,
-    GrapherDeliverCallback cb
+    PiNDeliverCallback cb
 ) {
     @autoreleasepool {
         UNUserNotificationCenter *center = safe_notification_center();
         if (center == nil) {
-            cb(ctx, GRAPHER_NOTIF_DELIVER_UNAVAILABLE, NULL);
+            cb(ctx, PI_N_NOTIF_DELIVER_UNAVAILABLE, NULL);
             return;
         }
-        NSString *title = title_utf8 ? [NSString stringWithUTF8String:title_utf8] : @"Grapher";
+        NSString *title = title_utf8 ? [NSString stringWithUTF8String:title_utf8] : @"Pi^n";
         NSString *body = body_utf8 ? [NSString stringWithUTF8String:body_utf8] : @"";
         NSString *runId = (run_id_utf8 && run_id_utf8[0] != '\0')
             ? [NSString stringWithUTF8String:run_id_utf8]
             : nil;
         if (title == nil) {
-            title = @"Grapher";
+            title = @"Pi^n";
         }
         if (body == nil) {
             body = @"";
@@ -255,18 +255,18 @@ void grapher_macos_send_notification(
 
         [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
             int32_t current = map_authorization_status(settings.authorizationStatus);
-            if (current == GRAPHER_NOTIF_STATUS_AUTHORIZED) {
+            if (current == PI_N_NOTIF_STATUS_AUTHORIZED) {
                 deliver_un_notification(center, title, body, runId, play_sound, ctx, cb);
-            } else if (current == GRAPHER_NOTIF_STATUS_NOT_DETERMINED) {
+            } else if (current == PI_N_NOTIF_STATUS_NOT_DETERMINED) {
                 request_authorization_on_main(center, ^(int32_t updated) {
-                    if (updated == GRAPHER_NOTIF_STATUS_AUTHORIZED) {
+                    if (updated == PI_N_NOTIF_STATUS_AUTHORIZED) {
                         deliver_un_notification(center, title, body, runId, play_sound, ctx, cb);
                     } else {
-                        cb(ctx, GRAPHER_NOTIF_DELIVER_DENIED, NULL);
+                        cb(ctx, PI_N_NOTIF_DELIVER_DENIED, NULL);
                     }
                 });
             } else {
-                cb(ctx, GRAPHER_NOTIF_DELIVER_DENIED, NULL);
+                cb(ctx, PI_N_NOTIF_DELIVER_DENIED, NULL);
             }
         }];
     }

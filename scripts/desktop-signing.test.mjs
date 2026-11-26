@@ -29,7 +29,7 @@ const signingScript = join(root, 'scripts', 'desktop-signing.mjs');
 const tauriJs = join(root, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 
 function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-signing-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-signing-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -158,7 +158,7 @@ test('preflight check catches missing, malformed, and mismatched updater keys be
         env: { TAURI_SIGNING_PRIVATE_KEY: secretA },
         tauriConfPath: emptyConf,
       }),
-    /GRAPHER_UPDATER_PUBKEY GitHub Actions Variable \(not a Secret\)/,
+    /PI_N_UPDATER_PUBKEY GitHub Actions Variable \(not a Secret\)/,
   );
 
   // 3. Private key / public key mismatch fails immediately in preflight AND desktop-build validation.
@@ -167,7 +167,7 @@ test('preflight check catches missing, malformed, and mismatched updater keys be
       assertPrivateKeyMatchesPubkey({
         secretKeyText: secretA,
         configuredPubkey: keyB.pubkey,
-        configuredSource: 'GRAPHER_UPDATER_PUBKEY',
+        configuredSource: 'PI_N_UPDATER_PUBKEY',
       }),
     /keypair mismatch.*derives key ID.*has key ID/i,
   );
@@ -176,7 +176,7 @@ test('preflight check catches missing, malformed, and mismatched updater keys be
       validateUpdaterSigningConfig({
         env: {
           TAURI_SIGNING_PRIVATE_KEY: secretA,
-          GRAPHER_UPDATER_PUBKEY: keyB.pubkey,
+          PI_N_UPDATER_PUBKEY: keyB.pubkey,
         },
         tauriConfPath: emptyConf,
       }),
@@ -187,20 +187,20 @@ test('preflight check catches missing, malformed, and mismatched updater keys be
   const matched = runSigningPreflight({
     env: {
       TAURI_SIGNING_PRIVATE_KEY: secretB,
-      GRAPHER_UPDATER_PUBKEY: keyB.pubkey,
+      PI_N_UPDATER_PUBKEY: keyB.pubkey,
     },
     tauriConfPath: confWithA,
   });
   assert.equal(matched.updater.mode, 'signed');
   assert.equal(matched.updater.keypairVerified, true);
-  assert.equal(matched.updater.pubkeySource, 'GRAPHER_UPDATER_PUBKEY');
+  assert.equal(matched.updater.pubkeySource, 'PI_N_UPDATER_PUBKEY');
   assert.equal(matched.updater.keyIdHex, keyB.keyIdHex);
 
   // 5. CLI `derive-pubkey --check-configured` and `check --json` never print private key bytes.
   const cliEnv = {
     ...process.env,
     TAURI_SIGNING_PRIVATE_KEY: secretA,
-    GRAPHER_UPDATER_PUBKEY: keyA.pubkey,
+    PI_N_UPDATER_PUBKEY: keyA.pubkey,
   };
   delete cliEnv.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
 
@@ -319,14 +319,14 @@ test('separates and reports optional macOS Developer ID/notarization and Windows
   // Secret sanitization strips Windows certificate secrets alongside updater & Apple secrets.
   const clean = sanitizedBuildEnv({
     PATH: '/usr/bin',
-    GRAPHER_UPDATER_PUBKEY: 'PUBKEY_B64',
+    PI_N_UPDATER_PUBKEY: 'PUBKEY_B64',
     TAURI_SIGNING_PRIVATE_KEY: 'sk',
     APPLE_CERTIFICATE: 'p12',
     WINDOWS_CERTIFICATE: 'pfx',
     WINDOWS_CERTIFICATE_PASSWORD: 'pw',
     WINDOWS_SIGN_COMMAND: 'cmd %1',
   });
-  assert.equal(clean.GRAPHER_UPDATER_PUBKEY, 'PUBKEY_B64');
+  assert.equal(clean.PI_N_UPDATER_PUBKEY, 'PUBKEY_B64');
   assert.equal(clean.TAURI_SIGNING_PRIVATE_KEY, undefined);
   assert.equal(clean.APPLE_CERTIFICATE, undefined);
   assert.equal(clean.WINDOWS_CERTIFICATE, undefined);
@@ -343,9 +343,9 @@ test('verifies standalone .sig files and latest.json manifests end-to-end and fa
   const keyB = generateMinisignKeypair({ outputPath: join(dir, 'rel-b.key') });
   const secretA = readFileSync(keyA.privateKeyPath, 'utf8').trim();
 
-  const armTar = join(assetsDir, 'Grapher_1.9.9_aarch64.app.tar.gz');
-  const x64Tar = join(assetsDir, 'Grapher_1.9.9_x64.app.tar.gz');
-  const winExe = join(assetsDir, 'Grapher_1.9.9_x64-setup.exe');
+  const armTar = join(assetsDir, 'Pi-n_1.9.9_aarch64.app.tar.gz');
+  const x64Tar = join(assetsDir, 'Pi-n_1.9.9_x64.app.tar.gz');
+  const winExe = join(assetsDir, 'Pi-n_1.9.9_x64-setup.exe');
   writeFileSync(armTar, 'arm64-signed-tarball');
   writeFileSync(x64Tar, 'x64-signed-tarball');
   writeFileSync(winExe, 'windows-signed-nsis-exe');
@@ -359,7 +359,7 @@ test('verifies standalone .sig files and latest.json manifests end-to-end and fa
     assetsDir,
     outputPath: manifestPath,
     tag: 'v1.9.9',
-    repo: 'zhexusun10/grapher',
+    repo: 'zhexusun10/pi-n',
     pubkey: keyA.pubkey,
     requirePubkey: true,
     requireAllWhenSigned: true,
@@ -466,7 +466,7 @@ test('release workflow wires preflight signing checks, Windows Authenticode sign
 
   // Exact documented secret and variable names.
   for (const name of [
-    'vars.GRAPHER_UPDATER_PUBKEY',
+    'vars.PI_N_UPDATER_PUBKEY',
     'secrets.TAURI_SIGNING_PRIVATE_KEY',
     'secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
     'secrets.APPLE_CERTIFICATE',

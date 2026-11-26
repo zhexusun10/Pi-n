@@ -24,9 +24,9 @@ pub struct ResolvedRuntimePaths {
 
 pub fn backend_binary_name() -> &'static str {
     if cfg!(windows) {
-        "grapher.exe"
+        "pi-n.exe"
     } else {
-        "grapher"
+        "pi-n"
     }
 }
 
@@ -127,12 +127,12 @@ pub fn resolve_runtime_paths_with_path(
 
     let installation_root = if let Some(root) = runtime_root {
         canonical_host_dir(&root)?
-    } else if let Some(override_root) = non_empty_env_path("GRAPHER_INSTALLATION_ROOT")
-        .or_else(|| non_empty_env_path("GRAPHER_INSTALLATION_DIR"))
+    } else if let Some(override_root) = non_empty_env_path("PI_N_INSTALLATION_ROOT")
+        .or_else(|| non_empty_env_path("PI_N_INSTALLATION_DIR"))
     {
         if !override_root.join("engine/entrypoint.mjs").is_file() {
             return Err(format!(
-                "Configured Grapher installation root does not contain engine/entrypoint.mjs: {}",
+                "Configured Pi^n installation root does not contain engine/entrypoint.mjs: {}",
                 override_root.display()
             ));
         }
@@ -141,7 +141,7 @@ pub fn resolve_runtime_paths_with_path(
         canonical_host_dir(repo)?
     } else {
         return Err(format!(
-            "Bundled Grapher runtime resources are missing (expected `runtime/engine/entrypoint.mjs` under {}). Reinstall Grapher or run `npm run desktop:stage`.",
+            "Bundled Pi^n runtime resources are missing (expected `runtime/engine/entrypoint.mjs` under {}). Reinstall Pi^n or run `npm run desktop:stage`.",
             effective_resource_dir
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "<resource_dir>".into())
@@ -174,12 +174,12 @@ fn resolve_backend_executable(
 ) -> Result<PathBuf, String> {
     let name = backend_binary_name();
     let mut candidates = Vec::new();
-    if let Some(explicit) = non_empty_env_path("GRAPHER_BACKEND_BIN") {
+    if let Some(explicit) = non_empty_env_path("PI_N_BACKEND_BIN") {
         candidates.push(explicit);
     }
     // Staged directly inside the relocatable runtime root (preferred).
     candidates.push(installation_root.join(name));
-    // Also support sibling sidecar layout (e.g. Contents/MacOS/grapher or install_dir/grapher.exe).
+    // Also support sibling sidecar layout (e.g. Contents/MacOS/pi-n or install_dir/pi-n.exe).
     if let Some(exe_dir) = current_exe.and_then(Path::parent) {
         let sibling = exe_dir.join(name);
         if Some(sibling.as_path()) != current_exe {
@@ -198,7 +198,7 @@ fn resolve_backend_executable(
     }
 
     for candidate in &candidates {
-        if let Ok(valid) = validate_executable_file(candidate, "Grapher backend") {
+        if let Ok(valid) = validate_executable_file(candidate, "Pi^n backend") {
             return Ok(valid);
         }
     }
@@ -209,7 +209,7 @@ fn resolve_backend_executable(
         .collect::<Vec<_>>()
         .join(", ");
     Err(format!(
-        "Grapher backend binary `{name}` was not found (searched: {searched})."
+        "Pi^n backend binary `{name}` was not found (searched: {searched})."
     ))
 }
 
@@ -217,8 +217,8 @@ fn resolve_bundled_node(
     resource_dir: Option<&Path>,
     required: bool,
 ) -> Result<Option<PathBuf>, String> {
-    if let Some(explicit) = non_empty_env_path("GRAPHER_TRUSTED_NODE")
-        .or_else(|| non_empty_env_path("GRAPHER_NODE_PATH"))
+    if let Some(explicit) = non_empty_env_path("PI_N_TRUSTED_NODE")
+        .or_else(|| non_empty_env_path("PI_N_NODE_PATH"))
     {
         return validate_executable_file(&explicit, "Node").map(Some);
     }
@@ -232,7 +232,7 @@ fn resolve_bundled_node(
 
     if required {
         return Err(format!(
-            "Bundled Node.js runtime is missing (expected `{}` under {}). Reinstall Grapher or run `npm run desktop:stage`.",
+            "Bundled Node.js runtime is missing (expected `{}` under {}). Reinstall Pi^n or run `npm run desktop:stage`.",
             bundled_node_relpath(),
             resource_dir
                 .map(|p| p.display().to_string())
@@ -374,7 +374,7 @@ fn standard_git_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// Discover a verified host Git binary from `GRAPHER_TRUSTED_GIT`, inherited
+/// Discover a verified host Git binary from `PI_N_TRUSTED_GIT`, inherited
 /// `PATH`, and platform standard locations. Returns `None` when absent so the
 /// desktop shell can still start and surface actionable diagnostics.
 pub fn discover_git() -> Option<PathBuf> {
@@ -382,7 +382,7 @@ pub fn discover_git() -> Option<PathBuf> {
 }
 
 pub fn discover_git_with_path(path_override: Option<&OsStr>) -> Option<PathBuf> {
-    if let Some(override_path) = non_empty_env_path("GRAPHER_TRUSTED_GIT") {
+    if let Some(override_path) = non_empty_env_path("PI_N_TRUSTED_GIT") {
         return verify_git_executable(&override_path).ok();
     }
     let name = if cfg!(windows) { "git.exe" } else { "git" };
@@ -688,9 +688,9 @@ pub fn resolve_desktop_user_path() -> Option<OsString> {
 }
 
 #[cfg(unix)]
-const SHELL_PATH_START_MARKER: &str = "__GRAPHER_SHELL_PATH_START__";
+const SHELL_PATH_START_MARKER: &str = "__PI_N_SHELL_PATH_START__";
 #[cfg(unix)]
-const SHELL_PATH_END_MARKER: &str = "__GRAPHER_SHELL_PATH_END__";
+const SHELL_PATH_END_MARKER: &str = "__PI_N_SHELL_PATH_END__";
 #[cfg(unix)]
 const MAX_SHELL_PROBE_OUTPUT_BYTES: u64 = 1024 * 1024;
 
@@ -966,8 +966,8 @@ mod tests {
     #[test]
     fn resolve_runtime_paths_infers_macos_app_resources_when_resource_dir_is_none() {
         let temp = tempfile::tempdir().unwrap();
-        let app = temp.path().join("Relocated/Grapher.app");
-        let macos_exe = app.join("Contents/MacOS/grapher-desktop");
+        let app = temp.path().join("Relocated/Pi^n.app");
+        let macos_exe = app.join("Contents/MacOS/pi-n-desktop");
         let res = app.join("Contents/Resources");
         let runtime = res.join("runtime");
         fs::create_dir_all(macos_exe.parent().unwrap()).unwrap();
@@ -1103,19 +1103,19 @@ mod tests {
 
     #[test]
     fn parse_marked_shell_path_ignores_chatter_and_uses_last_marker_pair() {
-        let output = b"welcome banner\n__GRAPHER_SHELL_PATH_START__/stale__GRAPHER_SHELL_PATH_END__\nnoise\n__GRAPHER_SHELL_PATH_START__/opt/homebrew/bin:/usr/bin\n__GRAPHER_SHELL_PATH_END__\nbye\n";
+        let output = b"welcome banner\n__PI_N_SHELL_PATH_START__/stale__PI_N_SHELL_PATH_END__\nnoise\n__PI_N_SHELL_PATH_START__/opt/homebrew/bin:/usr/bin\n__PI_N_SHELL_PATH_END__\nbye\n";
         let parsed = parse_marked_shell_path(
             output,
-            "__GRAPHER_SHELL_PATH_START__",
-            "__GRAPHER_SHELL_PATH_END__",
+            "__PI_N_SHELL_PATH_START__",
+            "__PI_N_SHELL_PATH_END__",
         )
         .unwrap();
         assert_eq!(parsed, OsString::from("/opt/homebrew/bin:/usr/bin"));
 
         assert!(parse_marked_shell_path(
             b"no markers here",
-            "__GRAPHER_SHELL_PATH_START__",
-            "__GRAPHER_SHELL_PATH_END__",
+            "__PI_N_SHELL_PATH_START__",
+            "__PI_N_SHELL_PATH_END__",
         )
         .is_none());
     }

@@ -8,12 +8,12 @@ import test from 'node:test';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-upgrade-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-upgrade-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
-const cleanupPowerShell = process.env.GRAPHER_TEST_POWERSHELL || (process.platform === 'win32'
+const cleanupPowerShell = process.env.PI_N_TEST_POWERSHELL || (process.platform === 'win32'
   ? join(process.env.SystemRoot || 'C:\\Windows', process.arch === 'x64' ? 'SysWOW64' : 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : null);
 const cleanupScript = join(root, 'src-tauri', 'nsis', 'stop-installation-runtime.ps1');
@@ -32,12 +32,12 @@ test('Windows upgrade cleanup stops only the live backend in the selected instal
   skip: process.platform !== 'win32',
 }, async (t) => {
   const temp = tempDir(t);
-  const install = join(temp, "Grapher user's & workspace 测试");
+  const install = join(temp, "Pi^n user's & workspace 测试");
   const unrelated = join(temp, 'independent-cli');
   mkdirSync(join(install, 'runtime'), { recursive: true });
   mkdirSync(unrelated);
   const cmd = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
-  const executables = [join(install, 'runtime', 'grapher.exe'), join(install, 'Grapher.exe'), join(unrelated, 'grapher.exe')];
+  const executables = [join(install, 'runtime', 'pi-n.exe'), join(install, 'Pi^n.exe'), join(unrelated, 'pi-n.exe')];
   const children = [];
   const exits = [];
   try {

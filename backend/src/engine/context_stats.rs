@@ -64,7 +64,7 @@ impl ContextStats {
         }
         let usage = &event["data"]["contextUsage"];
         let result = json!({
-            "type": "grapher_context_usage",
+            "type": "pi_n_context_usage",
             "tokens": usage["tokens"],
             "window": usage["contextWindow"],
         });

@@ -65,7 +65,7 @@ fn ambient_launch_preserves_business_values_through_backend_binding_and_real_bas
             ("GIT_DIR", "/wrong-repository"),
             ("NODE_OPTIONS", "--stack-trace-limit=37"),
             ("NODE_PATH", "business-node-modules"),
-            ("GRAPHER_MODE", "outer-agent"),
+            ("PI_N_MODE", "outer-agent"),
             ("PI_SESSION_ID", "outer-session"),
             ("HOME", "/wrong-home"),
             ("PYTHONDONTWRITEBYTECODE", "0"),
@@ -88,12 +88,12 @@ const {applyLaunchBinding,managedLaunch,managedBashOptions,managedBashCommand}=a
 if(process.env.NODE_OPTIONS||process.env.NODE_PATH) throw Error('Business Node settings reached engine startup');
 applyLaunchBinding();
 if(process.env.NODE_OPTIONS||process.env.NODE_PATH) throw Error('Business Node settings reached factories');
-const keys=['GTEST_BUSINESS','GTEST_AUTHORIZED','GTEST_REMOVED','HTTPS_PROXY','SSL_CERT_FILE','PYTHONPATH','GIT_ASKPASS','GIT_DIR','NODE_OPTIONS','NODE_PATH','GRAPHER_MODE','PI_SESSION_ID','HOME','PYTHONDONTWRITEBYTECODE','GTEST_STARTUP'];
+const keys=['GTEST_BUSINESS','GTEST_AUTHORIZED','GTEST_REMOVED','HTTPS_PROXY','SSL_CERT_FILE','PYTHONPATH','GIT_ASKPASS','GIT_DIR','NODE_OPTIONS','NODE_PATH','PI_N_MODE','PI_SESSION_ID','HOME','PYTHONDONTWRITEBYTECODE','GTEST_STARTUP'];
 const code=`console.log(JSON.stringify({...Object.fromEntries(${JSON.stringify(keys)}.map(k=>[k,process.env[k]??null])),limit:Error.stackTraceLimit}))`;
 const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
 const options=managedBashOptions({env:{...process.env}},true);
 process.stdout.write(execFileSync(managedLaunch().shell,['--noprofile','--norc','-c',managedBashCommand(quote(process.execPath.replaceAll('\\','/'))+' -e '+quote(code),process.cwd())],{...options,encoding:'utf8'}));
-"#]).arg(&adapter).env("GRAPHER_MODE", "node").env_remove("GTEST_REMOVED");
+"#]).arg(&adapter).env("PI_N_MODE", "node").env_remove("GTEST_REMOVED");
         clean_command_with_environment(&mut command, &launch, Some(&binding), ambient).unwrap();
         let output = command.output().unwrap();
         assert!(
@@ -129,7 +129,7 @@ process.stdout.write(execFileSync(managedLaunch().shell,['--noprofile','--norc',
         if inherit_ambient {
             assert_eq!(values["limit"], 37);
         }
-        for key in ["GTEST_REMOVED", "GIT_DIR", "GRAPHER_MODE", "PI_SESSION_ID"] {
+        for key in ["GTEST_REMOVED", "GIT_DIR", "PI_N_MODE", "PI_SESSION_ID"] {
             assert!(values[key].is_null(), "{key}: {}", values[key]);
         }
         assert!(crate::path_identity::same_path(
@@ -184,7 +184,7 @@ fn ambient_business_node_settings_defer_overrides_and_honor_explicit_removal() {
         "NODE_OPTIONS" | "NODE_PATH"
     )));
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&values["GRAPHER_BUSINESS_NODE_ENV"]).unwrap(),
+        serde_json::from_str::<serde_json::Value>(&values["PI_N_BUSINESS_NODE_ENV"]).unwrap(),
         serde_json::json!({"NODE_PATH":"explicit-modules"})
     );
 }
@@ -221,7 +221,7 @@ fn project_activated_python_path_and_markers_follow_the_private_snapshot() {
     let startup = source.join("shell-startup.sh");
     fs::write(&startup, "export GTEST_PROJECT_STARTUP=private-snapshot\n").unwrap();
     let base = workspace::snapshot_repository(&source).unwrap();
-    let node = temp.path().join(".grapher-worktrees/project-path/node");
+    let node = temp.path().join(".pi-n-worktrees/project-path/node");
     workspace::prepare(&source, &node, &base, &[]).unwrap();
     fs::write(
         modules.join("from-project/index.js"),
@@ -286,7 +286,7 @@ const python=JSON.parse(execFileSync(managedLaunch().shell,['--noprofile','--nor
 const module=execFileSync(process.execPath,['-e',"process.stdout.write(require('from-project'))"],{env:managedBusinessEnvironment(),encoding:'utf8'});
 console.log(JSON.stringify({...python,module}));
 "#]).arg(native::installation_root().join("engine/launch-binding.mjs"))
-        .env("GRAPHER_ORIGINAL_ROOT", &source).env("GRAPHER_WORKSPACE_ROOT", &node);
+        .env("PI_N_ORIGINAL_ROOT", &source).env("PI_N_WORKSPACE_ROOT", &node);
     clean_command_with_environment(&mut command, &launch, Some(&binding), ambient).unwrap();
     let values: serde_json::Value =
         serde_json::from_slice(&controlled_output(command).unwrap()).unwrap();
@@ -397,7 +397,7 @@ const {applyLaunchBinding,managedLaunch,managedBashOptions,managedBashCommand}=a
 applyLaunchBinding();
 process.stdout.write(execFileSync(managedLaunch().shell,['--noprofile','--norc','-c',managedBashCommand(process.argv[2],process.cwd())],{env:managedBashOptions({env:{...process.env}},true).env,encoding:'utf8'}));
 "#]).arg(native::installation_root().join("engine/launch-binding.mjs")).arg(&business)
-                .env("GRAPHER_ORIGINAL_ROOT", &source).env("GRAPHER_WORKSPACE_ROOT", root);
+                .env("PI_N_ORIGINAL_ROOT", &source).env("PI_N_WORKSPACE_ROOT", root);
             clean_command_with_environment(&mut command, &launch, Some(&binding), ambient.clone())
                 .unwrap();
             assert_eq!(
@@ -426,7 +426,7 @@ process.stdout.write(execFileSync(managedLaunch().shell,['--noprofile','--norc',
     };
     assert_eq!(execute(&source, false), ["17", "17000"]);
     write_config(&source, 91);
-    let a = temp.path().join(".grapher-worktrees/config-paths/A");
+    let a = temp.path().join(".pi-n-worktrees/config-paths/A");
     workspace::prepare(&source, &a, &base, &[]).unwrap();
     assert_eq!(
         execute(&a, true),
@@ -437,14 +437,14 @@ process.stdout.write(execFileSync(managedLaunch().shell,['--noprofile','--norc',
     let latest =
         workspace::snapshot_node_for_run(&a, &source, "A", Some(&Uuid::new_v4().to_string()))
             .unwrap();
-    let b = temp.path().join(".grapher-worktrees/config-paths/B");
+    let b = temp.path().join(".pi-n-worktrees/config-paths/B");
     workspace::prepare(&source, &b, &latest, &[]).unwrap();
     assert_eq!(
         execute(&b, true),
         ["23", "23000"],
         "downstream must read A's latest config"
     );
-    let historical = temp.path().join(".grapher-worktrees/config-paths/history");
+    let historical = temp.path().join(".pi-n-worktrees/config-paths/history");
     workspace::prepare(&source, &historical, &base, &[]).unwrap();
     assert_eq!(execute(&historical, true), ["17", "17000"]);
     assert_eq!(execute(&source, false), ["91", "91000"]);
@@ -495,8 +495,8 @@ fn project_config_and_startup_paths_preserve_external_values_overrides_and_legac
             ] {
                 let mut command = Command::new(&launch.entry);
                 command
-                    .env("GRAPHER_ORIGINAL_ROOT", &source)
-                    .env("GRAPHER_WORKSPACE_ROOT", &target)
+                    .env("PI_N_ORIGINAL_ROOT", &source)
+                    .env("PI_N_WORKSPACE_ROOT", &target)
                     .env(&key, &value);
                 clean_command_with_environment(
                     &mut command,
@@ -528,8 +528,8 @@ fn project_config_and_startup_paths_preserve_external_values_overrides_and_legac
             }
             let mut removed = Command::new(&launch.entry);
             removed
-                .env("GRAPHER_ORIGINAL_ROOT", &source)
-                .env("GRAPHER_WORKSPACE_ROOT", &target)
+                .env("PI_N_ORIGINAL_ROOT", &source)
+                .env("PI_N_WORKSPACE_ROOT", &target)
                 .env_remove(&key);
             clean_command_with_environment(
                 &mut removed,
@@ -661,7 +661,7 @@ fn ambient_loader_values_are_deferred_and_explicit_removals_win() {
     assert!(!values.contains_key("LD_LIBRARY_PATH"));
     assert!(!values.contains_key("DYLD_LIBRARY_PATH"));
     let loaders: serde_json::Value =
-        serde_json::from_str(&values["GRAPHER_BUSINESS_LOADER_ENV"]).unwrap();
+        serde_json::from_str(&values["PI_N_BUSINESS_LOADER_ENV"]).unwrap();
     assert_eq!(
         loaders,
         serde_json::json!({
@@ -694,7 +694,7 @@ fn ignored_sourceless_python_dependency_runs_in_source_and_private_snapshot() {
     fs::remove_file(source.join("offline_dependency.py")).unwrap();
     let bytecode = fs::read(source.join("offline_dependency.pyc")).unwrap();
     let base = workspace::snapshot_repository(&source).unwrap();
-    let node = temp.path().join(".grapher-worktrees/sourceless/node");
+    let node = temp.path().join(".pi-n-worktrees/sourceless/node");
     workspace::prepare(&source, &node, &base, &[]).unwrap();
     for path in [&source, &node] {
         let mut command = Command::new(&python);
@@ -1256,7 +1256,7 @@ fn history_restores_recorded_unbound_state_scopes_without_touching_w_names_or_ca
     let code = workspace::snapshot_repository(&source).unwrap();
     let path = temp
         .path()
-        .join(".grapher-worktrees/48b8e1d1-2428-42a2-9b28-9d90f631f9d1/node");
+        .join(".pi-n-worktrees/48b8e1d1-2428-42a2-9b28-9d90f631f9d1/node");
     workspace::prepare(&source, &path, &code, &[]).unwrap();
     let mut config = policy();
     config.discovery = true;
@@ -1346,7 +1346,7 @@ fn history_rejects_unbound_other_root_ownership_without_touching_live_state_or_h
     let code = workspace::snapshot_repository(&source).unwrap();
     let path = temp
         .path()
-        .join(".grapher-worktrees/48b8e1d1-2428-42a2-9b28-9d90f631f9d1/node");
+        .join(".pi-n-worktrees/48b8e1d1-2428-42a2-9b28-9d90f631f9d1/node");
     workspace::prepare(&source, &path, &code, &[]).unwrap();
     let mut config = policy();
     config.discovery = true;
@@ -1467,8 +1467,8 @@ fn node_path_rebinding_preserves_nodes_literal_quote_semantics() {
     launch.unbound_path = Some(launch.path.clone());
     let mut command = Command::new(native::trusted_node().unwrap());
     command
-        .env("GRAPHER_ORIGINAL_ROOT", &source)
-        .env("GRAPHER_WORKSPACE_ROOT", &target);
+        .env("PI_N_ORIGINAL_ROOT", &source)
+        .env("PI_N_WORKSPACE_ROOT", &target);
     clean_command_with_environment(
         &mut command,
         &launch,
@@ -1480,7 +1480,7 @@ fn node_path_rebinding_preserves_nodes_literal_quote_semantics() {
     .unwrap();
     let encoded = command
         .get_envs()
-        .find(|(name, _)| *name == "GRAPHER_BUSINESS_NODE_ENV")
+        .find(|(name, _)| *name == "PI_N_BUSINESS_NODE_ENV")
         .unwrap()
         .1
         .unwrap();
@@ -1553,7 +1553,7 @@ fn python_path_rebinding_preserves_literal_entries_overrides_and_legacy_rules() 
         let mut command = Command::new(&launch.entry);
         command.current_dir(&target).args(["-B", "-c",
             "import json,importlib.util,ordinary_module,external_module,relative_module; print(json.dumps([ordinary_module.VALUE,external_module.VALUE,relative_module.VALUE,importlib.util.find_spec('quoted_module') is None]))"])
-            .env("GRAPHER_ORIGINAL_ROOT", &source).env("GRAPHER_WORKSPACE_ROOT", &target)
+            .env("PI_N_ORIGINAL_ROOT", &source).env("PI_N_WORKSPACE_ROOT", &target)
             .env(key, &original);
         let ambient = [("PYTHONPATH".into(), "not-the-explicit-value".into())]
             .into_iter()
@@ -1596,8 +1596,8 @@ fn python_path_rebinding_preserves_literal_entries_overrides_and_legacy_rules() 
     }
     let mut removed = Command::new(&launch.entry);
     removed
-        .env("GRAPHER_ORIGINAL_ROOT", &source)
-        .env("GRAPHER_WORKSPACE_ROOT", &target)
+        .env("PI_N_ORIGINAL_ROOT", &source)
+        .env("PI_N_WORKSPACE_ROOT", &target)
         .env_remove(key);
     clean_command_with_environment(
         &mut removed,
@@ -1631,8 +1631,8 @@ fn module_path_rebinding_refuses_unrepresentable_destination_components() {
     for key in ["NODE_PATH", "PYTHONPATH"] {
         let mut command = Command::new(native::trusted_node().unwrap());
         command
-            .env("GRAPHER_ORIGINAL_ROOT", &source)
-            .env("GRAPHER_WORKSPACE_ROOT", &target);
+            .env("PI_N_ORIGINAL_ROOT", &source)
+            .env("PI_N_WORKSPACE_ROOT", &target);
         let error = clean_command_with_environment(
             &mut command,
             &launch,
@@ -1778,7 +1778,7 @@ fn admission_rejects_cross_domain_and_unverified_capabilities() {
     changed = config;
     changed.mode = "linux-namespace".into();
     assert!(changed.validate().is_err());
-    for name in [".GIT", ".grapher-worktrees/subtree"] {
+    for name in [".GIT", ".pi-n-worktrees/subtree"] {
         assert!(safe_relative(name).is_err());
     }
     if cfg!(windows) {
@@ -2264,7 +2264,7 @@ else { const version=fs.readFileSync(process.env.GTEST_STATE+'/.env/version','ut
         let directory = runtime.root.join("sessions").join(&job.execution.id);
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join(format!("test_{}.jsonl", job.execution.session_id)), format!("{}\n{}\n",
-            serde_json::json!({"type":"session","version":3,"grapherFormat":1,"grapherRunId":runtime.state.run_id,"id":job.execution.session_id,"cwd":job.execution.worktree}),
+            serde_json::json!({"type":"session","version":3,"piNFormat":1,"piNRunId":runtime.state.run_id,"id":job.execution.session_id,"cwd":job.execution.worktree}),
             serde_json::json!({"type":"message","id":"user","parentId":null,"message":{"role":"user","content":text,"timestamp":job.execution.started_at}}))).unwrap();
     };
     let a = runtime.jobs().unwrap().remove(0);
@@ -2301,7 +2301,7 @@ else { const version=fs.readFileSync(process.env.GTEST_STATE+'/.env/version','ut
             .root
             .join("sessions")
             .join(&repair.execution.id)
-            .join(format!("grapher_{}.jsonl", repair.execution.session_id)),
+            .join(format!("pi_n_{}.jsonl", repair.execution.session_id)),
     )
     .unwrap();
     assert!(text.contains("OWNER PRIVATE HISTORY"));
@@ -2329,7 +2329,7 @@ else { const version=fs.readFileSync(process.env.GTEST_STATE+'/.env/version','ut
             .root
             .join("sessions")
             .join(&verify.execution.id)
-            .join(format!("grapher_{}.jsonl", verify.execution.session_id)),
+            .join(format!("pi_n_{}.jsonl", verify.execution.session_id)),
     )
     .unwrap();
     assert!(history.contains("REVIEW PRIVATE HISTORY"));

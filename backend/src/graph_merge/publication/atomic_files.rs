@@ -11,7 +11,7 @@ struct Entry {
 
 pub(super) fn validate_relative(relative: &str) -> Result<(), String> {
     let path = Path::new(relative);
-    // .grapher* can be authored project files. Only Git metadata is protected
+    // .pi-n* can be authored project files. Only Git metadata is protected
     // here; host-owned graph metadata lives outside the project tree.
     if relative.is_empty()
         || path.components().any(|part| match part {
@@ -240,7 +240,7 @@ fn temporary_name_for_key(journal_key: &Path, relative: &str) -> String {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     journal_key.hash(&mut hash);
     relative.hash(&mut hash);
-    format!(".grapher-publish-{:016x}.tmp", hash.finish())
+    format!(".pi-n-publish-{:016x}.tmp", hash.finish())
 }
 
 fn reserve_owners(
@@ -519,13 +519,13 @@ fn ensure_parent(repository: &Path, journal: &Path, relative: &Path) -> Result<P
                             if actual.file_name().is_some_and(|name| name != wanted_name) {
                                 let hop_parent = actual.parent().unwrap_or(&enclosing);
                                 let mut hop = hop_parent.join(format!(
-                                    ".grapher-publish-rename-{}-{}",
+                                    ".pi-n-publish-rename-{}-{}",
                                     std::process::id(),
                                     uuid::Uuid::new_v4()
                                 ));
                                 while fs::symlink_metadata(&hop).is_ok() {
                                     hop = hop_parent.join(format!(
-                                        ".grapher-publish-rename-{}-{}",
+                                        ".pi-n-publish-rename-{}-{}",
                                         std::process::id(),
                                         uuid::Uuid::new_v4()
                                     ));
@@ -1121,7 +1121,7 @@ mod tests {
         let run = uuid::Uuid::new_v4().to_string();
         let node = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&run)
             .join("node");
         workspace::prepare_with_merger_expected_for_run(
@@ -1301,11 +1301,11 @@ mod tests {
     }
 
     #[test]
-    fn authored_grapher_names_are_delivered_not_rejected_as_host_metadata() {
+    fn authored_pi_n_names_are_delivered_not_rejected_as_host_metadata() {
         let (_temp, source, _node, journal, _) = fixture();
         let paths = [
-            ".grapher-project.json",
-            ".grapher-publish-0000000000000000.tmp",
+            ".pi-n-project.json",
+            ".pi-n-publish-0000000000000000.tmp",
         ];
         for path in paths {
             fs::write(source.join(path), "original").unwrap();
@@ -1849,7 +1849,7 @@ mod tests {
         .unwrap();
 
         // Simulate crash between step 1 (`sub` -> hop) and step 2 (hop -> `sub`) of dir rename.
-        let hop_name = ".grapher-publish-rename-test-hop";
+        let hop_name = ".pi-n-publish-rename-test-hop";
         fs::rename(source.join("sub"), source.join(hop_name)).unwrap();
         fs::write(
             journal.join("renaming-dir.json"),

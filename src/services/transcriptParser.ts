@@ -261,13 +261,13 @@ export function parseTranscriptChunkLines(
     }
     if (message.role === "toolResult") {
       const result = { content: message.content, details: message.details, isError: message.isError };
-      const rawResultRange = parseRawRange(message.grapherRawRange) ?? envelopeRawRange;
+      const rawResultRange = parseRawRange(message.piNRawRange) ?? envelopeRawRange;
       settleToolCall(message.toolCallId, message.toolName || "tool", result, !!message.isError, message.durationMs, {
         rawResultRange,
-        resultOmitted: Boolean(message.grapherBodyOmitted),
-        truncated: Boolean(message.grapherTruncated),
-        subcommandWarning: Boolean(message.grapherSubcommandWarning),
-        interruptedOutput: Boolean(message.grapherInterrupted),
+        resultOmitted: Boolean(message.piNBodyOmitted),
+        truncated: Boolean(message.piNTruncated),
+        subcommandWarning: Boolean(message.piNSubcommandWarning),
+        interruptedOutput: Boolean(message.piNInterrupted),
       });
       return;
     }
@@ -278,13 +278,13 @@ export function parseTranscriptChunkLines(
       if (part?.type === "toolCall") {
         addToolCall(part.id, part.name || "tool", part.arguments || {}, "running", !!part.argsTruncated, contentIndex, undefined, {
           rawArgsRange: envelopeRawRange,
-          argsOmitted: Boolean(part.grapherBodyOmitted),
+          argsOmitted: Boolean(part.piNBodyOmitted),
         });
       } else if (part?.type === "thinking") {
         // Keep blocks whose text was private or encrypted: their card explains
         // that this reasoning produced no visible content.
         const thinkingText = typeof part.thinking === "string" ? part.thinking : "";
-        const omitted = Boolean(part.grapherBodyOmitted && !thinkingText.trim());
+        const omitted = Boolean(part.piNBodyOmitted && !thinkingText.trim());
         currentItems.push({
           id: rowId("think"), type: "thinking", role: "assistant",
           thinkingContentIndex: contentIndex,
@@ -292,7 +292,7 @@ export function parseTranscriptChunkLines(
           ...(state.source ? { source: state.source } : {}),
           ...(omitted && envelopeRawRange ? { rawRange: envelopeRawRange } : {}),
           ...(omitted ? { bodyOmitted: true } : {}),
-          ...(typeof part.grapherThinkingChars === "number" ? { thinkingCharCount: part.grapherThinkingChars } : {}),
+          ...(typeof part.piNThinkingChars === "number" ? { thinkingCharCount: part.piNThinkingChars } : {}),
         });
       } else if (part?.type === "text" && typeof part.text === "string" && part.text) {
         currentItems.push({ id: rowId("text"), type: "text", role: "assistant", content: part.text, timestamp: Date.now() });
@@ -316,13 +316,13 @@ export function parseTranscriptChunkLines(
       // Final response is the terminal plain-text suffix of an execution, not
       // JSONL. Even valid JSON (including event-shaped examples) is Markdown
       // content here; only an explicit source boundary can resume event parsing.
-      if (state.inFinalResponse && event?.type !== "grapher_planning_source") {
+      if (state.inFinalResponse && event?.type !== "pi_n_planning_source") {
         appendFinalResponseLine(rawLine);
         continue;
       }
       parsedJson = true;
       if (!event || typeof event !== "object") continue;
-      if (event.type === "grapher_planning_source") {
+      if (event.type === "pi_n_planning_source") {
         state.source = event.planningId || "planner";
         state.byteOffset = event.startOffset ?? 0;
         state.leadingFragment = state.byteOffset > 0;
@@ -337,10 +337,10 @@ export function parseTranscriptChunkLines(
 
       if (options.showUserTurns && (event.type === "message_start" || event.type === "message_end") && event.message?.role === "user") {
         const messageId = event.message.id;
-        const grapherRequestId = typeof event.grapherRequestId === "string" && event.grapherRequestId
-          ? event.grapherRequestId
+        const piNRequestId = typeof event.piNRequestId === "string" && event.piNRequestId
+          ? event.piNRequestId
           : undefined;
-        if (!grapherRequestId && options.skipLeadingUserTurn && !state.seenFirstUser && !state.leadingFragment && currentItems.length === 0) {
+        if (!piNRequestId && options.skipLeadingUserTurn && !state.seenFirstUser && !state.leadingFragment && currentItems.length === 0) {
           if (event.type === "message_start") {
             state.pendingUserStart = true;
             if (messageId) state.userMessageStarts.add(messageId);
@@ -359,10 +359,10 @@ export function parseTranscriptChunkLines(
             continue;
           }
         }
-        const matchedById = !!grapherRequestId && (!options.userTurnRequestIds || options.userTurnRequestIds.includes(grapherRequestId));
+        const matchedById = !!piNRequestId && (!options.userTurnRequestIds || options.userTurnRequestIds.includes(piNRequestId));
         const display = matchedById
           ? rawDisplay
-          : (grapherRequestId && options.userTurnRequestIds ? null : matchRequestedUserTurn(rawDisplay, options.userTurnTexts));
+          : (piNRequestId && options.userTurnRequestIds ? null : matchRequestedUserTurn(rawDisplay, options.userTurnTexts));
         if (display === null) continue;
         if (event.type === "message_start") {
           state.pendingUserStart = true;
@@ -371,10 +371,10 @@ export function parseTranscriptChunkLines(
         const first = !state.seenFirstUser;
         state.seenFirstUser = true;
         if (first && options.skipFirstUser) continue;
-        const effectiveOffset = typeof event.grapherByteOffset === "number" ? event.grapherByteOffset : lineOffset;
+        const effectiveOffset = typeof event.piNByteOffset === "number" ? event.piNByteOffset : lineOffset;
         if (display.trim() || matchedById) currentItems.push({
-          id: grapherRequestId ? `steer_${grapherRequestId}` : steerId ? `msg-${steerId}` : messageId ? `user_${messageId}` : rowId("user"),
-          type: "text", role: "user", content: display, userTurnOffset: effectiveOffset, steerRequestId: grapherRequestId,
+          id: piNRequestId ? `steer_${piNRequestId}` : steerId ? `msg-${steerId}` : messageId ? `user_${messageId}` : rowId("user"),
+          type: "text", role: "user", content: display, userTurnOffset: effectiveOffset, steerRequestId: piNRequestId,
           images: imageContent(content), timestamp: Date.now(),
         });
         continue;
@@ -387,8 +387,8 @@ export function parseTranscriptChunkLines(
       }
 
       if (event.type === "message") {
-        const effectiveOffset = typeof event.grapherByteOffset === "number" ? event.grapherByteOffset : lineOffset;
-        pushSessionMessage(event.message, event.id, effectiveOffset, parseRawRange(event.grapherRawRange));
+        const effectiveOffset = typeof event.piNByteOffset === "number" ? event.piNByteOffset : lineOffset;
+        pushSessionMessage(event.message, event.id, effectiveOffset, parseRawRange(event.piNRawRange));
         continue;
       }
 
@@ -409,8 +409,8 @@ export function parseTranscriptChunkLines(
       if (event.type === "message_update" && thinkingEvent?.type === "toolcall_end" && thinkingEvent.toolCall) {
         const tool = thinkingEvent.toolCall;
         addToolCall(tool.id, tool.name || "tool", tool.arguments || {}, "running", !!tool.argsTruncated, thinkingEvent.contentIndex, "pending", {
-          rawArgsRange: parseRawRange(event.grapherRawRange),
-          argsOmitted: Boolean(tool.grapherBodyOmitted),
+          rawArgsRange: parseRawRange(event.piNRawRange),
+          argsOmitted: Boolean(tool.piNBodyOmitted),
         });
         continue;
       }
@@ -546,8 +546,8 @@ export function parseTranscriptChunkLines(
         currentItems = closeThinkingItems(currentItems);
         state.inTagThinking = false;
         const toolItem = addToolCall(event.toolCallId, event.toolName || "tool", event.args || {}, "running", !!event.argsTruncated, undefined, "executing", {
-          rawArgsRange: parseRawRange(event.grapherRawRange),
-          argsOmitted: Boolean(event.grapherBodyOmitted),
+          rawArgsRange: parseRawRange(event.piNRawRange),
+          argsOmitted: Boolean(event.piNBodyOmitted),
         });
         if (event.toolCallId) pendingTools.set(event.toolCallId, toolItem);
         continue;
@@ -555,11 +555,11 @@ export function parseTranscriptChunkLines(
 
       if (event.type === "tool_execution_end") {
         settleToolCall(event.toolCallId, event.toolName || "tool", event.result, !!event.isError, event.durationMs, {
-          rawResultRange: parseRawRange(event.grapherRawRange),
-          resultOmitted: Boolean(event.grapherBodyOmitted),
-          truncated: Boolean(event.grapherTruncated),
-          subcommandWarning: Boolean(event.grapherSubcommandWarning),
-          interruptedOutput: Boolean(event.grapherInterrupted),
+          rawResultRange: parseRawRange(event.piNRawRange),
+          resultOmitted: Boolean(event.piNBodyOmitted),
+          truncated: Boolean(event.piNTruncated),
+          subcommandWarning: Boolean(event.piNSubcommandWarning),
+          interruptedOutput: Boolean(event.piNInterrupted),
         });
         continue;
       }
@@ -573,7 +573,7 @@ export function parseTranscriptChunkLines(
         state.inTagThinking = false;
 
         const message = event.message;
-        const rawRange = parseRawRange(event.grapherRawRange);
+        const rawRange = parseRawRange(event.piNRawRange);
         if (message?.role === "assistant" &&
             (message.stopReason === "error" || message.stopReason === "aborted") && message.errorMessage) {
           currentItems.push({
@@ -592,7 +592,7 @@ export function parseTranscriptChunkLines(
             if (part?.type === "toolCall") {
               addToolCall(part.id, part.name || "tool", part.arguments || {}, "running", !!part.argsTruncated, contentIndex, "pending", {
                 rawArgsRange: rawRange,
-                argsOmitted: Boolean(part.grapherBodyOmitted),
+                argsOmitted: Boolean(part.piNBodyOmitted),
               });
             }
           });
@@ -649,9 +649,9 @@ export function parseTranscriptChunkLines(
         continue;
       }
 
-      // Grapher process lifecycle - kept in workspace details, not in chat transcript
-      if (event.type === "grapher_process_started" || event.type === "grapher_process_exited") {
-        if (event.type === "grapher_process_exited") {
+      // Pi^n process lifecycle - kept in workspace details, not in chat transcript
+      if (event.type === "pi_n_process_started" || event.type === "pi_n_process_exited") {
+        if (event.type === "pi_n_process_exited") {
           // A dead process cannot still be compacting.
           state.compacting = false;
           currentItems = closeThinkingItems(currentItems);
@@ -698,6 +698,11 @@ export function parseTranscriptChunkLines(
           isError: true,
           timestamp: Date.now(),
         });
+      } else if (line.length > 2048 && /^\{"[A-Za-z0-9_-]{1,64}"\s*:/.test(line)) {
+        // Never render truncated multi-kilobyte JSONL event fragments (e.g. an
+        // oversized agent_end/toolResult record split at a chunk boundary) as
+        // raw assistant markdown prose.
+        continue;
       } else {
         const lastItem = currentItems[currentItems.length - 1];
         if (lastItem && lastItem.type === "text" && lastItem.role === "assistant" && lastItem.rawOutput) {

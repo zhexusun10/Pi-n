@@ -14,7 +14,7 @@ fn record_session(runtime: &Runtime, execution: &Execution) {
     let directory = runtime.root.join("sessions").join(&execution.id);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(format!("test_{}.jsonl", execution.session_id)),
-        format!("{}\n{}\n", serde_json::json!({"type": "session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id": execution.session_id, "cwd": execution.worktree}),
+        format!("{}\n{}\n", serde_json::json!({"type": "session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id": execution.session_id, "cwd": execution.worktree}),
             serde_json::json!({"type": "message", "id": "opening", "parentId": null,
                 "message": {"role": "user", "content": "retained session context"}}))).unwrap();
 }
@@ -559,7 +559,7 @@ fn check_unstarted_source_direct_followup(fork_created: bool) {
         );
         root.join("sessions")
             .join(&failed.execution.id)
-            .join(format!("grapher_{}.jsonl", failed.execution.session_id))
+            .join(format!("pi_n_{}.jsonl", failed.execution.session_id))
     } else {
         let anchor = retry.session_fork.as_ref().unwrap();
         assert_eq!(anchor.id, first.execution.id);
@@ -574,7 +574,7 @@ fn check_unstarted_source_direct_followup(fork_created: bool) {
         .unwrap();
         root.join("sessions")
             .join(&retry.execution.id)
-            .join(format!("grapher_{}.jsonl", retry.execution.session_id))
+            .join(format!("pi_n_{}.jsonl", retry.execution.session_id))
     };
     assert!(fs::read_to_string(fork)
         .unwrap()
@@ -724,7 +724,7 @@ fn missing_feedback_fork_uses_the_target_session_and_original_instruction() {
     let fork = root
         .join("sessions")
         .join(&retry.execution.id)
-        .join(format!("grapher_{}.jsonl", retry.execution.session_id));
+        .join(format!("pi_n_{}.jsonl", retry.execution.session_id));
     assert!(fs::read_to_string(fork)
         .unwrap()
         .contains("retained session context"));
@@ -754,7 +754,7 @@ fn missing_session_after_observed_activity_never_restarts_the_original_task() {
         }
         runtime.emit_outputs(vec![EventKind::Output {
             execution_id: failed.execution.id.clone(),
-            text: "{\"type\":\"grapher_process_started\",\"pid\":1234}\n{\"type\":\"tool_execution_start\",\"toolName\":\"bash\"}\n".into(),
+            text: "{\"type\":\"pi_n_process_started\",\"pid\":1234}\n{\"type\":\"tool_execution_start\",\"toolName\":\"bash\"}\n".into(),
         }]).unwrap();
         runtime
             .finish(&failed.execution, Err("unrecognized failure".into()))
@@ -804,7 +804,7 @@ fn production_continue_fails_closed_when_an_active_session_is_missing() {
     let failed = runtime.jobs().unwrap().remove(0);
     runtime.emit_outputs(vec![EventKind::Output {
         execution_id: failed.execution.id.clone(),
-        text: "{\"type\":\"grapher_process_started\",\"pid\":1234}\n{\"type\":\"tool_execution_start\",\"toolName\":\"bash\"}\n".into(),
+        text: "{\"type\":\"pi_n_process_started\",\"pid\":1234}\n{\"type\":\"tool_execution_start\",\"toolName\":\"bash\"}\n".into(),
     }]).unwrap();
     runtime
         .finish(&failed.execution, Err("unrecognized failure".into()))
@@ -843,15 +843,15 @@ fn pause_before_session_persisted_recovers_initial_task_despite_startup_output()
             runtime.set_route(route).unwrap();
             runtime.approve().unwrap();
             let first = runtime.jobs().unwrap().remove(0);
-            // Pi emits grapher_process_started immediately on spawn, before it
+            // Pi emits pi_n_process_started immediately on spawn, before it
             // finishes booting or flushes a .jsonl session file to disk.
             runtime
                 .emit_outputs(vec![EventKind::Output {
                     execution_id: first.execution.id.clone(),
                     text: concat!(
-                        "{\"type\":\"grapher_process_started\",\"pid\":4321}\n",
+                        "{\"type\":\"pi_n_process_started\",\"pid\":4321}\n",
                         "[stderr] Warning: No project session found with id 'x'; creating a new session with that id.\n",
-                        "{\"type\":\"grapher_process_exited\",\"code\":null}\n"
+                        "{\"type\":\"pi_n_process_exited\",\"code\":null}\n"
                     )
                     .into(),
                 }])

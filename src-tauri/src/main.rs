@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    grapher_desktop_lib::run();
+    pi_n_desktop_lib::run();
 }

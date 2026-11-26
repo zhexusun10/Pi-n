@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Grapher",
+        "title": "Pi^n",
         "width": 1280,
         "height": 840,
         "minWidth": 960,

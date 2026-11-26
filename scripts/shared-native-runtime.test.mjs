@@ -15,7 +15,7 @@ const delay = ms => new Promise(completed => setTimeout(completed, ms));
 test('Windows projects/backends share a persistent engine and default workspaces to LocalAppData', {
   skip: process.platform !== 'win32', timeout: 360000,
 }, async t => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-shared-runtime-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-shared-runtime-')));
   const backends = [];
   let modelCalls = 0;
   const modelServer = createServer(async (request, response) => {
@@ -45,7 +45,7 @@ test('Windows projects/backends share a persistent engine and default workspaces
     throw new Error(`${label} within ${timeoutMs}ms\n${backend.diagnostics}`);
   };
   // Declared before the try so the teardown can reclaim sandbox masks.
-  const engines = join(directory, 'LocalAppData', 'Grapher', 'workspaces', '.grapher-workspaces');
+  const engines = join(directory, 'LocalAppData', 'Pi-n', 'workspaces', '.pi-n-workspaces');
   try {
     await new Promise(completed => modelServer.listen(0, '127.0.0.1', completed));
     const agent = join(directory, 'agent');
@@ -56,7 +56,7 @@ test('Windows projects/backends share a persistent engine and default workspaces
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
     } } }));
     const local = join(directory, 'LocalAppData');
-    const cache = join(local, 'Grapher', 'workspaces');
+    const cache = join(local, 'Pi-n', 'workspaces');
     const start = async name => {
       const source = join(directory, 'Desktop', name);
       await mkdir(source, { recursive: true });
@@ -66,17 +66,17 @@ test('Windows projects/backends share a persistent engine and default workspaces
       const port = listener.address().port;
       await new Promise(completed => listener.close(completed));
       const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
-      const env = { ...process.env, GRAPHER_DATA_DIR: join(directory, `data-${name}`), GRAPHER_PORT: String(port),
+      const env = { ...process.env, PI_N_DATA_DIR: join(directory, `data-${name}`), PI_N_PORT: String(port),
         // Isolate engine preparation explicitly to avoid inspecting the real
         // installation's legacy caches; node placement uses the OS default.
-        LOCALAPPDATA: local, GRAPHER_CACHE_DIR: undefined, GRAPHER_NATIVE_RUNTIME_PARENT: engines,
-        GRAPHER_NATIVE_RUNTIME_DIR: undefined, GRAPHER_WORKSPACE_PARENT: undefined,
-        PI_CODING_AGENT_DIR: agent, GRAPHER_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), GRAPHER_ISOLATED_PI_MODELS: '1' };
+        LOCALAPPDATA: local, PI_N_CACHE_DIR: undefined, PI_N_NATIVE_RUNTIME_PARENT: engines,
+        PI_N_NATIVE_RUNTIME_DIR: undefined, PI_N_WORKSPACE_PARENT: undefined,
+        PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), PI_N_ISOLATED_PI_MODELS: '1' };
       for (const role of ['PARTITIONER', 'PLANNER', 'NODE_AGENT', 'MERGER']) {
         env[`${role}_MODEL`] = 'cache-test/node';
         env[`${role}_THINKING`] = 'off';
       }
-      const backend = { child: spawn(join(target, 'debug/grapher.exe'), [], { cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'] }),
+      const backend = { child: spawn(join(target, 'debug/pi-n.exe'), [], { cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'] }),
         source, diagnostics: '' };
       backends.push(backend);
       backend.child.stdout.on('data', bytes => { backend.diagnostics += bytes; });
@@ -108,10 +108,10 @@ test('Windows projects/backends share a persistent engine and default workspaces
     await Promise.all([ready(first, 180000), ready(second, 180000)]);
     assert.equal(modelCalls, 0, 'preparation must not call a model');
     const copies = await readdir(engines);
-    const names = copies.filter(name => name.startsWith('grapher-native-engine-'));
+    const names = copies.filter(name => name.startsWith('pi-n-native-engine-'));
     assert.equal(names.length, 1, 'different projects/data roots must share one copy');
     const engine = join(engines, names[0]);
-    const marker = JSON.parse(await readFile(join(engine, '.grapher-native-runtime.json'), 'utf8'));
+    const marker = JSON.parse(await readFile(join(engine, '.pi-n-native-runtime.json'), 'utf8'));
     assert.equal(marker.version, 2);
     assert.equal(marker.ready, true);
     for (const backend of [first, second]) {
@@ -130,15 +130,15 @@ test('Windows projects/backends share a persistent engine and default workspaces
     const canonicalCache = await realpath(cache);
     for (const execution of completed.executions) {
       assert.equal(execution.status, 'completed');
-      assert.ok(resolve(execution.worktree).toLowerCase().startsWith(resolve(canonicalCache, '.grapher-worktrees', draft.runId).toLowerCase()));
+      assert.ok(resolve(execution.worktree).toLowerCase().startsWith(resolve(canonicalCache, '.pi-n-worktrees', draft.runId).toLowerCase()));
     }
     assert.equal(new Set(completed.executions.map(execution => execution.worktree.toLowerCase())).size, 4);
     assert.equal(await readFile(join(first.source, 'base.txt'), 'utf8'), 'keep');
     await stop(first);
-    assert.equal((await readdir(engines)).filter(name => name.startsWith('grapher-native-engine-')).length, 1);
+    assert.equal((await readdir(engines)).filter(name => name.startsWith('pi-n-native-engine-')).length, 1);
     const restarted = await start('alpha');
     await ready(restarted);
-    assert.deepEqual((await readdir(engines)).filter(name => name.startsWith('grapher-native-engine-')), names, 'restart reuses the cache while another backend holds its reader');
+    assert.deepEqual((await readdir(engines)).filter(name => name.startsWith('pi-n-native-engine-')), names, 'restart reuses the cache while another backend holds its reader');
     await stop(second);
     await stop(restarted);
     assert.ok(await readFile(join(engine, 'engine/entrypoint.mjs')), 'cache survives all backend exits');

@@ -4,16 +4,16 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadBundledWebSearch } from '../engine/pi-compat.ts';
-import { withGrapherSearchPreferences } from '../engine/search-credentials.mjs';
+import { withPiNSearchPreferences } from '../engine/search-credentials.mjs';
 
 async function fixture(run: (paths: { own: string; global: string; key: (directory: string, value: string) => void; execute: () => Promise<any>; sent: string[] }) => Promise<void>) {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-search-credentials-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-search-credentials-'));
   const own = join(directory, 'own');
   const global = join(directory, 'global');
   mkdirSync(own); mkdirSync(global);
   const changes: Record<string, string | undefined> = {
-    PI_CODING_AGENT_DIR: own, GRAPHER_GLOBAL_PI_AGENT_DIR: global,
-    PI_BETTER_WEB_SEARCH_AUTH: undefined, GRAPHER_ISOLATED_PI_SEARCH: undefined,
+    PI_CODING_AGENT_DIR: own, PI_N_GLOBAL_PI_AGENT_DIR: global,
+    PI_BETTER_WEB_SEARCH_AUTH: undefined, PI_N_ISOLATED_PI_SEARCH: undefined,
     PI_BETTER_WEB_SEARCH_SETTINGS: join(own, 'settings.json'), PI_BETTER_WEB_SEARCH_CACHE: join(own, 'cache.json'),
     EXA_API_KEY: 'fake-environment-key', PARALLEL_API_KEY: undefined,
   };
@@ -61,18 +61,18 @@ test('bundled search inherits global Pi API keys, observes rotation and leaves s
   key(global, 'fake-rotated-key');
   assert.notEqual((await execute()).isError, true);
   assert.equal(sent.at(-1), 'fake-rotated-key');
-  key(own, 'fake-grapher-key');
+  key(own, 'fake-pi-n-key');
   assert.notEqual((await execute()).isError, true);
-  assert.equal(sent.at(-1), 'fake-grapher-key', 'Grapher-saved keys override inherited keys');
+  assert.equal(sent.at(-1), 'fake-pi-n-key', 'Pi^n-saved keys override inherited keys');
   assert.equal(JSON.parse(readFileSync(source, 'utf8')).keys.exa, 'fake-rotated-key');
   assert.equal(process.env.EXA_API_KEY, 'fake-environment-key', 'inherited keys never enter process environment values');
 }));
 
 test('explicit search credential paths and isolation opt out of inheritance; corrupt upstream data falls back safely', () => fixture(async ({ own, global, key, execute, sent }) => {
-  process.env.GRAPHER_ISOLATED_PI_SEARCH = '1';
+  process.env.PI_N_ISOLATED_PI_SEARCH = '1';
   await execute();
   assert.equal(sent.at(-1), 'fake-environment-key');
-  delete process.env.GRAPHER_ISOLATED_PI_SEARCH;
+  delete process.env.PI_N_ISOLATED_PI_SEARCH;
   key(own, 'fake-explicit-key');
   process.env.PI_BETTER_WEB_SEARCH_AUTH = join(own, 'better-web-search-auth.json');
   await execute();
@@ -88,13 +88,13 @@ test('explicit search credential paths and isolation opt out of inheritance; cor
 }));
 
 test('bundled Parallel inherits keys, switches schema, locks routing and restores legacy search when disabled', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-parallel-search-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-parallel-search-'));
   const own = join(directory, 'own');
   const global = join(directory, 'global');
   mkdirSync(own); mkdirSync(global);
   const changes: Record<string, string | undefined> = {
-    PI_CODING_AGENT_DIR: own, GRAPHER_GLOBAL_PI_AGENT_DIR: global,
-    PI_BETTER_WEB_SEARCH_AUTH: undefined, GRAPHER_ISOLATED_PI_SEARCH: undefined,
+    PI_CODING_AGENT_DIR: own, PI_N_GLOBAL_PI_AGENT_DIR: global,
+    PI_BETTER_WEB_SEARCH_AUTH: undefined, PI_N_ISOLATED_PI_SEARCH: undefined,
     PI_BETTER_WEB_SEARCH_SETTINGS: join(own, 'settings.json'), PI_BETTER_WEB_SEARCH_CACHE: join(own, 'cache.json'),
     PARALLEL_API_KEY: 'fake-environment-parallel-key', EXA_API_KEY: 'fake-exa-key',
     KEENABLE_API_KEY: undefined, PERPLEXITY_API_KEY: undefined, DEEPSEEK_API_KEY: undefined,
@@ -166,14 +166,14 @@ test('bundled Parallel inherits keys, switches schema, locks routing and restore
   }
 });
 
-test('Grapher Keenable public opt-in activates public endpoint until a dedicated search provider has an API key', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-keenable-public-'));
+test('Pi^n Keenable public default activates public endpoint until opted out or a dedicated search provider has an API key', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-keenable-public-'));
   const own = join(directory, 'own');
   const global = join(directory, 'global');
   mkdirSync(own); mkdirSync(global);
   const envKeys = [
-    'PI_CODING_AGENT_DIR', 'GRAPHER_GLOBAL_PI_AGENT_DIR',
-    'PI_BETTER_WEB_SEARCH_AUTH', 'GRAPHER_ISOLATED_PI_SEARCH',
+    'PI_CODING_AGENT_DIR', 'PI_N_GLOBAL_PI_AGENT_DIR',
+    'PI_BETTER_WEB_SEARCH_AUTH', 'PI_N_ISOLATED_PI_SEARCH',
     'PI_BETTER_WEB_SEARCH_SETTINGS', 'PI_BETTER_WEB_SEARCH_CACHE',
     'KEENABLE_API_KEY', 'EXA_API_KEY', 'PARALLEL_API_KEY', 'PERPLEXITY_API_KEY', 'DEEPSEEK_API_KEY',
   ];
@@ -181,14 +181,10 @@ test('Grapher Keenable public opt-in activates public endpoint until a dedicated
   for (const key of envKeys) delete process.env[key];
   Object.assign(process.env, {
     PI_CODING_AGENT_DIR: own,
-    GRAPHER_GLOBAL_PI_AGENT_DIR: global,
+    PI_N_GLOBAL_PI_AGENT_DIR: global,
     PI_BETTER_WEB_SEARCH_SETTINGS: join(own, 'better-web-search-settings.json'),
     PI_BETTER_WEB_SEARCH_CACHE: join(own, 'better-web-search-cache.json'),
   });
-  writeFileSync(join(own, 'extensions.json'), JSON.stringify({
-    overrides: { 'npm:pi-better-web-search': true },
-    webSearch: { keenablePublic: true },
-  }));
   const fetch = globalThis.fetch;
   const requests: Array<{ url: string; apiKey: string | null; auth: string | null }> = [];
   globalThis.fetch = (async (url: string, init: RequestInit) => {
@@ -210,7 +206,7 @@ test('Grapher Keenable public opt-in activates public endpoint until a dedicated
     const run = async () => {
       await hooks.get('session_start')({}, ctx);
       assert.ok(active.includes('web_search'));
-      return tools.get('web_search').execute('search-call', { query: 'grapher test' }, undefined, undefined, ctx);
+      return tools.get('web_search').execute('search-call', { query: 'pi-n test' }, undefined, undefined, ctx);
     };
 
     // 1. No dedicated key -> uses Keenable public endpoint.
@@ -237,9 +233,18 @@ test('Grapher Keenable public opt-in activates public endpoint until a dedicated
     assert.equal(requests.at(-1)?.url, 'https://api.keenable.ai/v1/search');
     assert.equal(requests.at(-1)?.apiKey, 'fake-keenable-key');
 
-    // 5. Explicit keenable: false in better-web-search-settings.json overrides Grapher's keenablePublic opt-in.
+    // 5. Explicit keenable: false in better-web-search-settings.json overrides Pi^n's keenablePublic default.
     writeFileSync(join(global, 'better-web-search-auth.json'), JSON.stringify({ version: 1, keys: {} }));
     writeFileSync(join(own, 'better-web-search-settings.json'), JSON.stringify({ version: 1, apis: { keenable: false } }));
+    await hooks.get('session_start')({}, ctx);
+    assert.ok(!active.includes('web_search'));
+
+    // 6. Explicit keenablePublic: false in Pi^n extensions.json disables the public default.
+    rmSync(join(own, 'better-web-search-settings.json'));
+    writeFileSync(join(own, 'extensions.json'), JSON.stringify({
+      overrides: { 'npm:pi-better-web-search': true },
+      webSearch: { keenablePublic: false },
+    }));
     await hooks.get('session_start')({}, ctx);
     assert.ok(!active.includes('web_search'));
   } finally {
@@ -249,8 +254,8 @@ test('Grapher Keenable public opt-in activates public endpoint until a dedicated
   }
 });
 
-test('withGrapherSearchPreferences does not leak synthetic keenable:true when unrelated preferences or other APIs are saved', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-search-prefs-write-'));
+test('withPiNSearchPreferences does not leak synthetic keenable:true when unrelated preferences or other APIs are saved', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-search-prefs-write-'));
   const envKeys = ['KEENABLE_API_KEY', 'EXA_API_KEY', 'PARALLEL_API_KEY', 'PERPLEXITY_API_KEY'];
   const before = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
   for (const key of envKeys) delete process.env[key];
@@ -266,7 +271,7 @@ test('withGrapherSearchPreferences does not leak synthetic keenable:true when un
     };
     let savedParallelKey: string | undefined;
     const credentials = { savedApiKey: (provider: string) => provider === 'parallel' ? savedParallelKey : undefined };
-    const prefs = withGrapherSearchPreferences(upstream, credentials, () => directory);
+    const prefs = withPiNSearchPreferences(upstream, credentials, () => directory);
 
     // A configured Parallel API suppresses the public default; an explicit
     // Parallel opt-out restores it, matching the catalog's API detection.

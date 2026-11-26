@@ -182,7 +182,7 @@ impl<K: Clone + Eq + Send + 'static, W: Worker> Pool<K, W> {
             }
             self.shared.idle.notify_all();
             eprintln!(
-                "[Grapher] {} prewarm unavailable: {error}",
+                "[Pi^n] {} prewarm unavailable: {error}",
                 self.shared.label
             );
         }
@@ -232,11 +232,11 @@ impl<K: Clone + Eq + Send + 'static, W: Worker> Pool<K, W> {
                         let ready_ms = ready.1.ready_ms();
                         state.target = Some(ready.0.clone());
                         state.ready = Some(ready);
-                        eprintln!("[Grapher] {} prewarm ready in {ready_ms}ms", shared.label);
+                        eprintln!("[Pi^n] {} prewarm ready in {ready_ms}ms", shared.label);
                     }
                     Ok((_, worker)) => discard = Some(worker),
                     Err(error) if !ticket.cancelled() => {
-                        eprintln!("[Grapher] {} prewarm unavailable: {error}", shared.label);
+                        eprintln!("[Pi^n] {} prewarm unavailable: {error}", shared.label);
                     }
                     Err(_) => {}
                 }

@@ -25,7 +25,7 @@ async function freePort() {
 
 test('macOS browser drives Graph publication and a persistent Serial follow-up',
   { skip: process.platform !== 'darwin', timeout: 240_000 }, async () => {
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-macos-browser-')));
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-macos-browser-')));
     const project = join(directory, 'Cafe\u0301 中文 # % project');
     const agent = join(directory, 'agent');
     const data = join(directory, 'data');
@@ -119,17 +119,17 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
       // Do not inherit the host's model credentials, Pi configuration, data
       // directories, or NODE_OPTIONS. This process serves only this test.
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|TMPDIR|TMP|TEMP|LANG|LC_ALL)$/i.test(key)));
-      Object.assign(env, { HOME: join(directory, 'home'), GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(port),
-        GRAPHER_CACHE_DIR: join(directory, 'cache'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'),
-        GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), GRAPHER_ALLOWED_ORIGINS: origin,
-        GRAPHER_GLOBAL_PI_AGENT_DIR: join(directory, 'global'), PI_CODING_AGENT_DIR: agent,
-        GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_DEV_LAZY_PRIMARY: '1',
+      Object.assign(env, { HOME: join(directory, 'home'), PI_N_DATA_DIR: data, PI_N_PORT: String(port),
+        PI_N_CACHE_DIR: join(directory, 'cache'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
+        PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_ALLOWED_ORIGINS: origin,
+        PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global'), PI_CODING_AGENT_DIR: agent,
+        PI_N_ISOLATED_PI_MODELS: '1', PI_N_DEV_LAZY_PRIMARY: '1',
         GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
         PLANNER_MODEL: 'browser-local/native', NODE_AGENT_MODEL: 'browser-local/native',
         PARTITIONER_MODEL: 'browser-local/native', MERGER_MODEL: 'browser-local/native',
         PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PARTITIONER_THINKING: 'off', MERGER_THINKING: 'off' });
       const target = resolve(process.env.CARGO_TARGET_DIR || 'backend/target');
-      backend = spawn(join(target, 'debug', 'grapher'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+      backend = spawn(join(target, 'debug', 'pi-n'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
       backend.stderr.on('data', chunk => { diagnostics += chunk; });
       backend.on('error', error => { diagnostics += `${error}\n`; });
       api = async (command, body = {}) => {
@@ -154,13 +154,13 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
       const config = { ...bootstrap.config, repository: project, model: 'browser-local/native', thinkingLevel: 'off',
         maxParallel: 4, isolateParallelNodes: true, autoApprove: false, postTaskReview: false };
       await api('save_config', { config });
-      browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || 'chromium', headless: true });
+      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || 'chromium', headless: true });
       context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'en-US', reducedMotion: 'reduce' });
       await context.addInitScript(({ project, config }) => {
-        localStorage.setItem('grapher_language_v1', 'en');
-        localStorage.setItem('grapher_plan_mode', 'graph');
-        localStorage.setItem('grapher_config', JSON.stringify(config));
-        localStorage.setItem('grapher_projects', JSON.stringify([{ id: project, path: project, name: 'macOS acceptance', lastOpened: 1 }]));
+        localStorage.setItem('pi_n_language_v1', 'en');
+        localStorage.setItem('pi_n_plan_mode', 'graph');
+        localStorage.setItem('pi_n_config', JSON.stringify(config));
+        localStorage.setItem('pi_n_projects', JSON.stringify([{ id: project, path: project, name: 'macOS acceptance', lastOpened: 1 }]));
       }, { project, config });
       page = await context.newPage();
       page.on('pageerror', error => browserErrors.push(String(error)));
@@ -220,7 +220,7 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
       assert.equal(await readFile(join(project, '.DS_Store'), 'utf8'), 'finder metadata');
       assert.equal(git('show', ':input.txt'), 'staged');
       assert.equal(git('rev-parse', 'HEAD'), head, 'Graph delivery must not add a source commit');
-      assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/grapher'), '');
+      assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/pi-n'), '');
       assert.equal(git('cat-file', '--batch-all-objects', '--batch-check=%(objectname) %(objecttype)'), objects,
         'private Graph objects must not enter the source repository');
       await page.locator('[data-node-id="join"]').click();
@@ -289,8 +289,8 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
       const event = (content, type) => content.split('\n').flatMap(line => {
         try { const value = JSON.parse(line); return value.type === type ? [value] : []; } catch { return []; }
       })[0];
-      const parked = event(logs[0].content, 'grapher_session_parked');
-      const resumed = event(logs[1].content, 'grapher_session_resumed');
+      const parked = event(logs[0].content, 'pi_n_session_parked');
+      const resumed = event(logs[1].content, 'pi_n_session_resumed');
       assert.ok(parked && resumed, 'Serial must park and resume the real Pi process');
       assert.equal(resumed.pid, parked.pid, 'the follow-up uses the same process');
       assert.deepEqual(browserErrors, []);

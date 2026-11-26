@@ -42,7 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-const managed = !!process.env.GRAPHER_LAUNCH_BINDING;
+const managed = !!process.env.PI_N_LAUNCH_BINDING;
 applyLaunchBinding();
 const control = path.dirname(fileURLToPath(import.meta.url));
 let task = ''; for await (const chunk of process.stdin) task += chunk;
@@ -60,7 +60,7 @@ if (task.trim() === 'Resolve the current merge conflicts.') {
   console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'merged'}]}}));
   process.exit(0);
 }
-const continuation = task.trim() === '__grapher_continue_interrupted__';
+const continuation = task.trim() === '__pi_n_continue_interrupted__';
 const followup = task.trim() === 'finish a';
 const resumedNode = fs.existsSync(path.join(control, 'recover-b')) ? 'b' : 'a';
 const name = continuation ? resumedNode : followup ? 'a' : task.trim();
@@ -70,7 +70,7 @@ fs.mkdirSync(sessionDir, {recursive:true});
 let session = fs.readdirSync(sessionDir).find(file => file.endsWith(`_${id}.jsonl`));
 if (!session) {
   session = `fixture_${id}.jsonl`;
-  fs.writeFileSync(path.join(sessionDir, session), JSON.stringify({type:'session',version:3,grapherFormat:1,grapherRunId:process.env.GRAPHER_ACTIVE_RUN_ID,id,cwd:process.cwd(),timestamp:new Date().toISOString()})+'\n');
+  fs.writeFileSync(path.join(sessionDir, session), JSON.stringify({type:'session',version:3,piNFormat:1,piNRunId:process.env.PI_N_ACTIVE_RUN_ID,id,cwd:process.cwd(),timestamp:new Date().toISOString()})+'\n');
 }
 const sessionFile = path.join(sessionDir, session);
 if (continuation || followup) {
@@ -373,7 +373,7 @@ import {readFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 let launch;
 export function applyLaunchBinding(){
-  launch=JSON.parse(readFileSync(process.env.GRAPHER_LAUNCH_BINDING,'utf8'));
+  launch=JSON.parse(readFileSync(process.env.PI_N_LAUNCH_BINDING,'utf8'));
   if(launch.path[0]!==dirname(launch.entry)) throw Error('Declared default entry/PATH must be first (older launch policy)');
 }
 export function managedLaunch(){return launch;}

@@ -2,7 +2,7 @@ import katex from "katex";
 import { marked, type Token, type Tokens, type TokenizerAndRendererExtension } from "marked";
 import sanitize from "sanitize-html";
 import { shareJson } from "./structuralSharing";
-import { workspaceImagePath } from "./workspaceImages";
+import { isSafeInlineImageDataUrl, workspaceImagePath } from "./workspaceImages";
 
 // Model output and replayed transcripts are untrusted HTML. Parse with an
 // allowlist rather than trying to recognize executable markup with regexes.
@@ -20,26 +20,30 @@ export function sanitizeHtml(html: string): string {
       ol: ["start"],
       input: ["type", "checked", "disabled"],
     },
-    allowedClasses: { code: ["language-*"], span: ["grapher-math"], div: ["grapher-math-block"] },
+    allowedClasses: { code: ["language-*"], span: ["pi-n-math"], div: ["pi-n-math-block"] },
     allowedSchemes: ["http", "https", "mailto", "tel"],
-    allowedSchemesByTag: { img: ["http", "https"] },
+    allowedSchemesByTag: { img: ["http", "https", "data"] },
     allowProtocolRelative: false,
     transformTags: {
       img: (_tag, attributes) => {
-        // Never retain a model-supplied data attribute or blob/data URL. Local
-        // paths stay inert until the mounted conversation resolves them via a
-        // scoped JSON POST; they cannot issue GETs against the app or its API.
+        // Never retain a model-supplied data attribute or unsafe data/blob URL.
+        // Only http(s) and allowlisted raster base64 data URLs render directly;
+        // local paths stay inert until the mounted conversation resolves them
+        // via a scoped JSON POST (which verifies file headers on the backend).
         const { src = "", alt, title, width, height } = attributes;
         const attribs = { ...(alt !== undefined ? { alt } : {}), ...(title ? { title } : {}),
           ...(width ? { width } : {}), ...(height ? { height } : {}) };
         if (/^https?:\/\//i.test(src)) return { tagName: "img", attribs: {
           ...attribs, src, loading: "lazy", decoding: "async", referrerpolicy: "no-referrer",
         } };
+        if (isSafeInlineImageDataUrl(src)) return { tagName: "img", attribs: {
+          ...attribs, src: src.replace(/\s+/g, ""), loading: "lazy", decoding: "async",
+        } };
         const path = workspaceImagePath(src);
         return path ? { tagName: "img", attribs: { ...attribs, "data-workspace-path": path } }
           : { tagName: "span", attribs: {}, text: alt || "" };
       },
-      // A model link must not navigate the Grapher tab away from the current
+      // A model link must not navigate the Pi^n tab away from the current
       // Run. Open absolute web links outside the app and never trust a
       // model-supplied target/rel pair; a raw-HTML local path is reduced to its
       // text so it carries neither an href nor link styling. (Markdown links
@@ -89,7 +93,7 @@ function escapeMathSource(source: string): string {
 }
 
 function mathPlaceholder(source: string, displayMode: boolean, tag: "span" | "div"): string {
-  const className = tag === "span" ? "grapher-math" : "grapher-math-block";
+  const className = tag === "span" ? "pi-n-math" : "pi-n-math-block";
   return `<${tag} class="${className}">${displayMode ? "1" : "0"}${encodeMathSource(source)}</${tag}>`;
 }
 
@@ -119,7 +123,7 @@ function renderMath(source: string, displayMode: boolean): string {
 }
 
 function renderMathPlaceholders(html: string): string {
-  if (!html.includes("grapher-math")) return html;
+  if (!html.includes("pi-n-math")) return html;
   const replace = (payload: string): string => {
     if (!/^[01]/.test(payload)) return "";
     try {
@@ -129,8 +133,8 @@ function renderMathPlaceholders(html: string): string {
     }
   };
   return html
-    .replace(/<span class="grapher-math">([^<]*)<\/span>/g, (_match, payload: string) => replace(payload))
-    .replace(/<div class="grapher-math-block">([^<]*)<\/div>/g, (_match, payload: string) => replace(payload));
+    .replace(/<span class="pi-n-math">([^<]*)<\/span>/g, (_match, payload: string) => replace(payload))
+    .replace(/<div class="pi-n-math-block">([^<]*)<\/div>/g, (_match, payload: string) => replace(payload));
 }
 
 function findUnescapedDelimiter(src: string, from: number, delimiter: string): number {
@@ -227,7 +231,7 @@ const mathExtensions: TokenizerAndRendererExtension[] = [
 
 marked.use({ extensions: mathExtensions });
 
-// A model-authored workspace path is not a URL. Grapher is served from its own
+// A model-authored workspace path is not a URL. Pi^n is served from its own
 // origin with no Run state in the address, so a relative link would navigate the
 // tab to the app shell and drop the current Run. Render those links as
 // `text(path)` and keep anchors only for real web/mail targets and in-page refs.

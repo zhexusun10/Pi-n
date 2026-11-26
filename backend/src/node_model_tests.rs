@@ -4,7 +4,7 @@ fn record_session(runtime: &Runtime, execution: &Execution) {
     let directory = runtime.root.join("sessions").join(&execution.id);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(format!("test_{}.jsonl", execution.session_id)),
-        format!("{}\n", serde_json::json!({"type": "session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id": execution.session_id, "cwd": execution.worktree}))).unwrap();
+        format!("{}\n", serde_json::json!({"type": "session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id": execution.session_id, "cwd": execution.worktree}))).unwrap();
 }
 
 fn replacement(config: &Config) -> Config {

@@ -1,14 +1,14 @@
 import { useSyncExternalStore } from "react";
 
 /** Browser-local UI preferences: never part of the Run snapshot or backend config. */
-export const AUTO_EXPAND_COT_KEY = "grapher_auto_expand_cot_v1";
-export const EXECUTION_OVERVIEW_KEY = "grapher_execution_overview_v1";
-export const HIDE_AUTO_MODE_KEY = "grapher_hide_auto_mode_v1";
-export const LANDING_BACKGROUND_KEY = "grapher_landing_background_v1";
-export const COLLAPSE_CARDS_KEY = "grapher_collapse_cards_v1";
-export const COMPLETION_NOTIFICATIONS_KEY = "grapher_completion_notifications_v1";
-export const COMPLETION_NOTIFICATION_SOUND_KEY = "grapher_completion_notification_sound_v1";
-export type LandingBackground = "paths" | "dots";
+export const AUTO_EXPAND_COT_KEY = "pi_n_auto_expand_cot_v1";
+export const EXECUTION_OVERVIEW_KEY = "pi_n_execution_overview_v1";
+export const HIDE_AUTO_MODE_KEY = "pi_n_hide_auto_mode_v1";
+export const LANDING_BACKGROUND_KEY = "pi_n_landing_background_v1";
+export const COLLAPSE_CARDS_KEY = "pi_n_collapse_cards_v1";
+export const COMPLETION_NOTIFICATIONS_KEY = "pi_n_completion_notifications_v1";
+export const COMPLETION_NOTIFICATION_SOUND_KEY = "pi_n_completion_notification_sound_v1";
+export type LandingBackground = "paths" | "dots" | "grid";
 
 type ReadableStorage = Pick<Storage, "getItem">;
 type WritableStorage = Pick<Storage, "setItem" | "removeItem">;
@@ -143,12 +143,13 @@ export function useHideAutoMode(): boolean {
   return useSyncExternalStore(subscribeToAutoMode, hideAutoModeEnabled, hideAutoModeEnabled);
 }
 
-/** The static dot pattern is the default for new or invalid preferences. */
+/** The tri-colour grid is the default for new or invalid preferences. */
 export function readLandingBackground(storage?: ReadableStorage): LandingBackground {
   try {
-    return readableStorage(storage)?.getItem(LANDING_BACKGROUND_KEY) === "paths" ? "paths" : "dots";
+    const value = readableStorage(storage)?.getItem(LANDING_BACKGROUND_KEY);
+    return value === "paths" || value === "dots" ? value : "grid";
   } catch {
-    return "dots";
+    return "grid";
   }
 }
 

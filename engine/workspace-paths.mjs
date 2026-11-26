@@ -41,13 +41,13 @@ let cygpath;
 const msysPaths = new Map();
 
 function trustedGit() {
-  return process.env.GRAPHER_TRUSTED_GIT || 'git';
+  return process.env.PI_N_TRUSTED_GIT || 'git';
 }
 
 function gitCygpath() {
   // Prefer the protected trusted Git binding over a business PATH shim.
   const candidates = [];
-  const trusted = process.env.GRAPHER_TRUSTED_GIT;
+  const trusted = process.env.PI_N_TRUSTED_GIT;
   if (trusted) {
     const install = resolve(trusted, '../..');
     candidates.push(resolve(install, 'usr/bin/cygpath.exe'), resolve(install, '../../usr/bin/cygpath.exe'));
@@ -149,7 +149,7 @@ function shellWords(text) {
 }
 const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const regexEscape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-export const VISIBLE_ROOT = '\u0000GRAPHER_PATH_ROOT\u0000';
+export const VISIBLE_ROOT = '\u0000PI_N_PATH_ROOT\u0000';
 
 function unicodeVariants(value) {
   if (process.platform !== 'darwin') return [value];
@@ -241,7 +241,7 @@ export function createWorkspacePaths(
     workspaceCaseInsensitive,
     options?.sourceCaseInsensitive,
   );
-  const denied = parseDeniedPaths(process.env.GRAPHER_DENIED_PATHS);
+  const denied = parseDeniedPaths(process.env.PI_N_DENIED_PATHS);
   const variants = value => {
     const source = unicodeVariants(hostPath(value));
     if (process.platform !== 'win32') return source;
@@ -463,8 +463,8 @@ export function createWorkspacePaths(
           // Do not guess a workspace-relative spelling for a dotted token that
           // the word mapper could not resolve. Surface the residual inference
           // instead of leaving a source path silently unadapted.
-          if (process.env.GRAPHER_PATH_DIAGNOSTICS !== '0') {
-            console.error(`[grapher-path] source-like token left unadapted because it contains . or ..: ${token}`);
+          if (process.env.PI_N_PATH_DIAGNOSTICS !== '0') {
+            console.error(`[pi-n-path] source-like token left unadapted because it contains . or ..: ${token}`);
           }
           result += token;
           i = tokenEnd - 1;

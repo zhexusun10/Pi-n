@@ -55,21 +55,21 @@ function nativeShell() {
 
 test('native managed environment: install once, real Pi tools, editable/launchers, result recovery, source follow-up and drain', { timeout: 1800000 }, async t => {
   const started = Date.now();
-  const mlManifestPath = process.env.GRAPHER_ENV_TEST_ML_MANIFEST;
+  const mlManifestPath = process.env.PI_N_ENV_TEST_ML_MANIFEST;
   const ml = mlManifestPath ? JSON.parse(await readFile(mlManifestPath, 'utf8')) : undefined;
-  const condaManifestPath = process.env.GRAPHER_ENV_TEST_CONDA_MANIFEST;
+  const condaManifestPath = process.env.PI_N_ENV_TEST_CONDA_MANIFEST;
   assert.ok(!(mlManifestPath && condaManifestPath), 'Do not mix lazy Conda and legacy ML profiles');
   const conda = condaManifestPath ? JSON.parse(await readFile(condaManifestPath, 'utf8')) : undefined;
   // The automatic (non-ML/Conda) profile keeps its managed venv under {state};
   // the ML/Conda profiles pin it to the workspace.
   const venvPath = (worktree: string) => ml || conda
     ? join(worktree, '.venv')
-    : join(dirname(worktree), '.grapher-state', slotDigest(worktree), 'process', '.venv');
+    : join(dirname(worktree), '.pi-n-state', slotDigest(worktree), 'process', '.venv');
   // The declared runtime cache is workspace-relative for ML/Conda and {state}-
   // relative for the automatic profile.
   const cachePath = (worktree: string) => ml || conda
     ? join(worktree, '.runtime-cache')
-    : join(dirname(worktree), '.grapher-state', slotDigest(worktree), 'process', '.runtime-cache');
+    : join(dirname(worktree), '.pi-n-state', slotDigest(worktree), 'process', '.runtime-cache');
   const condaPackages: string[] = [];
   if (conda) {
     const toolRoot = resolve(dirname(condaManifestPath!));
@@ -104,7 +104,7 @@ test('native managed environment: install once, real Pi tools, editable/launcher
   }
   // Windows package installers may still require a short physical parent when
   // the host has not enabled long paths. This is test setup, not a Runtime fallback.
-  const parent = process.env.GRAPHER_ENV_TEST_PARENT || tmpdir();
+  const parent = process.env.PI_N_ENV_TEST_PARENT || tmpdir();
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(parent, 'ge-中 space-'));
   const source = join(directory, 'source 中文 space');
@@ -126,7 +126,7 @@ test('native managed environment: install once, real Pi tools, editable/launcher
     assert.ok(probe && resolve(probe).toLowerCase().startsWith(resolve(process.env.SystemRoot || 'C:/Windows').toLowerCase()), `expected trusted host nvidia-smi under SystemRoot, got ${probe}`);
     const listing = execFileSync(probe, ['--query-gpu=uuid,name,driver_version', '--format=csv,noheader'], { encoding: 'utf8' });
     const rows = listing.trim().split(/\r?\n/).map(line => line.split(',').map(value => value.trim()));
-    const selected = process.env.GRAPHER_ENV_TEST_CUDA_DEVICE_NAME;
+    const selected = process.env.PI_N_ENV_TEST_CUDA_DEVICE_NAME;
     const match = rows.find(row => selected ? row[1] === selected : /^GPU-[a-f0-9-]{36}$/i.test(row[0]));
     assert.ok(match && /^GPU-[a-f0-9-]{36}$/i.test(match[0]), `native CUDA device UUID missing: ${listing}`);
     cudaDeviceName = match[1];
@@ -226,16 +226,16 @@ test('native managed environment: install once, real Pi tools, editable/launcher
     const listener = createServer(); await new Promise<void>(completed => listener.listen(0, '127.0.0.1', completed));
     const port = (listener.address() as AddressInfo).port; await new Promise<void>(completed => listener.close(() => completed()));
     const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
-    const env = { ...process.env, GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(port), PI_CODING_AGENT_DIR: agent,
-      GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'engine-cache'), GRAPHER_WORKSPACE_PARENT: workspaceParent,
-      GRAPHER_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), NODE_AGENT_MODEL: 'environment-test/native', NODE_AGENT_THINKING: 'off',
+    const env = { ...process.env, PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
+      PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'engine-cache'), PI_N_WORKSPACE_PARENT: workspaceParent,
+      PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), NODE_AGENT_MODEL: 'environment-test/native', NODE_AGENT_THINKING: 'off',
       VIRTUAL_ENV: 'outer-poison', CONDA_PREFIX: 'outer-poison', PYTHONPATH: 'outer-poison', PYTHONHOME: 'outer-poison', BASH_ENV: 'outer-poison',
       PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
       LOCALAPPDATA: join(directory, 'local-app-data'), USERPROFILE: join(directory, 'profile'), HOME: join(directory, 'profile'),
       ...(conda ? { PATH: [dirname(conda.conda), process.env.PATH].join(delimiter) } : {}) };
     const profile = ml ? 'release' : 'debug';
-    const built = join(target, profile, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
-    const executable = join(directory, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
+    const built = join(target, profile, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
+    const executable = join(directory, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
     await copyFile(built, executable);
     if (process.platform !== 'win32') await chmod(executable, (await stat(built)).mode & 0o777);
     backend = spawn(executable, [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -395,7 +395,7 @@ test('native managed environment: install once, real Pi tools, editable/launcher
     // Native lifecycle: a real owned project-extension writer may never
     // outlive the result it was started under. Whether the host seals that
     // result or refuses to while the writer is live is a platform property, not
-    // a Grapher contract, so either outcome is accepted here.
+    // a Pi^n contract, so either outcome is accepted here.
     let background = await backgroundRun('BACKGROUND_WRITER');
     const backgroundSettled = await until(async () => {
       const state = await api('snapshot', { runId: background.runId });

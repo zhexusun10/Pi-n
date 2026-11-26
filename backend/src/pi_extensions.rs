@@ -1,4 +1,4 @@
-//! Read-only discovery of the user's global Pi resources, with Grapher-local selection.
+//! Read-only discovery of the user's global Pi resources, with Pi^n-local selection.
 use serde_json::Value;
 use std::{
     io::Write,
@@ -99,8 +99,8 @@ mod tests {
     fn run_discovery(root: &Path, own: &Path, global: &Path, body: Value) -> std::process::Output {
         let mut child = discovery_command(root, own)
             .unwrap()
-            .env("GRAPHER_GLOBAL_PI_AGENT_DIR", global)
-            .env("GRAPHER_ISOLATED_PI_MODELS", "1")
+            .env("PI_N_GLOBAL_PI_AGENT_DIR", global)
+            .env("PI_N_ISOLATED_PI_MODELS", "1")
             .spawn()
             .unwrap();
         child

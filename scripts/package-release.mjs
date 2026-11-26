@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { root } from './pi-baseline.mjs';
 
 const host = { darwin: 'macos', linux: 'linux', win32: 'windows' }[process.platform];
-const docsUrl = 'https://github.com/zhexusun10/grapher/tree/main/docs';
+const docsUrl = 'https://github.com/zhexusun10/pi-n/tree/main/docs';
 
-// Generated launcher files. Grapher itself is prebuilt; agent processes and
+// Generated launcher files. Pi^n itself is prebuilt; agent processes and
 // provider login still run through the Node.js and Git on the user's PATH, so
 // the launchers check both and fail with actionable guidance, never a silent
 // crash or a vanished console window.
@@ -18,9 +18,9 @@ export function launcherScripts(platform, version) {
     '- **Node.js 22.19+** and **Git** on `PATH`. Agent processes and provider login run through them at runtime; the start script checks both and prints exact guidance when something is missing.',
   ];
   const startHere = [
-    `# Grapher ${version} — quick start`,
+    `# Pi^n ${version} — quick start`,
     '',
-    'This archive is a compiled, relocatable Grapher installation: prebuilt backend, frontend, pinned Pi runtime and bundled extensions. No Rust toolchain, npm install or compilation is needed here.',
+    'This archive is a compiled, relocatable Pi^n installation: prebuilt backend, frontend, pinned Pi runtime and bundled extensions. No Rust toolchain, npm install or compilation is needed here.',
     '',
     '## Requirements',
     '',
@@ -41,7 +41,7 @@ export function launcherScripts(platform, version) {
           '- Run `./start.sh` in a terminal. On macOS it removes Apple\'s download quarantine mark from this extracted folder automatically.',
         ],
     '',
-    'Then open **http://127.0.0.1:1421** (set `GRAPHER_PORT` to use another port and start again).',
+    'Then open **http://127.0.0.1:1421** (set `PI_N_PORT` to use another port and start again).',
     '',
     '## First run',
     '',
@@ -55,18 +55,18 @@ export function launcherScripts(platform, version) {
     '',
     '## Data and updates',
     '',
-    '- Runtime data lives in `.grapher/` inside this folder. Back it up before replacing an installation.',
-    '- Across a persisted-format change, startup preserves incompatible data and automatically uses a separate current-format directory (for example `.grapher/format-1/`). The console reports the actual path; later starts reuse it. Keep the original data with its original application version to view old Runs; this release does not migrate or repair them.',
+    '- Runtime data lives in `.pi-n/` inside this folder. Back it up before replacing an installation.',
+    '- Across a persisted-format change, startup preserves incompatible data and automatically uses a separate current-format directory (for example `.pi-n/format-1/`). The console reports the actual path; later starts reuse it. Keep the original data with its original application version to view old Runs; this release does not migrate or repair them.',
     '',
     '## Troubleshooting',
     '',
     '| Symptom | Fix |',
     '| --- | --- |',
     '| "Node.js/Git was not found on PATH" | Install the missing tool (links in the launcher message), reopen the terminal, run again |',
-    '| Port already in use | Stop the other process or set `GRAPHER_PORT` before starting |',
+    '| Port already in use | Stop the other process or set `PI_N_PORT` before starting |',
     ...(platform === 'macos'
       ? [
-          '| macOS blocks the binary | Right-click `grapher` → Open, or run `xattr -dr com.apple.quarantine .` here |',
+          '| macOS blocks the binary | Right-click `pi-n` → Open, or run `xattr -dr com.apple.quarantine .` here |',
           '| Wrong macOS download | `uname -m` shows `arm64` (Apple Silicon) or `x86_64` (Intel); pick the `arm64` or `x64` archive respectively |',
         ]
       : platform === 'linux'
@@ -82,7 +82,7 @@ export function launcherScripts(platform, version) {
       '@echo off',
       'setlocal',
       'cd /d "%~dp0"',
-      'title Grapher',
+      'title Pi^^n',
       '',
       'where node >nul 2>nul || goto node-missing',
       'for /f "tokens=1,2 delims=. " %%a in (\'node -p "process.versions.node"\') do (',
@@ -95,13 +95,13 @@ export function launcherScripts(platform, version) {
       'where git >nul 2>nul || goto git-missing',
       '',
       'set "PORT=1421"',
-      'if not "%GRAPHER_PORT%"=="" set "PORT=%GRAPHER_PORT%"',
-      'echo Grapher: http://127.0.0.1:%PORT%  (press Ctrl+C or close this window to stop)',
+      'if not "%PI_N_PORT%"=="" set "PORT=%PI_N_PORT%"',
+      'echo Pi^^n: http://127.0.0.1:%PORT%  (press Ctrl+C or close this window to stop)',
       'echo.',
-      'grapher.exe',
+      'pi-n.exe',
       'set "CODE=%ERRORLEVEL%"',
       'echo.',
-      'echo Grapher exited with code %CODE%.',
+      'echo Pi^^n exited with code %CODE%.',
       'pause',
       'exit /b %CODE%',
       '',
@@ -130,12 +130,12 @@ export function launcherScripts(platform, version) {
 
   const sh = [
     '#!/bin/sh',
-    '# Grapher release launcher (macOS/Linux). Grapher itself is prebuilt; agent',
+    '# Pi^n release launcher (macOS/Linux). Pi^n itself is prebuilt; agent',
     '# processes and provider login still use the Node.js and Git on PATH.',
     'set -eu',
     'case "$0" in */*) cd "${0%/*}" ;; esac',
     '',
-    'port="${GRAPHER_PORT:-1421}"',
+    'port="${PI_N_PORT:-1421}"',
     '',
     'if ! command -v node >/dev/null 2>&1; then',
     '  echo "[ERROR] Node.js 22.19+ was not found on PATH." >&2',
@@ -159,13 +159,13 @@ export function launcherScripts(platform, version) {
     '# Downloaded archives carry Apple\'s quarantine mark; remove it inside this',
     '# extracted folder only, so Gatekeeper does not kill the unsigned binary.',
     'if [ "$(uname)" = "Darwin" ] && command -v xattr >/dev/null 2>&1 \\',
-    '   && xattr -p com.apple.quarantine ./grapher >/dev/null 2>&1; then',
+    '   && xattr -p com.apple.quarantine ./pi-n >/dev/null 2>&1; then',
     '  echo "Removing the macOS download quarantine mark from this extracted copy..."',
     '  xattr -dr com.apple.quarantine . >/dev/null 2>&1 || true',
     'fi',
     '',
-    'echo "Grapher: http://127.0.0.1:${port}  (press Ctrl+C to stop)"',
-    'exec ./grapher',
+    'echo "Pi^n: http://127.0.0.1:${port}  (press Ctrl+C to stop)"',
+    'exec ./pi-n',
     '',
   ].join('\n');
   return { files: { 'start.sh': sh, 'START-HERE.md': startHere }, executableScripts: ['start.sh'] };
@@ -173,7 +173,7 @@ export function launcherScripts(platform, version) {
 
 export function releaseExecutable(platform, env = process.env) {
   const target = env.CARGO_TARGET_DIR ? resolve(env.CARGO_TARGET_DIR) : join(root, 'backend/target');
-  return join(target, 'release', platform === 'windows' ? 'grapher.exe' : 'grapher');
+  return join(target, 'release', platform === 'windows' ? 'pi-n.exe' : 'pi-n');
 }
 
 export function packageRelease(platform, arch, artifact) {
@@ -181,17 +181,17 @@ export function packageRelease(platform, arch, artifact) {
     throw new Error(`Package target must match host ${host}-${process.arch}`);
   }
   const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
-  const name = `grapher-${platform}-${arch}`;
-  const staging = mkdtempSync(join(tmpdir(), 'grapher-package-'));
+  const name = `pi-n-${platform}-${arch}`;
+  const staging = mkdtempSync(join(tmpdir(), 'pi-n-package-'));
   const destination = join(staging, name);
   const archive = resolve(artifact);
   try {
     const runtime = execFileSync(process.execPath, [join(root, 'scripts/prepare-native-runtime.mjs')], {
-      encoding: 'utf8', env: { ...process.env, GRAPHER_NATIVE_RUNTIME_PARENT: staging },
+      encoding: 'utf8', env: { ...process.env, PI_N_NATIVE_RUNTIME_PARENT: staging },
       maxBuffer: 8 * 1024 * 1024,
     }).trim();
     renameSync(runtime, destination);
-    const executable = platform === 'windows' ? 'grapher.exe' : 'grapher';
+    const executable = platform === 'windows' ? 'pi-n.exe' : 'pi-n';
     cpSync(releaseExecutable(platform), join(destination, executable));
     cpSync(join(root, 'dist'), join(destination, 'dist'), { recursive: true });
     for (const file of ['README.md', 'LICENSE', 'SECURITY.md']) cpSync(join(root, file), join(destination, file));
@@ -208,8 +208,8 @@ export function packageRelease(platform, arch, artifact) {
       // Compress-Archive silently skips hidden .git metadata. ZipFile includes it;
       // preparation dereferences Windows junctions before they reach the archive.
       execFileSync('powershell.exe', ['-NoProfile', '-Command',
-        'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory($env:GRAPHER_PACKAGE_ROOT, $env:GRAPHER_PACKAGE_ARCHIVE, [IO.Compression.CompressionLevel]::Optimal, $true)'], {
-        env: { ...process.env, GRAPHER_PACKAGE_ROOT: destination, GRAPHER_PACKAGE_ARCHIVE: archive }, stdio: 'inherit',
+        'Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory($env:PI_N_PACKAGE_ROOT, $env:PI_N_PACKAGE_ARCHIVE, [IO.Compression.CompressionLevel]::Optimal, $true)'], {
+        env: { ...process.env, PI_N_PACKAGE_ROOT: destination, PI_N_PACKAGE_ARCHIVE: archive }, stdio: 'inherit',
       });
     } else {
       const env = platform === 'macos' ? { ...process.env, COPYFILE_DISABLE: '1' } : process.env;

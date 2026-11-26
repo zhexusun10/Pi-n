@@ -15,7 +15,7 @@ import { workerBody } from './fixtures/conversation-acceptance-worker.mjs';
 import { privateGraph } from './fixtures/current-run.mjs';
 import { createTemporaryTarget } from './temporary-target.mjs';
 
-const root = resolve(process.env.GRAPHER_ACCEPTANCE_DIR || `.grapher/acceptance/${new Date().toISOString().replace(/[:.]/g, '-')}`);
+const root = resolve(process.env.PI_N_ACCEPTANCE_DIR || `.pi-n/acceptance/${new Date().toISOString().replace(/[:.]/g, '-')}`);
 const repository = join(root, 'repo');
 const data = join(root, 'data');
 const db = join(data, 'events.sqlite');
@@ -56,7 +56,7 @@ async function backend() {
   const apiPort = await port();
   const log = fs.createWriteStream(join(root, `backend-${apiPort}.log`));
   const child = spawn(executable, [], { detached: process.platform !== 'win32', env: { ...env,
-    GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(apiPort), GRAPHER_DEV_LAZY_PRIMARY: '1',
+    PI_N_DATA_DIR: data, PI_N_PORT: String(apiPort), PI_N_DEV_LAZY_PRIMARY: '1',
   }, stdio: ['ignore', 'pipe', 'pipe'] });
   children.add(child); child.stdout.pipe(log); child.stderr.pipe(log); child.on('exit', () => log.end());
   const api = async (name, body = {}) => {
@@ -128,11 +128,11 @@ async function browserChecks(server, workers) {
     } catch (error) { res.writeHead(500); res.end(String(error)); }
   });
   const frontPort = await port(); proxy.listen(frontPort, '127.0.0.1'); await once(proxy, 'listening');
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chromium') });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chromium') });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'en-US' });
   await context.tracing.start({ screenshots: true, snapshots: true });
   await context.addInitScript(repository => {
-    localStorage.setItem('grapher_projects', JSON.stringify([{ id: repository, path: repository, name: 'Acceptance', branch: 'main', clean: true, lastOpened: Date.now() }]));
+    localStorage.setItem('pi_n_projects', JSON.stringify([{ id: repository, path: repository, name: 'Acceptance', branch: 'main', clean: true, lastOpened: Date.now() }]));
   }, repository);
   const page = await context.newPage();
   const errors = []; page.on('pageerror', error => errors.push(String(error)));
@@ -169,8 +169,8 @@ try {
   await writeFile(join(repository, 'README.md'), '# Disposable acceptance project\n');
   command('git', ['-C', repository, 'add', '.']); command('git', ['-C', repository, 'commit', '-qm', 'fixture']);
   target = await createTemporaryTarget({ env }); env.CARGO_TARGET_DIR = target.directory;
-  cargo('build', '--manifest-path', 'backend/Cargo.toml', '--no-default-features', '--features', 'fixture', '--bin', 'grapher');
-  executable = join(target.directory, 'debug', `grapher${process.platform === 'win32' ? '.exe' : ''}`);
+  cargo('build', '--manifest-path', 'backend/Cargo.toml', '--no-default-features', '--features', 'fixture', '--bin', 'pi-n');
+  executable = join(target.directory, 'debug', `pi-n${process.platform === 'win32' ? '.exe' : ''}`);
   for (const name of ['store_optimization', 'load_allocation']) {
     cargo('test', '--manifest-path', 'backend/Cargo.toml', '--no-default-features', '--features', 'fixture', '--test', name);
     record(name, { currentFormat: true });

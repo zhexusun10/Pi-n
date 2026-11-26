@@ -1,11 +1,13 @@
-//! Grapher Tauri v2 desktop shell.
+//! Pi^n Tauri v2 desktop shell.
 //!
-//! Owns the existing Rust `grapher` backend as a child process, runs
+//! Owns the existing Rust `pi-n` backend as a child process, runs
 //! preserve-first legacy-data migration into `app_data_dir()/data`, exposes the
 //! narrow `backend_url` IPC command, wires the Tauri v2 autostart + updater +
 //! process relaunch plugins, and shuts down the backend cleanly on exit.
 #[cfg(target_os = "macos")]
 pub mod macos_notifications;
+#[cfg(target_os = "macos")]
+pub mod macos_window;
 pub mod managed_git;
 pub mod migration;
 pub mod paths;
@@ -29,7 +31,7 @@ use std::{
 };
 use tauri::{Emitter, Manager, Resource, RunEvent};
 
-pub const DESKTOP_NOTIFICATION_CLICKED_EVENT: &str = "grapher://notification-clicked";
+pub const DESKTOP_NOTIFICATION_CLICKED_EVENT: &str = "pi-n://notification-clicked";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NotificationClickEvent {
@@ -69,7 +71,7 @@ pub struct BackendState {
 /// Resource registered in Tauri's app-level `ResourceTable` so `cleanup_before_exit()`
 /// (called by `tauri-plugin-updater` on Windows right after signature verification and
 /// installer extraction, immediately before launching NSIS and calling `std::process::exit(0)`)
-/// shuts down the `grapher` sidecar before the installer replaces bundled binaries.
+/// shuts down the `pi-n` sidecar before the installer replaces bundled binaries.
 struct SidecarShutdownGuard(Arc<BackendSidecar>);
 
 impl Resource for SidecarShutdownGuard {}
@@ -256,7 +258,7 @@ async fn open_external_url(url: String) -> Result<(), String> {
                     format!("Failed to open external URL in system browser: {error}")
                 })?;
             std::thread::Builder::new()
-                .name("grapher-open-external-url".to_string())
+                .name("pi-n-open-external-url".to_string())
                 .spawn(move || {
                     let _ = child.wait();
                 })
@@ -338,7 +340,7 @@ fn fallback_macos_osascript_notification(
         .spawn()
         .map_err(|error| format!("Failed to spawn osascript notification fallback: {error}"))?;
     std::thread::Builder::new()
-        .name("grapher-macos-notification-fallback".to_string())
+        .name("pi-n-macos-notification-fallback".to_string())
         .spawn(move || {
             let _ = child.wait();
         })
@@ -373,7 +375,7 @@ async fn send_desktop_notification(
     let clean_title = {
         let candidate = sanitize_notification_text(&title, MAX_NOTIFICATION_TITLE_CHARS);
         if candidate.is_empty() {
-            "Grapher".to_string()
+            "Pi^n".to_string()
         } else {
             candidate
         }
@@ -399,13 +401,13 @@ async fn send_desktop_notification(
             macos_notifications::MacosNotificationDelivery::Delivered => Ok(true),
             macos_notifications::MacosNotificationDelivery::PermissionDenied => {
                 eprintln!(
-                    "[grapher-desktop] macOS notification permission is denied; enable notifications for Grapher in System Settings -> Notifications"
+                    "[Pi^n-desktop] macOS notification permission is denied; enable notifications for Pi^n in System Settings -> Notifications"
                 );
                 Ok(false)
             }
             macos_notifications::MacosNotificationDelivery::Unavailable => {
                 eprintln!(
-                    "[grapher-desktop] UNUserNotificationCenter unavailable (not running inside a .app bundle); using macOS osascript fallback"
+                    "[Pi^n-desktop] UNUserNotificationCenter unavailable (not running inside a .app bundle); using macOS osascript fallback"
                 );
                 fallback_macos_osascript_notification(&clean_title, &clean_body, play_sound)?;
                 Ok(true)
@@ -509,7 +511,7 @@ fn open_desktop_notification_settings() -> Result<(), String> {
             .spawn()
             .map_err(|error| format!("Failed to open Windows notification settings: {error}"))?;
         std::thread::Builder::new()
-            .name("grapher-open-notification-settings".to_string())
+            .name("pi-n-open-notification-settings".to_string())
             .spawn(move || {
                 let _ = child.wait();
             })
@@ -704,7 +706,7 @@ pub fn resolve_updater_pubkey(
 
 /// Resolves an updater public key across primary override, fallback override, and
 /// `tauri.conf.json` configured key. Empty/whitespace overrides fall through instead
-/// of shadowing later sources (for example when CI exports `GRAPHER_UPDATER_PUBKEY=""`).
+/// of shadowing later sources (for example when CI exports `PI_N_UPDATER_PUBKEY=""`).
 pub fn resolve_updater_pubkey_from_sources(
     configured: &str,
     primary_override: Option<&str>,
@@ -720,7 +722,7 @@ pub fn resolve_updater_pubkey_from_sources(
 fn compile_time_updater_pubkey() -> Option<String> {
     resolve_updater_pubkey_from_sources(
         "",
-        option_env!("GRAPHER_UPDATER_PUBKEY"),
+        option_env!("PI_N_UPDATER_PUBKEY"),
         option_env!("TAURI_UPDATER_PUBKEY"),
     )
 }
@@ -765,7 +767,7 @@ fn initialize_backend(
             bytes_copied,
         } => {
             eprintln!(
-                "[grapher-desktop] Migrated legacy store from {} to {} ({files_copied} files, {bytes_copied} bytes; source preserved).",
+                "[Pi^n-desktop] Migrated legacy store from {} to {} ({files_copied} files, {bytes_copied} bytes; source preserved).",
                 source.display(),
                 destination.display()
             );
@@ -802,9 +804,9 @@ pub fn launched_from_autostart(args: &[String]) -> bool {
 pub fn tray_labels_for_windows_lang_id(lang_id: u16) -> (&'static str, &'static str) {
     // Primary language ID sits in the low 10 bits; 0x04 is LANG_CHINESE.
     if (lang_id & 0x03ff) == 0x0004 {
-        ("显示 Grapher", "退出 Grapher")
+        ("显示 Pi^n", "退出 Pi^n")
     } else {
-        ("Show Grapher", "Quit Grapher")
+        ("Show Pi^n", "Quit Pi^n")
     }
 }
 
@@ -852,7 +854,7 @@ impl WindowsTrayState {
 }
 
 #[cfg(target_os = "windows")]
-const WINDOWS_TRAY_ID: &str = "grapher-tray";
+const WINDOWS_TRAY_ID: &str = "pi-n-tray";
 #[cfg(target_os = "windows")]
 const WINDOWS_TRAY_SHOW_ID: &str = "tray-show";
 #[cfg(target_os = "windows")]
@@ -886,7 +888,7 @@ fn set_windows_webview_hidden_state(window: &tauri::WebviewWindow, hidden: bool)
         let controller = webview.controller();
         if let Err(err) = controller.SetIsVisible(visible) {
             eprintln!(
-                "[grapher-desktop] Warning: failed to set WebView2 visibility to {visible}: {err}"
+                "[Pi^n-desktop] Warning: failed to set WebView2 visibility to {visible}: {err}"
             );
         }
         // Lower WebView2's V8/Blink memory target when hidden in the tray without
@@ -900,14 +902,14 @@ fn set_windows_webview_hidden_state(window: &tauri::WebviewWindow, hidden: bool)
                 };
                 if let Err(err) = core19.SetMemoryUsageTargetLevel(level) {
                     eprintln!(
-                        "[grapher-desktop] Warning: failed to set WebView2 memory target level (hidden={hidden}): {err}"
+                        "[Pi^n-desktop] Warning: failed to set WebView2 memory target level (hidden={hidden}): {err}"
                     );
                 }
             }
         }
     }) {
         eprintln!(
-            "[grapher-desktop] Warning: failed to access WebView2 controller for hidden={hidden}: {error}"
+            "[Pi^n-desktop] Warning: failed to access WebView2 controller for hidden={hidden}: {error}"
         );
     }
 }
@@ -919,12 +921,12 @@ fn mark_windows_webview_start_hidden(window: &tauri::WebviewWindow) {
     let _ = window.with_webview(|webview| unsafe {
         if let Ok(core) = webview.controller().CoreWebView2() {
             let _ = core.AddScriptToExecuteOnDocumentCreated(
-                w!("window.__GRAPHER_START_HIDDEN__ = true;"),
+                w!("window.__PI_N_START_HIDDEN__ = true;"),
                 None,
             );
         }
     });
-    let _ = window.eval("window.__GRAPHER_START_HIDDEN__ = true;");
+    let _ = window.eval("window.__PI_N_START_HIDDEN__ = true;");
     set_windows_webview_hidden_state(window, true);
     let _ = window.hide();
 }
@@ -988,7 +990,7 @@ fn setup_windows_tray(app: &tauri::App) -> tauri::Result<()> {
         .build()?;
 
     let mut builder = TrayIconBuilder::with_id(WINDOWS_TRAY_ID)
-        .tooltip("Grapher")
+        .tooltip("Pi^n")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app_handle, event| match event.id().as_ref() {
@@ -1065,7 +1067,7 @@ pub(crate) fn handle_desktop_notification_clicked(
 fn schedule_windows_startup_reveal(app_handle: &tauri::AppHandle) {
     let fallback_handle = app_handle.clone();
     if let Err(error) = std::thread::Builder::new()
-        .name("grapher-startup-window".to_string())
+        .name("pi-n-startup-window".to_string())
         .spawn(move || {
             // The frontend normally shows the window after mounting its shell.
             // A failed JS import/IPC must not leave an invisible running app.
@@ -1083,15 +1085,15 @@ fn schedule_windows_startup_reveal(app_handle: &tauri::AppHandle) {
                 && matches!(window.is_visible(), Ok(false))
                 && matches!(window.is_minimized(), Ok(false))
             {
-                eprintln!("[grapher-desktop] Frontend window reveal timed out; showing the main window");
+                eprintln!("[Pi^n-desktop] Frontend window reveal timed out; showing the main window");
                 set_windows_webview_hidden_state(&window, false);
                 if let Err(error) = window.show() {
-                    eprintln!("[grapher-desktop] Failed to show the main window: {error}");
+                    eprintln!("[Pi^n-desktop] Failed to show the main window: {error}");
                 }
             }
         })
     {
-        eprintln!("[grapher-desktop] Failed to start window reveal watchdog: {error}");
+        eprintln!("[Pi^n-desktop] Failed to start window reveal watchdog: {error}");
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.show();
         }
@@ -1106,7 +1108,7 @@ fn set_windows_corner_preference<R: tauri::Runtime>(window: &tauri::WebviewWindo
     };
 
     let Ok(hwnd) = window.hwnd() else {
-        eprintln!("[grapher-desktop] Warning: failed to get the Windows window handle for rounded corners");
+        eprintln!("[Pi^n-desktop] Warning: failed to get the Windows window handle for rounded corners");
         return;
     };
     let preference = DWMWCP_ROUND;
@@ -1122,7 +1124,7 @@ fn set_windows_corner_preference<R: tauri::Runtime>(window: &tauri::WebviewWindo
         // Windows 10 and older Windows 11 builds may not support this DWM
         // attribute. The app remains usable with the platform default corners.
         eprintln!(
-            "[grapher-desktop] Warning: failed to set rounded Windows window corners (HRESULT 0x{result:08X})"
+            "[Pi^n-desktop] Warning: failed to set rounded Windows window corners (HRESULT 0x{result:08X})"
         );
     }
 }
@@ -1163,6 +1165,10 @@ pub fn run() {
         })
         .setup(|app| {
             app.manage(WindowsTrayState::default());
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                macos_window::configure_main_window(&window);
+            }
             #[cfg(target_os = "windows")]
             {
                 if let Some(window) = app.get_webview_window("main") {
@@ -1183,7 +1189,7 @@ pub fn run() {
                     }
                     Err(error) => {
                         eprintln!(
-                            "[grapher-desktop] Warning: failed to register Windows system tray icon (close will exit normally): {error}"
+                            "[Pi^n-desktop] Warning: failed to register Windows system tray icon (close will exit normally): {error}"
                         );
                     }
                 }
@@ -1203,14 +1209,14 @@ pub fn run() {
                 // and Settings surfaces an explicit diagnostic if queried.
                 if let Err(error) = app.handle().plugin(build_autostart_plugin()) {
                     eprintln!(
-                        "[grapher-desktop] Warning: failed to register autostart plugin (continuing startup): {error}"
+                        "[Pi^n-desktop] Warning: failed to register autostart plugin (continuing startup): {error}"
                     );
                 }
 
                 #[cfg(target_os = "macos")]
                 {
                     // Use native UNUserNotificationCenter on macOS so the OS
-                    // registers Grapher in System Settings -> Notifications and
+                    // registers Pi^n in System Settings -> Notifications and
                     // prompts for permission immediately on first launch.
                     macos_notifications::init_and_request_permission_on_startup(app.handle());
                 }
@@ -1234,7 +1240,7 @@ pub fn run() {
                     }
                     Err(error) => {
                         eprintln!(
-                            "[grapher-desktop] Warning: failed to register notification plugin (continuing startup): {error}"
+                            "[Pi^n-desktop] Warning: failed to register notification plugin (continuing startup): {error}"
                         );
                     }
                 }
@@ -1256,14 +1262,14 @@ pub fn run() {
             ) {
                 Ok((sidecar, git_bootstrap)) => {
                     eprintln!(
-                        "[grapher-desktop] Backend ready at {} (data: {})",
+                        "[Pi^n-desktop] Backend ready at {} (data: {})",
                         sidecar.info().base_url,
                         sidecar.info().data_dir
                     );
                     (BackendState::ready(sidecar), git_bootstrap)
                 }
                 Err(error) => {
-                    eprintln!("[grapher-desktop] Startup failed: {error}");
+                    eprintln!("[Pi^n-desktop] Startup failed: {error}");
                     (
                         BackendState::failed(error),
                         GitBootstrapManager::new(app_data_dir.clone(), None),
@@ -1304,7 +1310,7 @@ pub fn run() {
             terminal_kill
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Grapher desktop application");
+        .expect("error while building Pi^n desktop application");
 
     app.run(|app_handle, event| match event {
         #[cfg(target_os = "macos")]
@@ -1354,7 +1360,7 @@ mod tests {
             .err()
             .unwrap();
         assert!(
-            err.contains("Bundled Grapher runtime resources are missing"),
+            err.contains("Bundled Pi^n runtime resources are missing"),
             "{err}"
         );
         // Setup failure must not leave a partial `data` directory behind.
@@ -1432,7 +1438,7 @@ mod tests {
         let script = temp.path().join("fake-backend.sh");
         fs::write(
             &script,
-            "#!/bin/sh\nprintf '{\"type\":\"grapher_ready\",\"port\":43219,\"dataDir\":\"/tmp/d\"}\\n'\ncat >/dev/null\nexit 0\n",
+            "#!/bin/sh\nprintf '{\"type\":\"pi_n_ready\",\"port\":43219,\"dataDir\":\"/tmp/d\"}\\n'\ncat >/dev/null\nexit 0\n",
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1476,8 +1482,8 @@ mod tests {
     #[test]
     fn validate_external_url_allows_only_clean_http_and_https_urls() {
         assert_eq!(
-            validate_external_url(" https://github.com/zhexusun10/grapher/releases ").unwrap(),
-            "https://github.com/zhexusun10/grapher/releases"
+            validate_external_url(" https://github.com/zhexusun10/pi-n/releases ").unwrap(),
+            "https://github.com/zhexusun10/pi-n/releases"
         );
         assert_eq!(
             validate_external_url("HTTP://example.com/auth?a=1&b=2#top").unwrap(),
@@ -1537,8 +1543,8 @@ mod tests {
     fn sanitize_notification_text_normalizes_whitespace_strips_controls_and_truncates() {
         assert_eq!(sanitize_notification_text("   \r\n\t  ", 50), "");
         assert_eq!(
-            sanitize_notification_text("  Hello\n\nworld\t\u{0007}from\rGrapher  ", 50),
-            "Hello world from Grapher"
+            sanitize_notification_text("  Hello\n\nworld\t\u{0007}from\rPi^n  ", 50),
+            "Hello world from Pi^n"
         );
         assert_eq!(
             sanitize_notification_text("你好世界，这是一条很长的通知内容", 6),
@@ -1581,11 +1587,11 @@ mod tests {
         assert!(!launched_from_autostart(&[]));
         assert!(!launched_from_autostart(&["--autostart".to_string()]));
         assert!(!launched_from_autostart(&[
-            "grapher.exe".to_string(),
+            "pi-n.exe".to_string(),
             "--other".to_string()
         ]));
         assert!(launched_from_autostart(&[
-            "grapher.exe".to_string(),
+            "pi-n.exe".to_string(),
             "--autostart".to_string()
         ]));
     }
@@ -1595,20 +1601,20 @@ mod tests {
         // Simplified Chinese (0x0804) & Traditional Chinese (0x0404)
         assert_eq!(
             tray_labels_for_windows_lang_id(0x0804),
-            ("显示 Grapher", "退出 Grapher")
+            ("显示 Pi^n", "退出 Pi^n")
         );
         assert_eq!(
             tray_labels_for_windows_lang_id(0x0404),
-            ("显示 Grapher", "退出 Grapher")
+            ("显示 Pi^n", "退出 Pi^n")
         );
         // English US (0x0409) & Japanese (0x0411)
         assert_eq!(
             tray_labels_for_windows_lang_id(0x0409),
-            ("Show Grapher", "Quit Grapher")
+            ("Show Pi^n", "Quit Pi^n")
         );
         assert_eq!(
             tray_labels_for_windows_lang_id(0x0411),
-            ("Show Grapher", "Quit Grapher")
+            ("Show Pi^n", "Quit Pi^n")
         );
     }
 }

@@ -92,7 +92,7 @@ pub fn write_graph_profile(
 }
 
 /// Production adds session/data, engine and installation boundaries. The
-/// installation is the Grapher source checkout (or packaged app); like the
+/// installation is the Pi^n source checkout (or packaged app); like the
 /// shared engine copy it stays readable but must never be writable by an
 /// execution, matching the Linux bubblewrap read-only bind.
 #[allow(clippy::too_many_arguments)]
@@ -191,7 +191,7 @@ fn write_profile(
         .transpose()?;
     if let Some((data, session, engine, installation)) = &extra {
         if installation == Path::new("/") {
-            return Err("Invalid Grapher installation location".into());
+            return Err("Invalid Pi^n installation location".into());
         }
         if !session.starts_with(data)
             || session == data
@@ -207,7 +207,7 @@ fn write_profile(
             return Err("Invalid execution session or native engine location".into());
         }
     }
-    // Only a Grapher-created alternate pointing at the bound repository's
+    // Only a Pi^n-created alternate pointing at the bound repository's
     // actual object database may be read. Never trust an arbitrary alternate
     // path written by an agent when generating a profile. The Merger's graph
     // Git borrows the same object store through its own alternate.
@@ -369,11 +369,11 @@ fn write_profile(
             "(deny file-write* {data_rule})\n(deny file-write* (subpath {}))\n",
             quote(engine)?
         ));
-        // The original Grapher installation (source checkout or packaged app)
+        // The original Pi^n installation (source checkout or packaged app)
         // is shared host state. An execution may load from the prepared engine
         // copy but must not modify the installation, exactly as Linux mounts it
         // read-only. Reads stay allowed so linked dependency targets resolve.
-        // The default runtime data root (`<installation>/.grapher`) lives inside
+        // The default runtime data root (`<installation>/.pi-n`) lives inside
         // the installation, so its writable session/workspace exceptions are
         // carved out of this write denial just as they are elsewhere.
         let installation_rule = format!(

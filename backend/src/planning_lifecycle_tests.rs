@@ -96,7 +96,7 @@ fn startup_cleanup_recovers_unqueued_completed_workspaces_and_provisional_attemp
         runtime.state.run_id.clone()
     };
     let workspace = crate::workspace::workspaces_parent(&root)
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&id)
         .join("node/dependencies");
     fs::create_dir_all(&workspace).unwrap();
@@ -156,7 +156,7 @@ fn attempt(
     fs::write(directory.join("request.json"), request.to_string()).unwrap();
     fs::write(
         directory.join("planner-workspace"),
-        root.join(".grapher-workspaces")
+        root.join(".pi-n-workspaces")
             .join(run_id)
             .join(&id)
             .to_string_lossy()
@@ -184,10 +184,10 @@ fn attempt(
         write_planning_summary(&directory, &summary).unwrap();
     }
     fs::write(directory.join("planner.jsonl"), concat!(
-        "{\"type\":\"grapher_process_started\",\"timestamp\":1000}\n",
-        "{\"type\":\"tool_execution_start\",\"grapherReceivedAt\":2000}\n",
-        "{\"type\":\"message_end\",\"grapherReceivedAt\":3000,\"message\":{\"role\":\"assistant\",\"usage\":{\"totalTokens\":100}}}\n",
-        "{\"type\":\"message_update\",\"grapherReceivedAt\":6000}\n",
+        "{\"type\":\"pi_n_process_started\",\"timestamp\":1000}\n",
+        "{\"type\":\"tool_execution_start\",\"piNReceivedAt\":2000}\n",
+        "{\"type\":\"message_end\",\"piNReceivedAt\":3000,\"message\":{\"role\":\"assistant\",\"usage\":{\"totalTokens\":100}}}\n",
+        "{\"type\":\"message_update\",\"piNReceivedAt\":6000}\n",
     )).unwrap();
     (directory, summary)
 }
@@ -373,8 +373,8 @@ fn git_planning_failure_diagnostics_survive_restart() {
         temp.path(),
         &[
             "-c",
-            "alias.grapher-fail=!printf 'warning: line endings\\n' >&2; exit 23",
-            "grapher-fail",
+            "alias.pi-n-fail=!printf 'warning: line endings\\n' >&2; exit 23",
+            "pi-n-fail",
         ],
     )
     .unwrap_err();
@@ -582,7 +582,7 @@ fn run_started_is_published_after_persistence_and_commit_reuses_its_id() {
     let child = service_for_run(&primary, &id, true).unwrap();
     let script = temp.path().join("planner.sh");
     fs::write(&script, concat!(
-        "printf '%s' '{\"originalGoal\":\"Goal\",\"nodes\":[{\"id\":\"work\",\"task\":\"Do work\"}],\"edges\":[]}' > \"$GRAPHER_GRAPH_PATH\"\n",
+        "printf '%s' '{\"originalGoal\":\"Goal\",\"nodes\":[{\"id\":\"work\",\"task\":\"Do work\"}],\"edges\":[]}' > \"$PI_N_GRAPH_PATH\"\n",
         "echo '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"completed\"}],\"stopReason\":\"stop\"}}'\n",
     )).unwrap();
     let mut cfg = config(&repository);

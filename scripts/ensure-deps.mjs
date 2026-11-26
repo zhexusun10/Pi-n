@@ -122,10 +122,10 @@ export async function ensureDependencies({
     await run('git', ['submodule', 'update', '--init', '--recursive'], options);
   }
   if (!rootReady) {
-    log('[dev] Installing locked Grapher dependencies (including development tools)...');
+    log('[dev] Installing locked Pi^n dependencies (including development tools)...');
     try { await runNpm(['ci', '--ignore-scripts', '--include=dev']); }
     catch { throw new Error('Locked npm installation failed. Check the error above, network/proxy access and package-lock.json, then retry npm run dev. Startup does not fall back to npm install or rewrite the lockfile.'); }
-    if (!rootDependenciesReady(installationRoot)) throw new Error('npm ci completed but required Grapher dependencies are still missing; check npm omit/optional settings and retry npm run dev.');
+    if (!rootDependenciesReady(installationRoot)) throw new Error('npm ci completed but required Pi^n dependencies are still missing; check npm omit/optional settings and retry npm run dev.');
   }
   const picomatchVerified = rootReady ? await picomatchPromise : await verifyPicomatchPatch(installationRoot);
   if (!picomatchVerified) {

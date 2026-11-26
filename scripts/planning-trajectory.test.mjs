@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 function trajectory(run) {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-trajectory-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-trajectory-'));
   try {
-    const events = [{ type: 'grapher_process_started', timestamp: 1000 }];
+    const events = [{ type: 'pi_n_process_started', timestamp: 1000 }];
     const call = (id, name, start, end, text, details, isError = false) => {
-      events.push({ type: 'tool_execution_start', toolCallId: id, toolName: name, grapherReceivedAt: 1000 + start, args: {} });
-      events.push({ type: 'tool_execution_end', toolCallId: id, toolName: name, grapherReceivedAt: 1000 + end, isError,
+      events.push({ type: 'tool_execution_start', toolCallId: id, toolName: name, piNReceivedAt: 1000 + start, args: {} });
+      events.push({ type: 'tool_execution_end', toolCallId: id, toolName: name, piNReceivedAt: 1000 + end, isError,
         result: { content: [{ type: 'text', text }], details, ...(isError ? { isError } : {}) } });
     };
     const report = () => {
@@ -28,7 +28,7 @@ test('separates graph attempts from process outcome without double-counting conc
     call('explore', 'bash', 10, 30, 'Failed exploration', {}, true);
     call('a', 'edit_graph', 20, 25, 'Task is required.', { diagnostics: ['Task is required.'], diagnosticCodes: ['E203'] }, true);
     call('b', 'edit_graph', 40, 41, 'Task is required.', { diagnostics: ['Task is required.'], diagnosticCodes: ['E203'] }, true);
-    events.push({ type: 'grapher_process_exited', success: true, elapsedMs: 100 });
+    events.push({ type: 'pi_n_process_exited', success: true, elapsedMs: 100 });
     const failed = report();
     assert.equal(failed.processSuccess, true);
     assert.equal(failed.firstGraphMutationMs, 20);
@@ -56,7 +56,7 @@ test('edit_graph truncated reports use isError and structured details', () => {
       { diagnosticCodes: ['E204'], truncation: { truncated: true }, fullOutputPath: 'error.txt' }, true);
     call('large-success', 'edit_graph', 34, 35, 'The edit succeeded.\n[Output truncated. Full output: success.txt]',
       { truncation: { truncated: true }, fullOutputPath: 'success.txt' });
-    events.push({ type: 'grapher_process_exited', success: true, elapsedMs: 40 });
+    events.push({ type: 'pi_n_process_exited', success: true, elapsedMs: 40 });
     const result = report();
     assert.equal(result.firstGraphMutationMs, 10);
     assert.equal(result.firstSuccessfulGraphMutationMs, 31);

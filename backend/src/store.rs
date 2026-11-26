@@ -189,7 +189,7 @@ pub(crate) fn incompatible_database_version(path: &Path) -> Result<Option<i64>, 
 
 fn unsupported_database(version: i64) -> String {
     format!(
-        "Unsupported Grapher database format {version}; use a new data directory for this release"
+        "Unsupported Pi^n database format {version}; use a new data directory for this release"
     )
 }
 
@@ -199,7 +199,7 @@ pub(super) fn validate_database(connection: &Connection) -> Result<(), String> {
         return Err(unsupported_database(version));
     }
     connection.prepare("SELECT sequence,run_id,timestamp,payload,planning_id,nested_planning_id,kind,execution_id FROM events LIMIT 0")
-        .map_err(|e| format!("Invalid current Grapher database schema: {e}"))?;
+        .map_err(|e| format!("Invalid current Pi^n database schema: {e}"))?;
     let selected: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM workspace_selection WHERE id=1)",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one Harbor trial against an isolated, local Grapher backend.
+"""Run one Harbor trial against an isolated, local Pi^n backend.
 
 This file runs INSIDE the Harbor task environment. It has no Harbor/Python deps.
 """
@@ -30,7 +30,7 @@ class TrialCancelled(Exception):
 
 
 def _handle_cancel(signum, _frame):
-    raise TrialCancelled(f"Harbor cancelled Grapher (signal {signum})")
+    raise TrialCancelled(f"Harbor cancelled Pi^n (signal {signum})")
 
 
 def _parent_death_signal(parent_pid):
@@ -39,7 +39,7 @@ def _parent_death_signal(parent_pid):
         # Linux prctl(PR_SET_PDEATHSIG, SIGTERM); inherited by the backend only.
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
-            raise OSError(ctypes.get_errno(), "Cannot configure Grapher parent-death signal")
+            raise OSError(ctypes.get_errno(), "Cannot configure Pi^n parent-death signal")
         if os.getppid() != parent_pid:
             os.kill(os.getpid(), signal.SIGTERM)
     return arm
@@ -75,7 +75,7 @@ def config_for(repository, model, thinking, max_parallel):
     }
 
 
-class GrapherClient:
+class PiNClient:
     def __init__(self, port):
         self.url = f"http://127.0.0.1:{port}/api/"
         self.last_snapshot = None
@@ -96,9 +96,9 @@ class GrapherClient:
                 detail = json.loads(detail).get("error", detail)
             except ValueError:
                 pass
-            raise RuntimeError(f"Grapher {command}: {detail}") from exc
+            raise RuntimeError(f"Pi^n {command}: {detail}") from exc
         if not isinstance(reply, dict) or "result" not in reply:
-            raise RuntimeError(f"Invalid Grapher {command} response: {reply!r}")
+            raise RuntimeError(f"Invalid Pi^n {command} response: {reply!r}")
         if command in ("plan_goal", "snapshot", "control") and isinstance(reply["result"], dict):
             self.last_snapshot = reply["result"]
         return reply["result"]
@@ -113,7 +113,7 @@ def run_goal(client, instruction, config, timeout, poll_interval=1.0):
         raise RuntimeError("Planning returned no runId")
     while True:
         if snap.get("runId") != run_id:
-            raise RuntimeError("Grapher switched runs during the trial")
+            raise RuntimeError("Pi^n switched runs during the trial")
         phase = snap.get("phase")
         if phase == "completed":
             if (not snap.get("approved") or snap.get("planType") not in ("serial", "graph")
@@ -121,15 +121,15 @@ def run_goal(client, instruction, config, timeout, poll_interval=1.0):
                     node.get("status") != "completed" for node in snap["nodes"].values()
                 ) or (snap.get("planType") == "graph" and
                       (snap.get("publication") or {}).get("status") != "completed")):
-                raise RuntimeError("Grapher reported completion without published successful work")
+                raise RuntimeError("Pi^n reported completion without published successful work")
             return snap
         if phase in TERMINAL_FAILURES or phase == "awaiting_approval":
             failures = {name: node.get("error") for name, node in snap.get("nodes", {}).items()
                         if node.get("status") != "completed"}
-            raise RuntimeError(f"Grapher run {run_id} stopped in {phase}: "
+            raise RuntimeError(f"Pi^n run {run_id} stopped in {phase}: "
                                f"{(snap.get('publication') or {}).get('error') or failures}")
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"Grapher run {run_id} exceeded {timeout}s (phase={phase})")
+            raise TimeoutError(f"Pi^n run {run_id} exceeded {timeout}s (phase={phase})")
         time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
         snap = client.call("snapshot", {"detail": "metadata"}, timeout=min(30, max(1, deadline - time.monotonic())))
 
@@ -243,14 +243,14 @@ def main(argv=None):
     port = free_port()
     signal.signal(signal.SIGTERM, _handle_cancel)
     signal.signal(signal.SIGINT, _handle_cancel)
-    # Pi credentials must remain accessible to Graph nodes. Grapher isolates
+    # Pi credentials must remain accessible to Graph nodes. Pi^n isolates
     # runtime data except the current session, so keep Pi config beside it.
-    with tempfile.TemporaryDirectory(prefix="grapher-harbor-") as data_dir, \
-         tempfile.TemporaryDirectory(prefix="grapher-harbor-pi-") as pi_dir:
+    with tempfile.TemporaryDirectory(prefix="pi-n-harbor-") as data_dir, \
+         tempfile.TemporaryDirectory(prefix="pi-n-harbor-pi-") as pi_dir:
         env = os.environ.copy()
-        env.update({"GRAPHER_PORT": str(port), "GRAPHER_DATA_DIR": data_dir,
+        env.update({"PI_N_PORT": str(port), "PI_N_DATA_DIR": data_dir,
                     "PI_CODING_AGENT_DIR": pi_dir,
-                    "GRAPHER_ISOLATED_PI_MODELS": "1"})
+                    "PI_N_ISOLATED_PI_MODELS": "1"})
         # Avoid hidden .env or role-specific overrides silently changing the
         # provider/model for the Partitioner, Planner, nodes or merger.
         env.update({key: args.model for key in ROLE_MODELS})
@@ -260,11 +260,11 @@ def main(argv=None):
                                        start_new_session=(os.name == "posix"),
                                        preexec_fn=(_parent_death_signal(os.getpid())
                                                    if sys.platform == "linux" else None))
-            client = GrapherClient(port)
+            client = PiNClient(port)
             try:
                 for _ in range(100):
                     if process.poll() is not None:
-                        raise RuntimeError(f"Grapher backend exited during startup ({process.returncode})")
+                        raise RuntimeError(f"Pi^n backend exited during startup ({process.returncode})")
                     try:
                         client.call("snapshot", timeout=1)
                         break
@@ -273,7 +273,7 @@ def main(argv=None):
                     except (OSError, RuntimeError):
                         time.sleep(0.1)
                 else:
-                    raise TimeoutError("Grapher backend did not start")
+                    raise TimeoutError("Pi^n backend did not start")
                 snap = run_goal(client, instruction, config, args.timeout)
                 (logs / "snapshot.json").write_text(json.dumps(snap, indent=2), encoding="utf-8")
                 (logs / "result.json").write_text(json.dumps({
@@ -281,7 +281,7 @@ def main(argv=None):
                     "phase": snap["phase"], "model": args.model,
                     "planning": snap.get("planning"), "runMetrics": snap.get("runMetrics"),
                 }, indent=2), encoding="utf-8")
-                print(f"Grapher {snap['runId']} completed ({snap.get('planType')})", flush=True)
+                print(f"Pi^n {snap['runId']} completed ({snap.get('planType')})", flush=True)
             except Exception as exc:
                 snap = client.last_snapshot or {}
                 (logs / "snapshot.json").write_text(json.dumps(snap, indent=2), encoding="utf-8")
@@ -327,5 +327,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(f"Grapher Harbor trial failed: {exc}", file=sys.stderr)
+        print(f"Pi^n Harbor trial failed: {exc}", file=sys.stderr)
         sys.exit(1)

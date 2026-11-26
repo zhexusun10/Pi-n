@@ -25,7 +25,7 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest dir"))
         .parent()
-        .expect("Grapher root")
+        .expect("Pi^n root")
         .to_path_buf();
     let release = env::var("PROFILE").as_deref() == Ok("release");
     let commit = git(&root, &["rev-parse", "--verify", "HEAD"])
@@ -42,9 +42,9 @@ fn main() {
             &["status", "--porcelain", "--untracked-files=normal"],
         )
         .is_some_and(|status| status.trim().is_empty());
-    println!("cargo:rustc-env=GRAPHER_BUILD_COMMIT={commit}");
+    println!("cargo:rustc-env=PI_N_BUILD_COMMIT={commit}");
     println!(
-        "cargo:rustc-env=GRAPHER_BUILD_DIRTY={}",
+        "cargo:rustc-env=PI_N_BUILD_DIRTY={}",
         if clean { "0" } else { "1" }
     );
 

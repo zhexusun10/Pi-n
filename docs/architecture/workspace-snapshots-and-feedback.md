@@ -165,7 +165,7 @@ Manual `resolved` acknowledgement is also only a prepared input. The node retrie
 in that retained directory, and its repaired files wait for task success and the
 whole batch's delivery. Superseded or invalidated inputs are not revived.
 If preparation stopped before `Prepared` recorded a base, resolution validates the
-owned private slot's pinned `refs/grapher/base` commit and ancestry. Missing,
+owned private slot's pinned `refs/pi-n/base` commit and ancestry. Missing,
 invalid or discarded history remains an error before any repair is staged; a
 nonempty recorded preparation head always takes precedence over that local ref.
 Restart preserves this delivery barrier and the retained work; it does not restart
@@ -249,7 +249,7 @@ and setgid-directory inheritance; the source is never chowned. Each node still
 uses its own private project view and sandbox, not access to the whole Run
 parent. Preparation is also deterministic for a reused slot:
 entries no view can observe (ignored generated caches such as `__pycache__`,
-untracked reserved Grapher runtime directories without tracked descendants, and
+untracked reserved Pi^n runtime directories without tracked descendants, and
 directories left holding nothing else) are removed instead of blocking the
 comparison, while unrecorded project content still fails it. A reused slot's
 native project Git is rebound to the recorded code reference when it still
@@ -302,11 +302,11 @@ relocation/migration is performed.
 
 New source/project-view snapshots collect raw physical bytes without running
 clean/smudge/EOL filters. Native `.gitignore` is not a collection boundary.
-Reserved Grapher runtime directories (`.grapher`, `.grapher-worktrees`,
-`.grapher-workspaces`, `.grapher-state`, case-insensitively) and in-flight
-`.grapher-publish-<16-hex>.tmp` temp files are excluded from collection unless
+Reserved Pi^n runtime directories (`.pi-n`, `.pi-n-worktrees`,
+`.pi-n-workspaces`, `.pi-n-state`, case-insensitively) and in-flight
+`.pi-n-publish-<16-hex>.tmp` temp files are excluded from collection unless
 explicitly tracked in project Git (and skipped during nested-repository scans);
-ordinary project files such as `.grapher-project.json` or `.grapher-project/config`
+ordinary project files such as `.pi-n-project.json` or `.pi-n-project/config`
 remain collected. The graph index is separate from the
 user's staged/unstaged distinctions. Publication uses a private raw-checkout
 repository so conversion cannot silently change the delivered bytes.
@@ -337,7 +337,7 @@ git add -f -A
 with pathspec exclusions for:
 
 - `.git` and Git internals;
-- reserved Grapher runtime directories (`.grapher`, `.grapher-worktrees`, `.grapher-workspaces`, `.grapher-state`) and in-flight `.grapher-publish-<16-hex>.tmp` temp files (unless explicitly tracked in project Git; ordinary `.grapher-*` project files remain collected);
+- reserved Pi^n runtime directories (`.pi-n`, `.pi-n-worktrees`, `.pi-n-workspaces`, `.pi-n-state`) and in-flight `.pi-n-publish-<16-hex>.tmp` temp files (unless explicitly tracked in project Git; ordinary `.pi-n-*` project files remain collected);
 - managed environment/cache scopes;
 - rebuildable tool caches (see below);
 - untracked macOS host metadata (`.DS_Store`, `._*`). Tracked metadata stays
@@ -389,7 +389,7 @@ subtrees), `.yarn/cache`, `.dart_tool`, `.build`, `.swiftpm`, `bin`, `obj`,
 `deps`, `build`), `zig-out` and standalone `.pyc`/`.pyo` files follow the
 ordinary project Git channel, even when ignored or untracked. A manifest or
 registry may be missing, and local package patches, private/offline dependencies
-and sourceless modules cannot be assumed rebuildable. Grapher does not run an
+and sourceless modules cannot be assumed rebuildable. Pi^n does not run an
 installer to replace their bytes.
 
 Fresh nodes and forks inherit the recorded dependency/artifact bytes, not a
@@ -444,7 +444,7 @@ have drained (including Planner and publication work). A size warning sets
 Runs keep their Continue and message controls. A busy primary or background Run
 mutex defers the advisory scan rather than blocking the status response.
 Missing/inaccessible paths and the desktop guard remain errors during execution. Size scans retain
-their 30-second cache and exclude `.git`/internal `.grapher*` directories.
+their 30-second cache and exclude `.git`/internal `.pi-n*` directories.
 
 ## Shadow repository lifecycle
 
@@ -462,7 +462,7 @@ Serial does not create this database. Standard Git databases retain internal
 history for continuation and conversation-owned cleanup; the ordinary-folder
 reclamation rules below do not remove them. When a Run completes and no other
 incomplete Run needs the retained shadow database, Runtime still prunes
-unreferenced cache refs (`refs/grapher/heads/*`, `refs/grapher/inputs/*`),
+unreferenced cache refs (`refs/pi-n/heads/*`, `refs/pi-n/inputs/*`),
 dead `agent-views/` and unreachable Git objects while preserving all live Run
 refs and protected commits.
 
@@ -497,7 +497,7 @@ of that snapshot.
 ## Physical workspaces and ownership
 
 ```text
-<workspace-parent>/.grapher-worktrees/<run>/<node>[-<n>]/
+<workspace-parent>/.pi-n-worktrees/<run>/<node>[-<n>]/
 ```
 
 Graph slots are Run-owned private repositories, not `git worktree` checkouts. A physical directory is a reusable node/Merger single-writer slot, not a permanent node identity or security sandbox. Inputs come from the latest recorded source snapshot and completed dependency results, never the live source working tree.
@@ -517,7 +517,7 @@ Conversation creation, continuation and forks belong to [Session continuity](exe
 
 ### Physical copy primitive
 
-[Native copy](../../backend/src/native_copy.rs) prepares new slots and files outside the Git channel. Ordinary slot preparation excludes Git/Grapher internals and managed environment scopes. It preserves permissions, keeps symbolic links as links without following them, and rejects unsupported special files; link access/rebasing follows [Inherited project resources](filesystem-isolation.md#inherited-project-resources).
+[Native copy](../../backend/src/native_copy.rs) prepares new slots and files outside the Git channel. Ordinary slot preparation excludes Git/Pi^n internals and managed environment scopes. It preserves permissions, keeps symbolic links as links without following them, and rejects unsupported special files; link access/rebasing follows [Inherited project resources](filesystem-isolation.md#inherited-project-resources).
 
 It tries Linux FICLONE, macOS `clonefile` or Windows block cloning, then independent byte copies for unsupported storage operations. Other I/O errors fail. No writable hardlinks or shared mutable inodes are used. Clone support is filesystem-specific; it optimizes copying without promising stable logical paths, shared working layers, sandboxing or system snapshots. Managed snapshots impose additional [metadata restrictions](native-environments.md#branches-metadata-and-storage).
 
@@ -528,7 +528,7 @@ when that database has no chained alternates or promisor packs; otherwise it
 fetches the pinned inputs. The host database imports user history independently,
 so node storage never writes objects or refs into the user's Git database.
 
-Within a Run root, graph metadata lives in `.grapher-git/<slot-digest>.git`, outside the
+Within a Run root, graph metadata lives in `.pi-n-git/<slot-digest>.git`, outside the
 model's cwd. Slot and metadata directory names are digests rather than the
 full slot label, leaving Windows path budget for Git config/index lock files
 and external state under deep user paths. Host Git resolves that database explicitly even when the agent has
@@ -537,7 +537,7 @@ view, including for Merger repair. Project Git borrows no graph alternates: only
 actual project objects/index entries may cross into it. Source gitfiles bind to
 independent project metadata under that slot's external process root.
 
-Slots also own `.grapher-state/<slot-digest>/process/` beside, not inside, their project.
+Slots also own `.pi-n-state/<slot-digest>/process/` beside, not inside, their project.
 The existing Run cleanup ownership covers those roots. Slot scans must not treat
 the state container as another workspace; reclamation follows released writer,
 feedback, result and recovery dependencies. None of this is an additional Windows
@@ -545,11 +545,11 @@ filesystem security boundary.
 
 Source snapshots and node results are pinned in the host-only database:
 
-- `refs/grapher/heads/<commit>` pins snapshot heads;
-- `refs/grapher/runs/<run>/nodes/<node-id>` pins node results; named-parent
+- `refs/pi-n/heads/<commit>` pins snapshot heads;
+- `refs/pi-n/runs/<run>/nodes/<node-id>` pins node results; named-parent
   preparation and node snapshots require a Run scope;
-- inside a node repository, `refs/grapher/base` and
-  `refs/grapher/parents/<node-id>` pin the prepared inputs.
+- inside a node repository, `refs/pi-n/base` and
+  `refs/pi-n/parents/<node-id>` pin the prepared inputs.
 
 These refs are host storage, not an agent messaging protocol. Runtime imports
 node snapshots only into that database, without touching the user's working
@@ -704,7 +704,7 @@ Publication is Git-only, with internal composition separated from delivery:
    conflict invokes Merger repair. Normal merge ancestry and Merger repair stay
    internal; failed composition does not dirty the source or advance its branch.
 3. Deliver the composed project tree as ordinary file changes. Do **not**
-   fetch internal commits, create a `Grapher Work` commit, move the user's
+   fetch internal commits, create a `Pi^n Work` commit, move the user's
    branch, or replace the user's index. The source's real index bytes and
    staged entries remain exactly as captured.
 4. The source must still match its captured branch, HEAD, index and project
@@ -714,7 +714,7 @@ Publication is Git-only, with internal composition separated from delivery:
    result entries, while still validating every path in both recorded trees.
    This disposable index can be rebuilt on retry; it is never the source index
    or the journal's original-index evidence. Changed regular files are fully copied
-   and synced into adjacent, journal-owned `.grapher-publish-<id>.tmp` files
+   and synced into adjacent, journal-owned `.pi-n-publish-<id>.tmp` files
    before atomic rename. Untracked reserved temporaries are excluded from
    collection; explicitly tracked project files still win over the naming
    convention. Existing unowned temporaries are never deleted or adopted.
@@ -738,7 +738,7 @@ a retry can merge a fresh source baseline into the retained composition without
 rerunning nodes. A partially applied checkout requires recovery rather than
 blindly absorbing source changes. Atomic retries clean only temporaries with
 recorded ownership in their journal, under the publication lease; foreign locks and unrelated
-files remain protected. Older in-place checkouts could leave a truncated file matching neither input nor result. Such bytes are never automatically assumed to be Grapher's work: errors name the mismatching paths and fail closed so the user can inspect or resolve them before retrying (the legacy offline single-file reconciliation command is retired; see [Offline maintenance](../development/conversation-logs.md#offline-maintenance)).
+files remain protected. Older in-place checkouts could leave a truncated file matching neither input nor result. Such bytes are never automatically assumed to be Pi^n's work: errors name the mismatching paths and fail closed so the user can inspect or resolve them before retrying (the legacy offline single-file reconciliation command is retired; see [Offline maintenance](../development/conversation-logs.md#offline-maintenance)).
 
 Completion verifies internal input ancestry and delivery evidence, not node
 ancestry in the user's branch. Private bridge snapshots retain delivered node

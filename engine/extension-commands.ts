@@ -1,4 +1,4 @@
-// On-demand Pi RPC workers for extension commands outside a Grapher Run.
+// On-demand Pi RPC workers for extension commands outside a Pi^n Run.
 // Each worker uses the ordinary extension discovery and current project cwd.
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -32,7 +32,7 @@ class Worker {
   constructor(repository: string, event: (value: Event) => void) {
     this.child = spawn(process.execPath, ['--import', resolver, resolve(root, 'engine/extension-command-worker.ts')], {
       cwd: repository || process.env.PI_CODING_AGENT_DIR || globalAgentDir(), windowsHide: true,
-      env: { ...process.env, GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'source', GRAPHER_COMMAND_PROJECT: repository ? '1' : '0' },
+      env: { ...process.env, PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'source', PI_N_COMMAND_PROJECT: repository ? '1' : '0' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let resolveDone!: () => void;

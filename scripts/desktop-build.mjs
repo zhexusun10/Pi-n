@@ -106,7 +106,7 @@ export function hasUpdaterSigningKey(env = process.env) {
 
 /**
  * Validate updater signing configuration before compiling or signing desktop artifacts:
- * - Always validates any configured public key (`GRAPHER_UPDATER_PUBKEY`,
+ * - Always validates any configured public key (`PI_N_UPDATER_PUBKEY`,
  *   `TAURI_UPDATER_PUBKEY`, or `plugins.updater.pubkey` in `tauri.conf.json`).
  * - When `TAURI_SIGNING_PRIVATE_KEY` is present, requires a valid matching public key
  *   AND cryptographically verifies that the private key matches the configured public key
@@ -202,9 +202,9 @@ export function resolveWindowsSigningConfig(env = process.env) {
  * - Always disables `beforeBuildCommand` (staging already ran) and `createUpdaterArtifacts`
  *   (we sign updater payloads explicitly after native code-signing/notarization).
  * - Embeds any resolved updater public key into `plugins.updater.pubkey` so both
- *   `tauri::generate_context!()` and `option_env!("GRAPHER_UPDATER_PUBKEY")` agree.
+ *   `tauri::generate_context!()` and `option_env!("PI_N_UPDATER_PUBKEY")` agree.
  * - On Windows, injects optional Authenticode signing config (`certificateThumbprint` or
- *   `signCommand`) so `Grapher.exe` and the NSIS `-setup.exe` are Authenticode-signed
+ *   `signCommand`) so `Pi^n.exe` and the NSIS `-setup.exe` are Authenticode-signed
  *   before the Tauri updater minisign signature is computed over the final `.exe`.
  */
 export function buildTauriConfigOverride({ pubkey = null, windowsSigning = null } = {}) {
@@ -266,15 +266,15 @@ export function desktopArtifactNames(target, version) {
   const normalizedVersion = String(version).trim().replace(/^v/i, '');
   if (target.platform === 'darwin') {
     const archLabel = target.arch === 'arm64' ? 'aarch64' : 'x64';
-    const installerName = `Grapher_${normalizedVersion}_${archLabel}.dmg`;
-    const updaterName = `Grapher_${normalizedVersion}_${archLabel}.app.tar.gz`;
+    const installerName = `Pi-n_${normalizedVersion}_${archLabel}.dmg`;
+    const updaterName = `Pi-n_${normalizedVersion}_${archLabel}.app.tar.gz`;
     return {
       installerName,
       updaterName,
       signatureName: `${updaterName}.sig`,
     };
   }
-  const installerName = `Grapher_${normalizedVersion}_x64-setup.exe`;
+  const installerName = `Pi-n_${normalizedVersion}_x64-setup.exe`;
   return {
     installerName,
     updaterName: installerName,
@@ -402,19 +402,19 @@ function detachStaleMacosVolume(volumeName) {
   }
 }
 
-async function createSignedDmg(appPath, dmgPath, signingIdentity) {
-  const staging = mkdtempSync(join(tmpdir(), 'grapher-dmg-'));
+async function createSignedDmg(appPath, dmgPath, signingIdentity, productName = 'Pi^n') {
+  const staging = mkdtempSync(join(tmpdir(), 'pi-n-dmg-'));
   try {
-    cpSync(appPath, join(staging, 'Grapher.app'), { recursive: true, verbatimSymlinks: true });
+    cpSync(appPath, join(staging, `${productName}.app`), { recursive: true, verbatimSymlinks: true });
     symlinkSync('/Applications', join(staging, 'Applications'));
     mkdirSync(dirname(dmgPath), { recursive: true });
     await runHdiutilCreateWithRetry(
-      ['create', '-volname', 'Grapher', '-srcfolder', staging, '-ov', '-format', MACOS_DMG_FORMAT, dmgPath],
+      ['create', '-volname', productName, '-srcfolder', staging, '-ov', '-format', MACOS_DMG_FORMAT, dmgPath],
       dmgPath,
       {
         cleanup: targetPath => {
           rmSync(targetPath, { force: true });
-          detachStaleMacosVolume('Grapher');
+          detachStaleMacosVolume(productName);
         },
       },
     );
@@ -432,7 +432,7 @@ async function createSignedDmg(appPath, dmgPath, signingIdentity) {
 
 /**
  * Package a signed (and optionally stapled) macOS `.app` bundle into the exact
- * tar.gz layout expected by `tauri-plugin-updater` (`Grapher.app/Contents/...`,
+ * tar.gz layout expected by `tauri-plugin-updater` (`Pi^n.app/Contents/...`,
  * without leading `./` and without AppleDouble `._*` resource forks).
  */
 export function createMacosUpdaterTarball(appPath, tarballPath) {
@@ -506,7 +506,7 @@ function submitToNotarytool(submissionPath, notarizationConfig) {
 }
 
 function notarizeAndStapleMacosApp(appPath, notarizationConfig) {
-  const tempDir = mkdtempSync(join(tmpdir(), 'grapher-notarize-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'pi-n-notarize-'));
   const zipPath = join(tempDir, `${basename(appPath)}.zip`);
   try {
     console.log(`[desktop:build] Notarizing ${basename(appPath)} (${notarizationConfig.mode})...`);
@@ -591,7 +591,7 @@ export async function buildDesktopBundle({
   skipBuild = false,
   verifyTag = null,
   outputDir = null,
-  explicitNodeBinary = process.env.GRAPHER_DESKTOP_NODE_BINARY || null,
+  explicitNodeBinary = process.env.PI_N_DESKTOP_NODE_BINARY || null,
   signingIdentity = process.env.APPLE_SIGNING_IDENTITY || '-',
   env: baseEnv = process.env,
 } = {}) {
@@ -624,9 +624,9 @@ export async function buildDesktopBundle({
   const updaterSigningEnabled = updaterSigning.signingEnabled;
   if (updaterSigning.pubkey) {
     // Ensure the compiled desktop binary embeds the exact validated public key via
-    // both `option_env!("GRAPHER_UPDATER_PUBKEY")` in `src-tauri/src/lib.rs` and
+    // both `option_env!("PI_N_UPDATER_PUBKEY")` in `src-tauri/src/lib.rs` and
     // Tauri's `--config` override below.
-    buildEnv.GRAPHER_UPDATER_PUBKEY = updaterSigning.pubkey;
+    buildEnv.PI_N_UPDATER_PUBKEY = updaterSigning.pubkey;
   }
   const windowsSigning = target.platform === 'win32' ? resolveWindowsSigningConfig(baseEnv) : null;
   const names = desktopArtifactNames(target, version);
@@ -654,7 +654,7 @@ export async function buildDesktopBundle({
     pubkey: updaterSigning.pubkey,
     windowsSigning,
   });
-  const configTempDir = mkdtempSync(join(tmpdir(), 'grapher-tauri-config-'));
+  const configTempDir = mkdtempSync(join(tmpdir(), 'pi-n-tauri-config-'));
   const tauriConfigOverridePath = join(configTempDir, 'tauri.override.json');
   writeFileSync(tauriConfigOverridePath, `${JSON.stringify(tauriConfigOverrideObj, null, 2)}\n`, {
     mode: 0o600,
@@ -662,8 +662,8 @@ export async function buildDesktopBundle({
 
   try {
     if (target.platform === 'darwin') {
-      // Build Grapher.app first without Tauri's raw codesign pass, then apply
-      // inside-out nested Mach-O signing (Node, grapher, native addons), optional
+      // Build Pi^n.app first without Tauri's raw codesign pass, then apply
+      // inside-out nested Mach-O signing (Node, pi-n, native addons), optional
       // Apple notarization/stapling, and finally package `.dmg` + optional updater `.app.tar.gz`.
       const args = ['build', '--bundles', 'app', '--config', tauriConfigOverridePath];
       if (!hostTargetMatches(target)) {
@@ -673,13 +673,15 @@ export async function buildDesktopBundle({
       runTauriCli(args, { cwd: root, env: buildEnv });
 
       const bundleDir = tauriTargetBundleDir(target, buildEnv);
-      const appPath = join(bundleDir, 'macos', 'Grapher.app');
+      const tauriConf = JSON.parse(readFileSync(join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+      const productName = tauriConf.productName || 'Pi^n';
+      const appPath = join(bundleDir, 'macos', `${productName}.app`);
       signMacosAppBundle(appPath, { identity: normalizedIdentity });
 
       if (hostTargetMatches(target)) {
         const bundledRuntime = join(appPath, 'Contents', 'Resources', 'runtime');
         const bundledNode = join(appPath, 'Contents', 'Resources', target.nodeRelPath);
-        console.log('[desktop:build] Verifying bundled Grapher.app runtime with bundled Node...');
+        console.log(`[desktop:build] Verifying bundled ${productName}.app runtime with bundled Node...`);
         verifyStagedRuntimeWithNode(bundledNode, bundledRuntime, buildEnv);
       }
 
@@ -698,7 +700,7 @@ export async function buildDesktopBundle({
 
       const dmgPath = join(bundleDir, 'dmg', names.installerName);
       console.log(`[desktop:build] Creating macOS .dmg installer at ${dmgPath} (${MACOS_DMG_FORMAT})...`);
-      await createSignedDmg(appPath, dmgPath, normalizedIdentity);
+      await createSignedDmg(appPath, dmgPath, normalizedIdentity, productName);
       if (notarizationConfig) {
         notarizeAndStapleMacosDmg(dmgPath, notarizationConfig);
       }
@@ -790,7 +792,7 @@ function parseCliArgs(argv) {
     skipBuild: false,
     verifyTag: null,
     outputDir: null,
-    explicitNodeBinary: process.env.GRAPHER_DESKTOP_NODE_BINARY || null,
+    explicitNodeBinary: process.env.PI_N_DESKTOP_NODE_BINARY || null,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];

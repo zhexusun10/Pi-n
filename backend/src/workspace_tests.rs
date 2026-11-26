@@ -60,7 +60,7 @@ fn directory_inspection_rejects_missing_files_and_failed_admission() {
 
 fn slot(temp: &TempDir, name: &str) -> PathBuf {
     temp.path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(RUN_ID)
         .join(name)
 }
@@ -97,7 +97,7 @@ fn private_git_queries_use_graph_metadata_and_keep_cli_fallbacks() {
     let node = slot(&temp, "node");
     workspace::prepare(&repository, &node, &base, &[]).unwrap();
     assert_ne!(base, user_head);
-    workspace::project_git(&node, &["update-ref", "refs/grapher/base", &user_head]).unwrap();
+    workspace::project_git(&node, &["update-ref", "refs/pi-n/base", &user_head]).unwrap();
     let cli = |args: &[&str]| {
         String::from_utf8(workspace::git_bytes(&node, args, None, None).unwrap())
             .unwrap()
@@ -107,7 +107,7 @@ fn private_git_queries_use_graph_metadata_and_keep_cli_fallbacks() {
     for args in [
         vec!["rev-parse", "HEAD"],
         vec!["rev-parse", "--verify", "HEAD"],
-        vec!["rev-parse", "refs/grapher/base"],
+        vec!["rev-parse", "refs/pi-n/base"],
         vec!["diff", "--name-only", "--diff-filter=U"],
     ] {
         assert_eq!(
@@ -130,7 +130,7 @@ fn private_git_queries_use_graph_metadata_and_keep_cli_fallbacks() {
     assert!(workspace::git_read(&node, &ancestry).is_none());
     assert_eq!(workspace::git(&node, &ancestry).unwrap(), cli(&ancestry));
     for args in [
-        vec!["rev-parse", "refs/grapher/missing"],
+        vec!["rev-parse", "refs/pi-n/missing"],
         vec!["merge-base", "--is-ancestor", &base, &user_head],
     ] {
         assert!(workspace::git_read(&node, &args).is_none());
@@ -182,7 +182,7 @@ fn explicit_shadow_reads_use_the_selected_database_without_caching_refs() {
         fs::write(source.join("file.txt"), "snapshot bytes").unwrap();
         let head = workspace::snapshot_repository(&source).unwrap();
         assert_ne!(native_head.as_deref(), Some(head.as_str()));
-        workspace::repository_git(&source, &["update-ref", "refs/grapher/probe", &head]).unwrap();
+        workspace::repository_git(&source, &["update-ref", "refs/pi-n/probe", &head]).unwrap();
         let shadow = workspace::shadow_repo_dir(&source).unwrap();
         for prefix in [
             vec!["--git-dir", shadow.to_str().unwrap()],
@@ -196,8 +196,8 @@ fn explicit_shadow_reads_use_the_selected_database_without_caching_refs() {
             for query in [
                 vec!["rev-parse", "HEAD"],
                 vec!["rev-parse", "--verify", "HEAD"],
-                vec!["rev-parse", "refs/grapher/probe"],
-                vec!["rev-parse", "--verify", "refs/grapher/probe"],
+                vec!["rev-parse", "refs/pi-n/probe"],
+                vec!["rev-parse", "--verify", "refs/pi-n/probe"],
             ] {
                 let mut args = prefix.clone();
                 args.extend(query);
@@ -211,11 +211,11 @@ fn explicit_shadow_reads_use_the_selected_database_without_caching_refs() {
                 vec!["status", "--porcelain"],
                 vec!["diff", "--name-only", "--diff-filter=U"],
                 vec!["merge-base", "--is-ancestor", &head, "HEAD"],
-                vec!["rev-parse", "refs/grapher/probe^{tree}"],
-                vec!["rev-parse", "--verify", "refs/grapher/probe^{tree}"],
-                vec!["rev-parse", "refs/grapher/missing"],
-                vec!["rev-parse", "--verify", "refs/grapher/missing"],
-                vec!["update-ref", "refs/grapher/probe", &head],
+                vec!["rev-parse", "refs/pi-n/probe^{tree}"],
+                vec!["rev-parse", "--verify", "refs/pi-n/probe^{tree}"],
+                vec!["rev-parse", "refs/pi-n/missing"],
+                vec!["rev-parse", "--verify", "refs/pi-n/missing"],
+                vec!["update-ref", "refs/pi-n/probe", &head],
             ] {
                 let mut args = prefix.clone();
                 args.extend(query);
@@ -293,9 +293,9 @@ fn git_read_private_ancestry_obeys_replacement_refs() {
 #[test]
 fn git_read_private_revision_obeys_replacement_refs() {
     let (_temp, node, base, head) = private_query_fixture();
-    workspace::git(&node, &["update-ref", "refs/grapher/query", &head]).unwrap();
+    workspace::git(&node, &["update-ref", "refs/pi-n/query", &head]).unwrap();
     workspace::git(&node, &["replace", &head, &base]).unwrap();
-    let args = ["rev-parse", "refs/grapher/query^{tree}"];
+    let args = ["rev-parse", "refs/pi-n/query^{tree}"];
     let expected =
         String::from_utf8(workspace::git_bytes(&node, &args, None, None).unwrap()).unwrap();
     assert_eq!(workspace::git(&node, &args).unwrap(), expected.trim());
@@ -373,7 +373,7 @@ fn node_snapshot_stages_independent_slots_before_waiting_for_host_refs() {
             .map(|dir| {
                 git2::Repository::open(dir)
                     .unwrap()
-                    .find_reference("refs/heads/grapher-node")
+                    .find_reference("refs/heads/pi-n-node")
                     .unwrap()
                     .target()
                     .unwrap()
@@ -403,7 +403,7 @@ fn node_snapshot_stages_independent_slots_before_waiting_for_host_refs() {
                 git2::Repository::open(dir)
                     .ok()
                     .and_then(|repo| {
-                        repo.find_reference("refs/heads/grapher-node")
+                        repo.find_reference("refs/heads/pi-n-node")
                             .ok()
                             .and_then(|reference| reference.target())
                     })
@@ -434,7 +434,7 @@ fn node_snapshot_stages_independent_slots_before_waiting_for_host_refs() {
             assert_eq!(
                 workspace::repository_git(
                     &source,
-                    &["rev-parse", &format!("refs/grapher/heads/{head}"),]
+                    &["rev-parse", &format!("refs/pi-n/heads/{head}"),]
                 )
                 .unwrap(),
                 *head
@@ -445,7 +445,7 @@ fn node_snapshot_stages_independent_slots_before_waiting_for_host_refs() {
                     &[
                         "rev-parse",
                         &format!(
-                            "refs/grapher/runs/{RUN_ID}/nodes/{}",
+                            "refs/pi-n/runs/{RUN_ID}/nodes/{}",
                             crate::compiler::node_id(name)
                         ),
                     ]
@@ -499,7 +499,7 @@ fn node_snapshot_refuses_changes_between_staging_and_capture() {
             let head = git2::Repository::open(&metadata)
                 .ok()
                 .and_then(|repo| {
-                    repo.find_reference("refs/heads/grapher-node")
+                    repo.find_reference("refs/heads/pi-n-node")
                         .ok()
                         .and_then(|reference| reference.target())
                 })
@@ -579,7 +579,7 @@ fn node_snapshot_allows_source_edits_between_staging_and_capture() {
             let ready = git2::Repository::open(&metadata)
                 .ok()
                 .and_then(|repo| {
-                    repo.find_reference("refs/heads/grapher-node")
+                    repo.find_reference("refs/heads/pi-n-node")
                         .ok()
                         .and_then(|reference| reference.target())
                 })
@@ -780,14 +780,14 @@ fn git_failure_keeps_exit_status_command_directory_and_both_streams() {
     let temp = tempfile::tempdir().unwrap();
     let error = workspace::git(temp.path(), &[
         "-c",
-        "alias.grapher-fail=!printf 'failure detail on stdout\\n'; printf 'warning: line endings\\n' >&2; exit 23",
-        "grapher-fail",
+        "alias.pi-n-fail=!printf 'failure detail on stdout\\n'; printf 'warning: line endings\\n' >&2; exit 23",
+        "pi-n-fail",
     ]).unwrap_err();
     assert!(
         error.contains("exit code: 23") || error.contains("exit status: 23"),
         "{error}"
     );
-    assert!(error.contains("grapher-fail"), "{error}");
+    assert!(error.contains("pi-n-fail"), "{error}");
     assert!(
         error.contains(&temp.path().display().to_string()),
         "{error}"
@@ -804,14 +804,14 @@ fn git_failure_without_output_still_explains_which_command_failed() {
     let temp = tempfile::tempdir().unwrap();
     let error = workspace::git(
         temp.path(),
-        &["-c", "alias.grapher-fail=!exit 19", "grapher-fail"],
+        &["-c", "alias.pi-n-fail=!exit 19", "pi-n-fail"],
     )
     .unwrap_err();
     assert!(
         error.contains("exit code: 19") || error.contains("exit status: 19"),
         "{error}"
     );
-    assert!(error.contains("grapher-fail"), "{error}");
+    assert!(error.contains("pi-n-fail"), "{error}");
     assert!(
         error.contains(&temp.path().display().to_string()),
         "{error}"
@@ -930,15 +930,15 @@ fn ordinary_copy_ignores_gitignore_and_keeps_tracked_files_from_the_git_commit()
 }
 
 #[test]
-fn ordinary_copy_excludes_runtime_data_environment_scopes_and_grapher_internals() {
+fn ordinary_copy_excludes_runtime_data_environment_scopes_and_pi_n_internals() {
     let temp = tempfile::tempdir().unwrap();
     let (source, head) = source(&temp);
     fs::create_dir_all(source.join("packages/wheels")).unwrap();
     fs::write(source.join("packages/wheels/big.whl"), "environment data").unwrap();
     fs::create_dir_all(source.join("local-data")).unwrap();
     fs::write(source.join("local-data/runtime.db"), "runtime data").unwrap();
-    fs::create_dir_all(source.join(".grapher-private")).unwrap();
-    fs::write(source.join(".grapher-private/secret"), "internal").unwrap();
+    fs::create_dir_all(source.join(".pi-n-private")).unwrap();
+    fs::write(source.join(".pi-n-private/secret"), "internal").unwrap();
     let destination = temp.path().join("target");
     prepared_copy(
         &source,
@@ -950,7 +950,7 @@ fn ordinary_copy_excludes_runtime_data_environment_scopes_and_grapher_internals(
 
     assert!(!destination.join("packages").exists());
     assert!(!destination.join("local-data").exists());
-    assert!(!destination.join(".grapher-private").exists());
+    assert!(!destination.join(".pi-n-private").exists());
 }
 
 #[cfg(unix)]
@@ -1087,7 +1087,7 @@ fn collection_predicates_keep_case_unicode_and_tracked_override_rules() {
         ("backend/target/debug/.cargo-lock", true, false, false),
         ("backend/target/debug/.cargo-build-lock", true, false, false),
         ("backend/target/debug/.cargo-artifact-lock", true, false, false),
-        ("backend/target/debug/grapher", false, false, false),
+        ("backend/target/debug/pi-n", false, false, false),
         ("src/incremental/engine.rs", false, false, false),
         (".yarn/cache/pkg-npm-1.0.0.zip", false, false, false),
         (".dart_tool/package_config.json", false, false, false),
@@ -1098,29 +1098,29 @@ fn collection_predicates_keep_case_unicode_and_tracked_override_rules() {
         ("not_node_modules/file.js", false, false, false),
         ("dist/build/out/target/authored", false, false, false),
         (
-            "x/.grapher-publish-0123456789abcdef.tmp",
+            "x/.pi-n-publish-0123456789abcdef.tmp",
             false,
             true,
             false,
         ),
         (
-            "x/.grapher-publish-0123456789abcdeG.tmp",
+            "x/.pi-n-publish-0123456789abcdeG.tmp",
             false,
             false,
             false,
         ),
-        ("x/.grapher-publish-01234.tmp", false, false, false),
-        (".grapher", false, true, false),
-        (".grapher/events.sqlite-shm", false, true, false),
-        (".grapher-worktrees/run/node", false, true, false),
-        (".grapher-workspaces/run/node", false, true, false),
-        (".grapher-state/meta", false, true, false),
-        (".grapher-project.json", false, false, false),
-        (".grapher-project/config", false, false, false),
+        ("x/.pi-n-publish-01234.tmp", false, false, false),
+        (".pi-n", false, true, false),
+        (".pi-n/events.sqlite-shm", false, true, false),
+        (".pi-n-worktrees/run/node", false, true, false),
+        (".pi-n-workspaces/run/node", false, true, false),
+        (".pi-n-state/meta", false, true, false),
+        (".pi-n-project.json", false, false, false),
+        (".pi-n-project/config", false, false, false),
         ("managed/normal.txt", false, false, true),
         ("managed/tracked.pyc", false, false, true),
         (
-            "managed/.grapher-publish-0123456789abcdef.tmp",
+            "managed/.pi-n-publish-0123456789abcdef.tmp",
             false,
             true,
             true,
@@ -1156,21 +1156,21 @@ fn collection_predicates_keep_case_unicode_and_tracked_override_rules() {
     // Tracked descendants under reserved/generated directories must prevent
     // pruning their parent directory even when `collection_excluded` has no root.
     let tracked = BTreeSet::from([
-        ".grapher/tracked.txt".to_string(),
+        ".pi-n/tracked.txt".to_string(),
         "pkg/__pycache__/tracked.pyc".to_string(),
     ]);
     assert!(!workspace::collection_excluded(
-        Path::new(".grapher"),
+        Path::new(".pi-n"),
         &tracked,
         &[]
     ));
     assert!(!workspace::collection_excluded(
-        Path::new(".grapher/tracked.txt"),
+        Path::new(".pi-n/tracked.txt"),
         &tracked,
         &[]
     ));
     assert!(workspace::collection_excluded(
-        Path::new(".grapher/events.sqlite-shm"),
+        Path::new(".pi-n/events.sqlite-shm"),
         &tracked,
         &[]
     ));
@@ -1475,7 +1475,7 @@ fn reclaimed_slots_remove_only_current_owned_git_metadata_and_orphans() {
     let base = workspace::snapshot_repository(&source).unwrap();
     let run = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(uuid::Uuid::new_v4().to_string());
     let slot = run.join("slot");
     workspace::prepare(&source, &slot, &base, &[]).unwrap();
@@ -1487,8 +1487,8 @@ fn reclaimed_slots_remove_only_current_owned_git_metadata_and_orphans() {
     workspace::prepare(&source, &orphan, &base, &[]).unwrap();
     let metadata = workspace::private_git_dir(&orphan).unwrap();
     fs::remove_dir_all(&orphan).unwrap();
-    let unknown = run.join(".grapher-git").join("0123456789abcdef.git");
-    let retired = run.join(".grapher-git").join("legacy-slot.git");
+    let unknown = run.join(".pi-n-git").join("0123456789abcdef.git");
+    let retired = run.join(".pi-n-git").join("legacy-slot.git");
     for path in [&unknown, &retired] {
         fs::create_dir_all(path).unwrap();
         fs::write(path.join("keep"), "unowned").unwrap();
@@ -1569,9 +1569,9 @@ fn deleted_run_refs_and_orphan_heads_are_pruned_with_objects() {
         ],
     )
     .unwrap();
-    let run_ref = format!("refs/grapher/runs/{run}/nodes/node");
+    let run_ref = format!("refs/pi-n/runs/{run}/nodes/node");
     let detached_ref = format!(
-        "refs/grapher/runs/{run}/planner-detached/{}",
+        "refs/pi-n/runs/{run}/planner-detached/{}",
         uuid::Uuid::new_v4()
     );
     workspace::git(
@@ -1596,7 +1596,7 @@ fn deleted_run_refs_and_orphan_heads_are_pruned_with_objects() {
             "--git-dir",
             shadow_text,
             "update-ref",
-            &format!("refs/grapher/heads/{orphan}"),
+            &format!("refs/pi-n/heads/{orphan}"),
             &orphan,
         ],
     )
@@ -1607,7 +1607,7 @@ fn deleted_run_refs_and_orphan_heads_are_pruned_with_objects() {
             "--git-dir",
             shadow_text,
             "update-ref",
-            &format!("refs/grapher/heads/{kept}"),
+            &format!("refs/pi-n/heads/{kept}"),
             &kept,
         ],
     )
@@ -1618,7 +1618,7 @@ fn deleted_run_refs_and_orphan_heads_are_pruned_with_objects() {
             "--git-dir",
             shadow_text,
             "update-ref",
-            "refs/grapher/published/result",
+            "refs/pi-n/published/result",
             &kept,
         ],
     )
@@ -1650,7 +1650,7 @@ fn deleted_run_refs_and_orphan_heads_are_pruned_with_objects() {
             shadow_text,
             "rev-parse",
             "--verify",
-            &format!("refs/grapher/heads/{orphan}")
+            &format!("refs/pi-n/heads/{orphan}")
         ]
     )
     .is_err());
@@ -1661,7 +1661,7 @@ fn deleted_run_refs_and_orphan_heads_are_pruned_with_objects() {
             shadow_text,
             "rev-parse",
             "--verify",
-            &format!("refs/grapher/heads/{kept}")
+            &format!("refs/pi-n/heads/{kept}")
         ]
     )
     .is_ok());
@@ -1796,7 +1796,7 @@ fn prepare_recovers_from_incomplete_or_unborn_private_git_metadata() {
     let metadata = legacy
         .parent()
         .unwrap()
-        .join(".grapher-git")
+        .join(".pi-n-git")
         .join(super::graph_metadata_name("legacy").unwrap());
     fs::create_dir_all(&metadata).unwrap();
     fs::write(metadata.join("HEAD"), "ref: refs/heads/master\n").unwrap();
@@ -1972,7 +1972,7 @@ fn macos_nfd_case_shadow_verify_and_unstage_behave_consistently() {
 }
 
 #[test]
-fn scoped_snapshot_preserves_raw_bytes_and_authored_grapher_files_with_autocrlf() {
+fn scoped_snapshot_preserves_raw_bytes_and_authored_pi_n_files_with_autocrlf() {
     let temp = tempfile::tempdir().unwrap();
     let repo = temp.path().join("scoped-raw");
     fs::create_dir(&repo).unwrap();
@@ -1983,7 +1983,7 @@ fn scoped_snapshot_preserves_raw_bytes_and_authored_grapher_files_with_autocrlf(
     workspace::project_git(&repo, &["config", "core.safecrlf", "true"]).unwrap();
     fs::write(repo.join(".gitattributes"), "*.txt text\n.gitattributes -text\n").unwrap();
     fs::write(repo.join("raw.txt"), "line1\nline2\r\n").unwrap();
-    fs::write(repo.join(".grapher-project.json"), "{\"ok\":true}\n").unwrap();
+    fs::write(repo.join(".pi-n-project.json"), "{\"ok\":true}\n").unwrap();
     fs::create_dir(repo.join(".venv")).unwrap();
     fs::write(repo.join(".venv/runtime.bin"), "excluded").unwrap();
     let exclusions = vec![".venv".to_string()];
@@ -2001,7 +2001,7 @@ fn scoped_snapshot_preserves_raw_bytes_and_authored_grapher_files_with_autocrlf(
         .unwrap(),
         b"line1\nline2\r\n"
     );
-    assert!(workspace::repository_git(&repo, &["rev-parse", &format!("{base}:.grapher-project.json")]).is_ok());
+    assert!(workspace::repository_git(&repo, &["rev-parse", &format!("{base}:.pi-n-project.json")]).is_ok());
     assert!(workspace::repository_git(&repo, &["rev-parse", &format!("{base}:.venv/runtime.bin")]).is_err());
 
     let node = slot(&temp, "scoped-node");
@@ -2018,7 +2018,7 @@ fn scoped_snapshot_preserves_raw_bytes_and_authored_grapher_files_with_autocrlf(
     )
     .unwrap();
     assert_eq!(fs::read(node.join("raw.txt")).unwrap(), b"line1\nline2\r\n");
-    assert_eq!(fs::read_to_string(node.join(".grapher-project.json")).unwrap(), "{\"ok\":true}\n");
+    assert_eq!(fs::read_to_string(node.join(".pi-n-project.json")).unwrap(), "{\"ok\":true}\n");
     assert!(!node.join(".venv").exists());
 
     fs::create_dir(node.join(".venv")).unwrap();
@@ -2037,7 +2037,7 @@ fn scoped_snapshot_preserves_raw_bytes_and_authored_grapher_files_with_autocrlf(
         .unwrap(),
         b"updated\nraw\r\n"
     );
-    assert!(workspace::repository_git(&repo, &["rev-parse", &format!("{head}:.grapher-project.json")]).is_ok());
+    assert!(workspace::repository_git(&repo, &["rev-parse", &format!("{head}:.pi-n-project.json")]).is_ok());
     assert!(workspace::repository_git(&repo, &["rev-parse", &format!("{head}:.venv/extra")]).is_err());
 }
 
@@ -2055,7 +2055,7 @@ fn single_parent_prepare_reuses_parent_head_and_prunes_dead_agent_views() {
     let base = workspace::snapshot_repository(&repo).unwrap();
 
     let run = uuid::Uuid::new_v4().to_string();
-    let parent_slot = temp.path().join(".grapher-worktrees").join(&run).join("parent");
+    let parent_slot = temp.path().join(".pi-n-worktrees").join(&run).join("parent");
     workspace::prepare_with_merger_expected_for_run(&repo, &parent_slot, &base, &[], &base, Some(&run), || {
         Err("unexpected".into())
     })
@@ -2065,7 +2065,7 @@ fn single_parent_prepare_reuses_parent_head_and_prunes_dead_agent_views() {
 
     // Fresh child slot with single parent checks out parent directly without a
     // synthetic --no-ff commit and preserves both base and parent ancestry.
-    let child_slot = temp.path().join(".grapher-worktrees").join(&run).join("child");
+    let child_slot = temp.path().join(".pi-n-worktrees").join(&run).join("child");
     let child_before = workspace::prepare_with_merger_expected_for_run(
         &repo,
         &child_slot,
@@ -2171,7 +2171,7 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         ("backend/target/debug/.fingerprint/app/dep-bin", "fp\n"),
         ("backend/target/aarch64-apple-darwin/debug/incremental/app/q.bin", "inc\n"),
         ("backend/target/debug/.cargo-lock", "\n"),
-        ("backend/target/debug/grapher", "binary\n"),
+        ("backend/target/debug/pi-n", "binary\n"),
         ("src/incremental/mod.rs", "pub fn x() {}\n"),
         (".yarn/cache/pkg.zip", "offline-dep\n"),
         ("node_modules/.cache/tracked.txt", "tracked\n"),
@@ -2206,7 +2206,7 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         ".build/debug/SwiftApp",
         "bin/Debug/App.dll",
         "obj/Debug/project.assets.json",
-        "backend/target/debug/grapher",
+        "backend/target/debug/pi-n",
         "src/incremental/mod.rs",
         ".yarn/cache/pkg.zip",
         "node_modules/.cache/tracked.txt",
@@ -2269,7 +2269,7 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
     assert!(ignored_listed.contains(".build/debug/SwiftApp"));
     assert!(ignored_listed.contains("bin/Debug/App.dll"));
     assert!(ignored_listed.contains("obj/Debug/project.assets.json"));
-    assert!(ignored_listed.contains("backend/target/debug/grapher"));
+    assert!(ignored_listed.contains("backend/target/debug/pi-n"));
     for dropped in dropped_paths {
         assert!(
             !ignored_listed.contains(dropped),

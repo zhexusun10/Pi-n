@@ -1056,3 +1056,159 @@ fn get_file_diff_reads_live_worktree_for_failed_execution_without_after_commit()
         .iter()
         .any(|line| line["kind"] == "added" && line["text"] == "partial edit"));
 }
+
+/// A Serial/source-direct agent that only used bash: the panel must list what
+/// the commands really changed, hide scratch files, and every row must open to
+/// real content. After the user commits, the recorded history must not drift.
+#[test]
+fn bash_only_run_lists_verified_changes_that_open_to_content_and_survive_a_commit() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join("src")).unwrap();
+    crate::workspace::git(&repo, &["init", "-q"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.email", "test@example.com"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.name", "Tester"]).unwrap();
+    fs::write(repo.join(".gitignore"), "node_modules/\n").unwrap();
+    fs::write(repo.join("src/main.rs"), "fn main() {\n    println!(\"old\");\n}\n").unwrap();
+    fs::write(repo.join("src/gone.rs"), "one\ntwo\nthree\n").unwrap();
+    fs::write(repo.join("src/other.rs"), "someone else's file\n").unwrap();
+    crate::workspace::git(&repo, &["add", "."]).unwrap();
+    crate::workspace::git(&repo, &["commit", "-qm", "initial"]).unwrap();
+
+    // What the agent's shell commands did, plus a concurrent edit it never named.
+    fs::write(repo.join("src/main.rs"), "fn main() {\n    println!(\"new\");\n}\n").unwrap();
+    fs::remove_file(repo.join("src/gone.rs")).unwrap();
+    fs::write(repo.join("notes.md"), "hello\n").unwrap();
+    fs::write(repo.join("src/other.rs"), "edited by a parallel agent\n").unwrap();
+    let work = repo.to_string_lossy().to_string();
+    let command = format!(
+        "cd {work} && python3 - <<'EOF'\np='src/main.rs'\nopen(p,'w').write('x')\nEOF\nrm src/gone.rs; cat > notes.md <<'EOF'\nhello\nEOF\nrm scripts/_scratch.mjs; rm -rf node_modules/.vite-shot"
+    );
+
+    let mut runtime = Runtime::open(temp.path()).unwrap();
+    let run = Uuid::new_v4().to_string();
+    runtime.state.run_id = run.clone();
+    runtime
+        .emit(EventKind::Created {
+            graph: Graph {
+                original_goal: "bash only".into(),
+                nodes: vec![Node {
+                    id: "task".into(),
+                    task: "edit through the shell".into(),
+                }],
+                edges: vec![],
+            },
+            config: serde_json::from_value(serde_json::json!({
+                "repository": repo, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Started {
+            execution: Execution {
+                id: "bash-exec".into(),
+                node: "task".into(),
+                revision: 1,
+                attempt: 1,
+                session_id: "s1".into(),
+                worktree: work.clone(),
+                before: String::new(),
+                workspace_lineage: vec![],
+                after: None,
+                input: None,
+                result: None,
+                status: "running".into(),
+                output: String::new(),
+                output_bytes: 0,
+                pid: None,
+                started_at: now(),
+                completed_at: None,
+                metrics: None,
+            },
+            message_sequences: None,
+            fresh_restart: false,
+        })
+        .unwrap();
+    let transcript = [
+        serde_json::json!({
+            "type": "tool_execution_start", "toolCallId": "b1", "toolName": "bash",
+            "args": { "command": command }
+        })
+        .to_string(),
+        serde_json::json!({
+            "type": "tool_execution_end", "toolCallId": "b1", "toolName": "bash",
+            "isError": false, "result": { "details": { "exitCode": 0 } }
+        })
+        .to_string(),
+    ]
+    .join("\n")
+        + "\n";
+    runtime
+        .emit(EventKind::Output {
+            execution_id: "bash-exec".into(),
+            text: transcript,
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Finished {
+            execution_id: "bash-exec".into(),
+            head: String::new(),
+            output: String::new(),
+            output_bytes: 0,
+            metrics: None,
+        })
+        .unwrap();
+    let service = Arc::new(Service {
+        runtime: Mutex::new(runtime),
+        driving: AtomicBool::new(false),
+        drive_signal: (Mutex::new(0), Condvar::new()),
+        planning: AtomicBool::new(false),
+        extension: PathBuf::new(),
+    });
+    let list = || {
+        let value = read_changes(|| {
+            get_file_changes(&serde_json::json!({ "runId": run }), &service)
+        });
+        value["summary"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| {
+                (
+                    file["path"].as_str().unwrap().to_string(),
+                    file["status"].as_str().unwrap().to_string(),
+                    file["additions"].as_u64().unwrap(),
+                    file["deletions"].as_u64().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        ("notes.md".to_string(), "added".to_string(), 1, 0),
+        ("src/gone.rs".to_string(), "deleted".to_string(), 0, 3),
+        ("src/main.rs".to_string(), "modified".to_string(), 1, 1),
+    ];
+    assert_eq!(list(), expected, "scratch files and unnamed edits stay out");
+
+    for (path, status, _, _) in &expected {
+        let diff = get_file_diff(
+            &serde_json::json!({
+                "runId": run, "path": path, "status": status, "nodes": ["task"]
+            }),
+            &service,
+        )
+        .unwrap();
+        assert!(
+            !diff["lines"].as_array().unwrap().is_empty(),
+            "{path} must open to real content, got {diff:?}"
+        );
+    }
+
+    crate::workspace::git(&repo, &["add", "."]).unwrap();
+    crate::workspace::git(&repo, &["commit", "-qm", "user commits everything"]).unwrap();
+    assert_eq!(list(), expected, "a later commit must not rewrite the history");
+    crate::file_changes::invalidate_run(&run);
+}

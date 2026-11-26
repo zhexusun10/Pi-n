@@ -15,7 +15,7 @@ const DESKTOP_NOTIFICATION_PERMISSION_STATUS_COMMAND = "desktop_notification_per
 const REQUEST_DESKTOP_NOTIFICATION_PERMISSION_COMMAND = "request_desktop_notification_permission";
 const OPEN_DESKTOP_NOTIFICATION_SETTINGS_COMMAND = "open_desktop_notification_settings";
 const TAKE_PENDING_NOTIFICATION_CLICK_COMMAND = "take_pending_notification_click";
-export const DESKTOP_NOTIFICATION_CLICKED_EVENT = "grapher://notification-clicked";
+export const DESKTOP_NOTIFICATION_CLICKED_EVENT = "pi-n://notification-clicked";
 const NOTIFICATION_TAIL_BYTES = 64 * 1024;
 const DEFAULT_MAX_BODY_CHARS = 220;
 
@@ -457,7 +457,7 @@ export function subscribeDesktopNotificationClicks(
 export async function sendCompletionNotification(
   payload: CompletionNotificationPayload,
 ): Promise<boolean> {
-  const title = formatNotificationBody(payload.title, 120) || "Grapher";
+  const title = formatNotificationBody(payload.title, 120) || "Pi^n";
   const body = formatNotificationBody(payload.body, DEFAULT_MAX_BODY_CHARS);
   if (!body) return false;
   const runId = typeof payload.runId === "string" && payload.runId.trim() ? payload.runId.trim() : undefined;

@@ -4,7 +4,7 @@ import { activePlannerOutput, plannerConversationEdits, plannerHistoryIds, plann
 import { recoveredPlanningForDisplay, runningPlanningFromSnapshot } from '../src/services/planningRecovery.ts';
 import { defaultConfig, emptySnapshot, type PlanningSummary, type Snapshot } from '../src/types.ts';
 
-const source = (id: string) => JSON.stringify({ type: 'grapher_planning_source', planningId: id });
+const source = (id: string) => JSON.stringify({ type: 'pi_n_planning_source', planningId: id });
 const user = (text: string) => JSON.stringify({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
 
 test('Planner branch hides only abandoned turns while retaining earlier context and the new revision', () => {

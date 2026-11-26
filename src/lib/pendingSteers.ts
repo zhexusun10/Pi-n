@@ -110,7 +110,7 @@ export interface InlineUserTurnWindow {
   start?: number;
   end?: number;
   turns?: readonly { text: string; offset?: number; requestId?: string }[];
-  /** Full-log byte offset index of grapherRequestId-tagged user turns. */
+  /** Full-log byte offset index of piNRequestId-tagged user turns. */
   steerOffsets?: Readonly<Record<string, number>>;
   /** True when absence from steerOffsets proves the steer is unread across 0..totalBytes. */
   steerOffsetsAuthoritative?: boolean;

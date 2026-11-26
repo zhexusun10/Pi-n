@@ -30,7 +30,7 @@ fn setup() -> (tempfile::TempDir, PathBuf, Runtime) {
             &runtime.state.run_id,
             &BTreeSet::from([Target::Workspace {
                 parent: temp.path().canonicalize().unwrap(),
-                bucket: ".grapher-worktrees".into(),
+                bucket: ".pi-n-worktrees".into(),
                 owner: runtime.state.run_id.clone(),
                 checkout: None,
             }]),
@@ -44,7 +44,7 @@ fn deferred_cleanup_preserves_generation_source_and_active_writer_guards() {
     let (temp, _source, mut runtime) = setup();
     let workspace = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     directory(&workspace);
     let manifest = cleanup::manifest(&runtime.root, &runtime.store, &runtime.state, false).unwrap();
@@ -115,7 +115,7 @@ fn cleanup_retries_keep_undelivered_private_results() {
             .unwrap();
         let workspace = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&runtime.state.run_id);
         directory(&workspace);
         runtime.cleanup_worktrees().unwrap();
@@ -156,7 +156,7 @@ fn workspace_cleanup_refuses_active_mergers_and_result_processes() {
         runtime.set_route("graph").unwrap();
         let workspace = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&runtime.state.run_id);
         directory(&workspace);
         if result_process {
@@ -534,12 +534,12 @@ fn missing_source_cleans_recorded_workspaces_and_preserves_retired_layouts() {
             let id = runtime.state.run_id.clone();
             let mut owned = Vec::new();
             let mut unrelated = Vec::new();
-            for bucket in [".grapher-worktrees", ".grapher-workspaces"] {
+            for bucket in [".pi-n-worktrees", ".pi-n-workspaces"] {
                 let path = temp.path().join(bucket).join(&id);
                 let other = temp.path().join(bucket).join(Uuid::new_v4().to_string());
                 directory(&path);
                 directory(&other);
-                if bucket == ".grapher-worktrees" {
+                if bucket == ".pi-n-worktrees" {
                     owned.push(path);
                 } else {
                     unrelated.push(path);
@@ -584,7 +584,7 @@ fn unresolved_cleanup_preserves_unregistered_paths_and_remains_queued() {
     let runtime = Runtime::open_lazy(&temp.path().join("data")).unwrap();
     let id = Uuid::new_v4().to_string();
     let root = runtime.root.clone();
-    let owned: Vec<_> = [".grapher-worktrees", ".grapher-workspaces"]
+    let owned: Vec<_> = [".pi-n-worktrees", ".pi-n-workspaces"]
         .iter()
         .map(|bucket| temp.path().join(bucket).join(&id))
         .collect();
@@ -617,8 +617,8 @@ fn missing_source_prefers_recorded_physical_parent_over_a_dangling_alias_parent(
     crate::path_safety::directory_link(&source, &alias);
     runtime.state.config.as_mut().unwrap().repository = alias.to_string_lossy().into_owned();
     let id = runtime.state.run_id.clone();
-    let actual = temp.path().join(".grapher-worktrees").join(&id);
-    let decoy = alias_parent.join(".grapher-worktrees").join(&id);
+    let actual = temp.path().join(".pi-n-worktrees").join(&id);
+    let decoy = alias_parent.join(".pi-n-worktrees").join(&id);
     directory(&actual);
     directory(&decoy);
     fs::remove_dir_all(source).unwrap();
@@ -630,7 +630,7 @@ fn missing_source_prefers_recorded_physical_parent_over_a_dangling_alias_parent(
 
 #[test]
 fn missing_source_refuses_redirected_recorded_workspace_roots_before_deletion() {
-    let bucket = ".grapher-worktrees";
+    let bucket = ".pi-n-worktrees";
     let (temp, source, mut runtime) = setup();
     fs::remove_dir_all(source).unwrap();
     let id = runtime.state.run_id.clone();
@@ -647,7 +647,7 @@ fn physical_workspace_ownership_survives_source_removal_and_restart() {
     let (temp, source, runtime) = setup();
     let id = runtime.state.run_id.clone();
     let root = runtime.root.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     directory(&workspace);
     fs::remove_dir_all(source).unwrap();
     drop(runtime);
@@ -717,11 +717,11 @@ fn failed_completed_run_cleanup_is_durable_and_stale_generations_are_cancelled()
         })
         .unwrap();
     let id = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     directory(&workspace);
     let outside = temp.path().join("outside");
     directory(&outside);
-    let root = temp.path().join(".grapher-worktrees");
+    let root = temp.path().join(".pi-n-worktrees");
     fs::remove_dir_all(&root).unwrap();
     crate::path_safety::directory_link(&outside, &root);
     assert!(runtime.cleanup_worktrees().is_err());
@@ -759,8 +759,8 @@ fn retired_partitioner_directories_are_preserved() {
         .join(Uuid::new_v4().to_string());
     directory(&path);
     fs::write(
-        path.join(".grapher-partition-worker.json"),
-        r#"{"kind":"grapher-partition-worker","version":1}"#,
+        path.join(".pi-n-partition-worker.json"),
+        r#"{"kind":"pi-n-partition-worker","version":1}"#,
     )
     .unwrap();
     let id = runtime.state.run_id.clone();
@@ -776,7 +776,7 @@ fn forged_planner_marker_cannot_authorize_another_checkout() {
     let attempt = Uuid::new_v4().to_string();
     let outside = temp
         .path()
-        .join(".grapher-workspaces")
+        .join(".pi-n-workspaces")
         .join(Uuid::new_v4().to_string())
         .join(Uuid::new_v4().to_string());
     directory(&outside);
@@ -801,7 +801,7 @@ fn forged_planner_marker_cannot_authorize_another_checkout() {
 fn deletion_and_cleanup_manifest_rollback_together_on_database_failure() {
     let (temp, _source, mut runtime) = setup();
     let id = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     directory(&workspace);
     let db = rusqlite::Connection::open(runtime.root.join("events.sqlite")).unwrap();
     db.execute_batch("CREATE TRIGGER deny_deletion BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
@@ -836,14 +836,14 @@ fn workspace_batch_deletion_is_atomic_and_cascades_database_and_owned_files() {
             })
             .unwrap();
         let session = runtime.root.join("sessions").join(node);
-        let workspace = temp.path().join(".grapher-worktrees").join(&id);
+        let workspace = temp.path().join(".pi-n-worktrees").join(&id);
         runtime
             .store
             .remember_cleanup_targets(
                 &id,
                 &BTreeSet::from([Target::Workspace {
                     parent: temp.path().canonicalize().unwrap(),
-                    bucket: ".grapher-worktrees".into(),
+                    bucket: ".pi-n-worktrees".into(),
                     owner: id.clone(),
                     checkout: None,
                 }]),
@@ -958,7 +958,7 @@ fn cleanup_removes_read_blocked_windows_junctions() {
     // junction target.
     let (temp, _source, mut runtime) = setup();
     let id = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     let target = temp.path().join("outside-target");
     directory(&workspace);
     directory(&target);
@@ -984,7 +984,7 @@ fn cleanup_removes_read_blocked_windows_junctions() {
 fn cleanup_unlinks_directory_links_without_following_their_targets() {
     let (temp, _source, mut runtime) = setup();
     let id = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     let outside = temp.path().join("outside-target");
     directory(&outside);
     directory(&workspace);
@@ -1006,7 +1006,7 @@ fn cleanup_reports_locked_child_and_retries_after_restart() {
     let (temp, _source, mut runtime) = setup();
     let id = runtime.state.run_id.clone();
     let root = runtime.root.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     directory(&workspace);
     let file = workspace
         .join("nested/dependencies/file")
@@ -1046,7 +1046,7 @@ fn cleanup_reports_locked_child_and_retries_after_restart() {
 fn cleanup_removes_readonly_directories_instead_of_retrying_forever() {
     let (temp, _source, mut runtime) = setup();
     let id = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     directory(&workspace);
     for path in [&workspace, &workspace.join("nested/dependencies")] {
         let mut permissions = fs::metadata(path).unwrap().permissions();
@@ -1063,7 +1063,7 @@ fn cleanup_removes_readonly_directories_instead_of_retrying_forever() {
 fn cleanup_removes_readonly_files_instead_of_retrying_forever() {
     let (temp, _source, mut runtime) = setup();
     let id = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&id);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&id);
     directory(&workspace);
     let file = workspace.join("nested/dependencies/file");
     let mut permissions = fs::metadata(&file).unwrap().permissions();
@@ -1078,7 +1078,7 @@ fn cleanup_removes_readonly_files_instead_of_retrying_forever() {
 fn workspace_adopted_as_source_is_not_erased_even_after_all_history_is_cleared() {
     let (temp, _source, mut runtime) = setup();
     let original = runtime.state.run_id.clone();
-    let workspace = temp.path().join(".grapher-worktrees").join(&original);
+    let workspace = temp.path().join(".pi-n-worktrees").join(&original);
     let adopted = workspace.join("adopted-project");
     directory(&adopted);
     crate::workspace::git(&adopted, &["init", "-q"]).unwrap();
@@ -1094,7 +1094,7 @@ fn workspace_adopted_as_source_is_not_erased_even_after_all_history_is_cleared()
 fn intermediate_publication_retires_idle_slots_for_4_to_1_and_keeps_hot_slots_for_8_to_4() {
     // Case 1: 4 -> 1 fan-in. After the 4 parallel nodes deliver via intermediate
     // PublicationCompleted, the next batch is 1 shared-source node so all 4
-    // idle private slots (plus their `.grapher-git` and `.grapher-state`) are
+    // idle private slots (plus their `.pi-n-git` and `.pi-n-state`) are
     // retired asynchronously, while any failed/unreleased slot is preserved.
     let (_temp, source, mut runtime) = setup();
     let fan_in_graph = Graph {
@@ -1124,7 +1124,7 @@ fn intermediate_publication_retires_idle_slots_for_4_to_1_and_keeps_hot_slots_fo
 
     let run_id = runtime.state.run_id.clone();
     let run_root = crate::workspace::workspaces_parent(&runtime.root)
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&run_id);
     let mut heads = Vec::new();
     let mut slots = Vec::new();
@@ -1133,8 +1133,8 @@ fn intermediate_publication_retires_idle_slots_for_4_to_1_and_keeps_hot_slots_fo
         let slot = run_root.join(format!("{node}-1"));
         directory(&slot);
         let digest = crate::workspace_state::slot_digest(&slot).unwrap();
-        let git_meta = run_root.join(".grapher-git").join(format!("{digest}.git"));
-        let state_meta = run_root.join(".grapher-state").join(&digest);
+        let git_meta = run_root.join(".pi-n-git").join(format!("{digest}.git"));
+        let state_meta = run_root.join(".pi-n-state").join(&digest);
         directory(&git_meta);
         directory(&state_meta);
         let mut exec = execution(&runtime, &exec_id);
@@ -1226,7 +1226,7 @@ fn intermediate_publication_retires_idle_slots_for_4_to_1_and_keeps_hot_slots_fo
     runtime2.approve().unwrap();
     let run_id2 = runtime2.state.run_id.clone();
     let run_root2 = crate::workspace::workspaces_parent(&runtime2.root)
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&run_id2);
     let mut heads2 = Vec::new();
     let mut slot_paths2 = Vec::new();
@@ -1283,8 +1283,8 @@ fn intermediate_publication_retires_idle_slots_for_4_to_1_and_keeps_hot_slots_fo
 fn prune_shadow_unreachable_cleans_stale_cache_refs_and_dead_views_while_keeping_live_history() {
     let (_temp, source, runtime) = setup();
     crate::workspace::git(&source, &["init", "-q"]).unwrap();
-    crate::workspace::git(&source, &["config", "user.name", "Grapher"]).unwrap();
-    crate::workspace::git(&source, &["config", "user.email", "grapher@example.com"]).unwrap();
+    crate::workspace::git(&source, &["config", "user.name", "Pi^n"]).unwrap();
+    crate::workspace::git(&source, &["config", "user.email", "pi-n@example.com"]).unwrap();
     fs::write(source.join("main.txt"), "v1").unwrap();
     crate::workspace::git(&source, &["add", "main.txt"]).unwrap();
     crate::workspace::git(&source, &["commit", "-q", "-m", "v1"]).unwrap();
@@ -1305,7 +1305,7 @@ fn prune_shadow_unreachable_cleans_stale_cache_refs_and_dead_views_while_keeping
             "--git-dir",
             shadow_text,
             "update-ref",
-            &format!("refs/grapher/runs/{run_id}/nodes/a"),
+            &format!("refs/pi-n/runs/{run_id}/nodes/a"),
             &live_head,
         ],
     )
@@ -1316,7 +1316,7 @@ fn prune_shadow_unreachable_cleans_stale_cache_refs_and_dead_views_while_keeping
             "--git-dir",
             shadow_text,
             "update-ref",
-            "refs/grapher/inputs/stale-cache",
+            "refs/pi-n/inputs/stale-cache",
             &stale_head,
         ],
     )
@@ -1344,7 +1344,7 @@ fn prune_shadow_unreachable_cleans_stale_cache_refs_and_dead_views_while_keeping
             "--git-dir",
             shadow_text,
             "rev-parse",
-            &format!("refs/grapher/runs/{run_id}/nodes/a"),
+            &format!("refs/pi-n/runs/{run_id}/nodes/a"),
         ],
     )
     .unwrap();
@@ -1359,7 +1359,7 @@ fn prune_shadow_unreachable_cleans_stale_cache_refs_and_dead_views_while_keeping
             shadow_text,
             "rev-parse",
             "--verify",
-            "refs/grapher/inputs/stale-cache",
+            "refs/pi-n/inputs/stale-cache",
         ],
     )
     .is_err());
@@ -1392,7 +1392,7 @@ fn intermediate_publication_retires_installed_publication_dirs_and_keeps_incompl
 
     let run_id = runtime.state.run_id.clone();
     let run_root = crate::workspace::workspaces_parent(&runtime.root)
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&run_id);
 
     // 1. Installed publication workspace + journal + view -> should be retired.
@@ -1405,8 +1405,8 @@ fn intermediate_publication_retires_installed_publication_dirs_and_keeps_incompl
     fs::write(done_journal.join("00000000/installed"), "pub-1").unwrap();
     directory(&done_view);
     let done_digest = crate::workspace_state::slot_digest(&done_pub).unwrap();
-    let done_git = run_root.join(".grapher-git").join(format!("{done_digest}.git"));
-    let done_state = run_root.join(".grapher-state").join(&done_digest);
+    let done_git = run_root.join(".pi-n-git").join(format!("{done_digest}.git"));
+    let done_state = run_root.join(".pi-n-state").join(&done_digest);
     directory(&done_git);
     directory(&done_state);
 
@@ -1479,12 +1479,12 @@ fn intermediate_publication_retires_installed_publication_dirs_and_keeps_incompl
     assert!(!done_git.exists());
     assert!(!done_state.exists());
     assert!(
-        !run_root.join(".grapher-git").exists(),
-        "empty .grapher-git shell should be removed"
+        !run_root.join(".pi-n-git").exists(),
+        "empty .pi-n-git shell should be removed"
     );
     assert!(
-        !run_root.join(".grapher-state").exists(),
-        "empty .grapher-state shell should be removed"
+        !run_root.join(".pi-n-state").exists(),
+        "empty .pi-n-state shell should be removed"
     );
     assert!(pending_pub.is_dir(), "uninstalled publication workspace must stay");
     assert!(pending_journal.is_dir(), "uninstalled journal must stay");
@@ -1523,7 +1523,7 @@ fn manual_graph_revision_shrinks_excess_idle_slots() {
 
     let run_id = runtime.state.run_id.clone();
     let run_root = crate::workspace::workspaces_parent(&runtime.root)
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&run_id);
     let mut heads = Vec::new();
     let mut slots = Vec::new();

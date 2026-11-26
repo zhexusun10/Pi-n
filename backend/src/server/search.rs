@@ -1593,9 +1593,9 @@ impl AssistantTextExtractor {
         }
 
         if self.in_final_response {
-            if trimmed.starts_with('{') && trimmed.contains("\"grapher_planning_source\"") {
+            if trimmed.starts_with('{') && trimmed.contains("\"pi_n_planning_source\"") {
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    if event["type"].as_str() == Some("grapher_planning_source") {
+                    if event["type"].as_str() == Some("pi_n_planning_source") {
                         self.flush_final_response();
                         self.flush_streamed();
                         self.in_final_response = false;
@@ -1628,7 +1628,7 @@ impl AssistantTextExtractor {
         let maybe_relevant = trimmed.contains("\"message_end\"")
             || trimmed.contains("\"message_start\"")
             || trimmed.contains("\"text_delta\"")
-            || trimmed.contains("\"grapher_planning_source\"")
+            || trimmed.contains("\"pi_n_planning_source\"")
             || (trimmed.contains("\"message\"") && trimmed.contains("\"assistant\""));
         if !maybe_relevant {
             return;
@@ -1642,7 +1642,7 @@ impl AssistantTextExtractor {
         };
 
         match event_type {
-            "grapher_planning_source" => {
+            "pi_n_planning_source" => {
                 self.flush_streamed();
                 self.in_tag_thinking = false;
                 self.in_final_response = false;
@@ -1827,9 +1827,9 @@ fn find_first_tag(text: &str, tags: &[&str]) -> Option<(usize, usize)> {
 fn clean_user_message(raw: &str) -> String {
     let mut text = raw.trim();
 
-    // Strip trailing `<grapher-steer-id>...</grapher-steer-id>` if present.
-    if let Some(idx) = text.rfind("<grapher-steer-id>") {
-        if text[idx..].ends_with("</grapher-steer-id>") {
+    // Strip trailing `<pi-n-steer-id>...</pi-n-steer-id>` if present.
+    if let Some(idx) = text.rfind("<pi-n-steer-id>") {
+        if text[idx..].ends_with("</pi-n-steer-id>") {
             text = text[..idx].trim_end();
         }
     }
@@ -2218,16 +2218,16 @@ mod tests {
             r#"{"type":"message_start","message":{"role":"assistant","content":[]}}"#,
             r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"secret_thinking_token"}}"#,
             r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"<think>inline_secret_thought</think>Hello "}}"#,
-            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Grapher!"}}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Pi^n!"}}"#,
             r#"{"type":"tool_execution_start","toolCallId":"t1","toolName":"bash","args":{"command":"echo secret_tool_arg"}}"#,
             r#"{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","result":{"content":[{"type":"text","text":"secret_tool_output"}]}}"#,
-            r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"secret_thinking_block"},{"type":"text","text":"<think>inline_secret_thought</think>Hello Grapher!"},{"type":"toolCall","id":"t1","name":"bash","arguments":{"command":"echo secret_tool_arg"}}]}}"#,
+            r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"secret_thinking_block"},{"type":"text","text":"<think>inline_secret_thought</think>Hello Pi^n!"},{"type":"toolCall","id":"t1","name":"bash","arguments":{"command":"echo secret_tool_arg"}}]}}"#,
             r#"{"type":"message","message":{"role":"toolResult","toolCallId":"t1","toolName":"bash","content":[{"type":"text","text":"secret_tool_result"}]}}"#,
             r#"{"type":"extension_error","message":"secret_extension_error"}"#,
             r#"[stderr] secret_stderr_line"#,
             r#"raw_stdout_not_json"#,
             r#"── Final response ──"#,
-            r#"Hello Grapher!"#,
+            r#"Hello Pi^n!"#,
         ]
         .join("\n");
 
@@ -2236,7 +2236,7 @@ mod tests {
             extractor.push_line(line);
         }
         let texts = extractor.finish();
-        assert_eq!(texts, vec!["Hello Grapher!"]);
+        assert_eq!(texts, vec!["Hello Pi^n!"]);
     }
 
     #[test]
@@ -2245,7 +2245,7 @@ mod tests {
             r#"{"type":"message_start","message":{"role":"assistant","content":[]}}"#,
             r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Partial answer "}}"#,
             r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"before abort"}}"#,
-            r#"{"type":"grapher_process_exited","code":1}"#,
+            r#"{"type":"pi_n_process_exited","code":1}"#,
         ]
         .join("\n");
 
@@ -2262,7 +2262,7 @@ mod tests {
             "<file name=\"big.txt\">secret_file_body</file>\n\n",
             "@/tmp/data/attachment-inputs/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/spec.pdf ",
             "帮我检查这个逻辑\n\n",
-            "<grapher-steer-id>11111111-1111-1111-1111-111111111111</grapher-steer-id>"
+            "<pi-n-steer-id>11111111-1111-1111-1111-111111111111</pi-n-steer-id>"
         );
         assert_eq!(clean_user_message(raw), "帮我检查这个逻辑");
     }

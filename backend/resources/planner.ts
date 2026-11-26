@@ -245,14 +245,14 @@ function pruneRedundantEdges(graph: Graph): { from: string; to: string; path: st
   }));
 }
 
-export default function grapherPlanner(pi: ExtensionAPI) {
-  const graphPath = process.env.GRAPHER_GRAPH_PATH!;
-  const feedbackEnabled = process.env.GRAPHER_FEEDBACK_ENABLED === "true";
+export default function piNPlanner(pi: ExtensionAPI) {
+  const graphPath = process.env.PI_N_GRAPH_PATH!;
+  const feedbackEnabled = process.env.PI_N_FEEDBACK_ENABLED === "true";
   // Runtime-owned constraint: node IDs this run may not remove because their
   // results are already published. Graph structure cannot express it, so the
   // server passes it beside the graph and the edit is rejected where the
   // Planner can still react instead of failing the commit afterwards.
-  const unremovableNodes: string[] = JSON.parse(process.env.GRAPHER_UNREMOVABLE_NODES ?? '[]');
+  const unremovableNodes: string[] = JSON.parse(process.env.PI_N_UNREMOVABLE_NODES ?? '[]');
   // Only read_graph returns graph contents. Mutations follow Pi's native tools:
   // concise feedback, with structured local effects/diagnostics for UI and logs.
   const outputFilePath = (tool: MutationTool | "read_graph") => join(dirname(graphPath),
@@ -377,7 +377,7 @@ export default function grapherPlanner(pi: ExtensionAPI) {
   // Without the snapshot the compiler cannot report revision impact, so a
   // timeout fails the call instead of silently validating with less context.
   async function revisionContext(id: string, signal?: AbortSignal): Promise<unknown | undefined> {
-    if (!process.env.GRAPHER_PLANNER_RUN_ID) return;
+    if (!process.env.PI_N_PLANNER_RUN_ID) return;
     const path = revisionContextPath(id);
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
@@ -459,7 +459,7 @@ export default function grapherPlanner(pi: ExtensionAPI) {
   // child closes, including cancellation, timeout, early exit and output overflow.
   function compileCandidate(input: string, signal?: AbortSignal): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
     return new Promise(resolve => {
-      const child = spawn(process.env.GRAPHER_COMPILER_PATH!, ["--compile"], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(process.env.PI_N_COMPILER_PATH!, ["--compile"], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let error: Error | undefined;

@@ -17,7 +17,7 @@ async function freePort() {
 }
 
 async function fixture(t, behavior = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-dev-启动 # %-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-dev-启动 # %-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const script = join(root, 'child.mjs');
   writeFileSync(script, `
@@ -34,24 +34,24 @@ if (phase === 'setup' || phase === 'build') {
   setInterval(() => {}, 1000);
 } else {
   createServer((req, res) => { res.writeHead(415); res.end('JSON POST required'); })
-    .listen(Number(process.env.GRAPHER_PORT), '127.0.0.1');
+    .listen(Number(process.env.PI_N_PORT), '127.0.0.1');
 }
 `);
   const children = [];
   const phases = [];
   const logs = [];
   const signals = new EventEmitter();
-  const env = { ...process.env, GRAPHER_PORT: String(await freePort()), GRAPHER_FRONTEND_PORT: String(await freePort()), BEHAVIOR: JSON.stringify(behavior) };
+  const env = { ...process.env, PI_N_PORT: String(await freePort()), PI_N_FRONTEND_PORT: String(await freePort()), BEHAVIOR: JSON.stringify(behavior) };
   const spawnProcess = (command, args, options) => {
     const phase = args[0] === 'build' || args[0] === 'run' || args[0] === 'setup' ? args[0] : 'frontend';
     phases.push(phase);
     assert.equal(options.cwd, root);
-    assert.equal(options.env.GRAPHER_PORT, env.GRAPHER_PORT);
+    assert.equal(options.env.PI_N_PORT, env.PI_N_PORT);
     if (phase === 'build' || phase === 'run') {
       assert.ok(args.includes('--quiet'), 'Cargo progress must not show an internal crate version');
       assert.equal(options.stdio, 'inherit', 'Cargo warnings and errors must remain visible');
     }
-    if (phase === 'frontend') assert.equal(args.at(-1), env.GRAPHER_FRONTEND_PORT);
+    if (phase === 'frontend') assert.equal(args.at(-1), env.PI_N_FRONTEND_PORT);
     const child = spawn(process.execPath, [script, phase], { ...options, stdio: 'ignore' });
     children.push(child);
     return child;
@@ -139,31 +139,31 @@ for (const phase of ['setup', 'build']) {
 test('an occupied port is rejected before setup and its listener is not terminated', async t => {
   const f = await fixture(t);
   const server = createServer((req, res) => res.end('unrelated'));
-  await new Promise(resolve => server.listen(Number(f.env.GRAPHER_PORT), '127.0.0.1', resolve));
+  await new Promise(resolve => server.listen(Number(f.env.PI_N_PORT), '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   let installed = false;
   const dev = await f.start({ ensureReady: async () => { installed = true; } });
   assert.equal(await dev.completed, 1);
   assert.equal(installed, false);
   assert.deepEqual(f.phases, []);
-  assert.equal(await (await fetch(`http://127.0.0.1:${f.env.GRAPHER_PORT}`)).text(), 'unrelated');
+  assert.equal(await (await fetch(`http://127.0.0.1:${f.env.PI_N_PORT}`)).text(), 'unrelated');
 });
 
 test('.env ports are shared with backend and Vite; inherited values win and secrets are not logged', async t => {
   const f = await fixture(t);
   mkdirSync(join(f.root, 'backend'));
-  writeFileSync(join(f.root, '.env'), '# comment\nGRAPHER_PORT="4321"\nSECRET_KEY=private\n');
-  writeFileSync(join(f.root, 'backend/.env'), 'GRAPHER_PORT=9876\nOTHER=ignored\n');
+  writeFileSync(join(f.root, '.env'), '# comment\nPI_N_PORT="4321"\nSECRET_KEY=private\n');
+  writeFileSync(join(f.root, 'backend/.env'), 'PI_N_PORT=9876\nOTHER=ignored\n');
   const env = loadDevEnvironment(f.root, {});
-  assert.equal(env.GRAPHER_PORT, '4321');
+  assert.equal(env.PI_N_PORT, '4321');
   assert.equal(env.SECRET_KEY, 'private');
   assert.equal(env.OTHER, undefined);
-  assert.equal(loadDevEnvironment(f.root, { GRAPHER_PORT: '5432' }).GRAPHER_PORT, '5432');
+  assert.equal(loadDevEnvironment(f.root, { PI_N_PORT: '5432' }).PI_N_PORT, '5432');
   assert.equal(process.env.SECRET_KEY, undefined);
 });
 
 test('the PATH key keeps the launcher casing and stays spawnable on Windows', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-dev-path-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-dev-path-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const withoutPath = { ...process.env };
   for (const name of Object.keys(withoutPath)) if (/^path$/i.test(name)) delete withoutPath[name];
@@ -183,11 +183,11 @@ test('the PATH key keeps the launcher casing and stays spawnable on Windows', as
 
 test('invalid and conflicting ports fail before installation', async t => {
   for (const value of ['', '0', '-1', '65536', '1421oops', '1.5']) {
-    assert.throws(() => devPort(value, 1421, 'GRAPHER_PORT'), /integer from 1 to 65535/);
+    assert.throws(() => devPort(value, 1421, 'PI_N_PORT'), /integer from 1 to 65535/);
   }
-  assert.equal(devPort(undefined, 1421, 'GRAPHER_PORT'), 1421);
+  assert.equal(devPort(undefined, 1421, 'PI_N_PORT'), 1421);
   const f = await fixture(t);
-  const dev = await f.start({ env: { ...f.env, GRAPHER_PORT: f.env.GRAPHER_FRONTEND_PORT } });
+  const dev = await f.start({ env: { ...f.env, PI_N_PORT: f.env.PI_N_FRONTEND_PORT } });
   assert.equal(await dev.completed, 1);
   assert.deepEqual(f.phases, []);
 });
@@ -195,7 +195,7 @@ test('invalid and conflicting ports fail before installation', async t => {
 test('built dev backend launches directly without a second cargo run and defers stale cleanup', { timeout: 10000 }, async t => {
   const f = await fixture(t);
   const debugDir = join(f.root, 'backend', 'target', 'debug');
-  const binary = join(debugDir, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
+  const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
   mkdirSync(debugDir, { recursive: true });
   writeFileSync(binary, 'stub-binary');
   assert.equal(devBackendExecutable(f.root, f.env), binary);
@@ -235,7 +235,7 @@ test('up-to-date backend binary skips cargo build until Rust inputs or HEAD chan
     writeFileSync(full, content);
     utimesSync(full, oldTime, oldTime);
   };
-  writeOld('backend/Cargo.toml', '[package]\nname = "grapher"\n');
+  writeOld('backend/Cargo.toml', '[package]\nname = "pi-n"\n');
   writeOld('backend/Cargo.lock', '');
   writeOld('backend/build.rs', 'fn main() {}\n');
   writeOld('backend/src/main.rs', 'fn main() {}\n');
@@ -247,14 +247,14 @@ test('up-to-date backend binary skips cargo build until Rust inputs or HEAD chan
   }
   const debugDir = join(f.root, 'backend', 'target', 'debug');
   mkdirSync(join(debugDir, '.fingerprint'), { recursive: true });
-  const binary = join(debugDir, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
+  const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
   writeFileSync(binary, 'compiled-binary');
 
   // Unstamped binary (e.g. built externally with `--features fixture`) must rebuild.
   assert.equal(backendBuildUpToDate(f.root, f.env), false);
   recordDevBuildStamp(f.root, f.env);
   assert.equal(backendBuildUpToDate(f.root, f.env), true);
-  assert.equal(backendBuildUpToDate(f.root, { ...f.env, GRAPHER_FORCE_BUILD: '1' }), false);
+  assert.equal(backendBuildUpToDate(f.root, { ...f.env, PI_N_FORCE_BUILD: '1' }), false);
 
   const spawnProcess = (command, args, options) => {
     if (command === binary) {

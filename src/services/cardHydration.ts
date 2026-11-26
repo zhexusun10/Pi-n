@@ -182,7 +182,7 @@ export function extractHydratedCardPatches(
     let event: any;
     try { event = JSON.parse(trimmed); } catch { continue; }
     if (!event || typeof event !== "object") continue;
-    const range = parseRawRange(event.grapherRawRange);
+    const range = parseRawRange(event.piNRawRange);
 
     if (event.type === "tool_execution_start") {
       const key = toolKeyFor(event.toolCallId, range);

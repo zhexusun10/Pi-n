@@ -19,9 +19,19 @@ impl CacheSnapshot {
         ] {
             for (key, summary) in changes {
                 if key.0 == run {
-                    captured.executions.entry(key.1.clone()).or_default().push(
-                        Self::durable_summary(summary, live.and_then(|live| live.get(key))),
-                    );
+                    let durable =
+                        Self::durable_summary(summary, live.and_then(|live| live.get(key)));
+                    // Frozen bash rows describe the log part only; they replace
+                    // its unverified claims so a restart keeps the verified history.
+                    let durable = match (live.is_some(), cache.frozen.get(key)) {
+                        (true, Some(rows)) => super::bash_verify::apply_frozen(&durable, rows),
+                        _ => durable,
+                    };
+                    captured
+                        .executions
+                        .entry(key.1.clone())
+                        .or_default()
+                        .push(durable);
                 }
             }
         }

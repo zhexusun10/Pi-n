@@ -1,8 +1,8 @@
 import { isMacosTauriDesktop, isTauriDesktop, isWindowsTauriDesktop } from "./apiBase";
 import { createWebTerminal, killWebTerminal, resizeWebTerminal, subscribeWebTerminalEvents, writeWebTerminal } from "./webTerminal";
 
-export const DESKTOP_TERMINAL_OUTPUT_EVENT = "grapher://terminal-output";
-export const DESKTOP_TERMINAL_EXIT_EVENT = "grapher://terminal-exit";
+export const DESKTOP_TERMINAL_OUTPUT_EVENT = "pi-n://terminal-output";
+export const DESKTOP_TERMINAL_EXIT_EVENT = "pi-n://terminal-exit";
 
 export interface TerminalSessionInfo {
   sessionId: string;

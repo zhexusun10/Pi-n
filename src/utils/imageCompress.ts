@@ -3,7 +3,7 @@
  *
  * Keeps ordinary images untouched while automatically downscaling oversized
  * screenshots/photos (for example 5K Retina PNGs) to stay well within both
- * Grapher's JSON request limit and upstream vision API budgets (e.g. 5 MB).
+ * Pi^n's JSON request limit and upstream vision API budgets (e.g. 5 MB).
  */
 
 export const MAX_VISION_IMAGE_DIMENSION = 2000;

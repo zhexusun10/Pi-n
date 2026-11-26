@@ -29,11 +29,11 @@ fn validate_session_header(header: &Value, directory: &Path, id: &str) -> Result
     if header["type"] != "session"
         || header["id"] != id
         || header["version"] != 3
-        || header["grapherFormat"] != 1
+        || header["piNFormat"] != 1
     {
-        return Err("Unsupported Grapher Pi session format or identity".into());
+        return Err("Unsupported Pi^n Pi session format or identity".into());
     }
-    let run = header["grapherRunId"]
+    let run = header["piNRunId"]
         .as_str()
         .ok_or("Missing Pi session Run identity")?;
     Uuid::parse_str(run).map_err(|_| "Invalid Pi session Run identity")?;
@@ -229,7 +229,7 @@ pub fn fork_session(
     header["cwd"] = json!(session_cwd(target_cwd)?);
     header["parentSession"] = json!(crate::native::host_path(&source));
     fs::create_dir_all(target_dir).map_err(|error| error.to_string())?;
-    let target = target_dir.join(format!("grapher_{target_id}.jsonl"));
+    let target = target_dir.join(format!("pi_n_{target_id}.jsonl"));
     if target.exists() {
         return Err("Cannot overwrite an existing forked node session".into());
     }
@@ -297,10 +297,10 @@ pub fn branch_before_user(
 }
 
 fn without_planner_steer_marker(text: &str) -> &str {
-    let Some((prefix, tail)) = text.rsplit_once("\n\n<grapher-steer-id>") else {
+    let Some((prefix, tail)) = text.rsplit_once("\n\n<pi-n-steer-id>") else {
         return text;
     };
-    let Some(id) = tail.strip_suffix("</grapher-steer-id>") else {
+    let Some(id) = tail.strip_suffix("</pi-n-steer-id>") else {
         return text;
     };
     if Uuid::parse_str(id).is_ok() {
@@ -551,15 +551,15 @@ fn prepare_user_branch(
         .map(|line| serde_json::from_str(line).map_err(|_| "Invalid Pi session entry".to_string()))
         .collect::<Result<_, _>>()?;
     let header = values.first().ok_or("Empty Pi session")?;
-    if header["version"] != 3 || header["grapherFormat"] != 1 {
-        return Err("Unsupported Grapher Pi session format or identity".into());
+    if header["version"] != 3 || header["piNFormat"] != 1 {
+        return Err("Unsupported Pi^n Pi session format or identity".into());
     }
     let managed_session_dir = session_dir
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())
         .is_some_and(|name| matches!(name, "planner-sessions" | "sessions" | "mergers"));
-    if header.get("grapherRunId").is_some() || managed_session_dir {
+    if header.get("piNRunId").is_some() || managed_session_dir {
         validate_session_header(header, session_dir, session_id)?;
     }
     let actual_cwd = header.get("cwd").and_then(Value::as_str).map(Path::new);
@@ -798,7 +798,7 @@ impl UserBranch {
         let marker = json!({
             "type": "custom", "id": Uuid::new_v4().to_string(), "parentId": self.parent,
             "timestamp": values.last().and_then(|v| v["timestamp"].as_str()).unwrap_or("2025-01-01T00:00:00.000Z"),
-            "customType": "grapher-edit", "data": {"fromId": leaf},
+            "customType": "pi-n-edit", "data": {"fromId": leaf},
         });
         let old_len = contents.len() as u64;
         let mut file = OpenOptions::new()
@@ -834,8 +834,8 @@ mod tests {
             let mut value = serde_json::json!($($value)+);
             if value.get("type").and_then(Value::as_str) == Some("session") {
                 value["version"] = serde_json::json!(3);
-                value["grapherFormat"] = serde_json::json!(1);
-                value["grapherRunId"] = value["id"].clone();
+                value["piNFormat"] = serde_json::json!(1);
+                value["piNRunId"] = value["id"].clone();
             }
             value
         }};
@@ -853,7 +853,7 @@ mod tests {
             let id = Uuid::new_v4().to_string();
             let file = temp.path().join(format!("test_{id}.jsonl"));
             let header = serde_json::json!({"type":"session","id":id,"cwd":temp.path(),
-                "version":version,"grapherFormat":format,"grapherRunId":id});
+                "version":version,"piNFormat":format,"piNRunId":id});
             let turn = serde_json::json!({"type":"message","id":"u1","parentId":null,
                 "message":{"role":"user","content":"old","timestamp":1}});
             let original = format!("{header}\n{turn}\n");
@@ -873,7 +873,7 @@ mod tests {
             assert!(branch_before_user(temp.path(), &id, temp.path(), "old", 0, 2)
                 .err()
                 .expect("retired session header must be rejected")
-                .contains("Unsupported Grapher Pi session format"));
+                .contains("Unsupported Pi^n Pi session format"));
             assert_eq!(fs::read_to_string(&file).unwrap(), original);
             assert!(!target.exists());
         }
@@ -885,8 +885,8 @@ mod tests {
         let run = Uuid::new_v4().to_string();
         let directory = temp.path().join("planner-sessions").join(&run);
         fs::create_dir_all(&directory).unwrap();
-        let header = serde_json::json!({"type":"session","version":3,"grapherFormat":1,
-            "grapherRunId":Uuid::new_v4().to_string(),"id":run,"cwd":temp.path()});
+        let header = serde_json::json!({"type":"session","version":3,"piNFormat":1,
+            "piNRunId":Uuid::new_v4().to_string(),"id":run,"cwd":temp.path()});
         let turn = serde_json::json!({"type":"message","id":"u1","parentId":null,
             "message":{"role":"user","content":"goal","timestamp":1}});
         let original = format!("{header}\n{turn}\n");
@@ -912,7 +912,7 @@ mod tests {
             json!({"type":"session", "id":id, "cwd":temp.path()}),
             json!({"type":"message", "id":"goal", "parentId":null, "message":{"role":"user","content":"goal"}}),
             json!({"type":"message", "id":"steer", "parentId":"goal", "message":{"role":"user",
-                "content":format!("inspect\n\n<grapher-steer-id>{steer}</grapher-steer-id>")}}),
+                "content":format!("inspect\n\n<pi-n-steer-id>{steer}</pi-n-steer-id>")}}),
         ];
         fs::write(
             &path,
@@ -984,7 +984,7 @@ mod tests {
                 json!({"type":"session", "id":id, "cwd":temp.path()}),
                 json!({"type":"message", "id":"root", "parentId":null, "message":{"role":"system", "content":"system"}}),
                 json!({"type":"message", "id":"old", "parentId":"root", "message":{"role":"user", "content":"again", "timestamp":10}}),
-                json!({"type":"custom", "id":"branch", "parentId":"root", "customType":"grapher-edit"}),
+                json!({"type":"custom", "id":"branch", "parentId":"root", "customType":"pi-n-edit"}),
                 json!({"type":"message", "id":"current", "parentId":"branch", "message":{"role":"user", "content":"again", "timestamp":10}}),
             ];
             let original = entries
@@ -1216,7 +1216,7 @@ mod tests {
         let path = source.join(format!("test_{id}.jsonl"));
         fs::write(&path, &bytes).unwrap();
         fork_session(&source, &id, &old, &target, &next, &new).unwrap();
-        let result = fs::read_to_string(target.join(format!("grapher_{next}.jsonl"))).unwrap();
+        let result = fs::read_to_string(target.join(format!("pi_n_{next}.jsonl"))).unwrap();
         let (header, preserved) = result.split_once('\n').unwrap();
         let header: Value = serde_json::from_str(header).unwrap();
         assert_eq!(header["id"], next);
@@ -1302,7 +1302,7 @@ mod tests {
             json!({"type":"message","id":"root","parentId":null,"message":{"role":"system","content":"system"}}),
             json!({"type":"message","id":"target","parentId":"root","message":{"role":"user","content":"edit me","timestamp":100}}),
             json!({"type":"message","id":"old-answer","parentId":"target","message":{"role":"assistant","content":[]}}),
-            json!({"type":"custom","id":"branch","parentId":"root","customType":"grapher-edit"}),
+            json!({"type":"custom","id":"branch","parentId":"root","customType":"pi-n-edit"}),
             json!({"type":"message","id":"new-target","parentId":"branch","message":{"role":"user","content":"replacement","timestamp":300}}),
         ];
         fs::write(

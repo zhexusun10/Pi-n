@@ -20,16 +20,16 @@ const text = (result: any) => result.content.filter((part: any) => part.type ===
 
 async function plannerTools(source: string, workspace = source, writeTools = true) {
   const previous = process.cwd();
-  const keys = ['GRAPHER_MODE', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT', 'GRAPHER_SOURCE_ALIAS', 'GRAPHER_LAUNCH_BINDING', 'GRAPHER_PLANNER_WRITE_TOOLS'];
+  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS', 'PI_N_LAUNCH_BINDING', 'PI_N_PLANNER_WRITE_TOOLS'];
   const environment = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
     process.chdir(workspace);
     // Production Pi reports process.cwd() (realpath'd on macOS, as-launched on
     // Windows); capture that exact spelling for prompt/history inputs.
     const boundCwd = process.cwd();
-    Object.assign(process.env, { GRAPHER_MODE: 'planner', GRAPHER_EXECUTION_KIND: workspace === source ? 'source' : 'graph',
-      GRAPHER_ORIGINAL_ROOT: source, GRAPHER_SOURCE_ALIAS: source, GRAPHER_PLANNER_WRITE_TOOLS: String(writeTools) });
-    delete process.env.GRAPHER_LAUNCH_BINDING;
+    Object.assign(process.env, { PI_N_MODE: 'planner', PI_N_EXECUTION_KIND: workspace === source ? 'source' : 'graph',
+      PI_N_ORIGINAL_ROOT: source, PI_N_SOURCE_ALIAS: source, PI_N_PLANNER_WRITE_TOOLS: String(writeTools) });
+    delete process.env.PI_N_LAUNCH_BINDING;
     const loaded = await loadExtensions([join(root, 'backend/resources/planner.ts')], workspace);
     assert.deepEqual(loaded.errors, []);
     const tools = new Map<string, any>([...loaded.extensions[0].tools].map(([name, tool]) => [name, tool.definition]));
@@ -52,13 +52,13 @@ async function plannerTools(source: string, workspace = source, writeTools = tru
 }
 
 test('Serial and Node Agent identities select different Bash implementations at the source cwd', () => {
-  const keys = ['GRAPHER_MODE', 'GRAPHER_AGENT_KIND', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_CONTINUE_INTERRUPTED', 'GRAPHER_LAUNCH_BINDING'];
+  const keys = ['PI_N_MODE', 'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_N_CONTINUE_INTERRUPTED', 'PI_N_LAUNCH_BINDING'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
-    Object.assign(process.env, { GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'source', GRAPHER_CONTINUE_INTERRUPTED: 'false' });
-    delete process.env.GRAPHER_LAUNCH_BINDING;
+    Object.assign(process.env, { PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'source', PI_N_CONTINUE_INTERRUPTED: 'false' });
+    delete process.env.PI_N_LAUNCH_BINDING;
     for (const [agentKind, adapted] of [['serial', false], ['node', true]] as const) {
-      process.env.GRAPHER_AGENT_KIND = agentKind;
+      process.env.PI_N_AGENT_KIND = agentKind;
       const tools: string[] = [];
       const hooks = new Map<string, unknown[]>();
       workspacePolicy({
@@ -77,23 +77,23 @@ test('Serial and Node Agent identities select different Bash implementations at 
 });
 
 test('source-direct Graph Node Bash restores its requested cwd after BASH_ENV', { timeout: 30_000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-source-node-bash-env-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-source-node-bash-env-')));
   const startupCwd = join(directory, 'startup cwd');
   const startup = join(directory, 'bash-env');
   const previousCwd = process.cwd();
-  const keys = ['GRAPHER_MODE', 'GRAPHER_AGENT_KIND', 'GRAPHER_EXECUTION_KIND', 'GRAPHER_ORIGINAL_ROOT',
-    'GRAPHER_SOURCE_ALIAS', 'GRAPHER_CONTINUE_INTERRUPTED', 'GRAPHER_LAUNCH_BINDING', 'BASH_ENV'];
+  const keys = ['PI_N_MODE', 'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT',
+    'PI_N_SOURCE_ALIAS', 'PI_N_CONTINUE_INTERRUPTED', 'PI_N_LAUNCH_BINDING', 'BASH_ENV'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
     await mkdir(startupCwd);
     await writeFile(startup, `export BASH_ENV_TEST_VALUE=source-node\ncd ${quote(shellPath(startupCwd))}\n`);
     process.chdir(directory);
     Object.assign(process.env, {
-      GRAPHER_MODE: 'node', GRAPHER_AGENT_KIND: 'node', GRAPHER_EXECUTION_KIND: 'source',
-      GRAPHER_ORIGINAL_ROOT: directory, GRAPHER_SOURCE_ALIAS: directory,
-      GRAPHER_CONTINUE_INTERRUPTED: 'false', BASH_ENV: startup,
+      PI_N_MODE: 'node', PI_N_AGENT_KIND: 'node', PI_N_EXECUTION_KIND: 'source',
+      PI_N_ORIGINAL_ROOT: directory, PI_N_SOURCE_ALIAS: directory,
+      PI_N_CONTINUE_INTERRUPTED: 'false', BASH_ENV: startup,
     });
-    delete process.env.GRAPHER_LAUNCH_BINDING;
+    delete process.env.PI_N_LAUNCH_BINDING;
 
     const tools = new Map<string, any>();
     workspacePolicy({
@@ -120,7 +120,7 @@ test('source-direct Graph Node Bash restores its requested cwd after BASH_ENV', 
 });
 
 test('Planner can withhold write and edit tools while retaining read and Bash', { timeout: 30_000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-planner-files-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-planner-files-')));
   try {
     await writeFile(join(directory, 'plan.txt'), 'read-only');
     const { tools, context } = await plannerTools(directory, directory, false);
@@ -134,7 +134,7 @@ test('Planner can withhold write and edit tools while retaining read and Bash', 
 });
 
 test('Planner preserves native Bash semantics and immediate source writes on every platform', { timeout: 30_000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-planner-bash-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-planner-bash-')));
   const source = join(directory, '中文 space # %');
   try {
     await mkdir(source);
@@ -182,7 +182,7 @@ test('Planner preserves native Bash semantics and immediate source writes on eve
 });
 
 test('Planner Bash restores the selected workspace after BASH_ENV while retaining startup setup', { timeout: 30_000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-planner-bash-env-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-planner-bash-env-')));
   const source = join(directory, 'source project');
   const workspace = join(directory, 'private workspace');
   const startupCwd = join(directory, 'startup cwd');
@@ -220,7 +220,7 @@ test('Planner Bash restores the selected workspace after BASH_ENV while retainin
 });
 
 test('Planner keeps one visible path namespace across source, different worktrees and publication without prompt injection', { timeout: 30_000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-planner-paths-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-planner-paths-')));
   const source = join(directory, 'source 中文 space');
   const first = join(directory, 'first worktree'), second = join(directory, 'second worktree');
   try {
@@ -285,19 +285,19 @@ test('Planner keeps one visible path namespace across source, different worktree
   }
 });
 
-test('Planner Bash never exposes Grapher control paths to the model shell', { timeout: 30_000 }, async () => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'grapher-planner-env-')));
+test('Planner Bash never exposes Pi^n control paths to the model shell', { timeout: 30_000 }, async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-planner-env-')));
   // Keep the cache outside the workspace, as production does, so the path
   // adapter does not normalize the scratch to a workspace-relative spelling.
-  const cache = await realpath(await mkdtemp(join(tmpdir(), 'grapher-planner-cache-')));
-  const previousCache = process.env.GRAPHER_CACHE_DIR;
+  const cache = await realpath(await mkdtemp(join(tmpdir(), 'pi-n-planner-cache-')));
+  const previousCache = process.env.PI_N_CACHE_DIR;
   const previousXdgCache = process.env.XDG_CACHE_HOME;
   const previousAskpass = process.env.GIT_ASKPASS;
   const previousAskpassNode = process.env.VSCODE_GIT_ASKPASS_NODE;
-  const previousNodeName = process.env.GRAPHER_NODE_NAME;
+  const previousNodeName = process.env.PI_N_NODE_NAME;
   try {
-    process.env.GRAPHER_CACHE_DIR = cache;
-    process.env.GRAPHER_NODE_NAME = 'private-node-label';
+    process.env.PI_N_CACHE_DIR = cache;
+    process.env.PI_N_NODE_NAME = 'private-node-label';
     // Control the scratch base: modelShellScratch prefers XDG_CACHE_HOME.
     delete process.env.XDG_CACHE_HOME;
     // The host Git credential helper must survive so private-remote auth works.
@@ -305,7 +305,7 @@ test('Planner Bash never exposes Grapher control paths to the model shell', { ti
     process.env.VSCODE_GIT_ASKPASS_NODE = 'C:\\ide\\node.exe';
     const { tools, context } = await plannerTools(directory, directory, false);
     const output = text(await tools.get('bash').execute('bash', { command: 'env' }, undefined, undefined, context));
-    assert.ok(!/^GRAPHER_/m.test(output), `model shell leaked Grapher control variables:\n${output}`);
+    assert.ok(!/^PI_N_/m.test(output), `model shell leaked Pi^n control variables:\n${output}`);
     assert.ok(!/[\\/]data[\\/]sessions/i.test(output), `model shell leaked the Run data path:\n${output}`);
     assert.ok(!/^(?:PI_SESSION_FILE|PI_CODING_AGENT_DIR|ANTIGRAVITY_CLI_ALIAS|TERM_PROGRAM)/m.test(output),
       `model shell leaked a Pi/editor path:\n${output}`);
@@ -325,38 +325,38 @@ test('Planner Bash never exposes Grapher control paths to the model shell', { ti
       (value.endsWith('/tmp') || value.endsWith('\\tmp')) && value.includes(cacheName)), output);
     assert.ok(scratchValues.every(value => !/[\\/]data[\\/]/i.test(value)), output);
   } finally {
-    if (previousCache === undefined) delete process.env.GRAPHER_CACHE_DIR;
-    else process.env.GRAPHER_CACHE_DIR = previousCache;
+    if (previousCache === undefined) delete process.env.PI_N_CACHE_DIR;
+    else process.env.PI_N_CACHE_DIR = previousCache;
     if (previousXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
     else process.env.XDG_CACHE_HOME = previousXdgCache;
     if (previousAskpass === undefined) delete process.env.GIT_ASKPASS;
     else process.env.GIT_ASKPASS = previousAskpass;
     if (previousAskpassNode === undefined) delete process.env.VSCODE_GIT_ASKPASS_NODE;
     else process.env.VSCODE_GIT_ASKPASS_NODE = previousAskpassNode;
-    if (previousNodeName === undefined) delete process.env.GRAPHER_NODE_NAME;
-    else process.env.GRAPHER_NODE_NAME = previousNodeName;
+    if (previousNodeName === undefined) delete process.env.PI_N_NODE_NAME;
+    else process.env.PI_N_NODE_NAME = previousNodeName;
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
     await rm(cache, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
   }
 });
 
-test('the model shell never receives Grapher data/state or install paths', () => {
+test('the model shell never receives Pi^n data/state or install paths', () => {
   const env: Record<string, string> = {
-    HOME: 'C:/run/workspaces/.grapher-worktrees/run/.grapher-state/abc/process/.agent-home',
-    XDG_CACHE_HOME: 'C:/run/workspaces/.grapher-worktrees/run/.grapher-state/abc/process/.runtime-cache/xdg',
+    HOME: 'C:/run/workspaces/.pi-n-worktrees/run/.pi-n-state/abc/process/.agent-home',
+    XDG_CACHE_HOME: 'C:/run/workspaces/.pi-n-worktrees/run/.pi-n-state/abc/process/.runtime-cache/xdg',
     TMPDIR: '/tmp/run/data/sessions/abc',
     TMP: '/tmp/run/data/sessions/abc',
     TEMP: 'C:\\run\\data\\sessions\\abc',
     XDG_RUNTIME_DIR: 'C:\\run\\data\\sessions\\abc',
-    GRAPHER_LAUNCH_BINDING: 'C:\\run\\data\\sessions\\abc\\launch.json',
-    GRAPHER_ENVIRONMENT_DISCOVERY: 'C:\\run\\data\\sessions\\abc\\observer.json',
-    GRAPHER_ENVIRONMENT_HELPER: 'C:\\install\\grapher.exe',
-    GRAPHER_COMPILER_PATH: 'C:\\install\\grapher.exe',
-    GRAPHER_NODE_NAME: 'review',
-    grapher_node_execution_id: 'execution-123',
-    GRAPHER_ENVIRONMENT_DATA: '\\\\?\\C:\\run\\data',
+    PI_N_LAUNCH_BINDING: 'C:\\run\\data\\sessions\\abc\\launch.json',
+    PI_N_ENVIRONMENT_DISCOVERY: 'C:\\run\\data\\sessions\\abc\\observer.json',
+    PI_N_ENVIRONMENT_HELPER: 'C:\\install\\pi-n.exe',
+    PI_N_COMPILER_PATH: 'C:\\install\\pi-n.exe',
+    PI_N_NODE_NAME: 'review',
+    pi_n_node_execution_id: 'execution-123',
+    PI_N_ENVIRONMENT_DATA: '\\\\?\\C:\\run\\data',
     PI_SESSION_FILE: 'C:\\run\\data\\sessions\\abc\\session.jsonl',
-    PI_CODING_AGENT_DIR: 'C:\\Users\\user\\.grapher\\pi-agent',
+    PI_CODING_AGENT_DIR: 'C:\\Users\\user\\.pi-n\\pi-agent',
     PI_SESSION_ID: 'abc-session',
     PI_MODEL: 'example/model',
     PROJECT_SETTING: 'project-value',
@@ -365,8 +365,8 @@ test('the model shell never receives Grapher data/state or install paths', () =>
     ANTIGRAVITY_CLI_ALIAS: 'agy-ide',
   };
   const scratch = scrubModelShellEnvironment(env);
-  assert.equal(Object.keys(env).some(key => /^GRAPHER_/i.test(key)), false, 'Grapher control keys must not reach the model shell');
-  assert.equal(scratch, 'C:/run/workspaces/.grapher-worktrees/run/.grapher-state/abc/process/.runtime-cache/xdg/tmp');
+  assert.equal(Object.keys(env).some(key => /^PI_N_/i.test(key)), false, 'Pi^n control keys must not reach the model shell');
+  assert.equal(scratch, 'C:/run/workspaces/.pi-n-worktrees/run/.pi-n-state/abc/process/.runtime-cache/xdg/tmp');
   for (const key of ['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR']) assert.equal(env[key], scratch, key);
   for (const key of ['PI_SESSION_FILE', 'PI_CODING_AGENT_DIR', 'PI_SESSION_ID', 'ANTIGRAVITY_CLI_ALIAS']) {
     assert.equal(key in env, false, `${key} must not reach the model shell`);
@@ -375,7 +375,7 @@ test('the model shell never receives Grapher data/state or install paths', () =>
   assert.equal(env.VSCODE_GIT_ASKPASS_NODE, 'C:\\ide\\node.exe', 'the askpass script needs its node binding');
   assert.equal(env.PI_MODEL, 'example/model', 'PI_* metadata without a path is kept');
   assert.equal(env.PROJECT_SETTING, 'project-value', 'ordinary project environment stays available');
-  assert.equal(env.HOME, 'C:/run/workspaces/.grapher-worktrees/run/.grapher-state/abc/process/.agent-home');
+  assert.equal(env.HOME, 'C:/run/workspaces/.pi-n-worktrees/run/.pi-n-state/abc/process/.agent-home');
 });
 
 test('without a cache scratch, the shell keeps safe host temp bindings and removes only private session paths', () => {
@@ -385,7 +385,7 @@ test('without a cache scratch, the shell keeps safe host temp bindings and remov
     TMP: '/tmp/run/data/sessions/abc',
     TEMP: 'C:\\Users\\user\\AppData\\Local\\Temp',
     XDG_RUNTIME_DIR: '/run/user/1000',
-    GRAPHER_MODE: 'planner',
+    PI_N_MODE: 'planner',
     PI_SESSION_FILE: '/tmp/run/data/sessions/abc/session.jsonl',
   };
   assert.equal(scrubModelShellEnvironment(env), undefined);
@@ -393,28 +393,28 @@ test('without a cache scratch, the shell keeps safe host temp bindings and remov
   assert.equal('TMP' in env, false, 'a private session path must not be exposed');
   assert.equal(env.TEMP, 'C:\\Users\\user\\AppData\\Local\\Temp');
   assert.equal(env.XDG_RUNTIME_DIR, '/run/user/1000');
-  assert.equal('GRAPHER_MODE' in env, false);
+  assert.equal('PI_N_MODE' in env, false);
   assert.equal('PI_SESSION_FILE' in env, false);
 });
 
-test('macOS /System/Volumes/Data and /Volumes/Data volume roots are not misread as Grapher data dirs', { skip: process.platform !== 'darwin' }, () => {
+test('macOS /System/Volumes/Data and /Volumes/Data volume roots are not misread as Pi^n data dirs', { skip: process.platform !== 'darwin' }, () => {
   const env: Record<string, string> = {
-    XDG_CACHE_HOME: '/System/Volumes/Data/Users/alice/Library/Caches/Grapher',
+    XDG_CACHE_HOME: '/System/Volumes/Data/Users/alice/Library/Caches/Pi-n',
     TMPDIR: '/System/Volumes/Data/tmp',
     TMP: '/Volumes/Data/tmp',
-    TEMP: '/Volumes/Data/grapher/data/sessions/abc',
-    XDG_RUNTIME_DIR: '/System/Volumes/Data/Users/alice/grapher/data/sessions/abc',
+    TEMP: '/Volumes/Data/pi-n/data/sessions/abc',
+    XDG_RUNTIME_DIR: '/System/Volumes/Data/Users/alice/pi-n/data/sessions/abc',
   };
   const scratch = scrubModelShellEnvironment(env);
-  assert.equal(scratch, '/System/Volumes/Data/Users/alice/Library/Caches/Grapher/tmp');
+  assert.equal(scratch, '/System/Volumes/Data/Users/alice/Library/Caches/Pi-n/tmp');
   for (const key of ['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR']) assert.equal(env[key], scratch, key);
 
   const noScratch: Record<string, string> = {
-    XDG_CACHE_HOME: '/System/Volumes/Data/Users/alice/grapher/data/cache',
+    XDG_CACHE_HOME: '/System/Volumes/Data/Users/alice/pi-n/data/cache',
     TMPDIR: '/Volumes/Data/safe-tmp',
     TMP: '/System/Volumes/Data/Users/alice/safe-tmp',
-    TEMP: '/Volumes/Data/grapher/data/sessions/abc',
-    XDG_RUNTIME_DIR: '/System/Volumes/Data/Users/alice/grapher/data/sessions/abc',
+    TEMP: '/Volumes/Data/pi-n/data/sessions/abc',
+    XDG_RUNTIME_DIR: '/System/Volumes/Data/Users/alice/pi-n/data/sessions/abc',
   };
   assert.equal(scrubModelShellEnvironment(noScratch), undefined);
   assert.equal(noScratch.TMPDIR, '/Volumes/Data/safe-tmp');

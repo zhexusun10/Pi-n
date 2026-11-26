@@ -256,7 +256,7 @@ fn check_unknown_failure_in_source_direct_followup(standard_git: bool) {
     runtime
         .emit_outputs(vec![EventKind::Output {
             execution_id: failed.execution.id.clone(),
-            text: "{\"type\":\"grapher_process_started\",\"pid\":1234}\n".into(),
+            text: "{\"type\":\"pi_n_process_started\",\"pid\":1234}\n".into(),
         }])
         .unwrap();
     runtime
@@ -943,8 +943,8 @@ fn interrupted_followup_before_session_fork_recovers_after_restart() {
             serde_json::json!({
                 "type": "session",
                 "version": 3,
-                "grapherFormat": 1,
-                "grapherRunId": runtime.state.run_id,
+                "piNFormat": 1,
+                "piNRunId": runtime.state.run_id,
                 "id": first.execution.session_id,
                 "cwd": crate::native::host_path(&first_path),
             }),

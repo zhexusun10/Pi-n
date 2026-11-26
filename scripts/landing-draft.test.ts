@@ -8,7 +8,7 @@ import {
   LANDING_GOAL_STORAGE_KEY,
 } from "../src/services/landingDraft";
 
-const LEGACY_LANDING_GOAL_STORAGE_KEY = "grapher_landing_goal_draft";
+const LEGACY_LANDING_GOAL_STORAGE_KEY = "pi_n_landing_goal_draft";
 
 class MemoryStorage implements Storage {
   private data = new Map<string, string>();

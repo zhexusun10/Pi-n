@@ -36,12 +36,12 @@ impl DataDirectory {
             if let Some((original, version)) = redirect.incompatible {
                 write_selection(&redirect.configured, &self.root)?;
                 eprintln!(
-                    "[Grapher] Database format {version} at {} is incompatible with format {}. Using {}; previous data is preserved.",
+                    "[Pi^n] Database format {version} at {} is incompatible with format {}. Using {}; previous data is preserved.",
                     original.display(), store::FORMAT_VERSION, self.root.join("events.sqlite").display()
                 );
             } else {
                 eprintln!(
-                    "[Grapher] Reusing current-format database {} (configured data directory: {}).",
+                    "[Pi^n] Reusing current-format database {} (configured data directory: {}).",
                     self.root.join("events.sqlite").display(),
                     redirect.configured.display()
                 );
@@ -99,7 +99,7 @@ pub(crate) fn select(requested: &Path) -> Result<DataDirectory, String> {
     };
 
     // A stable name lets restarts find the same new store without changing .env
-    // or a user's GRAPHER_DATA_DIR. Occupied incompatible/unknown slots survive.
+    // or a user's PI_N_DATA_DIR. Occupied incompatible/unknown slots survive.
     let mut index = 1u64;
     loop {
         let name = if index == 1 {

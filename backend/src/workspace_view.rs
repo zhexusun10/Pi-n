@@ -780,7 +780,7 @@ fn inspect_scoped(source: &Path, owner: &Path, exclusions: &[String]) -> Result<
     let source = host_canonical(source)?;
     let data = workspace::data_root();
     if data.exists() && workspace::scope_contains(&data, &source) {
-        return Err("Runtime data is inside the source project; configure an external GRAPHER_DATA_DIR before preparing an equivalent workspace".into());
+        return Err("Runtime data is inside the source project; configure an external PI_N_DATA_DIR before preparing an equivalent workspace".into());
     }
     let mut entries = BTreeMap::new();
     let mut nested_git = std::collections::BTreeSet::new();
@@ -2368,7 +2368,7 @@ fn install_git_scoped(owner: &Path, path: &Path, record: &Path, view: &View) -> 
             }
         }
         let short = std::env::temp_dir();
-        let pending = short.join(format!("grapher-gitcfg-{}", uuid::Uuid::new_v4()));
+        let pending = short.join(format!("pi-n-gitcfg-{}", uuid::Uuid::new_v4()));
         fs::write(&pending, b"").map_err(|e| e.to_string())?;
         let worktree_str = crate::native::host_path(path)
             .to_string_lossy()
@@ -2493,7 +2493,7 @@ fn install_git_scoped(owner: &Path, path: &Path, record: &Path, view: &View) -> 
         let _ = fs::remove_file(&pending);
         let worktree_config = git_dir.join("config.worktree");
         if worktree_config.is_file() {
-            let scratch = short.join(format!("grapher-gitwt-{}", uuid::Uuid::new_v4()));
+            let scratch = short.join(format!("pi-n-gitwt-{}", uuid::Uuid::new_v4()));
             fs::copy(&worktree_config, &scratch).map_err(|e| e.to_string())?;
             let updated_fast = (|| -> Result<bool, String> {
                 let mut cfg = git2::Config::open(&scratch).map_err(|e| e.to_string())?;
@@ -2731,7 +2731,7 @@ fn validate_nested_bindings(owner: &Path, project: &Path) -> Result<(), String> 
     for item in fs::read_dir(project).map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
         if is_git_entry_name(project, &item.file_name())
-            || workspace::is_reserved_grapher_runtime_path(Path::new(&item.file_name()))
+            || workspace::is_reserved_pi_n_runtime_path(Path::new(&item.file_name()))
         {
             continue;
         }
@@ -3078,13 +3078,13 @@ fn reconcile_tree_aliases(
         }
         let to = root.join(&wanted);
         let mut hop = to.parent().unwrap_or(root).join(format!(
-            ".grapher-rename-{}-{}",
+            ".pi-n-rename-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
         while fs::symlink_metadata(&hop).is_ok() {
             hop = to.parent().unwrap_or(root).join(format!(
-                ".grapher-rename-{}-{}",
+                ".pi-n-rename-{}-{}",
                 std::process::id(),
                 uuid::Uuid::new_v4()
             ));
@@ -3139,7 +3139,7 @@ fn view_unobservable(
         let child = relative.join(item.file_name());
         let child_name = name(&child)?;
         let reserved_or_generated = workspace::is_generated_artifact(&child)
-            || workspace::is_reserved_grapher_runtime_path(&child);
+            || workspace::is_reserved_pi_n_runtime_path(&child);
         let host_meta = workspace::is_host_metadata(&child_name);
         if (reserved_or_generated || host_meta)
             && !tracked.matches(&child_name)
@@ -4128,7 +4128,7 @@ fn nested_repository_views(project: &Path) -> Result<BTreeMap<String, View>, Str
         for item in fs::read_dir(project.join(relative)).map_err(|e| e.to_string())? {
             let item = item.map_err(|e| e.to_string())?;
             if is_git_entry_name(project, &item.file_name())
-                || workspace::is_reserved_grapher_runtime_path(Path::new(&item.file_name()))
+                || workspace::is_reserved_pi_n_runtime_path(Path::new(&item.file_name()))
             {
                 continue;
             }
@@ -4169,7 +4169,7 @@ fn node_view(
     }
     // Host-only public API/fixture checkouts have graph Git, not agent Git.
     // Carry the recorded source project Git, never that internal database.
-    let base = match workspace::git(path, &["rev-parse", "refs/grapher/base"]) {
+    let base = match workspace::git(path, &["rev-parse", "refs/pi-n/base"]) {
         Ok(base) => base,
         Err(_) => return Ok(None),
     };
@@ -4206,7 +4206,7 @@ fn reject_undeliverable_special_changes(
     if !is_bound(path) {
         return Ok(None);
     }
-    let Ok(base) = workspace::git(path, &["rev-parse", "refs/grapher/base"]) else {
+    let Ok(base) = workspace::git(path, &["rev-parse", "refs/pi-n/base"]) else {
         return Ok(None);
     };
     if !has_record(source, &base) {
@@ -4958,13 +4958,13 @@ fn accept_resolution_checked(path: &Path, explicit: bool) -> Result<(), Resoluti
 }
 
 pub(crate) fn prepare_conflicts(source: &Path, path: &Path) -> Result<(), String> {
-    let base = workspace::git(path, &["rev-parse", "refs/grapher/base"])?;
+    let base = workspace::git(path, &["rev-parse", "refs/pi-n/base"])?;
     let parents = workspace::git(
         path,
         &[
             "for-each-ref",
             "--format=%(objectname)",
-            "refs/grapher/parents/",
+            "refs/pi-n/parents/",
         ],
     )?;
     prepare(

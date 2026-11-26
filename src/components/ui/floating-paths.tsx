@@ -71,6 +71,7 @@ export function FloatingPathsBackground({
   return (
     <div className={cn("w-full relative", className)}>
       <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+        {background === "grid" && <div className="landing-page-grid w-full h-full" />}
         {background === "paths" && (
           <svg
             className="w-full h-full text-slate-950 dark:text-white"

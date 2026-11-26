@@ -199,7 +199,7 @@ test("blank assistant text does not create live Planner rows", () => {
 
 test("Planner revision boundaries use visible row indices after blank text is removed", () => {
   const line = (event: unknown) => JSON.stringify(event) + "\n";
-  const marker = (planningId: string) => line({ type: "grapher_planning_source", planningId, startOffset: 0 });
+  const marker = (planningId: string) => line({ type: "pi_n_planning_source", planningId, startOffset: 0 });
   const tool = (id: string) => line({ type: "tool_execution_start", toolCallId: id, toolName: "bash", args: {} });
   const blank = line({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "\n" } });
   const output = marker("first") + blank + tool("tool-first") + marker("second") + tool("tool-second");
@@ -398,7 +398,7 @@ test("cold final-response tails preserve JSON, blank lines and Markdown indentat
 
 test("planning source boundaries end final-response mode without consuming the next revision", () => {
   const answer = releaseAnswer("<ACCEPT>");
-  const source = JSON.stringify({ type: "grapher_planning_source", planningId: "next", startOffset: 0 }) + "\n";
+  const source = JSON.stringify({ type: "pi_n_planning_source", planningId: "next", startOffset: 0 }) + "\n";
   for (const prefix of ["", assistantEnd(answer)]) {
     const items = parseHistory(prefix + finalResponse(answer) + source + assistantEnd("Next revision"));
     assert.equal(items.length, 2);
@@ -466,7 +466,7 @@ test("prepending across a large agent_end removes only the final-response copy, 
   // agent_end repeats the session and can exceed both the initial tail and an older page.
   const output = assistantEnd(answer) + assistantEnd(answer)
     + JSON.stringify({ type: "agent_end", messages: [{ padding: "x".repeat(2 * 1024 * 1024) }] }) + "\n"
-    + JSON.stringify({ type: "grapher_process_exited", success: true }) + "\n"
+    + JSON.stringify({ type: "pi_n_process_exited", success: true }) + "\n"
     + "\n── Final response ──\n" + answer + "\n";
   const bytes = Buffer.from(output);
   let start = bytes.length - 512 * 1024;

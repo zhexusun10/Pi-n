@@ -69,9 +69,9 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = React.memo(({
           <h3>{state.graph.nodes.length}{t(" 个节点，")}{state.plan?.executionBatches.length ?? 0}{t(" 个执行层")}</h3>
           <ul>
             <li>
-              {t("Graph 模式的节点在用户仓库旁的 .grapher-worktrees 中执行，完成后以文件形式写回用户仓库。")}</li>
+              {t("Compile 模式的节点在用户仓库旁的 .pi-n-worktrees 中执行，完成后以文件形式写回用户仓库。")}</li>
             <li>{t("Planner 已直接修改源项目；拒绝计划不会撤销这些修改。")}</li>
-            <li>{t("批准会先生成私有源快照，不会暂存、提交或移动你的分支与索引；节点结果最终以文件形式写回源目录，不创建提交。Git/Grapher 内部文件除外。")}</li>
+            <li>{t("批准会先生成私有源快照，不会暂存、提交或移动你的分支与索引；节点结果最终以文件形式写回源目录，不创建提交。Git/Pi^n 内部文件除外。")}</li>
             <li>{feedbackActive
               ? t("每个节点分配独立隔离会话；若配置反馈边，最多自动反馈重试 {0} 次。", maxFeedback)
               : t("每个节点分配独立隔离会话。")}</li>

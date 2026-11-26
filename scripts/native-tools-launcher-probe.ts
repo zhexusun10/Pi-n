@@ -9,10 +9,10 @@ import { pathToFileURL } from 'node:url';
 
 export default async function () {
   try {
-    const runtime = process.env.GRAPHER_TEST_RUNTIME!;
-    const source = process.env.GRAPHER_ORIGINAL_ROOT!;
+    const runtime = process.env.PI_N_TEST_RUNTIME!;
+    const source = process.env.PI_N_ORIGINAL_ROOT!;
     const cwd = process.cwd();
-    const label = process.env.GRAPHER_TEST_LABEL!;
+    const label = process.env.PI_N_TEST_LABEL!;
     const tools = new Map<string, any>();
     const hooks = new Map<string, any[]>();
     const extension = await import(pathToFileURL(join(runtime, 'engine/prompt-extension.ts')).href);
@@ -42,8 +42,8 @@ export default async function () {
     const home = relative(cwd, process.env.HOME!);
     assert.ok(home.startsWith('..') || isAbsolute(home), 'Runtime HOME must be physically outside the project');
     assert.equal(text(await call('bash', { command: 'git rev-parse --is-inside-work-tree' })).trim(), 'true');
-    assert.equal(text(await call('bash', { command: 'test -z "$(git for-each-ref --format="%(refname)" refs/grapher/)" && printf source-refs-only' })).trim(), 'source-refs-only');
-    assert.ok(!readFileSync(join(cwd, '.git/HEAD'), 'utf8').includes('grapher-node'));
+    assert.equal(text(await call('bash', { command: 'test -z "$(git for-each-ref --format="%(refname)" refs/pi-n/)" && printf source-refs-only' })).trim(), 'source-refs-only');
+    assert.ok(!readFileSync(join(cwd, '.git/HEAD'), 'utf8').includes('pi-n-node'));
     await call('write', { path: visible, content: `first-${label}` });
     await call('edit', { path: visible, edits: [{ oldText: `first-${label}`, newText: `final-${label}` }] });
     assert.equal(text(await call('read', { path: visible })), `final-${label}`);
@@ -53,13 +53,13 @@ export default async function () {
     assert.equal(readFileSync(join(cwd, 'sub/local.txt'), 'utf8'), 'relative');
     assert.equal(text(await call('read', { path: 'sub/local.txt' })), 'relative');
     assert.equal(text(await call('read', { path: join(source, 'sub/local.txt') })), 'relative');
-    const externalMaterial = join(process.env.GRAPHER_TEST_EXTERNAL!, '..', 'material.txt');
+    const externalMaterial = join(process.env.PI_N_TEST_EXTERNAL!, '..', 'material.txt');
     // Resolve the external sibling using its host absolute path, not ../ from cwd.
     assert.equal(text(await call('read', { path: externalMaterial })), 'external material');
     await call('write', { path: join(source, 'literal.txt'), content: `keep ${source} unchanged` });
     assert.equal(readFileSync(join(cwd, 'literal.txt'), 'utf8'), `keep ${source} unchanged`);
     // External absolute script and absolute script within the real workspace.
-    const external = process.env.GRAPHER_TEST_EXTERNAL!;
+    const external = process.env.PI_N_TEST_EXTERNAL!;
     await call('write', { path: join(source, 'local.cjs'), content: "require('node:fs').writeFileSync('local-ran', 'ok')" });
     await call('bash', { command: `${quote(process.execPath)} ${quote(external)} ${quote(label)}` });
     await call('bash', { command: `${quote(process.execPath)} ${quote(join(cwd, 'local.cjs'))}` });
@@ -70,7 +70,7 @@ export default async function () {
     // uses host permissions: snapshot separation is not an access sandbox.
     if (process.platform !== 'win32') {
       const denied = [join(source, 'source-marker'), join(cwd, 'source-link', 'source-marker'),
-        process.env.GRAPHER_TEST_SIBLING!, process.env.GRAPHER_TEST_OTHER_SESSION!];
+        process.env.PI_N_TEST_SIBLING!, process.env.PI_N_TEST_OTHER_SESSION!];
       for (const path of denied) {
         const code = `require('node:fs').writeFileSync(Buffer.from(${JSON.stringify(Buffer.from(path).toString('base64'))}, 'base64').toString(), 'BAD')`;
         const result = await call('bash', { command: `${quote(process.execPath)} -e ${quote(code)}` });

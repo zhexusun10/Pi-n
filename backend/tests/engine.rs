@@ -1,7 +1,7 @@
 // Custom engine commands are fixture-only.
 #![cfg(feature = "fixture")]
 
-use grapher::{
+use pi_n::{
     engine::{parse_route_decision, run_pi, PiRequest, PiRole},
     model::{Config, Route},
 };
@@ -46,7 +46,7 @@ fn execute_script_in_mode(script: &str, mode: Option<&str>) -> (Result<String, S
             session_id: Some("test-session"),
             extra_args: Vec::new(),
             environment: mode
-                .map(|mode| vec![("GRAPHER_MODE", mode.into())])
+                .map(|mode| vec![("PI_N_MODE", mode.into())])
                 .unwrap_or_default(),
             system_prompt: None,
             images: None,
@@ -347,8 +347,8 @@ fn planner_and_node_allow_resources_while_partitioner_disables_them() {
     let script_path = temp.path().join("fake-pi.sh");
     let script = r#"cat >/dev/null
 echo "ARGS: $@"
-echo "PLANNER_WRITE_TOOLS: ${GRAPHER_PLANNER_WRITE_TOOLS:-unset}"
-echo "FEEDBACK_ENABLED: ${GRAPHER_FEEDBACK_ENABLED:-unset}"
+echo "PLANNER_WRITE_TOOLS: ${PI_N_PLANNER_WRITE_TOOLS:-unset}"
+echo "FEEDBACK_ENABLED: ${PI_N_FEEDBACK_ENABLED:-unset}"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"OK"}]}}'
 "#;
     fs::write(&script_path, script).unwrap();
@@ -502,7 +502,7 @@ fn instance_role_and_workspace_are_owned_by_the_host() {
     let temp = TempDir::new().unwrap();
     let script = temp.path().join("instance.sh");
     fs::write(&script, r#"cat >/dev/null
-printf 'ROLE=%s\nROOT=%s\nORIGINAL_ROOT=%s\n' "$GRAPHER_MODE" "$GRAPHER_WORKSPACE_ROOT" "$GRAPHER_ORIGINAL_ROOT"
+printf 'ROLE=%s\nROOT=%s\nORIGINAL_ROOT=%s\n' "$PI_N_MODE" "$PI_N_WORKSPACE_ROOT" "$PI_N_ORIGINAL_ROOT"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"OK"}]}}'
 "#).unwrap();
     let config = Config {
@@ -543,8 +543,8 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
                 session_id: None,
                 extra_args: vec![],
                 environment: vec![
-                    ("GRAPHER_MODE", "wrong-role".into()),
-                    ("GRAPHER_WORKSPACE_ROOT", "/wrong/root".into()),
+                    ("PI_N_MODE", "wrong-role".into()),
+                    ("PI_N_WORKSPACE_ROOT", "/wrong/root".into()),
                 ],
                 system_prompt: None,
                 images: None,
@@ -579,7 +579,7 @@ fn original_repository_root_is_distinct_from_an_execution_checkout() {
     fs::write(
         &script,
         r#"cat >/dev/null
-printf 'WORKSPACE=%s\nORIGINAL=%s\n' "$GRAPHER_WORKSPACE_ROOT" "$GRAPHER_ORIGINAL_ROOT"
+printf 'WORKSPACE=%s\nORIGINAL=%s\n' "$PI_N_WORKSPACE_ROOT" "$PI_N_ORIGINAL_ROOT"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"OK"}]}}'
 "#,
     )
@@ -662,7 +662,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
         pi_command: "/bin/sh".into(),
         pi_args: vec![script_path.to_string_lossy().into()],
         isolate_parallel_nodes: true,
-        model: "internal-grapher-model".into(),
+        model: "internal-pi-n-model".into(),
         role_models: Default::default(),
         thinking_level: "medium".into(),
         max_parallel: 2,
@@ -672,9 +672,9 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
         planner_write_tools: true,
     };
 
-    use grapher::engine::PiModelConfig;
+    use pi_n::engine::PiModelConfig;
     let resolved = PiModelConfig::resolve(PiRole::NodeAgent, &base_config);
-    assert_eq!(resolved.model, "internal-grapher-model");
+    assert_eq!(resolved.model, "internal-pi-n-model");
     assert_eq!(resolved.thinking.as_deref(), Some("medium"));
     let saved_thinking = std::env::var("PARTITIONER_THINKING").ok();
     std::env::remove_var("PARTITIONER_THINKING");
@@ -725,7 +725,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
     assert!(output.contains("PI_THINKING_ENV: UNSET"));
     assert!(output.contains("PI_SESSION_ID_ENV: UNSET"));
     assert!(output.contains("PI_SESSION_FILE_ENV: UNSET"));
-    assert!(output.contains("CLI_MODEL: internal-grapher-model"));
+    assert!(output.contains("CLI_MODEL: internal-pi-n-model"));
     std::env::remove_var("PI_MODEL");
     std::env::remove_var("PI_THINKING");
     std::env::remove_var("PI_SESSION_ID");

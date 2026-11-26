@@ -1074,7 +1074,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   const displayedPlannerTurnId = state.planning?.planningId ?? failedPlanning?.planningId;
   // A freshly started review/follow-up turn initially has no sessionId on its
   // summary; keep looking up the active session's context/usage until it emits
-  // `grapher_process_started` (or if it fails before Pi launches).
+  // `pi_n_process_started` (or if it fails before Pi launches).
   const resolvedPlannerSessionId = useMemo(
     () => plannerRole?.sessionId || plannerResolvedSessionId(plannerTurnHistory, displayedPlannerTurnId),
     [plannerRole?.sessionId, plannerTurnHistory, displayedPlannerTurnId]);
@@ -1198,7 +1198,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   const historyStartsAtBeginning = useMemo(() => {
     try {
       const marker = JSON.parse(activeSavedPlannerOutput.split("\n", 1)[0]);
-      return marker.type === "grapher_planning_source" && marker.planningId === savedPlannerIds[0] && marker.startOffset === 0;
+      return marker.type === "pi_n_planning_source" && marker.planningId === savedPlannerIds[0] && marker.startOffset === 0;
     } catch { return false; }
   }, [activeSavedPlannerOutput, savedPlannerIds]);
   const skipFirstPersistedTurn = historyStartsAtBeginning && !firstPersistedUserIsSteer &&
@@ -2016,6 +2016,8 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       };
       const observer = new ResizeObserver(reveal);
       observer.observe(card);
+      const scrollContent = chatScrollRef.current?.firstElementChild;
+      if (followOutput && scrollContent) observer.observe(scrollContent);
       const composer = chatScrollRef.current?.parentElement?.querySelector(".pane-bottom-chat");
       if (composer) observer.observe(composer);
       expandedCardObserverRef.current = observer;
@@ -2027,19 +2029,22 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         finishResize();
       }, 400);
     } else {
-      // During collapse, remain bottom-pinned while the card's height shrinks.
+      // During collapse, remain bottom-pinned while the card's height shrinks
+      // and while any concurrent streaming sibling grows below it.
       // Auto-scroll is suppressed for the animation, so without this local
-      // observer the shrinking content can briefly leave a gap below the last
-      // transcript row. A deliberate upward gesture still takes over.
+      // observer the shrinking or streaming content can briefly jitter below
+      // the last transcript row. A deliberate upward gesture still takes over.
       const scroll = chatScrollRef.current;
       const observer = card && followOutput && scroll ? new ResizeObserver(() => {
         const currentScroll = chatScrollRef.current;
         if (!currentScroll || !shouldFollowOutput()) return;
         currentScroll.scrollTop = currentScroll.scrollHeight;
         lastScrollTopRef.current = currentScroll.scrollTop;
+        prevScrollHeightRef.current = currentScroll.scrollHeight;
       }) : null;
       if (observer && card) {
         observer.observe(card);
+        if (scroll?.firstElementChild) observer.observe(scroll.firstElementChild);
         expandedCardObserverRef.current = observer;
       }
       expandedCardTimerRef.current = setTimeout(() => {
@@ -2049,7 +2054,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         }
         expandedCardTimerRef.current = null;
         finishResize();
-      }, 260);
+      }, 300);
     }
   }, [handleChatScroll, isUnrunNode, setScrollBottomVisible, setUserScrolledUp, shouldFollowOutput]);
 
@@ -2975,7 +2980,8 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     const el = chatScrollRef.current;
     const triggerEl = event?.currentTarget ?? el?.querySelector<HTMLElement>('[data-testid="collapse-cards-trigger"]') ?? null;
     const distanceFromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
-    const pinToBottom = distanceFromBottom <= 4;
+    const pinToBottom = distanceFromBottom <= 4
+      || (shouldFollowOutput() && !userScrolledAwayRef.current && !historyReadingRef.current);
     if (el) {
       if (pinToBottom) {
         setUserScrolledUp(false);
@@ -3010,7 +3016,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       setCardsTransition("idle");
     }
     setCollapseCards(nextCollapsed);
-  }, [cardsCollapsed, reduceMotion, releaseCardsScrollSuppression, setUserScrolledUp]);
+  }, [cardsCollapsed, reduceMotion, releaseCardsScrollSuppression, setUserScrolledUp, shouldFollowOutput]);
 
   const scopedAttemptIdsKey = useMemo(
     () => (inNodeScope ? attempts.map(execution => execution.id).join("\0") : ""),

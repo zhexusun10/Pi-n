@@ -1,7 +1,7 @@
 # Documentation index
 
-- **Using Grapher:** [English README](../README.md), [中文 README](../README.zh-CN.md), [User guide](user-guide.md), [Security policy](../SECURITY.md).
-- **Changing Grapher:** [CONTRIBUTING.md](../CONTRIBUTING.md) for setup and ownership; [AGENTS.md](../AGENTS.md) for repository instructions, with [backend](../backend/AGENTS.md) and [engine](../engine/AGENTS.md) boundaries.
+- **Using Pi^n:** [English README](../README.md), [中文 README](../README.zh-CN.md), [User guide](user-guide.md), [Security policy](../SECURITY.md).
+- **Changing Pi^n:** [CONTRIBUTING.md](../CONTRIBUTING.md) for setup and ownership; [AGENTS.md](../AGENTS.md) for repository instructions, with [backend](../backend/AGENTS.md) and [engine](../engine/AGENTS.md) boundaries.
 - **Choosing a check:** [Testing](development/testing.md). The routes below are starting points, not a reading or execution checklist.
 
 ## Task routes
@@ -16,7 +16,7 @@ Choose the nearest area, then follow its source imports/callers and nearby tests
 | Scheduling, feedback & recovery | [runtime.rs](../backend/src/runtime.rs), [feedback_continuation.rs](../backend/src/feedback_continuation.rs), [feedback_delivery.rs](../backend/src/feedback_delivery.rs) | [Runtime](architecture/runtime.md), [current log acceptance](development/conversation-logs.md#acceptance-prerequisites) |
 | Shared/private workspaces, Git & handoff | [workspace_policy.rs](../backend/src/workspace_policy.rs), [workspace.rs](../backend/src/workspace.rs), [session_branch.rs](../backend/src/session_branch.rs) | [Workspaces & Git](architecture/workspace-snapshots-and-feedback.md) |
 | Composition & publication | [graph_merge.rs](../backend/src/graph_merge.rs), [publication_driver.rs](../backend/src/publication_driver.rs) | [Publication](architecture/execution-model.md#final-publication) |
-| Result execution (model-free) | [runtime.rs](../backend/src/runtime.rs) (`start_result_entry`, `perform_result`), [entrypoint.mjs](../engine/entrypoint.mjs), [execution-cli.ts](../engine/execution-cli.ts) (`--grapher-run-result`) | [Result execution](architecture/native-environments.md#publication-and-model-free-execution) |
+| Result execution (model-free) | [runtime.rs](../backend/src/runtime.rs) (`start_result_entry`, `perform_result`), [entrypoint.mjs](../engine/entrypoint.mjs), [execution-cli.ts](../engine/execution-cli.ts) (`--pi-n-run-result`) | [Result execution](architecture/native-environments.md#publication-and-model-free-execution) |
 | Native environments, sandbox & paths | [environment.rs](../backend/src/environment.rs), [native.rs](../backend/src/native.rs), [workspace-tools.ts](../engine/workspace-tools.ts) | [Native environments](architecture/native-environments.md), [Filesystem isolation](architecture/filesystem-isolation.md) |
 | Zero-configuration HOME discovery (implementation gap) | [environment_automatic.rs](../backend/src/environment_automatic.rs), [environment_fork_tests.rs](../backend/src/environment_fork_tests.rs) | [Required source/parent semantics and native blocker](architecture/native-environments.md#zero-configuration-source-home-discovery) |
 | Private HOME branch inheritance | [environment_forks.rs](../backend/src/environment_forks.rs), [environment_fork_tests.rs](../backend/src/environment_fork_tests.rs) | [Unbound private HOME branches](architecture/native-environments.md#unbound-private-home-branches) |

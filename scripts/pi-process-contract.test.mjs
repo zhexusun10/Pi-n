@@ -15,10 +15,10 @@ import { root, lock } from './pi-baseline.mjs';
 const resolverUrl = pathToFileURL(join(root, 'pi/packages/coding-agent/src/experimental/source-resolver.ts')).href;
 
 // Ensure direct `node --test scripts/pi-process-contract.test.mjs` runs inside
-// an outer Grapher/Pi shell do not leak outer Run/session bindings into child probes.
+// an outer Pi^n/Pi shell do not leak outer Run/session bindings into child probes.
 for (const key of Object.keys(process.env)) {
   const upper = key.toUpperCase();
-  if ((upper.startsWith('GRAPHER_') && !['GRAPHER_TRUSTED_GIT', 'GRAPHER_TRUSTED_NODE', 'GRAPHER_NODE_PATH', 'GRAPHER_MANAGED_GIT_PATH'].includes(upper)) ||
+  if ((upper.startsWith('PI_N_') && !['PI_N_TRUSTED_GIT', 'PI_N_TRUSTED_NODE', 'PI_N_NODE_PATH', 'PI_N_MANAGED_GIT_PATH'].includes(upper)) ||
       /^PI_(?:SESSION_ID|SESSION_FILE|CODING_AGENT_DIR|CODING_AGENT|MODEL|PROVIDER|REASONING_LEVEL|THINKING)$/i.test(key)) {
     delete process.env[key];
   }
@@ -32,7 +32,7 @@ function settleRpc(child, role) {
 }
 
 test('production Pi CLI reports the pinned version', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-pi-cli-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-pi-cli-'));
   try {
     const stdout = execFileSync(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--version'], {
       cwd: root,
@@ -47,12 +47,12 @@ test('production Pi CLI reports the pinned version', () => {
 });
 
 test('Provider/Auth private readiness loads code only and preserves authentication bytes', { timeout: 30000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-auth-prepared-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-auth-prepared-'));
   const auth = join(directory, 'auth.json');
   const original = '{ "sentinel": { "type": "api_key", "key": "isolated-not-a-real-key" } }\n';
   writeFileSync(auth, original);
   const child = spawn(process.execPath, ['--import', resolverUrl, join(root, 'engine/provider-host.ts')], {
-    cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: directory, GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
+    cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exit = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', code => resolve(code)); });
@@ -65,7 +65,7 @@ test('Provider/Auth private readiness loads code only and preserves authenticati
       timer = setTimeout(() => reject(new Error(`Provider/Auth readiness timed out: ${diagnostics}`)), 20000);
       lines.once('line', line => { try { resolve(JSON.parse(line)); } catch (error) { reject(error); } });
     });
-    child.stdin.write(`${JSON.stringify({ version: 1, operation: 'grapher_prepare', id: 'isolated-ready' })}\n`);
+    child.stdin.write(`${JSON.stringify({ version: 1, operation: 'pi_n_prepare', id: 'isolated-ready' })}\n`);
     const ready = await Promise.race([reply, exit.then(code => { throw new Error(`Provider/Auth exited before readiness: ${code}: ${diagnostics}`); })]);
     assert.deepEqual(ready, { version: 1, id: 'isolated-ready', result: { ready: true } });
     assert.equal(readFileSync(auth, 'utf8'), original);
@@ -81,12 +81,12 @@ test('Provider/Auth private readiness loads code only and preserves authenticati
 });
 
 test('Provider/Auth Codex browser login exposes method and callback prompts and can restart after cancellation', { timeout: 30000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-codex-login-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-codex-login-'));
   const auth = join(directory, 'auth.json');
   const original = '{}\n';
   writeFileSync(auth, original);
   const child = spawn(process.execPath, ['--import', resolverUrl, join(root, 'engine/provider-host.ts')], {
-    cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: directory, GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
+    cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exit = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
@@ -139,11 +139,11 @@ test('Provider/Auth Codex browser login exposes method and callback prompts and 
 });
 
 test('Provider/Auth OpenAI OAuth exposes its browser URL and callback prompt', { timeout: 30000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-openai-login-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-openai-login-'));
   const auth = join(directory, 'auth.json');
   writeFileSync(auth, '{}\n');
   const child = spawn(process.execPath, ['--import', resolverUrl, join(root, 'engine/provider-host.ts')], {
-    cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: directory, GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
+    cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exit = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
@@ -196,7 +196,7 @@ test('Provider/Auth OpenAI OAuth exposes its browser URL and callback prompt', {
 });
 
 test('Settings IPC discovers extensions and persists removal/restoration without executing user code', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-pi-extensions-ipc-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-pi-extensions-ipc-'));
   try {
     const global = join(dir, 'global');
     mkdirSync(join(global, 'extensions'), { recursive: true });
@@ -205,7 +205,7 @@ test('Settings IPC discovers extensions and persists removal/restoration without
     writeFileSync(file, code);
     const call = fields => JSON.parse(execFileSync(process.execPath, ['--import', resolverUrl, join(root, 'engine/extensions-host.ts')], {
       encoding: 'utf8', timeout: 30000, input: JSON.stringify({ version: 1, ...fields }),
-      env: { ...process.env, PI_CODING_AGENT_DIR: join(dir, 'own'), GRAPHER_GLOBAL_PI_AGENT_DIR: global, GRAPHER_ISOLATED_PI_MODELS: '1' },
+      env: { ...process.env, PI_CODING_AGENT_DIR: join(dir, 'own'), PI_N_GLOBAL_PI_AGENT_DIR: global, PI_N_ISOLATED_PI_MODELS: '1' },
     })).result;
     const catalog = call({ operation: 'catalog' });
     const continuity = catalog.extensions.find(extension => extension.id === 'npm:pi-continuity');
@@ -225,10 +225,10 @@ test('Settings IPC discovers extensions and persists removal/restoration without
     const webSearch = catalog.extensions.find(extension => extension.id === 'npm:pi-better-web-search');
     assert.ok(webSearch?.bundled);
     assert.equal(webSearch.required, false);
-    assert.equal(webSearch.enabled, false);
-    assert.equal(call({ operation: 'set_enabled', id: webSearch.id, enabled: true }).extensions.find(value => value.id === webSearch.id).enabled, true);
-    assert.equal(call({ operation: 'catalog' }).extensions.find(value => value.id === webSearch.id).enabled, true);
+    assert.equal(webSearch.enabled, true);
     assert.equal(call({ operation: 'set_enabled', id: webSearch.id, enabled: false }).extensions.find(value => value.id === webSearch.id).enabled, false);
+    assert.equal(call({ operation: 'catalog' }).extensions.find(value => value.id === webSearch.id).enabled, false);
+    assert.equal(call({ operation: 'set_enabled', id: webSearch.id, enabled: true }).extensions.find(value => value.id === webSearch.id).enabled, true);
     const extension = catalog.extensions.find(extension => !extension.bundled);
     assert.ok(extension);
     assert.equal(extension.enabled, false, 'discovered external global extensions default to disabled until manually added');
@@ -240,7 +240,7 @@ test('Settings IPC discovers extensions and persists removal/restoration without
 });
 
 test('pi-trim transforms actual provider requests for every role without removing tools or task prompts', { timeout: 90000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-trim-provider-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-trim-provider-'));
   const agent = join(directory, 'agent');
   const global = join(directory, 'global');
   for (const path of [agent, global]) mkdirSync(path);
@@ -268,8 +268,8 @@ test('pi-trim transforms actual provider requests for every role without removin
     const child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--mode', 'rpc', '--no-session',
       '--no-context-files', '--no-prompt-templates', '--no-themes', '--model', 'pi-trim-audit/local', '--thinking', 'off', ...args], {
       cwd: directory, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PI_CODING_AGENT_DIR: agent, GRAPHER_GLOBAL_PI_AGENT_DIR: global,
-        GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_MODE: role, GRAPHER_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
+      env: { ...process.env, PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: global,
+        PI_N_ISOLATED_PI_MODELS: '1', PI_N_MODE: role, PI_N_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
     });
     let stderr = '';
     const events = [];
@@ -345,13 +345,13 @@ test('pi-trim transforms actual provider requests for every role without removin
         event.message.content.some(part => part.type === 'text' && part.text === 'audit complete')), `${role}: request completes successfully`);
     }
 
-    // Verify /pi-trim mode can still toggle back from Grapher's aggressive default to default mode.
+    // Verify /pi-trim mode can still toggle back from Pi^n's aggressive default to default mode.
     await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--mode', 'rpc', '--no-session',
         '--no-context-files', '--no-prompt-templates', '--no-themes', '--model', 'pi-trim-audit/local', '--thinking', 'off', '--approve'], {
         cwd: directory, stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PI_CODING_AGENT_DIR: agent, GRAPHER_GLOBAL_PI_AGENT_DIR: global,
-          GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
+        env: { ...process.env, PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: global,
+          PI_N_ISOLATED_PI_MODELS: '1', PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
       });
       let stderr = '';
       let sawDefaultNotify = false;
@@ -383,12 +383,12 @@ test('pi-trim transforms actual provider requests for every role without removin
     const toggledSystem = toggledBody.messages.filter(message => message.role === 'system').map(message => text(message.content)).join('\n');
     assert.ok(toggledSystem.includes('<tools>') && toggledSystem.includes('Additional tools may be available.'), 'default mode restores <tools> section');
 
-    // Verify a brand-new Grapher Pi session honors the persisted pi-trim.json choice instead of overriding it back to aggressive.
+    // Verify a brand-new Pi^n Pi session honors the persisted pi-trim.json choice instead of overriding it back to aggressive.
     const nextSessionBefore = requests.length;
     await run('node', ['--approve'], 'TRIM_AUDIT[persisted-default]');
     const nextSessionBody = requests[nextSessionBefore];
     const nextSessionSystem = nextSessionBody.messages.filter(message => message.role === 'system').map(message => text(message.content)).join('\n');
-    assert.ok(nextSessionSystem.includes('<tools>') && nextSessionSystem.includes('Additional tools may be available.'), 'new Grapher session preserves user-saved default mode');
+    assert.ok(nextSessionSystem.includes('<tools>') && nextSessionSystem.includes('Additional tools may be available.'), 'new Pi^n session preserves user-saved default mode');
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
@@ -397,7 +397,7 @@ test('pi-trim transforms actual provider requests for every role without removin
 });
 
 test('bundled continuity recovers capped provider turns only while selected for allowed roles', { timeout: 90000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-continuity-provider-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-continuity-provider-'));
   const agent = join(directory, 'agent');
   const global = join(directory, 'global');
   for (const path of [agent, global]) mkdirSync(path);
@@ -424,8 +424,8 @@ test('bundled continuity recovers capped provider turns only while selected for 
       '--no-context-files', '--no-skills', '--no-tools', '--model', 'continuity-audit/local', '--thinking', 'off',
       ...(noExtensions ? ['--no-extensions'] : [])], {
       cwd: directory, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PI_CODING_AGENT_DIR: agent, GRAPHER_GLOBAL_PI_AGENT_DIR: global,
-        GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_MODE: role, GRAPHER_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
+      env: { ...process.env, PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: global,
+        PI_N_ISOLATED_PI_MODELS: '1', PI_N_MODE: role, PI_N_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
     });
     let stderr = '';
     const events = [];
@@ -491,7 +491,7 @@ test('bundled continuity recovers capped provider turns only while selected for 
 });
 
 test('manual continuation preserves tool history and uses Pi native missing-result normalization', { timeout: 90000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-continuation-context-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-continuation-context-'));
   const agent = join(directory, 'agent'), global = join(directory, 'global');
   const workspace = join(directory, 'workspace'), alias = join(directory, 'workspace-alias');
   for (const path of [agent, global, workspace]) mkdirSync(path);
@@ -527,7 +527,7 @@ test('manual continuation preserves tool history and uses Pi native missing-resu
       const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
       const entries = [
-        { type: 'session', version: 3, grapherFormat: 1, grapherRunId: null, id, timestamp: now, cwd: savedCwd },
+        { type: 'session', version: 3, piNFormat: 1, piNRunId: null, id, timestamp: now, cwd: savedCwd },
         entry('user', null, { role: 'user', content: [{ type: 'text', text: 'ORIGINAL_TASK_ONLY' }], timestamp: 1 }),
         entry('assistant', 'user', { role: 'assistant', content: [call('call_alpha', 'bash'), call('call_beta', 'bash')],
           api: 'openai-completions', provider: 'context-audit', model: 'local', usage, stopReason, timestamp: 2 }),
@@ -542,8 +542,8 @@ test('manual continuation preserves tool history and uses Pi native missing-resu
         const child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--mode', 'rpc', '--no-context-files',
           '--no-skills', '--no-tools', '--model', 'context-audit/local', '--thinking', 'off', '--session-id', id, '--session-dir', sessions], {
           cwd: alias, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PI_CODING_AGENT_DIR: agent,
-            GRAPHER_GLOBAL_PI_AGENT_DIR: global, GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_MODE: role,
-            GRAPHER_EXECUTION_KIND: 'source', GRAPHER_CONTINUE_INTERRUPTED: 'true', PI_OFFLINE: '1' },
+            PI_N_GLOBAL_PI_AGENT_DIR: global, PI_N_ISOLATED_PI_MODELS: '1', PI_N_MODE: role,
+            PI_N_EXECUTION_KIND: 'source', PI_N_CONTINUE_INTERRUPTED: 'true', PI_OFFLINE: '1' },
         });
         let stderr = ''; const seen = [];
         child.stderr.on('data', chunk => { stderr += chunk.toString(); });
@@ -553,7 +553,7 @@ test('manual continuation preserves tool history and uses Pi native missing-resu
         const timer = setTimeout(() => { child.kill(); reject(new Error(`${role} continuation timed out: ${stderr}`)); }, 20000);
         child.once('error', error => { clearTimeout(timer); lines.close(); reject(error); });
         child.once('close', code => { clearTimeout(timer); lines.close(); code === 0 ? resolve(seen) : reject(new Error(`${role} exited ${code}: ${stderr}`)); });
-        child.stdin.write(`${JSON.stringify({ id: 'continue', type: 'prompt', message: '__grapher_continue_interrupted__' })}\n`);
+        child.stdin.write(`${JSON.stringify({ id: 'continue', type: 'prompt', message: '__pi_n_continue_interrupted__' })}\n`);
       });
       assert.ok(events.some(event => event.type === 'message_end' && event.message?.role === 'assistant' && event.message.stopReason === 'stop'));
       assert.equal(requests.length, index);
@@ -562,11 +562,11 @@ test('manual continuation preserves tool history and uses Pi native missing-resu
       assert.equal(messages.filter(message => message.role === 'user').length, 1,
         `${role} case ${index}: the original session must be loaded from the workspace alias`);
       assert.ok(serialized.includes('ORIGINAL_TASK_ONLY'));
-      assert.ok(!serialized.includes('__grapher_continue_interrupted__'));
+      assert.ok(!serialized.includes('__pi_n_continue_interrupted__'));
       const retainedBatch = stopReason === 'toolUse';
       assert.equal(serialized.includes('No result provided'), retainedBatch && !complete,
         'only Pi supplies its native missing-result text');
-      assert.ok(!serialized.includes('side effects are unknown'), 'Grapher adds no custom warning');
+      assert.ok(!serialized.includes('side effects are unknown'), 'Pi^n adds no custom warning');
       assert.equal(serialized.includes('SAVED_RESULT_ALPHA'), retainedBatch, 'saved sibling results are retained');
       assert.equal(serialized.includes('SAVED_RESULT_BETA'), complete);
       assert.ok(readFileSync(sessionFile, 'utf8').includes('SAVED_RESULT_ALPHA'), 'raw session history stays intact');
@@ -579,7 +579,7 @@ test('manual continuation preserves tool history and uses Pi native missing-resu
 });
 
 test('a resumed Pi session honors a replacement model while retaining its conversation', { timeout: 60000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-model-retry-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-model-retry-'));
   const agent = join(directory, 'agent');
   const global = join(directory, 'global');
   const sessions = join(directory, 'sessions');
@@ -600,8 +600,8 @@ test('a resumed Pi session honors a replacement model while retaining its conver
       '--no-skills', '--no-tools', '--model', model, '--thinking', 'off', '--session-id',
       '6816076a-c027-4f14-aa58-17f22416754c', '--session-dir', sessions], {
       cwd: directory, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PI_CODING_AGENT_DIR: agent,
-        GRAPHER_GLOBAL_PI_AGENT_DIR: global, GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_MODE: 'node',
-        GRAPHER_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
+        PI_N_GLOBAL_PI_AGENT_DIR: global, PI_N_ISOLATED_PI_MODELS: '1', PI_N_MODE: 'node',
+        PI_N_EXECUTION_KIND: 'source', PI_OFFLINE: '1' },
     });
     let stderr = '';
     const events = [];
@@ -647,7 +647,7 @@ test('a resumed Pi session honors a replacement model while retaining its conver
 });
 
 test('Provider refresh and Pi CLI use the same refreshed local model overlay', { timeout: 90000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-overlay-contract-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-overlay-contract-'));
   const agent = join(directory, 'agent');
   const source = join(directory, 'upstream-models.json');
   mkdirSync(agent);
@@ -657,8 +657,8 @@ test('Provider refresh and Pi CLI use the same refreshed local model overlay', {
   const writeSource = id => writeFileSync(source, `// Pi supports JSONC\n${JSON.stringify({ providers: { 'overlay-audit': provider([model(id)]) } })}`);
   writeSource('first');
   // Managed execution replaces HOME; the explicit host path must still win.
-  const env = { ...process.env, HOME: directory, USERPROFILE: directory, PI_CODING_AGENT_DIR: agent, GRAPHER_UPSTREAM_PI_MODELS: source,
-    GRAPHER_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' };
+  const env = { ...process.env, HOME: directory, USERPROFILE: directory, PI_CODING_AGENT_DIR: agent, PI_N_UPSTREAM_PI_MODELS: source,
+    PI_N_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' };
   const child = spawn(process.execPath, ['--import', resolverUrl, join(root, 'engine/provider-host.ts')], {
     cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -710,7 +710,7 @@ test('Provider refresh and Pi CLI use the same refreshed local model overlay', {
 });
 
 test('execution sends requests to a model loaded from the Pi overlay', { timeout: 45000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-overlay-execution-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-overlay-execution-'));
   const agent = join(directory, 'agent');
   const source = join(directory, 'upstream.json');
   mkdirSync(agent);
@@ -734,7 +734,7 @@ test('execution sends requests to a model loaded from the Pi overlay', { timeout
     const child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--mode', 'rpc', '--no-session',
       '--no-context-files', '--no-extensions', '--no-skills', '--model', 'overlay-execution/fresh'], {
       cwd: directory, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, HOME: directory, USERPROFILE: directory,
-        PI_CODING_AGENT_DIR: agent, GRAPHER_UPSTREAM_PI_MODELS: source, GRAPHER_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' },
+        PI_CODING_AGENT_DIR: agent, PI_N_UPSTREAM_PI_MODELS: source, PI_N_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' },
     });
     let stderr = '';
     child.stderr.on('data', value => { stderr += value; });
@@ -759,7 +759,7 @@ test('execution sends requests to a model loaded from the Pi overlay', { timeout
 });
 
 test('Provider/Auth IPC returns a catalog after input EOF without exposing credentials', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-pi-provider-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-pi-provider-'));
   try {
     writeFileSync(join(dir, 'models.json'), JSON.stringify({ providers: { 'thinking-audit': {
       baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'local-audit-only',
@@ -775,7 +775,7 @@ test('Provider/Auth IPC returns a catalog after input EOF without exposing crede
       SystemRoot: process.env.SystemRoot,
       windir: process.env.windir,
       PI_CODING_AGENT_DIR: dir,
-      GRAPHER_ISOLATED_PI_MODELS: '1',
+      PI_N_ISOLATED_PI_MODELS: '1',
       PI_OFFLINE: '1',
     };
     const output = execFileSync(process.execPath, ['--import', resolverUrl, join(root, 'engine/provider-host.ts')], {

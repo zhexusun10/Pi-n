@@ -1,4 +1,4 @@
-use grapher::{model::*, store::Store};
+use pi_n::{model::*, store::Store};
 use rusqlite::{params, Connection};
 use tempfile::TempDir;
 
@@ -133,11 +133,11 @@ fn unversioned_databases_are_rejected_without_schema_or_payload_changes() {
     assert!(Store::open(&path)
         .err()
         .unwrap()
-        .contains("Unsupported Grapher database format"));
-    assert!(grapher::store::conversation_summaries(&path)
+        .contains("Unsupported Pi^n database format"));
+    assert!(pi_n::store::conversation_summaries(&path)
         .err()
         .unwrap()
-        .contains("Unsupported Grapher database format"));
+        .contains("Unsupported Pi^n database format"));
     assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
@@ -485,7 +485,7 @@ fn tail_pages_never_discard_a_tool_result_larger_than_the_page() {
 #[test]
 fn committed_finished_has_no_text_and_carries_metrics_and_pid() {
     let temp = TempDir::new().unwrap();
-    let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+    let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
     runtime.state.run_id = "run".into();
     runtime.emit(created("repo", None, None)).unwrap();
     let exec = execution("completed");
@@ -496,7 +496,7 @@ fn committed_finished_has_no_text_and_carries_metrics_and_pid() {
             fresh_restart: false,
         })
         .unwrap();
-    let first = "{\"type\":\"grapher_process_started\",\"pid\":123}";
+    let first = "{\"type\":\"pi_n_process_started\",\"pid\":123}";
     runtime
         .emit_outputs(vec![EventKind::Output {
             execution_id: "completed".into(),
@@ -547,7 +547,7 @@ fn committed_finished_has_no_text_and_carries_metrics_and_pid() {
 fn runtime_completion_tail_and_feedback_roll_back_and_retry_together() {
     for rejected in ["finished", "feedback_queued"] {
         let temp = TempDir::new().unwrap();
-        let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+        let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
         runtime.state.run_id = "run".into();
         let mut initial = created("repo", None, None);
         if let EventKind::Created { graph, .. } = &mut initial {
@@ -590,7 +590,7 @@ fn runtime_completion_tail_and_feedback_roll_back_and_retry_together() {
             })
             .unwrap();
         // Final accounting must recover metrics split across writer batches.
-        let stream = "{\"type\":\"grapher_process_started\",\"pid\":123}\n{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"provider\":\"p\",\"model\":\"m\",\"thinkingLevel\":\"high\",\"usage\":{\"input\":7,\"output\":3,\"totalTokens\":10}}}";
+        let stream = "{\"type\":\"pi_n_process_started\",\"pid\":123}\n{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"provider\":\"p\",\"model\":\"m\",\"thinkingLevel\":\"high\",\"usage\":{\"input\":7,\"output\":3,\"totalTokens\":10}}}";
         for text in [&stream[..70], &stream[70..]] {
             runtime
                 .emit_outputs(vec![EventKind::Output {
@@ -602,7 +602,7 @@ fn runtime_completion_tail_and_feedback_roll_back_and_retry_together() {
         let db = Connection::open(temp.path().join("events.sqlite")).unwrap();
         db.execute_batch(&format!("CREATE TRIGGER reject_completion BEFORE INSERT ON events WHEN NEW.kind='{rejected}' BEGIN SELECT RAISE(ABORT,'injected completion failure'); END;")).unwrap();
         let before = serde_json::to_value(&runtime.state).unwrap();
-        let output = "完成𠀀\n{\"type\":\"grapher_process_exited\",\"elapsedMs\":1250}\n<ACCEPT>";
+        let output = "完成𠀀\n{\"type\":\"pi_n_process_exited\",\"elapsedMs\":1250}\n<ACCEPT>";
         assert!(runtime
             .finish(&exec, Ok(("head".into(), output.into())))
             .is_err());
@@ -705,13 +705,13 @@ fn runtime_completion_tail_and_feedback_roll_back_and_retry_together() {
 #[test]
 fn runtime_completion_recovers_the_log_prefix_missing_from_live_metadata() {
     let stream = concat!(
-        "{\"type\":\"grapher_process_started\",\"pid\":123}\n",
+        "{\"type\":\"pi_n_process_started\",\"pid\":123}\n",
         "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"model\":\"actual/model\",\"usage\":{\"input\":7,\"output\":3,\"totalTokens\":10}}}\n",
-        "{\"type\":\"grapher_process_exited\",\"elapsedMs\":1250}\n",
+        "{\"type\":\"pi_n_process_exited\",\"elapsedMs\":1250}\n",
     );
     for split in [stream.len(), 70] {
         let temp = TempDir::new().unwrap();
-        let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+        let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
         runtime.state.run_id = "run".into();
         runtime.emit(created("repo", None, None)).unwrap();
         let exec = execution("completed");
@@ -769,7 +769,7 @@ fn runtime_completion_recovers_the_log_prefix_missing_from_live_metadata() {
 fn runtime_completion_rejects_an_incomplete_recovered_log_before_writing_its_tail() {
     for damage in ["missing", "truncated", "inflated-metadata"] {
         let temp = TempDir::new().unwrap();
-        let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+        let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
         runtime.state.run_id = "run".into();
         runtime.emit(created("repo", None, None)).unwrap();
         let exec = execution("completed");
@@ -927,8 +927,8 @@ fn terminal_checkpoint_is_written_once_and_resets_the_periodic_interval() {
             .unwrap();
         assert_eq!(writes(), 2);
         assert_eq!(
-            grapher::snapshot_view::snapshot_metadata(&store.load("run").unwrap()).unwrap(),
-            grapher::snapshot_view::snapshot_metadata(&state).unwrap()
+            pi_n::snapshot_view::snapshot_metadata(&store.load("run").unwrap()).unwrap(),
+            pi_n::snapshot_view::snapshot_metadata(&state).unwrap()
         );
     }
 }
@@ -936,7 +936,7 @@ fn terminal_checkpoint_is_written_once_and_resets_the_periodic_interval() {
 #[test]
 fn runtime_merger_failure_and_failed_bytes_survive_reload() {
     let temp = TempDir::new().unwrap();
-    let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+    let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
     runtime.state.run_id = "run".into();
     runtime.emit(created("repo", None, None)).unwrap();
     runtime
@@ -1001,7 +1001,7 @@ fn interrupted_runtime_preserves_committed_logs_bytes_and_metrics() {
     let temp = TempDir::new().unwrap();
     let text = "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"usage\":{\"totalTokens\":42}}}\n失败前𠀀\n";
     {
-        let mut runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+        let mut runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
         runtime.state.run_id = "run".into();
         runtime.emit(created("repo", None, None)).unwrap();
         runtime.store.select_run(Some("run")).unwrap();
@@ -1020,7 +1020,7 @@ fn interrupted_runtime_preserves_committed_logs_bytes_and_metrics() {
             .unwrap();
         // Drop without a terminal event to simulate interruption.
     }
-    let runtime = grapher::runtime::Runtime::open(temp.path()).unwrap();
+    let runtime = pi_n::runtime::Runtime::open(temp.path()).unwrap();
     let exec = &runtime.state.executions[0];
     assert_eq!(exec.status, "failed");
     assert!(exec.output.is_empty());
@@ -1131,7 +1131,7 @@ fn terminal_cache_settlement_matches_single_and_batch_event_commits() {
             }
             assert_eq!(state.events.len(), before);
             assert!(!state.paused);
-            let pending = grapher::file_changes::get_cached_execution_changes(&run, &exec).unwrap();
+            let pending = pi_n::file_changes::get_cached_execution_changes(&run, &exec).unwrap();
             assert_eq!(
                 pending.total_files, 2,
                 "{terminal}, batched={batched}: rollback must retain live changes"
@@ -1146,7 +1146,7 @@ fn terminal_cache_settlement_matches_single_and_batch_event_commits() {
                 store.append(&mut state, kind).unwrap();
             }
             // A terminal commit must also fence stale running snapshots.
-            let settled = grapher::file_changes::get_cached_execution_changes(&run, &exec).unwrap();
+            let settled = pi_n::file_changes::get_cached_execution_changes(&run, &exec).unwrap();
             assert_eq!(
                 settled
                     .files
@@ -1158,7 +1158,7 @@ fn terminal_cache_settlement_matches_single_and_batch_event_commits() {
             );
             assert!(!settled.is_running);
             assert!(settled.active_file_path.is_none());
-            grapher::file_changes::invalidate_run(&run);
+            pi_n::file_changes::invalidate_run(&run);
         }
     }
 }
@@ -1668,7 +1668,7 @@ fn failed_workspace_deletion_preserves_live_change_accumulators_until_commit() {
             )
             .unwrap();
         assert_eq!(
-            grapher::file_changes::get_cached_execution_changes(&state.run_id, &exec)
+            pi_n::file_changes::get_cached_execution_changes(&state.run_id, &exec)
                 .unwrap()
                 .total_files,
             1
@@ -1679,12 +1679,12 @@ fn failed_workspace_deletion_preserves_live_change_accumulators_until_commit() {
     db.execute_batch(&format!("CREATE TRIGGER reject_delete BEFORE DELETE ON events WHEN OLD.run_id='{}' BEGIN SELECT RAISE(ABORT,'injected deletion failure'); END;", states[1].run_id)).unwrap();
     let cleanups = states
         .iter()
-        .map(|state| (state.run_id.clone(), grapher::cleanup::Manifest::default()))
+        .map(|state| (state.run_id.clone(), pi_n::cleanup::Manifest::default()))
         .collect::<Vec<_>>();
     assert!(store.delete_runs_with_cleanup(&cleanups).is_err());
     for state in &states {
         assert!(store.load(&state.run_id).is_ok());
-        let cached = grapher::file_changes::get_cached_execution_changes(
+        let cached = pi_n::file_changes::get_cached_execution_changes(
             &state.run_id,
             &state.executions[0],
         );
@@ -1698,7 +1698,7 @@ fn failed_workspace_deletion_preserves_live_change_accumulators_until_commit() {
     store.delete_runs_with_cleanup(&cleanups).unwrap();
     for state in &states {
         assert!(store.load(&state.run_id).is_err());
-        assert!(grapher::file_changes::get_cached_execution_changes(
+        assert!(pi_n::file_changes::get_cached_execution_changes(
             &state.run_id,
             &state.executions[0]
         )
@@ -1737,13 +1737,13 @@ fn clearing_one_store_does_not_reset_another_stores_live_tool_tracking() {
     let unrelated = Store::open(&temp.path().join("unrelated.db")).unwrap();
     unrelated.clear().unwrap();
     assert_eq!(
-        grapher::file_changes::get_cached_execution_changes(&state.run_id, &exec)
+        pi_n::file_changes::get_cached_execution_changes(&state.run_id, &exec)
             .unwrap()
             .total_files,
         1
     );
     owner.clear().unwrap();
-    assert!(grapher::file_changes::get_cached_execution_changes(&state.run_id, &exec).is_none());
+    assert!(pi_n::file_changes::get_cached_execution_changes(&state.run_id, &exec).is_none());
 }
 
 #[test]

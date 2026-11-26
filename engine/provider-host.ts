@@ -50,7 +50,7 @@ input.on("line", async (line) => {
     const request = JSON.parse(line);
     // Private readiness probe: imports and baseline verification only. Do not
     // construct ModelRuntime, check credentials, refresh tokens or call a model.
-    reply = request.version === 1 && request.operation === 'grapher_prepare' && typeof request.id === 'string'
+    reply = request.version === 1 && request.operation === 'pi_n_prepare' && typeof request.id === 'string'
       ? { version: 1, id: request.id, result: { ready: true } }
       : { version: 1, result: await dispatch(request) };
   } catch {

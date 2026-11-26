@@ -13,7 +13,7 @@ test("Run load failures stop at the authoritative endpoint and validate response
   const original = globalThis.fetch;
   const calls: string[] = [];
   try {
-    for (const error of ["Unsupported Grapher database format", "Run not found", "Cannot load Run"]) {
+    for (const error of ["Unsupported Pi^n database format", "Run not found", "Cannot load Run"]) {
       calls.length = 0;
       globalThis.fetch = async url => {
         calls.push(String(url));
@@ -120,7 +120,7 @@ test("attachment requests preserve Run targeting and reject missing, legacy or t
   const runId = "11111111-1111-4111-8111-111111111111";
   const id = "00000000-0000-4000-8000-000000000004";
   const path = `/data/attachment-inputs/${runId}/${id}/中文说明.txt`;
-  const windowsPath = `C:/Users/dev/.grapher/attachment-inputs/${id}/中文说明.txt`;
+  const windowsPath = `C:/Users/dev/.pi-n/attachment-inputs/${id}/中文说明.txt`;
   const file = new File(["fixture"], "中文说明.txt", { type: "text/plain" });
   let result: unknown = { name: file.name, path };
   let sent: Record<string, unknown> | undefined;
@@ -150,7 +150,7 @@ test("attachment requests preserve Run targeting and reject missing, legacy or t
     for (const invalid of [
       undefined,
       file.name,
-      `grapher-attachments/${id}/中文说明.txt`,
+      `pi-n-attachments/${id}/中文说明.txt`,
       `/data/attachment-inputs/${id}/../../original.txt`,
       `/data/other/${id}/中文说明.txt`,
     ]) {

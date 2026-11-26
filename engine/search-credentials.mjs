@@ -53,12 +53,13 @@ export function isKeenableDisabledInDir(agentDir) {
   return readSavedApisSettings(agentDir)?.keenable === false;
 }
 
-export function readGrapherKeenablePublic(agentDir) {
+export function readPiNKeenablePublic(agentDir) {
   try {
-    const parsed = JSON.parse(readFileSync(join(agentDir, 'extensions.json'), 'utf8'));
-    return parsed?.webSearch?.keenablePublic === true;
+    const parsed = JSON.parse(readFileSync(join(agentDir, 'extensions.json'), 'utf8').replace(/^\uFEFF/, ''));
+    if (parsed?.overrides?.['npm:pi-better-web-search'] === false) return false;
+    return parsed?.webSearch?.keenablePublic !== false;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -72,7 +73,7 @@ export function hasConfiguredDedicatedSearchApiInDir(agentDir, globalDir) {
   const apis = readSavedApisSettings(agentDir);
   const explicitAuth = process.env.PI_BETTER_WEB_SEARCH_AUTH?.trim();
   const ownAuth = explicitAuth || join(agentDir, 'better-web-search-auth.json');
-  const globalAuth = !explicitAuth && process.env.GRAPHER_ISOLATED_PI_SEARCH !== '1'
+  const globalAuth = !explicitAuth && process.env.PI_N_ISOLATED_PI_SEARCH !== '1'
     ? resolve(globalDir, 'better-web-search-auth.json')
     : undefined;
   const inheritGlobal = globalAuth && !samePath(globalAuth, ownAuth);
@@ -89,8 +90,8 @@ export function hasConfiguredDedicatedSearchApiInDir(agentDir, globalDir) {
 
 export function withInheritedSearchCredentials(upstream) {
   const inheritedApiKey = provider => {
-    if (process.env.PI_BETTER_WEB_SEARCH_AUTH?.trim() || process.env.GRAPHER_ISOLATED_PI_SEARCH === '1') return undefined;
-    let directory = toHostInput(process.env.GRAPHER_GLOBAL_PI_AGENT_DIR || join(homedir(), '.pi', 'agent'));
+    if (process.env.PI_BETTER_WEB_SEARCH_AUTH?.trim() || process.env.PI_N_ISOLATED_PI_SEARCH === '1') return undefined;
+    let directory = toHostInput(process.env.PI_N_GLOBAL_PI_AGENT_DIR || join(homedir(), '.pi', 'agent'));
     if (directory === '~' || /^~[\\/]/.test(directory)) directory = homedir() + directory.slice(1);
     const source = resolve(directory, 'better-web-search-auth.json');
     if (source === resolve(upstream.getCredentialsPath())) return undefined;
@@ -110,17 +111,17 @@ export function withInheritedSearchCredentials(upstream) {
   };
 }
 
-// Enable Keenable's public endpoint when the user explicitly opted in while
-// mounting web search, and automatically stop once Parallel, Keenable, Exa or
-// Perplexity has an API key configured.
-export function withGrapherSearchPreferences(upstream, credentials, getAgentDir) {
+// Enable Keenable's public endpoint by default when web search is enabled
+// (unless explicitly opted out), and automatically stop once Parallel,
+// Keenable, Exa or Perplexity has an API key configured.
+export function withPiNSearchPreferences(upstream, credentials, getAgentDir) {
   const syntheticApis = new WeakSet();
   return {
     ...upstream,
     readProviderPreferences() {
       const base = upstream.readProviderPreferences();
       if (base.apis?.keenable !== undefined) return base;
-      if (!readGrapherKeenablePublic(getAgentDir())) return base;
+      if (!readPiNKeenablePublic(getAgentDir())) return base;
       if (hasConfiguredDedicatedSearchApi(credentials, base.apis)) return base;
       const apis = { ...base.apis, keenable: true };
       syntheticApis.add(apis);
@@ -130,7 +131,7 @@ export function withGrapherSearchPreferences(upstream, credentials, getAgentDir)
       if (preferences?.apis?.keenable === true && !preferences.apis.keenableKeyRequired) {
         const base = upstream.readProviderPreferences();
         const wasSynthetic = base.apis?.keenable === undefined
-          && readGrapherKeenablePublic(getAgentDir())
+          && readPiNKeenablePublic(getAgentDir())
           && !hasConfiguredDedicatedSearchApi(credentials, base.apis);
         if (wasSynthetic) {
           const otherApisChanged = Object.keys({ ...base.apis, ...preferences.apis })

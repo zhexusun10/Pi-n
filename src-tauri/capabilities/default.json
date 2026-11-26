@@ -1,6 +1,6 @@
 {
   "identifier": "desktop-main",
-  "description": "Least-privilege capability for the main Grapher desktop window. Permits querying the local backend URL, reading the app version, closing IPC resources, managing user launch-at-login registration, running signed in-app updates, and restarting after an update.",
+  "description": "Least-privilege capability for the main Pi^n desktop window. Permits querying the local backend URL, reading the app version, closing IPC resources, managing user launch-at-login registration, running signed in-app updates, and restarting after an update.",
   "local": true,
   "windows": ["main"],
   "permissions": [

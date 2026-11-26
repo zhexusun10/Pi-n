@@ -123,6 +123,10 @@ struct FileChangesCache {
     publication_changes: HashMap<String, FileChangeSummary>,
     /// Keyed by `(run_id, planning_id)` -> planner log-derived summary
     planning_changes: HashMap<(String, String), FileChangeSummary>,
+    /// Verified bash rows of settled executions, applied over their log rows on
+    /// every read and save. A settled execution's bash claims are checked once;
+    /// later commits or unrelated edits must not change its recorded history.
+    frozen: HashMap<(String, String), Vec<FileChangeItem>>,
     /// Live incremental parse state for streaming execution logs.
     live: HashMap<(String, String), ChangeAccumulator>,
     /// Same, for streaming Planner turns (writes before any node runs).
@@ -150,6 +154,15 @@ impl FileChangesCache {
             self.run_epochs.get(&key.0).copied().unwrap_or(0),
             self.log_state.get(key).map_or(0, |state| state.revision),
         )
+    }
+
+    /// An execution's log rows with its frozen bash verification applied.
+    fn execution_log_view(&self, key: &(String, String)) -> Option<FileChangeSummary> {
+        let log = self.log_changes.get(key)?;
+        Some(match self.frozen.get(key) {
+            Some(rows) => bash_verify::apply_frozen(log, rows),
+            None => log.clone(),
+        })
     }
 
     fn planning_token(&self, key: &(String, String)) -> CacheToken {
@@ -196,6 +209,7 @@ impl FileChangesCache {
         self.planning_revisions.retain(|(r, _), _| r != run_id);
         self.log_state.retain(|(r, _), _| r != run_id);
         self.log_changes.retain(|(r, _), _| r != run_id);
+        self.frozen.retain(|(r, _), _| r != run_id);
         self.git_changes.retain(|(r, _), _| r != run_id);
         self.publication_changes.remove(run_id);
         self.planning_changes.retain(|(r, _), _| r != run_id);
@@ -289,6 +303,7 @@ pub fn clear_all() {
         guard.planning_revisions.clear();
         guard.log_state.clear();
         guard.log_changes.clear();
+        guard.frozen.clear();
         guard.git_changes.clear();
         guard.publication_changes.clear();
         guard.planning_changes.clear();
@@ -411,9 +426,9 @@ pub fn normalize_workspace_path(raw: &str, worktree: &str, repository: &str) -> 
         }
     }
 
-    // Also strip `.grapher-worktrees/<run>/<slot>/` if embedded in an absolute path
-    if let Some(idx) = cleaned.find(".grapher-worktrees/") {
-        let after = &cleaned[idx + ".grapher-worktrees/".len()..];
+    // Also strip `.pi-n-worktrees/<run>/<slot>/` if embedded in an absolute path
+    if let Some(idx) = cleaned.find(".pi-n-worktrees/") {
+        let after = &cleaned[idx + ".pi-n-worktrees/".len()..];
         let mut parts = after.splitn(3, '/');
         let _run = parts.next();
         let _slot = parts.next();
@@ -711,73 +726,102 @@ fn parse_bash_command_changes(
     // example `cd /tmp && rm -rf build`) moves every following relative target
     // outside it. Commands without a resolved directory cannot be attributed.
     let mut cwd = root;
-    for segment in command.split([';', '\n']) {
-        for sub in segment.split("&&") {
-            let trimmed = sub.trim();
-            if trimmed.is_empty() {
-                continue;
+    // Here-document bodies are data for another program, not shell commands.
+    let mut heredoc_end: Option<String> = None;
+    for line in command.split('\n') {
+        if let Some(end) = &heredoc_end {
+            if line.trim() == end {
+                heredoc_end = None;
             }
-            let tokens = split_shell_tokens(trimmed);
-            if tokens.is_empty() {
-                continue;
-            }
-            // A subshell may separate the opening parenthesis from its first
-            // word: `( cd /tmp && ... )`.
-            let mut start = 0;
-            while start + 1 < tokens.len() && tokens[start] == "(" {
-                start += 1;
-            }
-            let command_token = tokens[start].trim_start_matches('(');
-            let (cmd, args_slice) = if command_token == "git" && tokens.len() >= start + 2 {
-                (tokens[start + 1].as_str(), &tokens[start + 2..])
-            } else {
-                (command_token, &tokens[start + 1..])
-            };
-            match cmd {
-                "cd" | "pushd" => {
-                    cwd = args_slice
-                        .iter()
-                        .find(|arg| !arg.starts_with('-'))
-                        .and_then(|arg| resolve_cd_target(arg, cwd.as_deref()));
+            continue;
+        }
+        if let Some(delimiter) = bash_candidates::heredoc_delimiter(line) {
+            heredoc_end = Some(delimiter);
+        }
+        for segment in line.split(';') {
+            for sub in segment.split("&&") {
+                let trimmed = sub.trim();
+                if trimmed.is_empty() {
+                    continue;
                 }
-                "rm" | "unlink" | "del" | "Remove-Item" => {
-                    for arg in args_slice {
-                        if arg.starts_with('-') {
-                            continue;
-                        }
-                        if let Some(path) =
-                            resolve_bash_path(arg, cwd.as_deref(), worktree, repository)
-                        {
-                            items.push(path_change_item(path, None, "deleted", node, execution_id));
+                let tokens = split_shell_tokens(trimmed);
+                if tokens.is_empty() {
+                    continue;
+                }
+                // A subshell may separate the opening parenthesis from its first
+                // word: `( cd /tmp && ... )`.
+                let mut start = 0;
+                while start + 1 < tokens.len() && tokens[start] == "(" {
+                    start += 1;
+                }
+                let command_token = tokens[start].trim_start_matches('(');
+                let (cmd, args_slice) = if command_token == "git" && tokens.len() >= start + 2 {
+                    (tokens[start + 1].as_str(), &tokens[start + 2..])
+                } else {
+                    (command_token, &tokens[start + 1..])
+                };
+                match cmd {
+                    "cd" | "pushd" => {
+                        cwd = args_slice
+                            .iter()
+                            .find(|arg| !arg.starts_with('-'))
+                            .and_then(|arg| resolve_cd_target(arg, cwd.as_deref()));
+                    }
+                    "rm" | "unlink" | "del" | "Remove-Item" => {
+                        for arg in args_slice {
+                            if arg.starts_with('-') {
+                                continue;
+                            }
+                            if let Some(path) =
+                                resolve_bash_path(arg, cwd.as_deref(), worktree, repository)
+                            {
+                                items.push(path_change_item(path, None, "deleted", node, execution_id));
+                            }
                         }
                     }
-                }
-                "mv" => {
-                    let non_flags: Vec<&str> = args_slice
-                        .iter()
-                        .map(String::as_str)
-                        .filter(|a| !a.starts_with('-'))
-                        .collect();
-                    if non_flags.len() == 2 {
-                        if let (Some(old_path), Some(new_path)) = (
-                            resolve_bash_path(non_flags[0], cwd.as_deref(), worktree, repository),
-                            resolve_bash_path(non_flags[1], cwd.as_deref(), worktree, repository),
-                        ) {
-                            items.push(path_change_item(
-                                new_path,
-                                Some(old_path),
-                                "renamed",
-                                node,
-                                execution_id,
-                            ));
+                    "mv" => {
+                        let non_flags: Vec<&str> = args_slice
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|a| !a.starts_with('-'))
+                            .collect();
+                        if non_flags.len() == 2 {
+                            if let (Some(old_path), Some(new_path)) = (
+                                resolve_bash_path(non_flags[0], cwd.as_deref(), worktree, repository),
+                                resolve_bash_path(non_flags[1], cwd.as_deref(), worktree, repository),
+                            ) {
+                                items.push(path_change_item(
+                                    new_path,
+                                    Some(old_path),
+                                    "renamed",
+                                    node,
+                                    execution_id,
+                                ));
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
+                for raw in bash_candidates::segment_leads(&tokens[start..]) {
+                    if let Some(path) = resolve_bash_path(raw, cwd.as_deref(), worktree, repository) {
+                        items.push(candidate_item(path, node, execution_id));
+                    }
+                }
             }
         }
     }
+    for raw in bash_candidates::interpreter_leads(command) {
+        if let Some(path) = resolve_bash_path(&raw, cwd.as_deref(), worktree, repository) {
+            items.push(candidate_item(path, node, execution_id));
+        }
+    }
     items
+}
+
+fn candidate_item(path: String, node: &str, execution_id: &str) -> FileChangeItem {
+    let mut item = path_change_item(path, None, "modified", node, execution_id);
+    item.source = Some(CANDIDATE_SOURCE.into());
+    item
 }
 
 fn build_tool_change_items(
@@ -866,6 +910,47 @@ fn build_tool_change_items(
     }
 }
 
+/// Git and verified-bash counts are absolute against a baseline; transcript
+/// counts are deltas. Absolute counts replace, never add to, other counts.
+fn is_absolute_source(source: Option<&str>) -> bool {
+    matches!(source, Some("git" | bash_verify::VERIFIED_SOURCE))
+}
+
+fn union_into(target: &mut Vec<String>, extra: Vec<String>) {
+    for value in extra {
+        if !target.contains(&value) {
+            target.push(value);
+        }
+    }
+}
+
+/// A lead never overrides a precise record, and a precise record replaces a
+/// lead. Provenance is unioned either way.
+fn merge_candidate_item(existing: &mut FileChangeItem, incoming: FileChangeItem) {
+    let nodes = incoming.nodes.clone();
+    let ids = incoming.execution_ids.clone();
+    let running = incoming.is_running;
+    if is_candidate(&incoming) {
+        if existing.status == "deleted" && !is_candidate(existing) {
+            // The path was recreated after `rm`; Git decides what survived.
+            existing.status = "modified".into();
+            existing.old_path = None;
+            existing.additions = 0;
+            existing.deletions = 0;
+            existing.source = incoming.source;
+        }
+    } else {
+        let old_nodes = std::mem::take(&mut existing.nodes);
+        let old_ids = std::mem::take(&mut existing.execution_ids);
+        *existing = incoming;
+        union_into(&mut existing.nodes, old_nodes);
+        union_into(&mut existing.execution_ids, old_ids);
+    }
+    existing.is_running |= running;
+    union_into(&mut existing.nodes, nodes);
+    union_into(&mut existing.execution_ids, ids);
+}
+
 fn merge_file_item_into(map: &mut BTreeMap<String, FileChangeItem>, incoming: FileChangeItem) {
     if let Some(old_path) = &incoming.old_path {
         if incoming.status == "renamed" {
@@ -873,6 +958,10 @@ fn merge_file_item_into(map: &mut BTreeMap<String, FileChangeItem>, incoming: Fi
         }
     }
     if let Some(existing) = map.get_mut(&incoming.path) {
+        if is_candidate(&incoming) || is_candidate(existing) {
+            merge_candidate_item(existing, incoming);
+            return;
+        }
         let next_status = match (existing.status.as_str(), incoming.status.as_str()) {
             ("added", "modified") => "added",
             ("added", "deleted") => "deleted",
@@ -885,11 +974,11 @@ fn merge_file_item_into(map: &mut BTreeMap<String, FileChangeItem>, incoming: Fi
         if incoming.old_path.is_some() {
             existing.old_path = incoming.old_path;
         }
-        if incoming.source.as_deref() == Some("git") {
+        if is_absolute_source(incoming.source.as_deref()) {
             existing.additions = incoming.additions;
             existing.deletions = incoming.deletions;
             existing.source = incoming.source;
-        } else if existing.source.as_deref() != Some("git") {
+        } else if !is_absolute_source(existing.source.as_deref()) {
             if incoming.source.as_deref() == Some("write") {
                 existing.additions = incoming.additions;
                 existing.deletions = incoming.deletions;
@@ -935,6 +1024,33 @@ impl ChangeAccumulator {
     }
 }
 
+/// Source of a path that a bash command *may* have written (`sed -i`,
+/// redirects, formatters, interpreter scripts). It is a lead, never proof: the
+/// read-time check in `bash_verify` keeps it only when the working tree really
+/// differs from the baseline, so another agent's or the user's edits to files
+/// this command never named cannot be attributed to it.
+pub(crate) const CANDIDATE_SOURCE: &str = "bash-candidate";
+
+fn is_candidate(item: &FileChangeItem) -> bool {
+    item.source.as_deref() == Some(CANDIDATE_SOURCE)
+}
+
+/// Commit a settled tool call. A failed call contributes nothing except
+/// unverified leads: a trailing `grep -c` that exits 1 must not hide an earlier
+/// `sed -i` that succeeded, and the lead is verified against the tree anyway.
+fn commit_items(acc: &mut ChangeAccumulator, items: Vec<FileChangeItem>, failed: bool) {
+    for item in items {
+        let candidate = is_candidate(&item);
+        if failed && !candidate {
+            continue;
+        }
+        if !candidate {
+            acc.known_existing.insert(item.path.clone());
+        }
+        merge_file_item_into(&mut acc.committed, item);
+    }
+}
+
 /// Incremental parser state: callers feed whole transcripts or just the bytes
 /// appended since the previous call without re-reading earlier output.
 fn apply_jsonl(
@@ -948,7 +1064,7 @@ fn apply_jsonl(
 ) {
     for raw_line in jsonl.lines() {
         let line = raw_line.trim();
-        if line.is_empty() || (!line.contains("\"tool") && !line.contains("\"grapher_process")) {
+        if line.is_empty() || (!line.contains("\"tool") && !line.contains("\"pi_n_process")) {
             continue;
         }
         let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -1034,13 +1150,8 @@ fn apply_jsonl(
                     }
                 }
                 if let Some(items) = acc.pending.remove(id) {
-                    if !is_error {
-                        for item in items {
-                            acc.known_existing.insert(item.path.clone());
-                            merge_file_item_into(&mut acc.committed, item);
-                        }
-                    }
-                } else if !is_error {
+                    commit_items(acc, items, is_error);
+                } else {
                     let tool_name = event["toolName"].as_str().unwrap_or_default();
                     let items = build_tool_change_items(
                         tool_name,
@@ -1051,10 +1162,7 @@ fn apply_jsonl(
                         node,
                         execution_id,
                     );
-                    for item in items {
-                        acc.known_existing.insert(item.path.clone());
-                        merge_file_item_into(&mut acc.committed, item);
-                    }
+                    commit_items(acc, items, is_error);
                 }
             }
             "message" | "message_end" => {
@@ -1110,20 +1218,15 @@ fn apply_jsonl(
                         }
                     }
                     if let Some(items) = acc.pending.remove(id) {
-                        if !is_error {
-                            for item in items {
-                                acc.known_existing.insert(item.path.clone());
-                                merge_file_item_into(&mut acc.committed, item);
-                            }
-                        }
+                        commit_items(acc, items, is_error);
                     }
                 }
             }
-            "grapher_process_exited" => {
+            "pi_n_process_exited" => {
                 acc.process_alive = false;
                 acc.pending.clear();
             }
-            "grapher_process_started" => {
+            "pi_n_process_started" => {
                 acc.process_alive = is_execution_running;
             }
             _ => {}
@@ -1173,8 +1276,12 @@ pub fn parse_jsonl_file_changes(
     accumulator_summary(&acc)
 }
 
+mod bash_candidates;
+mod bash_verify;
 pub mod file_diff;
 mod git_diff;
+
+pub use bash_verify::{verify_bash_changes, verify_snapshot_changes, VerifyTarget};
 
 /// Best-effort live counts before an untracked path has a Git blob. Read link
 /// text, never its target, and bound regular-file reads even if the file grows.
@@ -1561,7 +1668,7 @@ pub fn update_planning_from_log_chunk(
     if run_id.is_empty() || planning_id.is_empty() || chunk.is_empty() {
         return;
     }
-    if !chunk.contains("\"tool") && !chunk.contains("\"grapher_process") {
+    if !chunk.contains("\"tool") && !chunk.contains("\"pi_n_process") {
         return;
     }
     let key = (run_id.to_string(), planning_id.to_string());
@@ -1658,7 +1765,7 @@ pub fn get_cached_execution_changes(
 ) -> Option<FileChangeSummary> {
     let guard = cache().lock().ok()?;
     let key = (run_id.to_string(), execution.id.clone());
-    let log_part = guard.log_changes.get(&key).cloned();
+    let log_part = guard.execution_log_view(&key);
     let git_part = guard.git_changes.get(&key).cloned();
     drop(guard);
     let is_running = execution.status == "running";
@@ -1701,8 +1808,8 @@ pub fn get_cached_run_changes(state: &Snapshot) -> Option<FileChangeSummary> {
             continue;
         }
         let key = (state.run_id.clone(), exec.id.clone());
-        if let Some(l) = guard.log_changes.get(&key) {
-            parts.push(l.clone());
+        if let Some(l) = guard.execution_log_view(&key) {
+            parts.push(l);
         }
         if let Some(g) = guard.git_changes.get(&key) {
             parts.push(g.clone());
@@ -1753,7 +1860,7 @@ struct PersistedRunChanges {
 /// Derived summaries are a cache, not history. Bump this whenever transcript
 /// parsing changes semantics so an older sidecar cannot keep stale rows (for
 /// example bash deletions that were never inside the workspace) authoritative.
-const PERSISTED_CHANGES_VERSION: u32 = 4;
+const PERSISTED_CHANGES_VERSION: u32 = 5;
 
 fn read_persisted(path: &Path) -> PersistedRunChanges {
     fs::read_to_string(path)
@@ -2072,6 +2179,9 @@ pub(crate) fn warm_scoped_changes(
                 .execution_log_page(&state.run_id, &exec.id, 0, bytes)
                 .map(|page| page.content)
         });
+        // The first read after settlement records which bash claims Git
+        // confirmed; later commits cannot rewrite that history.
+        bash_verify::freeze_execution(&state.run_id, exec, repo_str);
 
         if let Some(after) = &exec.after {
             if !exec.before.is_empty() && !after.is_empty() {
@@ -2183,7 +2293,7 @@ mod tests {
         );
         assert_eq!(
             normalize_workspace_path(
-                "C:\\Users\\test\\ cache\\.grapher-worktrees\\run-1\\node-1\\src\\lib\\util.ts",
+                "C:\\Users\\test\\ cache\\.pi-n-worktrees\\run-1\\node-1\\src\\lib\\util.ts",
                 "",
                 "C:\\Users\\test\\repo"
             ),
@@ -2194,7 +2304,7 @@ mod tests {
             None
         );
         assert_eq!(
-            normalize_workspace_path(".grapher/events.sqlite", "/repo", "/repo"),
+            normalize_workspace_path(".pi-n/events.sqlite", "/repo", "/repo"),
             None
         );
     }

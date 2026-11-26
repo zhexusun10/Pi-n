@@ -19,13 +19,13 @@ before(async () => {
     }],
   });
   await server.listen(); origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
 async function fixture(query, handler) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   await context.route("**/api/*", async route => {
     if (handler) return handler(route, new URL(route.request().url()).pathname.slice(5), route.request().postDataJSON());
@@ -211,7 +211,7 @@ test("bootstrap renders 24 authoritative summaries with no history or blank-titl
     graph: { ...empty.graph, originalGoal: i % 3 ? `Goal ${i}` : "" } }]));
   const histories = [], snapshotPolls = [], errors = [];
   let active = 0, maximum = 0;
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;

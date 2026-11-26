@@ -166,8 +166,8 @@ sys.stdin.read()
                     session_id: None,
                     extra_args: vec![],
                     environment: vec![
-                        ("GRAPHER_TEST_NODE_RPC", "1".into()),
-                        ("GRAPHER_ACTIVE_RUN_ID", run.clone()),
+                        ("PI_N_TEST_NODE_RPC", "1".into()),
+                        ("PI_N_ACTIVE_RUN_ID", run.clone()),
                     ],
                     system_prompt: None,
                     images: None,
@@ -365,7 +365,7 @@ fn planner_live_log_append_wakes_reconnected_views_before_tool_finishes() {
 while [ ! -f '{}' ]; do sleep 0.02; done
 printf '%s\n' '{{"type":"tool_execution_start","toolCallId":"live","toolName":"bash"}}'
 while [ ! -f '{}' ]; do sleep 0.02; done
-printf '%s' '{{"originalGoal":"goal","nodes":[{{"id":"worker","task":"work"}}],"edges":[]}}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{{"originalGoal":"goal","nodes":[{{"id":"worker","task":"work"}}],"edges":[]}}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"done"}}]}}}}'
 "#, start.display(), finish.display())).unwrap();
     let config: Config = serde_json::from_value(serde_json::json!({
@@ -402,7 +402,7 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
     };
     loop {
         let line = rx.recv_timeout(Duration::from_secs(15)).unwrap();
-        if line.contains("grapher_process_started") {
+        if line.contains("pi_n_process_started") {
             break;
         }
     }

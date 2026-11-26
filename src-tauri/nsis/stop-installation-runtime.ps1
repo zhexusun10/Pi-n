@@ -8,15 +8,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Stop-GrapherInstallationRuntime {
+function Stop-PiNInstallationRuntime {
     param(
         [Parameter(Mandatory = $true)]
         [string] $InstallDirectory,
-        [object[]] $Processes = @([System.Diagnostics.Process]::GetProcessesByName('grapher'))
+        [object[]] $Processes = @([System.Diagnostics.Process]::GetProcessesByName('pi-n'))
     )
 
     $expectedPath = [System.IO.Path]::GetFullPath(
-        [System.IO.Path]::Combine($InstallDirectory, 'runtime', 'grapher.exe')
+        [System.IO.Path]::Combine($InstallDirectory, 'runtime', 'pi-n.exe')
     )
     foreach ($process in $Processes) {
         try {
@@ -46,7 +46,7 @@ function Stop-GrapherInstallationRuntime {
             try {
                 $process.Kill()
                 if (-not $process.WaitForExit(5000)) {
-                    throw 'The old Grapher runtime did not stop. Close this installation and retry.'
+                    throw 'The old Pi^n runtime did not stop. Close this installation and retry.'
                 }
             } catch {
                 if (-not $process.HasExited) { throw }
@@ -59,9 +59,9 @@ function Stop-GrapherInstallationRuntime {
 
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        Stop-GrapherInstallationRuntime -InstallDirectory $InstallDirectory
+        Stop-PiNInstallationRuntime -InstallDirectory $InstallDirectory
     } catch {
-        [Console]::Error.WriteLine(('Cannot stop the old Grapher runtime: {0}' -f $_.Exception.Message))
+        [Console]::Error.WriteLine(('Cannot stop the old Pi^n runtime: {0}' -f $_.Exception.Message))
         exit 1
     }
     exit 0

@@ -11,8 +11,8 @@ export interface ThinkingUpdate {
 interface MessageContent {
   type: string;
   thinking?: string;
-  grapherBodyOmitted?: boolean;
-  grapherThinkingChars?: number;
+  piNBodyOmitted?: boolean;
+  piNThinkingChars?: number;
 }
 
 export interface FinalizeThinkingMeta {
@@ -107,8 +107,8 @@ export function finalizeThinkingItems(
   content.forEach((part, contentIndex) => {
     if (part.type !== "thinking") return;
     const index = blockIndex(next, contentIndex, messageStart);
-    const omitted = Boolean(part.grapherBodyOmitted);
-    const charCount = typeof part.grapherThinkingChars === "number" ? part.grapherThinkingChars : undefined;
+    const omitted = Boolean(part.piNBodyOmitted);
+    const charCount = typeof part.piNThinkingChars === "number" ? part.piNThinkingChars : undefined;
     if (index >= 0) {
       const mergedContent = backfillThinkingContent(next[index].content, part.thinking);
       const stillOmitted = omitted && !mergedContent.trim();

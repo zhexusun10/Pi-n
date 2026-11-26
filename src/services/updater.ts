@@ -1,4 +1,4 @@
-export const UPDATER_RELEASES_URL = "https://github.com/zhexusun10/grapher/releases";
+export const UPDATER_RELEASES_URL = "https://github.com/zhexusun10/pi-n/releases";
 
 export type UpdaterPlatform = "macos" | "windows" | "linux" | "unknown";
 

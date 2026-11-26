@@ -154,7 +154,7 @@ pub fn stop_partition_prewarm() {
     if let Some(pool) = WARM_NODE.get() {
         pool.shutdown();
         if !pool.wait_idle(Duration::from_secs(5)) {
-            eprintln!("[Grapher] Node prewarm shutdown timed out");
+            eprintln!("[Pi^n] Node prewarm shutdown timed out");
         }
     }
 }
@@ -274,7 +274,7 @@ pub fn warm_node(config: Config, cwd: PathBuf, session_dir: PathBuf, session_id:
                     prepare_warm_node(&config, key, hash, &ticket)
                 });
         }
-        Err(error) => eprintln!("[Grapher] Node prewarm unavailable: {error}"),
+        Err(error) => eprintln!("[Pi^n] Node prewarm unavailable: {error}"),
     }
 }
 
@@ -321,15 +321,15 @@ fn prepare_warm_node(
         .env_remove("PI_SESSION_FILE")
         // A warmed Serial session is not bound from the later launch command.
         // It must never inherit a surrounding feedback node's protocol flag.
-        .env_remove("GRAPHER_FEEDBACK_SOURCE")
-        .env("GRAPHER_MODE", "node")
-        .env("GRAPHER_AGENT_KIND", "serial")
-        .env("GRAPHER_EXECUTION_KIND", "source")
-        .env("GRAPHER_SOURCE_ALIAS", &key.5)
-        .env("GRAPHER_WORKSPACE_ROOT", &key.0)
-        .env("GRAPHER_ORIGINAL_ROOT", &key.0)
+        .env_remove("PI_N_FEEDBACK_SOURCE")
+        .env("PI_N_MODE", "node")
+        .env("PI_N_AGENT_KIND", "serial")
+        .env("PI_N_EXECUTION_KIND", "source")
+        .env("PI_N_SOURCE_ALIAS", &key.5)
+        .env("PI_N_WORKSPACE_ROOT", &key.0)
+        .env("PI_N_ORIGINAL_ROOT", &key.0)
         .env(
-            "GRAPHER_SOURCE_CASE_INSENSITIVE",
+            "PI_N_SOURCE_CASE_INSENSITIVE",
             if crate::path_identity::case_insensitive_volume(&key.0) {
                 "1"
             } else {
@@ -463,7 +463,7 @@ pub fn steer_node_with_id(
     request_id: &str,
 ) -> Result<(), String> {
     let transport =
-        format!("{instruction}\n\n<grapher-node-steer-id>{request_id}</grapher-node-steer-id>");
+        format!("{instruction}\n\n<pi-n-node-steer-id>{request_id}</pi-n-node-steer-id>");
     send_steer(execution_id, &transport, images, false, Some(request_id))
 }
 
@@ -1011,7 +1011,7 @@ fn run_pi_with_timeout(
         && !request
             .environment
             .iter()
-            .any(|(key, _)| *key == "GRAPHER_ACTIVE_RUN_ID")
+            .any(|(key, _)| *key == "PI_N_ACTIVE_RUN_ID")
     {
         let database = request
             .session_dir
@@ -1022,14 +1022,14 @@ fn run_pi_with_timeout(
             let id = request
                 .environment
                 .iter()
-                .find(|(key, _)| *key == "GRAPHER_NODE_EXECUTION_ID")
+                .find(|(key, _)| *key == "PI_N_NODE_EXECUTION_ID")
                 .map(|(_, id)| id.as_str())
                 .or(request.session_id)
                 .ok_or("Missing execution identity for Pi session")?;
             let run = crate::store::Store::open_reader(&database)?
                 .run_for_execution(id)?
                 .ok_or("Missing Run ownership for Pi session")?;
-            request.environment.push(("GRAPHER_ACTIVE_RUN_ID", run));
+            request.environment.push(("PI_N_ACTIVE_RUN_ID", run));
         } else if !cfg!(feature = "fixture") {
             return Err("Missing Run database for Pi session".into());
         }
@@ -1057,14 +1057,14 @@ fn run_pi_with_timeout(
     if let Some(host) = claim_matching_serial(&request) {
         return run_resumed(host, &request, on_output, timeout, launch_started);
     }
-    // Production always runs the pinned, Grapher-owned entrypoint. Persisted
+    // Production always runs the pinned, Pi^n-owned entrypoint. Persisted
     // legacy command fields cannot select a different engine implementation.
     #[cfg(not(feature = "fixture"))]
     let planner_workspaces = if request.role == PiRole::Planner {
         let targets = request
             .environment
             .iter()
-            .find(|(key, _)| *key == "GRAPHER_PLANNER_WORKSPACES")
+            .find(|(key, _)| *key == "PI_N_PLANNER_WORKSPACES")
             .map(|(_, value)| serde_json::from_str::<serde_json::Value>(value))
             .transpose()
             .map_err(|e| e.to_string())?;
@@ -1099,7 +1099,7 @@ fn run_pi_with_timeout(
                 request
                     .environment
                     .iter()
-                    .find(|(key, _)| *key == "GRAPHER_ACTIVE_RUN_ID")
+                    .find(|(key, _)| *key == "PI_N_ACTIVE_RUN_ID")
                     .map(|(_, id)| id.as_str())
             })
             .flatten();
@@ -1186,7 +1186,7 @@ fn run_pi_with_timeout(
             || request
                 .environment
                 .iter()
-                .any(|(key, value)| *key == "GRAPHER_TEST_NODE_RPC" && value == "1"));
+                .any(|(key, value)| *key == "PI_N_TEST_NODE_RPC" && value == "1"));
     command.args([
         "--mode",
         if rpc_agent { "rpc" } else { "json" },
@@ -1229,7 +1229,7 @@ fn run_pi_with_timeout(
         #[cfg(not(feature = "fixture"))]
         let extension_path = {
             if request.role != PiRole::Planner {
-                return Err("Only the Grapher-owned Planner extension may be injected".into());
+                return Err("Only the Pi^n-owned Planner extension may be injected".into());
             }
             let bundled = crate::native::installation_root().join("backend/resources/planner.ts");
             if bundled.is_file() {
@@ -1237,7 +1237,7 @@ fn run_pi_with_timeout(
             } else {
                 // Packaged/desktop distributions embed planner.ts in the binary
                 // when backend/resources is not shipped alongside resources.
-                let session_extension = request.session_dir.join("grapher-planner.ts");
+                let session_extension = request.session_dir.join("pi-n-planner.ts");
                 fs::write(&session_extension, include_str!("../resources/planner.ts"))
                     .map_err(|error| error.to_string())?;
                 session_extension
@@ -1296,16 +1296,16 @@ fn run_pi_with_timeout(
     crate::native::clear_git_environment(&mut command);
     // Only the current request may identify its agent. Never inherit a parent's
     // Serial/Node selection into Planner, Partitioner or unrelated Node work.
-    command.env_remove("GRAPHER_AGENT_KIND");
+    command.env_remove("PI_N_AGENT_KIND");
     // Only an explicit per-turn binding may activate the feedback protocol.
-    command.env_remove("GRAPHER_FEEDBACK_SOURCE");
-    command.env_remove("GRAPHER_FEEDBACK_ENABLED");
+    command.env_remove("PI_N_FEEDBACK_SOURCE");
+    command.env_remove("PI_N_FEEDBACK_ENABLED");
     for (key, value) in &request.environment {
         command.env(key, value);
     }
-    // Never pass a node label, even when Grapher was started inside another
+    // Never pass a node label, even when Pi^n was started inside another
     // execution or a role-specific request accidentally includes one.
-    command.env_remove("GRAPHER_NODE_NAME");
+    command.env_remove("PI_N_NODE_NAME");
     #[cfg(not(feature = "fixture"))]
     if !crate::path_identity::same_path(request.cwd, Path::new(&config.repository)) {
         // Git environment cleanup above must not erase the external project
@@ -1319,7 +1319,7 @@ fn run_pi_with_timeout(
     // The host owns the instance identity. Never inherit another agent's role
     // or directory mapping from the parent process or role-specific overrides.
     command.env(
-        "GRAPHER_MODE",
+        "PI_N_MODE",
         match request.role {
             PiRole::Partitioner => "partition",
             PiRole::Planner => "planner",
@@ -1329,13 +1329,13 @@ fn run_pi_with_timeout(
     );
     if request.role == PiRole::Planner {
         command.env(
-            "GRAPHER_FEEDBACK_ENABLED",
+            "PI_N_FEEDBACK_ENABLED",
             config.feedback_enabled.to_string(),
         );
         // The workspace extension owns its tool registration, so it must see
         // the same decision that produced --exclude-tools above.
         command.env(
-            "GRAPHER_PLANNER_WRITE_TOOLS",
+            "PI_N_PLANNER_WRITE_TOOLS",
             if config.planner_write_tools {
                 "true"
             } else {
@@ -1352,13 +1352,13 @@ fn run_pi_with_timeout(
                 .map_err(|e| e.to_string())?,
         );
         command.env(
-            "GRAPHER_EXECUTION_KIND",
+            "PI_N_EXECUTION_KIND",
             if graph { "graph" } else { "source" },
         );
-        command.env("GRAPHER_SOURCE_ALIAS", &config.repository);
+        command.env("PI_N_SOURCE_ALIAS", &config.repository);
     }
     command.env(
-        "GRAPHER_WORKSPACE_ROOT",
+        "PI_N_WORKSPACE_ROOT",
         crate::path_identity::actual_path(request.cwd)
             .or_else(|_| request.cwd.canonicalize().map_err(|error| error.to_string()))?,
     );
@@ -1370,19 +1370,19 @@ fn run_pi_with_timeout(
     let original_root = crate::path_identity::actual_path(original_path)
         .or_else(|_| original_path.canonicalize().map_err(|error| error.to_string()))?;
     command.env(
-        "GRAPHER_SOURCE_CASE_INSENSITIVE",
+        "PI_N_SOURCE_CASE_INSENSITIVE",
         if crate::path_identity::case_insensitive_volume(&original_root) {
             "1"
         } else {
             "0"
         },
     );
-    command.env("GRAPHER_ORIGINAL_ROOT", original_root);
+    command.env("PI_N_ORIGINAL_ROOT", original_root);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    command.env_remove("GRAPHER_LAUNCH_BINDING");
+    command.env_remove("PI_N_LAUNCH_BINDING");
     // Node Agents and publication/Git Mergers use the same validated native
     // launch boundary when a managed environment is available.
     let managed = matches!(request.role, PiRole::NodeAgent | PiRole::Merger)
@@ -1390,11 +1390,11 @@ fn run_pi_with_timeout(
         && request
             .environment
             .iter()
-            .any(|(key, _)| *key == "GRAPHER_ENVIRONMENT_DATA")
+            .any(|(key, _)| *key == "PI_N_ENVIRONMENT_DATA")
         && request
             .environment
             .iter()
-            .any(|(key, _)| *key == "GRAPHER_NODE_EXECUTION_ID");
+            .any(|(key, _)| *key == "PI_N_NODE_EXECUTION_ID");
     if managed {
         let environment = config
             .environment
@@ -1403,13 +1403,13 @@ fn run_pi_with_timeout(
         let data = request
             .environment
             .iter()
-            .find(|(key, _)| *key == "GRAPHER_ENVIRONMENT_DATA")
+            .find(|(key, _)| *key == "PI_N_ENVIRONMENT_DATA")
             .map(|(_, value)| PathBuf::from(value))
             .ok_or("Missing environment data binding")?;
         let execution = request
             .environment
             .iter()
-            .find(|(key, _)| *key == "GRAPHER_NODE_EXECUTION_ID")
+            .find(|(key, _)| *key == "PI_N_NODE_EXECUTION_ID")
             .map(|(_, value)| value.as_str())
             .ok_or("Missing managed execution identity")?;
         let run = request
@@ -1547,7 +1547,7 @@ fn run_pi_with_timeout(
     let prewarmed = false;
     on_output(format!(
         "{}\n",
-        serde_json::json!({"type":"grapher_process_started", "pid":child.id(), "sessionId":request.session_id, "cwd":request.cwd, "prewarmed":prewarmed, "prewarmStage":prewarm_stage, "prewarmReadyMs":prewarm_ready_ms, "taskBindingMs":task_binding_ms, "launchPreparationMs":launch_preparation_ms, "timestamp":crate::model::now()})
+        serde_json::json!({"type":"pi_n_process_started", "pid":child.id(), "sessionId":request.session_id, "cwd":request.cwd, "prewarmed":prewarmed, "prewarmStage":prewarm_stage, "prewarmReadyMs":prewarm_ready_ms, "taskBindingMs":task_binding_ms, "launchPreparationMs":launch_preparation_ms, "timestamp":crate::model::now()})
     ));
     #[cfg(not(feature = "fixture"))]
     for line in warm_startup_output {
@@ -1565,7 +1565,7 @@ fn run_pi_with_timeout(
             request
                 .environment
                 .iter()
-                .find(|(key, _)| *key == "GRAPHER_ACTIVE_RUN_ID")
+                .find(|(key, _)| *key == "PI_N_ACTIVE_RUN_ID")
                 .map(|(_, id)| id.clone())
                 .filter(|id| !id.is_empty())
         } else {
@@ -1585,7 +1585,7 @@ fn run_pi_with_timeout(
             request
                 .environment
                 .iter()
-                .find(|(key, _)| *key == "GRAPHER_NODE_EXECUTION_ID")
+                .find(|(key, _)| *key == "PI_N_NODE_EXECUTION_ID")
                 .map(|(_, value)| value.clone())
                 .or_else(|| {
                     request
@@ -1601,7 +1601,7 @@ fn run_pi_with_timeout(
             request
                 .environment
                 .iter()
-                .find(|(key, _)| *key == "GRAPHER_PLANNER_RUN_ID")
+                .find(|(key, _)| *key == "PI_N_PLANNER_RUN_ID")
                 .map(|(_, id)| id.clone())
                 .filter(|id| !id.is_empty())
         } else {
@@ -2010,7 +2010,7 @@ fn run_turn(
                     }
                 }
                 if let Some(object) = event.as_mut().and_then(Value::as_object_mut) {
-                    object.insert("grapherReceivedAt".into(), crate::model::now().into());
+                    object.insert("piNReceivedAt".into(), crate::model::now().into());
                 }
                 if let Some(event) = event {
                     output_buffer.push(event, &mut *on_output)?;
@@ -2137,11 +2137,11 @@ fn finish_turn(
             let _ = process_control::reassign_owner(&process_tree, &linger_owner);
             on_output(format!(
                 "{}\n",
-                serde_json::json!({"type":"grapher_process_exited", "pid":child.id(), "code":null, "success":true, "timedOut":false, "parked":true, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
+                serde_json::json!({"type":"pi_n_process_exited", "pid":child.id(), "code":null, "success":true, "timedOut":false, "parked":true, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
             ));
             on_output(format!(
                 "{}\n",
-                serde_json::json!({"type":"grapher_session_parked", "pid":child.id(), "sessionId":request.session_id, "cwd":request.cwd, "runId":run_id, "timestamp":crate::model::now()})
+                serde_json::json!({"type":"pi_n_session_parked", "pid":child.id(), "sessionId":request.session_id, "cwd":request.cwd, "runId":run_id, "timestamp":crate::model::now()})
             ));
             // Keep the unbound prewarm slot warm for the next *different* session.
             process_prewarm::request(config, request.role, true);
@@ -2190,7 +2190,7 @@ fn finish_turn(
     }
     on_output(format!(
         "{}\n",
-        serde_json::json!({"type":"grapher_process_exited", "pid":child.id(), "code":status.code(), "success":status.success() && !outcome.timed_out && (input_error.is_none() || input_broken_pipe_on_success), "timedOut":outcome.timed_out, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
+        serde_json::json!({"type":"pi_n_process_exited", "pid":child.id(), "code":status.code(), "success":status.success() && !outcome.timed_out && (input_error.is_none() || input_broken_pipe_on_success), "timedOut":outcome.timed_out, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
     ));
     if outcome.timed_out {
         return Err(format!(
@@ -2235,7 +2235,7 @@ fn finish_turn(
     }
     #[cfg(not(feature = "fixture"))]
     if retain_source_planner_services(request, &process_tree, settled_response, source_role) {
-        eprintln!("[Grapher] Retaining source Planner background processes");
+        eprintln!("[Pi^n] Retaining source Planner background processes");
     }
     Ok(outcome.final_text)
 }
@@ -2403,7 +2403,7 @@ fn retain_source_planner_services(
     let Some(run_id) = request
         .environment
         .iter()
-        .find(|(key, _)| *key == "GRAPHER_ACTIVE_RUN_ID")
+        .find(|(key, _)| *key == "PI_N_ACTIVE_RUN_ID")
         .map(|(_, run_id)| run_id.clone())
         .filter(|run_id| !run_id.is_empty())
     else {
@@ -2411,7 +2411,7 @@ fn retain_source_planner_services(
     };
     let owner = format!("planner-service:{run_id}:{}", uuid::Uuid::new_v4());
     if let Err(error) = process_control::reassign_owner(process_tree, &owner) {
-        eprintln!("[Grapher] Could not retain source Planner background services: {error}");
+        eprintln!("[Pi^n] Could not retain source Planner background services: {error}");
         return false;
     }
     planner_services().hold(
@@ -2441,7 +2441,7 @@ fn serial_linger_key(request: &PiRequest<'_>) -> Option<lingering::SessionKey> {
     let agent_kind = request
         .environment
         .iter()
-        .find(|(key, _)| *key == "GRAPHER_AGENT_KIND")
+        .find(|(key, _)| *key == "PI_N_AGENT_KIND")
         .map(|(_, value)| value.as_str());
     if request.role != PiRole::NodeAgent
         || agent_kind != Some("serial")
@@ -2493,7 +2493,7 @@ fn node_rpc_id(request: &PiRequest<'_>) -> Result<String, String> {
     request
         .environment
         .iter()
-        .find(|(key, _)| *key == "GRAPHER_NODE_EXECUTION_ID")
+        .find(|(key, _)| *key == "PI_N_NODE_EXECUTION_ID")
         .map(|(_, value)| value.clone())
         .or_else(|| {
             request
@@ -2569,7 +2569,7 @@ fn run_resumed(
     let (id, initial_rpc_id) = begin_resumed_turn(&mut host, request)?;
     on_output(format!(
         "{}\n",
-        serde_json::json!({"type":"grapher_session_resumed", "pid":host.child.id(), "sessionId":request.session_id, "cwd":request.cwd, "launchPreparationMs":launch_started.elapsed().as_millis(), "timestamp":crate::model::now()})
+        serde_json::json!({"type":"pi_n_session_resumed", "pid":host.child.id(), "sessionId":request.session_id, "cwd":request.cwd, "launchPreparationMs":launch_started.elapsed().as_millis(), "timestamp":crate::model::now()})
     ));
     let started = Instant::now();
     let rpc_guard = Some(NodeRpcGuard(id));
@@ -2613,7 +2613,7 @@ fn request_agent_kind<'a>(request: &'a PiRequest<'_>) -> Option<&'a str> {
     request
         .environment
         .iter()
-        .find(|(key, _)| *key == "GRAPHER_AGENT_KIND")
+        .find(|(key, _)| *key == "PI_N_AGENT_KIND")
         .map(|(_, value)| value.as_str())
 }
 
@@ -2676,7 +2676,7 @@ pub fn execute(
         );
     }
     let task = if continuation {
-        "__grapher_continue_interrupted__".to_string()
+        "__pi_n_continue_interrupted__".to_string()
     } else {
         task.into()
     };
@@ -2719,12 +2719,12 @@ pub fn execute(
             session_id: Some(&execution.session_id),
             extra_args,
             environment: vec![
-                ("GRAPHER_MODE", "node".into()),
-                ("GRAPHER_AGENT_KIND", agent_kind.as_str().into()),
-                ("GRAPHER_NODE_EXECUTION_ID", execution.id.clone()),
-                ("GRAPHER_CONTINUE_INTERRUPTED", continuation.to_string()),
-                ("GRAPHER_FEEDBACK_SOURCE", feedback_source.to_string()),
-                ("GRAPHER_ENVIRONMENT_DATA", root.to_string_lossy().into()),
+                ("PI_N_MODE", "node".into()),
+                ("PI_N_AGENT_KIND", agent_kind.as_str().into()),
+                ("PI_N_NODE_EXECUTION_ID", execution.id.clone()),
+                ("PI_N_CONTINUE_INTERRUPTED", continuation.to_string()),
+                ("PI_N_FEEDBACK_SOURCE", feedback_source.to_string()),
+                ("PI_N_ENVIRONMENT_DATA", root.to_string_lossy().into()),
             ],
             system_prompt: None,
             images,
@@ -2770,7 +2770,7 @@ pub fn repair_feedback_verdict(
             return Ok(output);
         }
         eprintln!(
-            "[Grapher] [Execution] Node '{}' did not end with a standalone <ACCEPT>/<FEEDBACK> line; pushing protocol repair to its session ({attempt}/{FEEDBACK_REPAIR_ATTEMPTS})",
+            "[Pi^n] [Execution] Node '{}' did not end with a standalone <ACCEPT>/<FEEDBACK> line; pushing protocol repair to its session ({attempt}/{FEEDBACK_REPAIR_ATTEMPTS})",
             execution.node
         );
         output = execute(
@@ -2890,9 +2890,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let script = temp.path().join("capture_task.py");
         fs::write(&script, r#"import json, os, sys
-assert 'GRAPHER_NODE_NAME' not in os.environ, 'node identity must not reach the agent process'
+assert 'PI_N_NODE_NAME' not in os.environ, 'node identity must not reach the agent process'
 text = sys.stdin.read()
-print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':json.dumps({'task':text,'feedback':os.environ.get('GRAPHER_FEEDBACK_SOURCE')})}]}}), flush=True)
+print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':json.dumps({'task':text,'feedback':os.environ.get('PI_N_FEEDBACK_SOURCE')})}]}}), flush=True)
 "#).unwrap();
         let config = Config {
             feedback_enabled: false,
@@ -2995,7 +2995,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
         fs::write(
             extensions.join("feedback-env.ts"),
             format!(
-                "import {{ writeFileSync }} from 'node:fs';\nexport default function() {{ writeFileSync({}, process.env.GRAPHER_FEEDBACK_SOURCE ?? 'cleared'); }}\n",
+                "import {{ writeFileSync }} from 'node:fs';\nexport default function() {{ writeFileSync({}, process.env.PI_N_FEEDBACK_SOURCE ?? 'cleared'); }}\n",
                 serde_json::to_string(&marker.to_string_lossy()).unwrap()
             ),
         ).unwrap();
@@ -3007,7 +3007,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
         fs::write(&session_file, format!("{}\n{}\n{}\n",
             serde_json::json!({
                 "type": "session", "version": 3, "id": session_id,
-                "grapherFormat": 1, "grapherRunId": run_id,
+                "piNFormat": 1, "piNRunId": run_id,
                 "timestamp": "2026-01-01T00:00:00.000Z", "cwd": repository,
             }),
             serde_json::json!({"type":"model_change", "id":"model-1", "parentId":null,
@@ -3029,8 +3029,8 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
             auto_approve: false,
             role_models: Default::default(),
         };
-        let inherited_feedback = std::env::var_os("GRAPHER_FEEDBACK_SOURCE");
-        std::env::set_var("GRAPHER_FEEDBACK_SOURCE", "true");
+        let inherited_feedback = std::env::var_os("PI_N_FEEDBACK_SOURCE");
+        std::env::set_var("PI_N_FEEDBACK_SOURCE", "true");
         warm_node(
             config.clone(),
             repository.clone(),
@@ -3039,9 +3039,9 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
         );
         assert!(WARM_NODE.get().unwrap().wait_idle(Duration::from_secs(30)));
         if let Some(value) = inherited_feedback {
-            std::env::set_var("GRAPHER_FEEDBACK_SOURCE", value);
+            std::env::set_var("PI_N_FEEDBACK_SOURCE", value);
         } else {
-            std::env::remove_var("GRAPHER_FEEDBACK_SOURCE");
+            std::env::remove_var("PI_N_FEEDBACK_SOURCE");
         }
         assert_eq!(fs::read_to_string(&marker).unwrap(), "cleared");
         let mut other = config.clone();
@@ -3092,7 +3092,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
                 "{}\n",
                 serde_json::json!({
                     "type": "session", "version": 3, "id": session_id,
-                    "grapherFormat": 1, "grapherRunId": run_id,
+                    "piNFormat": 1, "piNRunId": run_id,
                     "timestamp": "2026-01-02T00:00:00.000Z", "cwd": repository,
                 })
             ),
@@ -3156,7 +3156,7 @@ sys.stdin.read()
                 tools: Some(""),
                 session_id: None,
                 extra_args: vec![],
-                environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                 system_prompt: None,
                 images: None,
             },
@@ -3318,7 +3318,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             tools: None,
             session_id: Some("linger-session"),
             extra_args: vec!["--thinking", "medium"],
-            environment: vec![("GRAPHER_AGENT_KIND", "serial".into())],
+            environment: vec![("PI_N_AGENT_KIND", "serial".into())],
             system_prompt: None,
             images: None,
         };
@@ -3365,7 +3365,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
         })
         .unwrap();
         assert_eq!(result, "done");
-        assert!(output.contains("grapher_session_parked"));
+        assert!(output.contains("pi_n_session_parked"));
         assert_eq!(
             lingering_pool().len(),
             1,
@@ -3484,7 +3484,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             tools: None,
             session_id: Some("planner-session"),
             extra_args: vec![],
-            environment: vec![("GRAPHER_ACTIVE_RUN_ID", run_id.clone())],
+            environment: vec![("PI_N_ACTIVE_RUN_ID", run_id.clone())],
             system_prompt: None,
             images: None,
         };
@@ -3517,8 +3517,8 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
         })
         .unwrap();
         assert_eq!(result, "done");
-        assert!(output.contains("grapher_process_exited"));
-        assert!(!output.contains("grapher_session_parked"));
+        assert!(output.contains("pi_n_process_exited"));
+        assert!(!output.contains("pi_n_session_parked"));
         assert_eq!(planner_service_count_for_run(&run_id), 1);
         drop(guard);
 
@@ -3603,7 +3603,7 @@ sys.exit(2) # No message_end/agent_settled: the partial text must still survive.
                 tools: Some(""),
                 session_id: None,
                 extra_args: vec![],
-                environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                 system_prompt: None,
                 images: None,
             },
@@ -3628,7 +3628,7 @@ sys.exit(2) # No message_end/agent_settled: the partial text must still survive.
         let before = output.find("BEFORE_RAW").unwrap();
         let raw = output.find("raw output barrier").unwrap();
         let suffix = output.find("FAILED_SUFFIX").unwrap();
-        let exited = output.find("grapher_process_exited").unwrap();
+        let exited = output.find("pi_n_process_exited").unwrap();
         assert!(idle < before && before < raw && raw < suffix && suffix < exited);
     }
 
@@ -3672,7 +3672,7 @@ time.sleep(10)
                 tools: Some(""),
                 session_id: None,
                 extra_args: vec![],
-                environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                 system_prompt: None,
                 images: None,
             },
@@ -3681,7 +3681,7 @@ time.sleep(10)
         );
         assert!(result.unwrap_err().contains("Partitioner timed out"));
         let suffix = output.find("TIMED_OUT_SUFFIX").unwrap();
-        let exited = output.find("grapher_process_exited").unwrap();
+        let exited = output.find("pi_n_process_exited").unwrap();
         assert!(suffix < exited);
         let exited: Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
         assert_eq!(exited["timedOut"], true);
@@ -3731,14 +3731,14 @@ sys.stdin.read() # RPC shutdown is requested by closing stdin.
                 tools: Some(""),
                 session_id: None,
                 extra_args: vec![],
-                environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                 system_prompt: None,
                 images: None,
             },
             |line| events.push_str(&line),
         );
         assert_eq!(result.unwrap(), "parallel");
-        assert!(events.contains("grapher_process_exited"));
+        assert!(events.contains("pi_n_process_exited"));
     }
 
     #[cfg(feature = "fixture")]
@@ -3783,7 +3783,7 @@ sys.exit(3)  # Windows fail-fast teardown cannot be represented portably; any no
                 tools: Some(""),
                 session_id: None,
                 extra_args: vec![],
-                environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                 system_prompt: None,
                 images: None,
             },
@@ -3851,9 +3851,9 @@ sys.stdin.read()
                         session_id: None,
                         extra_args: vec![],
                         environment: vec![
-                            ("GRAPHER_TEST_NODE_RPC", "1".into()),
-                            ("GRAPHER_PLANNER_RUN_ID", "run-test".into()),
-                            ("GRAPHER_ACTIVE_RUN_ID", "run-test".into()),
+                            ("PI_N_TEST_NODE_RPC", "1".into()),
+                            ("PI_N_PLANNER_RUN_ID", "run-test".into()),
+                            ("PI_N_ACTIVE_RUN_ID", "run-test".into()),
                         ],
                         system_prompt: None,
                         images: None,
@@ -3890,7 +3890,7 @@ assert first['type'] == 'prompt'
 print(json.dumps({'type':'tool_execution_start'}), flush=True)
 second = json.loads(sys.stdin.readline())
 assert second['type'] == 'prompt' and second['streamingBehavior'] == 'steer'
-assert second['message'] == os.environ['GRAPHER_ACTIVE_RUN_ID']
+assert second['message'] == os.environ['PI_N_ACTIVE_RUN_ID']
 print(json.dumps({'type':'response','id':second['id'],'success':True}), flush=True)
 print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':second['message']}]}}), flush=True)
 print(json.dumps({'type':'agent_settled'}), flush=True)
@@ -3942,9 +3942,9 @@ sys.stdin.read()
                             session_id: None,
                             extra_args: vec![],
                             environment: vec![
-                                ("GRAPHER_TEST_NODE_RPC", "1".into()),
-                                ("GRAPHER_PLANNER_RUN_ID", run_id.into()),
-                                ("GRAPHER_ACTIVE_RUN_ID", run_id.into()),
+                                ("PI_N_TEST_NODE_RPC", "1".into()),
+                                ("PI_N_PLANNER_RUN_ID", run_id.into()),
+                                ("PI_N_ACTIVE_RUN_ID", run_id.into()),
                             ],
                             system_prompt: None,
                             images: None,
@@ -4029,7 +4029,7 @@ sys.stdin.read()
                         tools: None,
                         session_id: None,
                         extra_args: vec![],
-                        environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                        environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                         system_prompt: None,
                         images: None,
                     },
@@ -4121,7 +4121,7 @@ sys.stdin.read()
                         tools: None,
                         session_id: None,
                         extra_args: vec![],
-                        environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                        environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                         system_prompt: None,
                         images: None,
                     },
@@ -4186,7 +4186,7 @@ sys.stdin.read()
                 tools: None,
                 session_id: None,
                 extra_args: vec![],
-                environment: vec![("GRAPHER_TEST_NODE_RPC", "1".into())],
+                environment: vec![("PI_N_TEST_NODE_RPC", "1".into())],
                 system_prompt: None,
                 images: None,
             },
@@ -4246,7 +4246,7 @@ sys.stdin.read()
             assert!(result.unwrap_err().contains("Planner timed out"));
             assert!(start.elapsed() < Duration::from_secs(5));
             let exited: Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
-            assert_eq!(exited["type"], "grapher_process_exited");
+            assert_eq!(exited["type"], "pi_n_process_exited");
             assert_eq!(exited["timedOut"], true);
             assert_eq!(exited["success"], false);
         }

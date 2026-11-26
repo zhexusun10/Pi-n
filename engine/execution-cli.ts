@@ -1,4 +1,4 @@
-// Install Grapher's process-local policy before upstream constructs a session.
+// Install Pi^n's process-local policy before upstream constructs a session.
 import { configureExecutionRetries } from './retry-policy.ts';
 import { runPiCli, preparePiCli } from './pi-compat.ts';
 import { flushRuntimeCompileCache } from '../scripts/pi-baseline.mjs';
@@ -11,19 +11,19 @@ process.env.PYTHONDONTWRITEBYTECODE = '1';
 let args = process.argv.slice(2);
 // Host-only cache priming after the shared runtime has been verified. Import
 // ordinary CLI code without resources, factories, sessions or model requests.
-if (args.length === 1 && args[0] === '--grapher-prepare-runtime-cache') {
+if (args.length === 1 && args[0] === '--pi-n-prepare-runtime-cache') {
   await preparePiCli();
   flushRuntimeCompileCache();
   process.exit(0);
 }
-if (args[0] === '--grapher-prewarm') {
+if (args[0] === '--pi-n-prewarm') {
   if (args.length !== 2) throw new Error('Invalid prepared-host arguments');
   const { bindPreparedHost } = await import('./prepared-host.ts');
   const binding = await bindPreparedHost(args[1]);
   if (binding === null) process.exit(0);
   args = binding;
 }
-if (args[0] === '--grapher-run-result') {
+if (args[0] === '--pi-n-run-result') {
   applyLaunchBinding();
   const launch = managedLaunch();
   if (!launch) throw new Error('Result execution requires a Runtime launch binding');
@@ -46,5 +46,5 @@ if (args[0] === '--grapher-run-result') {
 const standalone = args.some(arg => ['--version', '-v', '--help', '-h'].includes(arg)) ||
   ['install', 'remove', 'update', 'list', 'config', 'mcp', 'auth'].includes(args[0]);
 if (!standalone) applyLaunchBinding();
-const resources = standalone ? { args } : await executionResources(args, process.env.PI_CODING_AGENT_DIR!, process.env.GRAPHER_MODE || 'node');
+const resources = standalone ? { args } : await executionResources(args, process.env.PI_CODING_AGENT_DIR!, process.env.PI_N_MODE || 'node');
 await runPiCli(resources.args, { extensionFactories: 'extensionFactories' in resources ? resources.extensionFactories : [] });

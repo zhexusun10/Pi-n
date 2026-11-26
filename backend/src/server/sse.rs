@@ -40,7 +40,7 @@ fn sse_signal_sender() -> &'static std::sync::mpsc::Sender<RuntimeSignal> {
     SSE_SIGNAL_TX.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<RuntimeSignal>();
         let _ = thread::Builder::new()
-            .name("grapher-sse-coalescer".into())
+            .name("pi-n-sse-coalescer".into())
             .spawn(move || run_sse_coalescer(rx));
         tx
     })
@@ -298,17 +298,17 @@ pub(super) fn respond_sse(
     }
     write!(
         writer,
-        "X-Grapher-Instance: {}\r\n",
+        "X-Pi-N-Instance: {}\r\n",
         super::api_transport::instance()
     )?;
     if advertise_events {
-        writer.write_all(b"X-Grapher-Events: 1\r\n")?;
+        writer.write_all(b"X-Pi-N-Events: 1\r\n")?;
     }
     if let Some(origin) = origin {
         write!(writer, "Access-Control-Allow-Origin: {origin}\r\n")?;
         if advertise_events {
             writer.write_all(
-                b"Access-Control-Expose-Headers: X-Grapher-Events, X-Grapher-Instance\r\n",
+                b"Access-Control-Expose-Headers: X-Pi-N-Events, X-Pi-N-Instance\r\n",
             )?;
         }
     }

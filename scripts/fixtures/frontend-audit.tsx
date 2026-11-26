@@ -177,7 +177,7 @@ function VirtualScrollFixture() {
 
 function TranscriptOutputFixture() {
   const line = (event: unknown) => JSON.stringify(event) + "\n";
-  const marker = (startOffset: number) => line({ type: "grapher_planning_source", planningId: "planner-live", startOffset });
+  const marker = (startOffset: number) => line({ type: "pi_n_planning_source", planningId: "planner-live", startOffset });
   const answer = (text: string) => line({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } });
   const [state, setState] = useState(() => ({ offset: 100, text: answer("PLANNER_TAIL"), live: true }));
   audit.setTranscriptOutput = (text: string, offset = 0) => setState({ text, offset, live: false });

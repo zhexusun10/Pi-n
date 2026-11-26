@@ -28,7 +28,7 @@ fn source(temp: &tempfile::TempDir) -> PathBuf {
 
 fn slot(temp: &tempfile::TempDir, name: &str) -> PathBuf {
     temp.path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join("48b8e1d1-2428-42a2-9b28-9d90f631f9d1")
         .join(name)
 }
@@ -92,8 +92,8 @@ fn workspace_is_the_project_tree_and_runtime_state_reclaims_outside_it() {
         "refs/heads/feature/current"
     );
     let refs = crate::workspace::project_git(&target, &["show-ref"]).unwrap();
-    assert!(!refs.contains("refs/grapher/"), "{refs}");
-    assert!(!refs.contains("refs/heads/grapher-node"), "{refs}");
+    assert!(!refs.contains("refs/pi-n/"), "{refs}");
+    assert!(!refs.contains("refs/heads/pi-n-node"), "{refs}");
     assert!(
         crate::workspace::project_git(&target, &["status", "--porcelain"])
             .unwrap()
@@ -164,7 +164,7 @@ fn workspace_is_the_project_tree_and_runtime_state_reclaims_outside_it() {
         source_head
     );
     assert_eq!(fs::read(source.join(".git/index")).unwrap(), source_index);
-    assert!(!source.join(".grapher-state").exists());
+    assert!(!source.join(".pi-n-state").exists());
 
     // Reclaim removes the external state and leaves the project tree.
     crate::workspace_state::reclaim(&target).unwrap();
@@ -206,7 +206,7 @@ fn windows_spaces_unicode_and_readonly_paths_keep_the_project_view_clean() {
     crate::workspace::git(&source, &["commit", "-qm", "project history"]).unwrap();
     let base_commit = crate::workspace::snapshot_repository(&source).unwrap();
     let target = base
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join("48b8e1d1-2428-42a2-9b28-9d90f631f9d1")
         .join("node 源");
     crate::workspace::prepare(&source, &target, &base_commit, &[]).unwrap();
@@ -220,15 +220,15 @@ fn windows_spaces_unicode_and_readonly_paths_keep_the_project_view_clean() {
     assert!(target.join(".git").is_dir());
     assert!(!target.join(".agent-home").exists());
     assert!(!target.join(".runtime-cache").exists());
-    assert!(!target.join(".grapher-state").exists());
+    assert!(!target.join(".pi-n-state").exists());
     let refs = std::process::Command::new("git")
         .args(["show-ref"])
         .current_dir(&target)
         .output()
         .unwrap();
     let refs = String::from_utf8_lossy(&refs.stdout);
-    assert!(!refs.contains("refs/grapher/"), "{refs}");
-    assert!(!refs.contains("refs/heads/grapher-node"), "{refs}");
+    assert!(!refs.contains("refs/pi-n/"), "{refs}");
+    assert!(!refs.contains("refs/heads/pi-n-node"), "{refs}");
 }
 
 #[cfg(windows)]

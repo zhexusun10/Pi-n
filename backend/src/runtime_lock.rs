@@ -1,4 +1,4 @@
-//! Cross-platform exclusive ownership of the Grapher runtime directory.
+//! Cross-platform exclusive ownership of the Pi^n runtime directory.
 use std::{fs, path::Path, sync::Arc};
 
 #[cfg(windows)]
@@ -43,7 +43,7 @@ pub fn acquire(root: &Path) -> Result<RuntimeLock, String> {
     {
         let result = unsafe { libc::flock(marker.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if result != 0 {
-            return Err("Another Grapher instance owns this runtime. Close it before opening this data directory again.".into());
+            return Err("Another Pi^n instance owns this runtime. Close it before opening this data directory again.".into());
         }
         return Ok(RuntimeLock {
             _marker: marker,
@@ -56,12 +56,12 @@ pub fn acquire(root: &Path) -> Result<RuntimeLock, String> {
         let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let mut hasher = DefaultHasher::new();
         canonical.to_string_lossy().hash(&mut hasher);
-        let key = format!("Local\\GrapherRuntime-{:016x}", hasher.finish());
+        let key = format!("Local\\PiNRuntime-{:016x}", hasher.finish());
         let locks = PROCESS_LOCKS.get_or_init(|| Mutex::new(HashSet::new()));
         {
             let mut owned = locks.lock().map_err(|error| error.to_string())?;
             if !owned.insert(key.clone()) {
-                return Err("Another Grapher instance owns this runtime. Close it before opening this data directory again.".into());
+                return Err("Another Pi^n instance owns this runtime. Close it before opening this data directory again.".into());
             }
         }
         let wide: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
@@ -74,7 +74,7 @@ pub fn acquire(root: &Path) -> Result<RuntimeLock, String> {
         if waited != WAIT_OBJECT_0 && waited != WAIT_ABANDONED {
             unsafe { CloseHandle(mutex) };
             let _ = locks.lock().map(|mut owned| owned.remove(&key));
-            return Err("Another Grapher instance owns this runtime. Close it before opening this data directory again.".into());
+            return Err("Another Pi^n instance owns this runtime. Close it before opening this data directory again.".into());
         }
         Ok(RuntimeLock {
             _marker: marker,

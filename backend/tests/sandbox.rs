@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use grapher::sandbox;
+use pi_n::sandbox;
 use std::{fs, os::unix::fs::symlink, path::Path, process::Command};
 use tempfile::TempDir;
 
@@ -20,7 +20,7 @@ fn graph_filesystem_policy_and_inherited_child_processes() {
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source project");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/current");
     let sibling = root.join("run/sibling");
     let outside = base.join("outside");
@@ -82,22 +82,22 @@ fn graph_filesystem_policy_and_inherited_child_processes() {
 }
 
 #[test]
-fn grapher_installation_and_shared_engine_are_write_protected() {
+fn pi_n_installation_and_shared_engine_are_write_protected() {
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/current");
     // Sessions must stay writable inside the protected installation.
     let installation = base.join("installation");
-    let data = installation.join(".grapher");
+    let data = installation.join(".pi-n");
     let session = data.join("sessions/current");
-    let engine = base.join("engine-cache/grapher-native-engine-x");
+    let engine = base.join("engine-cache/pi-n-native-engine-x");
     for dir in [&source, &current, &session, &engine, &installation] {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join("marker"), "original").unwrap();
     }
-    let cache = engine.join(".grapher-runtime-cache/baseline");
+    let cache = engine.join(".pi-n-runtime-cache/baseline");
     fs::create_dir_all(&cache).unwrap();
     fs::write(cache.join("marker"), "original").unwrap();
     let profile = base.join("profile.sb");
@@ -152,7 +152,7 @@ fn node_network_and_upstream_tools_work_inside_sandbox() {
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/current");
     let sibling = root.join("run/sibling");
     let outside = base.join("outside");
@@ -256,12 +256,12 @@ fn node_network_and_upstream_tools_work_inside_sandbox() {
 
 #[test]
 fn shared_git_metadata_outside_source_is_protected() {
-    use grapher::workspace::git;
+    use pi_n::workspace::git;
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source");
     let common = base.join("separate-git-dir");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/current");
     fs::create_dir_all(&source).unwrap();
     git(
@@ -308,11 +308,11 @@ fn shared_git_metadata_outside_source_is_protected() {
 
 #[test]
 fn standalone_workspace_exposes_project_git_while_protecting_source() {
-    use grapher::workspace;
+    use pi_n::workspace;
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/current");
 
     fs::create_dir_all(&source).unwrap();
@@ -331,7 +331,7 @@ fn standalone_workspace_exposes_project_git_while_protecting_source() {
     let isolated = run(
         &profile,
         &current,
-        "set -e; test -d .git; test -z \"$(git for-each-ref --format=%(refname) refs/grapher/)\"; echo isolated > local.txt; test -f local.txt",
+        "set -e; test -d .git; test -z \"$(git for-each-ref --format=%(refname) refs/pi-n/)\"; echo isolated > local.txt; test -f local.txt",
         &[],
     );
     assert!(
@@ -352,7 +352,7 @@ fn seatbelt_allows_workspace_when_configured_with_case_alias() {
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/CurrentSlot");
     fs::create_dir_all(&source).unwrap();
     fs::create_dir_all(&current).unwrap();
@@ -365,8 +365,8 @@ fn seatbelt_allows_workspace_when_configured_with_case_alias() {
     } else {
         current.clone()
     };
-    let alias_root = if base.join(".GRAPHER-WORKTREES").exists() {
-        base.join(".GRAPHER-WORKTREES")
+    let alias_root = if base.join(".PI-N-WORKTREES").exists() {
+        base.join(".PI-N-WORKTREES")
     } else {
         root.clone()
     };
@@ -395,7 +395,7 @@ fn seatbelt_rejects_nested_symlink_loop_back_to_worktree_root() {
     let temp = TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let source = base.join("source");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let real_slot = root.join("run/real");
     fs::create_dir_all(&source).unwrap();
     fs::create_dir_all(&real_slot).unwrap();

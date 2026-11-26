@@ -779,7 +779,7 @@ mod tests {
             metrics: None,
             output_bytes: 0,
             pid: Some(123),
-            output: "{\"type\":\"grapher_process_started\",\"pid\":123,\"cwd\":\"x\"}\nsecret"
+            output: "{\"type\":\"pi_n_process_started\",\"pid\":123,\"cwd\":\"x\"}\nsecret"
                 .into(),
         });
         let metadata = snapshot_metadata(&state).unwrap();

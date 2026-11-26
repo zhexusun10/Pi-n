@@ -353,7 +353,7 @@ the HTTP request on a long tool turn's acknowledgement; a closed RPC input still
 surfaces as a failure, not false success or an automatic resend.
 
 Planner Steers use an append-only submission/status record keyed by a client
-request ID. The HTTP response means Grapher recorded the submission, not that Pi
+request ID. The HTTP response means Pi^n recorded the submission, not that Pi
 or the model read it; the asynchronous Pi RPC disposition separately records
 queued, accepted, handled or failed. Repeated requests with the same ID are
 idempotent. An unconfirmed RPC times out to unknown and a later response can
@@ -362,7 +362,7 @@ also shown as unknown rather than silently resent. A private UUID suffix binds
 Pi's user-turn event to its submission without matching text or repeated
 instructions. It remains in Pi's session/log for recovery and history edits,
 but the mandatory Planner context projection removes it before model calls. If
-an extension handles or rewrites the input without the marker, Grapher does not
+an extension handles or rewrites the input without the marker, Pi^n does not
 claim that it was consumed. Slash commands retain their original parsing.
 
 The browser presents unconsumed Planner Steers separately from the ordered
@@ -462,7 +462,7 @@ All event rows have an indexed kind; output exists only in `execution_logs`.
 Planner summary/request files carry `formatVersion=1` and explicit Run ownership.
 Summary reads never fill missing metadata from events or other files. Every Run's
 Planner session lives in `planner-sessions/<runId>` with that Run's deterministic
-Pi identity. Session validation checks Pi version 3, `grapherFormat=1`, Run ownership,
+Pi identity. Session validation checks Pi version 3, `piNFormat=1`, Run ownership,
 identity and a complete tail before rebinding, forking or editing. Interrupted
 current attempts still recover their durable summaries and log metrics.
 
@@ -513,7 +513,7 @@ trailing messages; their model window falls back to Pi's provider catalog or
 installed model files. The browser displays these backend projections without
 maintaining a separate context counter.
 
-Grapher's tool-output display log is a projection, not a raw Pi-session dump. The
+Pi^n's tool-output display log is a projection, not a raw Pi-session dump. The
 [engine projection](../../backend/src/engine/tool_output.rs) retains at most
 100 KiB of UTF-8 text per tool-result body and per tool-call argument value
 (`write`/`edit` carry whole file bodies), marks projection-only cuts with
@@ -562,6 +562,26 @@ lexically within their workspace: unmatched absolute paths and `..` escapes are
 excluded, while ordinary project directories named `tmp`, `dev` or `proc` remain
 visible. Case-insensitive root matching preserves original UTF-8 path boundaries.
 Older derived sidecar versions are reparsed rather than retaining pre-fix rows.
+
+Bash is opaque, so transcript rows from it are leads, not facts. `rm`/`unlink`
+rows and write leads (`bash-candidate`: redirects, `tee`, `touch`, `cp`,
+`sed -i`, formatters with `--write`/`--fix`, and quoted paths in a command that
+calls an interpreter's file-write API; here-document bodies are not parsed) are
+verified by [bash_verify.rs](../../backend/src/file_changes/bash_verify.rs).
+Each is compared with its execution's baseline (the `before` snapshot, or the
+real `HEAD` / shadow `HEAD` for Serial/source-direct work that has none) using
+read-only Git queries (`-c core.fsmonitor=false`, `--relative`, bounded to 400
+paths per target with deletions prioritized, a 5-second deadline, and a short
+TTL cache while running) and kept only if Git still sees a difference at or
+below that path, using Git's status and line counts. Scratch files created and
+removed in one command, ignored caches and files only another agent or the user
+touched leave no row, so the row's diff always has content. A failed bash call
+still contributes leads, never deletions. Precise `write`/`edit`/Git rows win
+over a verified lead. Once an execution settles, the first warm read freezes its
+verified rows (`bash-verified`) in the cache and durable sidecar so later user
+commits or edits cannot rewrite its history; transient Git failures never
+freeze. Plain folders without a shadow repository have no baseline: deletions
+stay as parsed and leads are dropped.
 
 Sidecar persistence and display unions capture an owned cache snapshot, then
 release the process-wide display-cache mutex before merging large path sets.
@@ -618,11 +638,11 @@ with stable `code`, `message`, `retryable` and `requestId`. HTTP 404 identifies
 missing entities, 409 identifies conflicts or uncertain operations, 429 rejects
 receipt capacity exhaustion before dispatch, and recognized internal failures
 use 500. The frontend uses `RUN_NOT_FOUND`, not display wording, to retire a Run.
-`X-Grapher-Request-Id` correlates a request with its response; browser callers may
+`X-Pi-N-Request-Id` correlates a request with its response; browser callers may
 read it and the backend instance/receipt headers through the explicit CORS list.
 
-After bootstrap advertises `X-Grapher-Instance`, writes carry
-`X-Grapher-Operation: <instance>:<issued-ms>:<uuid>`. The HTTP boundary reserves the
+After bootstrap advertises `X-Pi-N-Instance`, writes carry
+`X-Pi-N-Operation: <instance>:<issued-ms>:<uuid>`. The HTTP boundary reserves the
 receipt before Run/service creation. The desktop client tracks each response's
 dispatch generation: an older connection cannot replace the current instance
 or invalidate a newer connection, and superseded URL lookups follow the current
@@ -730,7 +750,7 @@ label. After the agent returns (including any feedback-protocol repair),
 `node_finalize` reports result saving, with snapshot and environment phases shown
 in the node conversation. Completion still waits for validated code/environment
 evidence and the output flush; this activity never marks a node completed early.
-The execution log records `grapher_completion_phase` start/end entries with
+The execution log records `pi_n_completion_phase` start/end entries with
 `phase`, `status`, `timestamp` and terminal `elapsedMs` for verification, discovery,
 snapshot, file-change collection and environment sealing. These timings separate
 post-agent Runtime work from the model-process duration. A node snapshot reuses
@@ -823,7 +843,7 @@ After interruption:
   the unfinished truncated turn when explicitly continuing it. Ordinary tool
   calls and saved results, including partially answered batches, remain intact.
   Pi's provider adapter supplies its native `No result provided` tool result
-  for a missing result; Grapher adds no separate warning or user instruction.
+  for a missing result; Pi^n adds no separate warning or user instruction.
   Raw session history is unchanged. Missing results can represent operations
   with unknown side effects; exactly-once execution is not claimed
   ([context regressions](../../scripts/continuation-context.test.ts)).

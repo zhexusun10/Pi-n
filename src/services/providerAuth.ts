@@ -50,7 +50,7 @@ function call<T>(operation: string, fields: Record<string, unknown> = {}): Promi
 async function callBody<T>(operation: string, fields: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   return jsonRequest<T>("provider_auth", { version: 1, operation, ...fields }, { signal, timeoutMs: null });
 }
-const CATALOG_STORAGE_KEY = "grapher_provider_catalog_cache";
+const CATALOG_STORAGE_KEY = "pi_n_provider_catalog_cache";
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -112,7 +112,7 @@ const catalogListeners = new Set<() => void>();
 let visibilityRevision = 0;
 let knownHiddenModels = cachedCatalog?.hiddenModels;
 let visibilityRead: Promise<ModelVisibility> | null = null;
-const VISIBILITY_KEY = "grapher_model_visibility_changed";
+const VISIBILITY_KEY = "pi_n_model_visibility_changed";
 
 function withVisibility(catalog: ProviderCatalog, hiddenModels: string[]): ProviderCatalog {
   const hidden = new Set(hiddenModels);

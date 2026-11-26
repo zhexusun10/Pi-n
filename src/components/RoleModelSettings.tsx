@@ -19,30 +19,17 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
   busy: boolean;
   hidePartitioner?: boolean;
 }) {
-  const [providerFilter, setProviderFilter] = useState("");
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
   const isHidden = (key: string) => catalog?.hiddenModels?.includes(key) || catalog?.models.some(model => `${model.provider}/${model.id}` === key && model.hidden);
   const displayModel = (key: string) => isHidden(key) ? t("当前已选模型已隐藏") : key;
   const draft = normalizeModelThinkingLevels(config, catalog);
   const availableModels = availableCatalogModels(catalog);
-  const availableProviders = catalog?.providers.filter(provider => availableModels.some(model => model.provider === provider.id)) ?? [];
-  // A provider may disappear after logout. Don't leave a stale filter hiding
-  // the remaining available models, or reset any role's persisted selection.
-  const activeFilter = availableProviders.some(provider => provider.id === providerFilter) ? providerFilter : "";
-  const models = availableModels.filter(model => !activeFilter || model.provider === activeFilter);
 
   return (
     <div className="role-model-settings">
       <AnimatePresence>
         {scopedModelsOpen && <ScopedModelsModal key="scoped-models-modal" onClose={() => setScopedModelsOpen(false)} />}
       </AnimatePresence>
-      <label className="form-field">
-        <span>{t("可用模型 Provider 筛选")}</span>
-        <select value={activeFilter} disabled={busy || availableProviders.length === 0} onChange={event => setProviderFilter(event.target.value)} className="provider-filter-select">
-          <option value="">{t("全部可用 Provider")}</option>
-          {availableProviders.map(provider => <option key={provider.id} value={provider.id}>{provider.name} ({provider.id})</option>)}
-        </select>
-      </label>
       {!catalog && <p className="role-model-note" role="status">{busy ? t("正在加载可用模型…") : t("模型列表暂不可用，请在上方刷新 Provider 状态。")}</p>}
       {catalog && availableModels.length === 0 && <p className="role-model-note" role="status">{catalog.models.some(model => model.available)
         ? t("所有可用模型均已隐藏，可在管理可见模型中恢复显示。")
@@ -52,8 +39,8 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
         const model = selected?.model ?? (role.id === "nodeAgent" ? draft.model : "");
         const settings = roleModelConfig(draft, role.id);
         const effective = roleModelConfig(draft, role.id, envOverrides);
-        // Capabilities follow the saved/inherited model, not the provider filter
-        // or an environment override that cannot be edited in this form.
+        // Capabilities follow the saved/inherited model, not an environment
+        // override that cannot be edited in this form.
         const thinkingModel = catalog?.models.find(item => `${item.provider}/${item.id}` === settings.model);
         const levels = thinkingModel?.thinkingLevels ?? [];
         const supported = levels.includes(settings.thinkingLevel);
@@ -61,9 +48,6 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
         const currentModel = availableModels.find(item => `${item.provider}/${item.id}` === model);
         const hidden = isHidden(effective.model);
         const unavailable = !!catalog && !!effective.model && !hidden && !availableModels.some(item => `${item.provider}/${item.id}` === effective.model);
-        // Keep an available current selection visible when filtering another
-        // provider. An unavailable saved value is displayed but not selectable.
-        const choices = currentModel && !models.includes(currentModel) ? [currentModel, ...models] : models;
         return (
           <section className="role-model-group" key={role.id} aria-label={t("{0} 模型配置", role.label)}>
             <h5>{role.label}</h5>
@@ -79,7 +63,7 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
                 }} className="provider-filter-select" disabled={busy || !catalog || availableModels.length === 0}>
                   <option value="">{role.id === "nodeAgent" ? t("请选择可用模型") : t("使用 Node Agent 默认模型")}</option>
                   {model && !currentModel && <option value={model} disabled>{isHidden(model) ? t("当前已选模型已隐藏") : `${catalog ? t("已选模型不可用：") : t("当前模型：")}${model}`}</option>}
-                  {choices.map(item => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id} ({item.provider}/{item.id})</option>)}
+                  {availableModels.map(item => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id} ({item.provider}/{item.id})</option>)}
                 </select>
               </label>
               <label className="form-field">

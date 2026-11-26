@@ -57,7 +57,7 @@ function isInsideDirectory(candidatePath, parentDir) {
 /**
  * Resolve the configured updater public key AND record where it came from,
  * matching the exact precedence of `src-tauri/src/lib.rs`:
- *   explicit override -> `GRAPHER_UPDATER_PUBKEY` -> `TAURI_UPDATER_PUBKEY` -> `tauri.conf.json`.
+ *   explicit override -> `PI_N_UPDATER_PUBKEY` -> `TAURI_UPDATER_PUBKEY` -> `tauri.conf.json`.
  */
 export function resolveUpdaterPubkeySource({
   explicitPubkey = null,
@@ -69,9 +69,9 @@ export function resolveUpdaterPubkeySource({
     return { pubkey: cleanedExplicit, source: 'cli' };
   }
   const envPrimary =
-    typeof env?.GRAPHER_UPDATER_PUBKEY === 'string' ? env.GRAPHER_UPDATER_PUBKEY.trim() : '';
+    typeof env?.PI_N_UPDATER_PUBKEY === 'string' ? env.PI_N_UPDATER_PUBKEY.trim() : '';
   if (envPrimary) {
-    return { pubkey: envPrimary, source: 'GRAPHER_UPDATER_PUBKEY' };
+    return { pubkey: envPrimary, source: 'PI_N_UPDATER_PUBKEY' };
   }
   const envFallback =
     typeof env?.TAURI_UPDATER_PUBKEY === 'string' ? env.TAURI_UPDATER_PUBKEY.trim() : '';
@@ -364,7 +364,7 @@ export function assertPrivateKeyMatchesPubkey({
 
   if (!derived.keyId.equals(parsedConfigured.keyId) || !derived.rawEd25519.equals(configuredRawEd25519)) {
     throw new Error(
-      `Tauri updater signing keypair mismatch: TAURI_SIGNING_PRIVATE_KEY derives key ID ${derived.keyIdHex}, but ${configuredSource} has key ID ${parsedConfigured.keyIdHex}. Update GRAPHER_UPDATER_PUBKEY (GitHub Actions Variable) or src-tauri/tauri.conf.json plugins.updater.pubkey so both belong to the same keypair.`,
+      `Tauri updater signing keypair mismatch: TAURI_SIGNING_PRIVATE_KEY derives key ID ${derived.keyIdHex}, but ${configuredSource} has key ID ${parsedConfigured.keyIdHex}. Update PI_N_UPDATER_PUBKEY (GitHub Actions Variable) or src-tauri/tauri.conf.json plugins.updater.pubkey so both belong to the same keypair.`,
     );
   }
 
@@ -395,7 +395,7 @@ export function generateMinisignKeypair({
   }
   if (!allowInRepo && isInsideDirectory(resolvedOut, repoRoot)) {
     throw new Error(
-      `Refusing to write private signing key inside the repository (${resolvedOut}). Choose an offline path outside the repo (for example ~/.tauri/grapher-updater.key) or pass --allow-in-repo for temporary tests.`,
+      `Refusing to write private signing key inside the repository (${resolvedOut}). Choose an offline path outside the repo (for example ~/.tauri/pi-n-updater.key) or pass --allow-in-repo for temporary tests.`,
     );
   }
   const pubPath = `${resolvedOut}.pub`;
@@ -678,7 +678,7 @@ export function validateUpdaterSigningEnvironment({
 
   if (signingEnabled && !parsedPubkey) {
     throw new Error(
-      'TAURI_SIGNING_PRIVATE_KEY is set, but no updater public key is configured. Set the GRAPHER_UPDATER_PUBKEY GitHub Actions Variable (not a Secret) or plugins.updater.pubkey in src-tauri/tauri.conf.json to the matching base64 minisign public key.',
+      'TAURI_SIGNING_PRIVATE_KEY is set, but no updater public key is configured. Set the PI_N_UPDATER_PUBKEY GitHub Actions Variable (not a Secret) or plugins.updater.pubkey in src-tauri/tauri.conf.json to the matching base64 minisign public key.',
     );
   }
 
@@ -779,7 +779,7 @@ export function verifyArtifactSignatureFile({
     : resolveUpdaterPubkeySource({ tauriConfPath, env }).pubkey;
   if (!effectivePubkey) {
     throw new Error(
-      'No updater public key provided or configured. Pass --pubkey <base64|path>, set GRAPHER_UPDATER_PUBKEY, or configure plugins.updater.pubkey in src-tauri/tauri.conf.json.',
+      'No updater public key provided or configured. Pass --pubkey <base64|path>, set PI_N_UPDATER_PUBKEY, or configure plugins.updater.pubkey in src-tauri/tauri.conf.json.',
     );
   }
   validateUpdaterPublicKeyStrict(effectivePubkey);
@@ -983,7 +983,7 @@ function runCli(argv) {
     console.log(`[desktop:signing] Generated Tauri minisign keypair (key ID ${result.keyIdHex}).`);
     console.log(`[desktop:signing] Private key (keep offline, NEVER commit): ${result.privateKeyPath}`);
     console.log(`[desktop:signing] Public key file: ${result.publicKeyPath}`);
-    console.log(`[desktop:signing] Public key (safe for GRAPHER_UPDATER_PUBKEY variable or tauri.conf.json):`);
+    console.log(`[desktop:signing] Public key (safe for PI_N_UPDATER_PUBKEY variable or tauri.conf.json):`);
     console.log(result.pubkey);
     return;
   }
@@ -1015,7 +1015,7 @@ function runCli(argv) {
       if (!configured.pubkey) {
         if (checkConfigured) {
           throw new Error(
-            'No updater public key is configured in GRAPHER_UPDATER_PUBKEY, TAURI_UPDATER_PUBKEY, or src-tauri/tauri.conf.json.',
+            'No updater public key is configured in PI_N_UPDATER_PUBKEY, TAURI_UPDATER_PUBKEY, or src-tauri/tauri.conf.json.',
           );
         }
       } else {

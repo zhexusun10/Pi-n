@@ -87,12 +87,12 @@ test("parseMessageAttachmentsAndText omits image attachment cards when images ar
 });
 
 test("parseMessageAttachmentsAndText extracts and strips external managed attachment mentions", () => {
-  const path = "/Users/dev/.grapher/attachment-inputs/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/report.pdf";
+  const path = "/Users/dev/.pi-n/attachment-inputs/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/report.pdf";
   const parsed = parseMessageAttachmentsAndText(`@${path} summarize this report`);
   assert.equal(parsed.cleanText, "summarize this report");
   assert.deepEqual(parsed.attachments, [{ name: "report.pdf", type: "file" }]);
 
-  const quotedPath = "/Users/My User/.grapher/attachment-inputs/22222222-2222-4222-8222-222222222222/quarterly data.csv";
+  const quotedPath = "/Users/My User/.pi-n/attachment-inputs/22222222-2222-4222-8222-222222222222/quarterly data.csv";
   const parsedQuoted = parseMessageAttachmentsAndText(`@${JSON.stringify(quotedPath)} check totals`);
   assert.equal(parsedQuoted.cleanText, "check totals");
   assert.deepEqual(parsedQuoted.attachments, [{ name: "quarterly data.csv", type: "file" }]);
@@ -101,19 +101,19 @@ test("parseMessageAttachmentsAndText extracts and strips external managed attach
 test("extractLeadingAttachmentPrefix returns empty string for plain indented text without attachments", () => {
   assert.equal(extractLeadingAttachmentPrefix("   indented prompt"), "");
   assert.equal(extractLeadingAttachmentPrefix("\n\tplain text"), "");
-  const path = "/Users/dev/.grapher/attachment-inputs/22222222-2222-4222-8222-222222222222/report.pdf";
+  const path = "/Users/dev/.pi-n/attachment-inputs/22222222-2222-4222-8222-222222222222/report.pdf";
   assert.equal(extractLeadingAttachmentPrefix(`@${path} follow up`), `@${path} `);
   assert.equal(extractLeadingAttachmentPrefix(`  @${path}\n\nfollow up`), `  @${path}\n\n`);
 });
 
 test("prependAttachmentPrefix inserts a separator when editing file-only messages", () => {
-  const barePath = "/Users/dev/.grapher/attachment-inputs/22222222-2222-4222-8222-222222222222/report.pdf";
+  const barePath = "/Users/dev/.pi-n/attachment-inputs/22222222-2222-4222-8222-222222222222/report.pdf";
   const barePrefix = extractLeadingAttachmentPrefix(`@${barePath}`);
   assert.equal(barePrefix, `@${barePath}`);
   assert.equal(prependAttachmentPrefix(barePrefix, ""), `@${barePath}`);
   assert.equal(prependAttachmentPrefix(barePrefix, "summarize this"), `@${barePath} summarize this`);
 
-  const quotedPath = "/Users/My User/.grapher/attachment-inputs/22222222-2222-4222-8222-222222222222/my report.pdf";
+  const quotedPath = "/Users/My User/.pi-n/attachment-inputs/22222222-2222-4222-8222-222222222222/my report.pdf";
   const quotedPrefix = extractLeadingAttachmentPrefix(`@${JSON.stringify(quotedPath)}`);
   assert.equal(prependAttachmentPrefix(quotedPrefix, "check totals"), `@${JSON.stringify(quotedPath)} check totals`);
 
@@ -123,8 +123,8 @@ test("prependAttachmentPrefix inserts a separator when editing file-only message
 });
 
 test("formatManagedAttachmentDisplayLabel hides internal paths and falls back to filenames", () => {
-  const pathA = "/Users/dev/.grapher/attachment-inputs/22222222-2222-4222-8222-222222222222/report.pdf";
-  const pathB = "/Users/dev/.grapher/attachment-inputs/33333333-3333-4333-8333-333333333333/data.csv";
+  const pathA = "/Users/dev/.pi-n/attachment-inputs/22222222-2222-4222-8222-222222222222/report.pdf";
+  const pathB = "/Users/dev/.pi-n/attachment-inputs/33333333-3333-4333-8333-333333333333/data.csv";
   assert.equal(formatManagedAttachmentDisplayLabel(`@${pathA} Summarize Q4`), "Summarize Q4");
   assert.equal(formatManagedAttachmentDisplayLabel(`@${pathA}`), "report.pdf");
   assert.equal(formatManagedAttachmentDisplayLabel(`@${pathA} @${pathB}`), "report.pdf, data.csv");

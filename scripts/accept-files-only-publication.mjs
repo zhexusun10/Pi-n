@@ -9,10 +9,10 @@ import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import { privateGraph } from './fixtures/current-run.mjs';
 
-const directory = await mkdtemp(join(tmpdir(), 'grapher-files-only-acceptance-'));
+const directory = await mkdtemp(join(tmpdir(), 'pi-n-files-only-acceptance-'));
 const agent = join(directory, 'agent');
 const target = resolve(process.env.CARGO_TARGET_DIR || 'backend/target');
-const executable = join(target, 'debug', `grapher${process.platform === 'win32' ? '.exe' : ''}`);
+const executable = join(target, 'debug', `pi-n${process.platform === 'win32' ? '.exe' : ''}`);
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Acceptance', '-c', 'user.email=acceptance@localhost',
   '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -52,7 +52,7 @@ const model = createServer(async (request, response) => {
       else if (!results.length) tools = [{ name: 'bash', arguments: { command:
         'test -n "$(git diff --name-only --diff-filter=U)" && printf "left\\nright\\n" > shared.txt && git add -f shared.txt' } }];
     } else if (!results.length) {
-      const projectView = 'test -d .git && test -z "$(git for-each-ref --format="%(refname)" refs/grapher/)" && test "$(git branch --show-current)" != grapher-node && ';
+      const projectView = 'test -d .git && test -z "$(git for-each-ref --format="%(refname)" refs/pi-n/)" && test "$(git branch --show-current)" != pi-n-node && ';
       const command = text.includes('WRITE_ALPHA') ? 'printf alpha > alpha.txt'
         : text.includes('WRITE_BETA') ? 'printf beta > beta.txt'
         : text.includes('WRITE_GAMMA') ? 'printf gamma > gamma.txt'
@@ -125,7 +125,7 @@ const verify = (repository, original, state, before) => {
   assert.ok(state.publication?.status === 'completed'
     || (state.isolatedWorkspaces === false && state.events.some(event => event.type === 'publication_completed')),
   'private results must have a completed publication');
-  assert.equal(git(repository, 'for-each-ref', '--format=%(refname)', 'refs/grapher'), '');
+  assert.equal(git(repository, 'for-each-ref', '--format=%(refname)', 'refs/pi-n'), '');
   assert.equal(git(repository, 'rev-parse', 'HEAD'), original);
   assert.equal(git(repository, 'diff', '--cached', '--name-only'), before.indexStaged);
   assert.notEqual(git(repository, 'status', '--porcelain'), '', 'delivered files remain uncommitted');
@@ -149,9 +149,9 @@ try {
   await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
   port = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
-  env = { ...process.env, GRAPHER_DATA_DIR: join(directory, 'data'), GRAPHER_PORT: String(port),
-    GRAPHER_CACHE_DIR: join(directory, 'cache'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'),
-    GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_CODING_AGENT_DIR: agent, GRAPHER_ISOLATED_PI_MODELS: '1' };
+  env = { ...process.env, PI_N_DATA_DIR: join(directory, 'data'), PI_N_PORT: String(port),
+    PI_N_CACHE_DIR: join(directory, 'cache'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
+    PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_CODING_AGENT_DIR: agent, PI_N_ISOLATED_PI_MODELS: '1' };
   for (const role of ['PLANNER', 'PARTITIONER', 'NODE_AGENT', 'MERGER']) {
     env[`${role}_MODEL`] = 'files-only-acceptance/native'; env[`${role}_THINKING`] = 'off';
   }
@@ -180,7 +180,7 @@ try {
       if (label === 'NODE_FANIN') nodes.push({ id: 'join', task: `${label} VERIFY_MERGED` });
       // Pin these cases to the retained private contract: a two-node adaptive
       // batch may run in source and therefore never require a publication Merger.
-      initial = await privateGraph(api, env.GRAPHER_DATA_DIR, { config: config(repository), graph: { originalGoal: label, nodes,
+      initial = await privateGraph(api, env.PI_N_DATA_DIR, { config: config(repository), graph: { originalGoal: label, nodes,
         edges: label === 'NODE_FANIN' ? [{ from: 'left', to: 'join', feedback: false }, { from: 'right', to: 'join', feedback: false }] : [] } });
     }
     console.log(`[acceptance] ${label}: approving ${initial.runId}`);

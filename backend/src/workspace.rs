@@ -119,7 +119,7 @@ pub struct PickResult {
 }
 
 pub fn data_root() -> PathBuf {
-    let path = crate::native::environment_path("GRAPHER_DATA_DIR").unwrap_or_else(|| {
+    let path = crate::native::environment_path("PI_N_DATA_DIR").unwrap_or_else(|| {
         // Unit tests must never write shadow/workspace data into the
         // checkout; integration fixtures call `ensure_test_data_root()`
         // explicitly because this library is compiled without `cfg(test)`.
@@ -129,7 +129,7 @@ pub fn data_root() -> PathBuf {
         }
         #[cfg(not(test))]
         {
-            crate::native::installation_root().join(".grapher")
+            crate::native::installation_root().join(".pi-n")
         }
     });
     let path = if path.is_relative() {
@@ -165,11 +165,11 @@ fn default_cache_root(platform: &str, env: impl Fn(&str) -> Option<PathBuf>) -> 
     match platform {
         "windows" => env("LOCALAPPDATA")
             .unwrap_or_else(|| home.join("AppData/Local"))
-            .join("Grapher"),
-        "macos" => home.join("Library/Caches/Grapher"),
+            .join("Pi-n"),
+        "macos" => home.join("Library/Caches/Pi-n"),
         _ => env("XDG_CACHE_HOME")
             .unwrap_or_else(|| home.join(".cache"))
-            .join("grapher"),
+            .join("pi-n"),
     }
 }
 
@@ -205,7 +205,7 @@ pub(crate) fn host_cache_root() -> PathBuf {
 
 pub fn cache_root() -> PathBuf {
     absolute_cache_path(
-        crate::native::environment_path("GRAPHER_CACHE_DIR").unwrap_or_else(|| {
+        crate::native::environment_path("PI_N_CACHE_DIR").unwrap_or_else(|| {
             default_cache_root(std::env::consts::OS, |name| {
                 std::env::var_os(name).map(PathBuf::from)
             })
@@ -216,14 +216,14 @@ pub fn cache_root() -> PathBuf {
 pub(crate) fn native_runtime_parent() -> PathBuf {
     // Keep the leaf spelling so storage can reject a linked/redirected parent.
     absolute_path(
-        crate::native::environment_path("GRAPHER_NATIVE_RUNTIME_PARENT")
-            .unwrap_or_else(|| cache_root().join("workspaces/.grapher-workspaces")),
+        crate::native::environment_path("PI_N_NATIVE_RUNTIME_PARENT")
+            .unwrap_or_else(|| cache_root().join("workspaces/.pi-n-workspaces")),
     )
 }
 
 pub(crate) fn workspaces_parent(data: &Path) -> PathBuf {
     absolute_cache_path(
-        crate::native::environment_path("GRAPHER_WORKSPACE_PARENT").unwrap_or_else(|| {
+        crate::native::environment_path("PI_N_WORKSPACE_PARENT").unwrap_or_else(|| {
             // Fixture/unit-test checkouts are disposable with their test data. Real
             // execution must stay outside both source and protected session data.
             if cfg!(any(test, feature = "fixture")) {
@@ -248,11 +248,11 @@ mod cache_path_tests {
             "LOCALAPPDATA" => Some(local.clone()),
             _ => None,
         });
-        assert_eq!(root, local.join("Grapher"));
+        assert_eq!(root, local.join("Pi-n"));
         assert_eq!(
             default_cache_root("windows", |name| (name == "USERPROFILE")
                 .then(|| profile.clone())),
-            profile.join("AppData/Local/Grapher")
+            profile.join("AppData/Local/Pi-n")
         );
     }
 
@@ -267,12 +267,12 @@ mod cache_path_tests {
         };
         assert_eq!(
             default_cache_root("macos", env),
-            home.join("Library/Caches/Grapher")
+            home.join("Library/Caches/Pi-n")
         );
-        assert_eq!(default_cache_root("linux", env), xdg.join("grapher"));
+        assert_eq!(default_cache_root("linux", env), xdg.join("pi-n"));
         assert_eq!(
             default_cache_root("linux", |name| (name == "HOME").then(|| home.clone())),
-            home.join(".cache/grapher")
+            home.join(".cache/pi-n")
         );
     }
 }
@@ -359,14 +359,14 @@ mod workspace_guard_tests {
         assert!(validate_binding(&project).is_ok());
         assert!(err.contains("数据集"));
 
-        // Files in .git and .grapher* are excluded from project size
+        // Files in .git and .pi-n* are excluded from project size
         let git_dir = project.join(".git");
         fs::create_dir_all(&git_dir).unwrap();
         fs::write(git_dir.join("large_pack"), vec![b'x'; 500]).unwrap();
 
-        let grapher_dir = project.join(".grapher-worktrees");
-        fs::create_dir_all(&grapher_dir).unwrap();
-        fs::write(grapher_dir.join("worktree_cache"), vec![b'y'; 500]).unwrap();
+        let pi_n_dir = project.join(".pi-n-worktrees");
+        fs::create_dir_all(&pi_n_dir).unwrap();
+        fs::write(pi_n_dir.join("worktree_cache"), vec![b'y'; 500]).unwrap();
 
         // Still passes with 200 bytes of actual project files
         assert!(check_workspace_size(&project, 250).is_ok());
@@ -478,7 +478,7 @@ pub fn check_workspace_size(root: &Path, max_bytes: u64) -> Result<(), String> {
                     continue;
                 }
                 if file_type.is_dir() {
-                    // Exclude .git and internal .grapher* directories.
+                    // Exclude .git and internal .pi-n* directories.
                     if crate::path_identity::is_runtime_metadata_name(&entry.file_name()) {
                         continue;
                     }
@@ -676,7 +676,7 @@ fn prohibited_workspace_reason(candidate: &Path) -> Option<String> {
         std::env::var_os(name).map(PathBuf::from)
     }) {
         return Some(
-            "不能选择系统桌面作为项目工作区：Grapher 会强制把工作区内所有文件收录进 Git 快照（无视 .gitignore），\
+            "不能选择系统桌面作为项目工作区：Pi^n 会强制把工作区内所有文件收录进 Git 快照（无视 .gitignore），\
              而桌面通常包含大量无关个人数据，会让运行长时间卡住。请选择具体的项目或代码仓库目录。"
                 .to_string(),
         );
@@ -705,7 +705,7 @@ fn slot_metadata_dir(path: &Path) -> Result<PathBuf, String> {
         return Err("Non-UTF-8 slot".into());
     }
     Ok(run
-        .join(".grapher-git")
+        .join(".pi-n-git")
         .join(format!("{}.git", crate::workspace_state::slot_digest(path)?)))
 }
 
@@ -832,7 +832,7 @@ pub(crate) fn remove_private_git(path: &Path) -> Result<(), String> {
     if path.file_name().and_then(|name| name.to_str()).is_none() {
         return Ok(());
     }
-    let metadata_root = run.join(".grapher-git");
+    let metadata_root = run.join(".pi-n-git");
     let metadata = slot_metadata_dir(path)?;
     match fs::symlink_metadata(&metadata) {
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -866,7 +866,7 @@ pub(crate) fn remove_private_git(path: &Path) -> Result<(), String> {
 /// Reclaim metadata left beside a Run root when its slot directory is already
 /// gone. This is a migration and crash-recovery sweep, not a live-slot sweep.
 pub(crate) fn reclaim_orphan_git_metadata(run_root: &Path) -> Result<(), String> {
-    let metadata_root = run_root.join(".grapher-git");
+    let metadata_root = run_root.join(".pi-n-git");
     let Ok(meta) = fs::symlink_metadata(&metadata_root) else {
         return Ok(());
     };
@@ -927,7 +927,7 @@ pub(crate) fn reclaim_orphan_git_metadata(run_root: &Path) -> Result<(), String>
 }
 
 /// Remove refs owned by a deleted Run and reclaim objects that are no longer
-/// reachable from any remaining Grapher ref. Shared source databases keep
+/// reachable from any remaining Pi^n ref. Shared source databases keep
 /// their other Run refs, source snapshots and published results intact.
 pub(crate) fn prune_shadow_run_refs(
     shadow: &Path,
@@ -948,7 +948,7 @@ pub(crate) fn prune_shadow_run_refs(
         ));
     }
     let shadow_text = shadow.to_str().ok_or("Invalid shadow path")?;
-    let prefix = format!("refs/grapher/runs/{run_id}/");
+    let prefix = format!("refs/pi-n/runs/{run_id}/");
     let run_refs = git(
         shadow,
         &[
@@ -973,8 +973,8 @@ pub(crate) fn prune_shadow_run_refs(
         )?;
     }
 
-    // Node result commits are also pinned under refs/grapher/heads/<commit>,
-    // and source deduplication caches live under refs/grapher/inputs/<key>.
+    // Node result commits are also pinned under refs/pi-n/heads/<commit>,
+    // and source deduplication caches live under refs/pi-n/inputs/<key>.
     // Keep cache refs only while a root ref (HEAD, another Run, a published
     // result or protected live-Run evidence) still points at the same object.
     let refs = git(
@@ -997,8 +997,8 @@ pub(crate) fn prune_shadow_run_refs(
         let Some((reference, object)) = line.split_once(' ') else {
             continue;
         };
-        if reference.starts_with("refs/grapher/heads/")
-            || reference.starts_with("refs/grapher/inputs/")
+        if reference.starts_with("refs/pi-n/heads/")
+            || reference.starts_with("refs/pi-n/inputs/")
         {
             cache_refs.push((reference.to_string(), object.to_string()));
         } else {
@@ -1039,7 +1039,7 @@ pub(crate) fn prune_shadow_run_refs(
             .all(|object| remaining.contains(object.as_str()))
         {
             // Reflogs can keep otherwise unreachable objects alive; expire them
-            // before pruning. The host ref lock serializes this with Grapher Git.
+            // before pruning. The host ref lock serializes this with Pi^n Git.
             git(
                 shadow,
                 &[
@@ -1061,10 +1061,10 @@ pub(crate) fn prune_shadow_run_refs(
     Ok(())
 }
 
-/// Reclaim unreferenced cache refs (`refs/grapher/heads/*`, `refs/grapher/inputs/*`),
+/// Reclaim unreferenced cache refs (`refs/pi-n/heads/*`, `refs/pi-n/inputs/*`),
 /// dead `agent-views/` and unreachable Git objects from a retained shadow
 /// repository (e.g. a standard Git project after a Run settles) without
-/// removing any live Run's `refs/grapher/runs/*` or protected commits.
+/// removing any live Run's `refs/pi-n/runs/*` or protected commits.
 pub(crate) fn prune_shadow_unreachable(
     shadow: &Path,
     protected: &std::collections::BTreeSet<String>,
@@ -1101,8 +1101,8 @@ pub(crate) fn prune_shadow_unreachable(
         let Some((reference, object)) = line.split_once(' ') else {
             continue;
         };
-        if reference.starts_with("refs/grapher/heads/")
-            || reference.starts_with("refs/grapher/inputs/")
+        if reference.starts_with("refs/pi-n/heads/")
+            || reference.starts_with("refs/pi-n/inputs/")
         {
             cache_refs.push((reference.to_string(), object.to_string()));
         } else {
@@ -1529,11 +1529,11 @@ fn bridge_plain_snapshot(target: &Path) -> Result<String, String> {
     if let (Ok(published), Ok(composed)) = (
         repository_git(
             target,
-            &["rev-parse", "--verify", "refs/grapher/published/source"],
+            &["rev-parse", "--verify", "refs/pi-n/published/source"],
         ),
         repository_git(
             target,
-            &["rev-parse", "--verify", "refs/grapher/published/composed"],
+            &["rev-parse", "--verify", "refs/pi-n/published/composed"],
         ),
     ) {
         if repository_git(target, &["merge-base", "--is-ancestor", &published, &head]).is_ok()
@@ -1631,7 +1631,7 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
             commit.push("--allow-empty");
         }
     }
-    commit.extend(["-m", "Grapher source snapshot"]);
+    commit.extend(["-m", "Pi^n source snapshot"]);
     git(&canonical, &commit)?;
     let head = bridge_plain_snapshot(&canonical)?;
     if !crate::workspace_view::has_record(&canonical, &head) {
@@ -1728,7 +1728,7 @@ Add-Type -AssemblyName System.Drawing
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $owner = New-Object System.Windows.Forms.Form
-$owner.Text = 'Grapher folder picker'
+$owner.Text = 'Pi^n folder picker'
 $owner.TopMost = $true
 $owner.ShowInTaskbar = $false
 $owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -1985,9 +1985,9 @@ fn git_read(cwd: &Path, args: &[&str]) -> Option<Result<String, String>> {
             | ["status", "--porcelain"]
             | ["diff", "--name-only", "--diff-filter=U"]
             | ["merge-base", "--is-ancestor", _, _]
-    ) || matches!(args, ["rev-parse", spec] if spec.starts_with("refs/grapher/"))
+    ) || matches!(args, ["rev-parse", spec] if spec.starts_with("refs/pi-n/"))
         || matches!(args, ["rev-parse", "--verify", spec]
-            if explicit.is_some() && spec.starts_with("refs/grapher/"));
+            if explicit.is_some() && spec.starts_with("refs/pi-n/"));
     if !supported {
         return None;
     }
@@ -2037,7 +2037,7 @@ fn git_read(cwd: &Path, args: &[&str]) -> Option<Result<String, String>> {
         let (verify, spec) = match args {
             ["rev-parse", "HEAD"] | ["rev-parse", "--verify", "HEAD"] => (true, "HEAD"),
             ["rev-parse", spec] | ["rev-parse", "--verify", spec]
-                if spec.starts_with("refs/grapher/") =>
+                if spec.starts_with("refs/pi-n/") =>
             {
                 (true, *spec)
             }
@@ -2416,9 +2416,9 @@ fn run_git_bytes_allowing(
             "-c",
             "commit.gpgsign=false",
             "-c",
-            "user.name=Grapher",
+            "user.name=Pi^n",
             "-c",
-            "user.email=runtime@grapher.local",
+            "user.email=runtime@pi-n.local",
             // Completion must not wait for an opportunistic repack. Importing
             // a node ref otherwise triggers fetch's automatic maintenance and
             // can hold the node in Running for minutes on a large repository.
@@ -2839,7 +2839,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
         shadow_repo_if_exists(&canonical_repo)?
             .ok_or_else(|| missing_shadow_error(&canonical_repo))?
     };
-    let pin = format!("refs/grapher/heads/{base}");
+    let pin = format!("refs/pi-n/heads/{base}");
     repository_git(&canonical_repo, &["update-ref", &pin, base])?;
     drop(guard);
     // Resolve refs in the host repository first, then borrow its object store.
@@ -2883,7 +2883,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
     let objects = PathBuf::from(objects)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    let base_head = source_git(&["rev-parse", &format!("refs/grapher/heads/{base}")])?;
+    let base_head = source_git(&["rev-parse", &format!("refs/pi-n/heads/{base}")])?;
     // Alternates must use the same object ID format as their source.
     let object_format = source_git(&["rev-parse", "--show-object-format=storage"])
         .unwrap_or_else(|_| "sha1".into());
@@ -2934,7 +2934,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                 "--no-tags",
                 "--no-write-fetch-head",
                 url,
-                &format!("+refs/grapher/heads/{base}:refs/grapher/base"),
+                &format!("+refs/pi-n/heads/{base}:refs/pi-n/base"),
             ],
         )?;
     } else {
@@ -2960,7 +2960,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
         )
         .map_err(|e| e.to_string())?;
         // No fetch or pack copying: pin just the needed refs in this isolated repo.
-        git(path, &["update-ref", "refs/grapher/base", &base_head])?;
+        git(path, &["update-ref", "refs/pi-n/base", &base_head])?;
     }
     let (workers, threshold) = checkout_parallelism();
     let resolve_parent = |parent: &String| -> Result<String, String> {
@@ -2974,14 +2974,14 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
             crate::compiler::node_id(parent)
         };
         let parent_ref = if is_head {
-            format!("refs/grapher/heads/{parent_id}")
+            format!("refs/pi-n/heads/{parent_id}")
         } else if let Some(id) = run_id {
-            format!("refs/grapher/runs/{id}/nodes/{parent_id}")
+            format!("refs/pi-n/runs/{id}/nodes/{parent_id}")
         } else {
             return Err("Named parent snapshots require a Run identity".into());
         };
         if let Some(url) = source_url.as_deref() {
-            let head_refspec = format!("+{parent_ref}:refs/grapher/parents/{parent_id}");
+            let head_refspec = format!("+{parent_ref}:refs/pi-n/parents/{parent_id}");
             git(
                 path,
                 &[
@@ -2999,14 +2999,14 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                 path,
                 &[
                     "update-ref",
-                    &format!("refs/grapher/parents/{parent_id}"),
+                    &format!("refs/pi-n/parents/{parent_id}"),
                     &head,
                 ],
             )?;
         }
         git(
             path,
-            &["rev-parse", &format!("refs/grapher/parents/{parent_id}")],
+            &["rev-parse", &format!("refs/pi-n/parents/{parent_id}")],
         )
     };
     let mut resolved_heads = Vec::new();
@@ -3020,7 +3020,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                 .is_ok()
                 .then(|| parent_head.clone());
                 resolved_heads.push(parent_head);
-                let checkout_target = direct.as_deref().unwrap_or("refs/grapher/base");
+                let checkout_target = direct.as_deref().unwrap_or("refs/pi-n/base");
                 git(
                     path,
                     &[
@@ -3032,7 +3032,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                         "-q",
                         "-f",
                         "-B",
-                        "grapher-node",
+                        "pi-n-node",
                         checkout_target,
                     ],
                 )?;
@@ -3050,8 +3050,8 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                         "-q",
                         "-f",
                         "-B",
-                        "grapher-node",
-                        "refs/grapher/base",
+                        "pi-n-node",
+                        "refs/pi-n/base",
                     ],
                 );
                 return Err(error);
@@ -3069,8 +3069,8 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                 "-q",
                 "-f",
                 "-B",
-                "grapher-node",
-                "refs/grapher/base",
+                "pi-n-node",
+                "refs/pi-n/base",
             ],
         )?;
         for parent in parents {
@@ -3226,7 +3226,7 @@ pub(crate) fn snapshot_node_scoped(
     let node_id = crate::compiler::node_id(node_name);
     let target_ref = if let Some(id) = run_id {
         uuid::Uuid::parse_str(id).map_err(|_| "Invalid Run ID for node snapshot")?;
-        format!("refs/grapher/runs/{id}/nodes/{node_id}")
+        format!("refs/pi-n/runs/{id}/nodes/{node_id}")
     } else {
         return Err("Node snapshots require a Run identity".into());
     };
@@ -3244,7 +3244,7 @@ pub(crate) fn snapshot_detached_planner_scoped(
 ) -> Result<String, String> {
     uuid::Uuid::parse_str(run_id).map_err(|_| "Invalid Run ID for Planner snapshot")?;
     uuid::Uuid::parse_str(execution_id).map_err(|_| "Invalid execution ID for Planner snapshot")?;
-    let target_ref = format!("refs/grapher/runs/{run_id}/planner-detached/{execution_id}");
+    let target_ref = format!("refs/pi-n/runs/{run_id}/planner-detached/{execution_id}");
     snapshot_slot_to_ref_scoped(path, repository, &target_ref, exclusions)
 }
 
@@ -3301,7 +3301,7 @@ fn snapshot_slot_to_ref_scoped(
     let head = git(&canonical_path, &["rev-parse", "HEAD"])?;
     git(
         &canonical_path,
-        &["update-ref", "refs/heads/grapher-node", &head],
+        &["update-ref", "refs/heads/pi-n-node", &head],
     )?;
 
     let path_url = git_file_url(
@@ -3309,9 +3309,9 @@ fn snapshot_slot_to_ref_scoped(
             .as_deref()
             .unwrap_or(&canonical_path),
     )?;
-    let head_ref = format!("refs/grapher/heads/{head}");
-    let head_refspec = format!("+refs/heads/grapher-node:{head_ref}");
-    let node_refspec = format!("+refs/heads/grapher-node:{target_ref}");
+    let head_ref = format!("refs/pi-n/heads/{head}");
+    let head_refspec = format!("+refs/heads/pi-n-node:{head_ref}");
+    let node_refspec = format!("+refs/heads/pi-n-node:{target_ref}");
     // Only host-object/ref writes need to serialize with other imports and GC.
     // The prepared inputs are already pinned; local staging above writes to
     // the slot's own object database, never the shared alternate.
@@ -3379,20 +3379,20 @@ fn snapshot_slot_to_ref_scoped(
 }
 
 /// Pin an immutable source input for composition with a retained node result.
-/// This changes only Grapher-owned refs, never the source working files.
+/// This changes only Pi^n-owned refs, never the source working files.
 pub fn pin_repository_head(repository: &Path, head: &str) -> Result<(), String> {
     let repository = canonical_workspace_path(repository)?;
     let lock = host_ref_lock(&repository)?;
     let _guard = lock.lock().map_err(|error| error.to_string())?;
     repository_git(
         &repository,
-        &["update-ref", &format!("refs/grapher/heads/{head}"), head],
+        &["update-ref", &format!("refs/pi-n/heads/{head}"), head],
     )?;
     Ok(())
 }
 
 /// Snapshot the user-owned source workspace (Planner or Serial). Graph workspaces
-/// must use `snapshot_node` to import their commits into Grapher-owned host refs.
+/// must use `snapshot_node` to import their commits into Pi^n-owned host refs.
 /// This never stages, commits or moves the user's branch/index, including for an
 /// unborn repository.
 pub fn snapshot_repository(path: &Path) -> Result<String, String> {
@@ -3818,8 +3818,8 @@ impl<'a> TrackedPathIndex<'a> {
     }
 
     /// True when at least one project-tracked file lives inside `relative`
-    /// under an excluded generated-artifact or reserved Grapher runtime
-    /// directory (e.g. `__pycache__/tracked.pyc` or `.grapher/tracked.txt`),
+    /// under an excluded generated-artifact or reserved Pi^n runtime
+    /// directory (e.g. `__pycache__/tracked.pyc` or `.pi-n/tracked.txt`),
     /// so directory traversal must descend into it instead of pruning the
     /// entire directory.
     pub(crate) fn has_tracked_generated_descendant(&self, relative: &str) -> bool {
@@ -3827,7 +3827,7 @@ impl<'a> TrackedPathIndex<'a> {
             let mut set = std::collections::HashSet::new();
             for entry in self.exact {
                 let path = Path::new(entry);
-                if is_generated_artifact(path) || is_reserved_grapher_runtime_path(path) {
+                if is_generated_artifact(path) || is_reserved_pi_n_runtime_path(path) {
                     let mut parent = path.parent();
                     while let Some(dir) = parent.filter(|p| !p.as_os_str().is_empty()) {
                         set.insert(dir.to_string_lossy().replace('\\', "/"));
@@ -3863,16 +3863,16 @@ impl<'a> TrackedPathIndex<'a> {
     }
 }
 
-/// Grapher-owned runtime directories and in-flight publish temp files that may
-/// coexist inside a checkout (for example a dev backend writing `.grapher/events.sqlite*`
+/// Pi^n-owned runtime directories and in-flight publish temp files that may
+/// coexist inside a checkout (for example a dev backend writing `.pi-n/events.sqlite*`
 /// while a packaged desktop app runs against the same repository). Ordinary
-/// project files such as `.grapher-project.json` or `.grapher-project/config`
+/// project files such as `.pi-n-project.json` or `.pi-n-project/config`
 /// remain collected.
-pub(crate) fn is_reserved_grapher_runtime_path(relative: &Path) -> bool {
+pub(crate) fn is_reserved_pi_n_runtime_path(relative: &Path) -> bool {
     if relative
         .file_name()
         .and_then(|name| name.to_str())
-        .and_then(|name| name.strip_prefix(".grapher-publish-"))
+        .and_then(|name| name.strip_prefix(".pi-n-publish-"))
         .and_then(|name| name.strip_suffix(".tmp"))
         .is_some_and(|id| id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit()))
     {
@@ -3881,10 +3881,10 @@ pub(crate) fn is_reserved_grapher_runtime_path(relative: &Path) -> bool {
     relative.components().any(|component| match component {
         std::path::Component::Normal(raw) => {
             let name = raw.to_string_lossy();
-            name.eq_ignore_ascii_case(".grapher")
-                || name.eq_ignore_ascii_case(".grapher-worktrees")
-                || name.eq_ignore_ascii_case(".grapher-workspaces")
-                || name.eq_ignore_ascii_case(".grapher-state")
+            name.eq_ignore_ascii_case(".pi-n")
+                || name.eq_ignore_ascii_case(".pi-n-worktrees")
+                || name.eq_ignore_ascii_case(".pi-n-workspaces")
+                || name.eq_ignore_ascii_case(".pi-n-state")
         }
         _ => false,
     })
@@ -3912,7 +3912,7 @@ pub(crate) fn collection_excluded_with_index(
     }
     // Most entries are ordinary project files. Check cheap name/path predicates
     // before allocating a normalized path and querying the tracked set.
-    let reserved = is_reserved_grapher_runtime_path(relative);
+    let reserved = is_reserved_pi_n_runtime_path(relative);
     let host_meta = is_host_metadata_path(relative);
     let generated = !reserved && !host_meta && is_generated_artifact(relative);
     if !reserved && !host_meta && !generated {
@@ -3972,7 +3972,7 @@ fn collection_excluded_inner(
     exclusions: &[String],
 ) -> bool {
     // Other Runs may capture the source while an adjacent copy or another
-    // Grapher instance's `.grapher/` runtime store is live. As with generated
+    // Pi^n instance's `.pi-n/` runtime store is live. As with generated
     // artifacts, an explicitly tracked project file wins over the reserved-name
     // convention.
     if exclusions.iter().any(|scope| {
@@ -3983,7 +3983,7 @@ fn collection_excluded_inner(
     }) {
         return true;
     }
-    let reserved = is_reserved_grapher_runtime_path(relative);
+    let reserved = is_reserved_pi_n_runtime_path(relative);
     let host_meta = is_host_metadata_path(relative);
     let generated = !reserved && !host_meta && is_generated_artifact(relative);
     if !reserved && !host_meta && !generated {
@@ -4547,13 +4547,13 @@ fn stage_scoped_impl(path: &Path, exclusions: &[String], local: bool) -> Result<
     let tracked_host_metadata = capture_tracked_host_metadata(path, exclusions, local)?;
     // Runtime deliberately overrides Git's ignore rules for project files:
     // every ordinary project file becomes part of the node/source Git snapshot.
-    // Only Grapher internals, Runtime data, managed environment scopes and
+    // Only Pi^n internals, Runtime data, managed environment scopes and
     // untracked macOS host metadata stay outside the code snapshot.
     let mut pathspecs = vec![
-        ":(exclude,glob).grapher*".to_string(),
-        ":(exclude,glob).grapher*/**".to_string(),
-        ":(exclude,glob)**/.grapher*".to_string(),
-        ":(exclude,glob)**/.grapher*/**".to_string(),
+        ":(exclude,glob).pi-n*".to_string(),
+        ":(exclude,glob).pi-n*/**".to_string(),
+        ":(exclude,glob)**/.pi-n*".to_string(),
+        ":(exclude,glob)**/.pi-n*/**".to_string(),
     ];
     pathspecs.extend(host_metadata_exclusions());
     if let (Some(root), Some(data)) = (
@@ -4790,12 +4790,12 @@ fn snapshot_source_scoped(
         let _guard = lock.lock().map_err(|e| e.to_string())?;
         let published = repository_git(
             path,
-            &["rev-parse", "--verify", "refs/grapher/published/source"],
+            &["rev-parse", "--verify", "refs/pi-n/published/source"],
         )
         .ok();
         let composed = repository_git(
             path,
-            &["rev-parse", "--verify", "refs/grapher/published/composed"],
+            &["rev-parse", "--verify", "refs/pi-n/published/composed"],
         )
         .ok();
         let bridge = head
@@ -4808,7 +4808,7 @@ fn snapshot_source_scoped(
                     .then_some(composed)
             });
         let input_ref = format!(
-            "refs/grapher/inputs/{}-{}-{}-{}",
+            "refs/pi-n/inputs/{}-{}-{}-{}",
             head.as_deref().unwrap_or("unborn"),
             tree,
             bridge.unwrap_or("source"),
@@ -4921,7 +4921,7 @@ fn snapshot_source_scoped(
             path,
             &[
                 "update-ref",
-                &format!("refs/grapher/heads/{snapshot}"),
+                &format!("refs/pi-n/heads/{snapshot}"),
                 &snapshot,
             ],
         )?;
@@ -5087,7 +5087,7 @@ mod status_filter_tests {
             " M .DS_Store\0",
         )
         .to_string();
-        let root = Path::new("/nonexistent-grapher-status-root");
+        let root = Path::new("/nonexistent-pi-n-status-root");
         let exclusions = vec!["managed".to_string()];
 
         let macos = filtered_status_for(raw.clone(), root, &exclusions, true);

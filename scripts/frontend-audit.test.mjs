@@ -36,22 +36,22 @@ before(async () => {
   });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
 async function fixture(name, handler = async () => false, reducedMotion = "reduce", autoExpandCot = undefined, clockTime = undefined, browserInstance = browser) {
   const context = await browserInstance.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion });
   await context.addInitScript(({ enabled, showAuto }) => {
-    localStorage.setItem("grapher_language_v1", "en");
+    localStorage.setItem("pi_n_language_v1", "en");
     // Mode-transition fixtures explicitly restore Auto; preserve later choices on reload.
-    if (showAuto && localStorage.getItem("grapher_hide_auto_mode_v1") === null) {
-      localStorage.setItem("grapher_hide_auto_mode_v1", "0");
+    if (showAuto && localStorage.getItem("pi_n_hide_auto_mode_v1") === null) {
+      localStorage.setItem("pi_n_hide_auto_mode_v1", "0");
     }
     // COT cards auto-expand by default; "0" disables, "1" enables.
-    if (enabled === true) localStorage.setItem("grapher_auto_expand_cot_v1", "1");
-    else if (enabled === false) localStorage.setItem("grapher_auto_expand_cot_v1", "0");
-    else localStorage.removeItem("grapher_auto_expand_cot_v1");
+    if (enabled === true) localStorage.setItem("pi_n_auto_expand_cot_v1", "1");
+    else if (enabled === false) localStorage.setItem("pi_n_auto_expand_cot_v1", "0");
+    else localStorage.removeItem("pi_n_auto_expand_cot_v1");
   }, { enabled: autoExpandCot, showAuto: ["landingPrompt", "compactModePrompt"].includes(name) });
   const errors = [];
   await context.route("**/api/*", async route => {
@@ -326,6 +326,81 @@ test("Markdown retries a failed workspace image after its reference is removed a
     await page.evaluate(() => window.audit.setMarkdown('![Retry](retry.png)', true));
     await page.waitForFunction(() => document.querySelector('img[alt="Retry"]')?.naturalWidth === 1);
     assert.equal(calls, 2);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Markdown stacks more than two consecutive images and flips through them on hover", { timeout: 30_000 }, async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  const { context, page, errors } = await fixture("markdownCopy", async (route, command, body) => {
+    if (command !== "get_workspace_image") return false;
+    if (body.path === "broken.png") await route.fulfill({ status: 400, json: { error: "Missing" } });
+    else await route.fulfill({ contentType: "image/png", body: png });
+    return true;
+  });
+  try {
+    await page.evaluate(() => {
+      window.audit.setImageScope("stack-run");
+      window.audit.setMarkdown("![One](a.png)\n\n![Two](b.png)");
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll(".markdown-content img")].filter(i => i.naturalWidth === 1).length === 2);
+    assert.equal(await page.locator(".markdown-image-stack").count(), 0, "two images stay unstacked");
+
+    await page.evaluate(() => {
+      window.audit.setMarkdown([
+        "Gallery:",
+        "![Alpha](a.png)",
+        "![Beta](b.png)",
+        "![Gamma](c.png)",
+        "![Delta](d.png)",
+      ].join("\n"));
+    });
+    const stack = page.locator(".markdown-image-stack");
+    await stack.waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll(".markdown-image-stack img")].filter(i => i.naturalWidth === 1).length === 4);
+    assert.equal(await stack.getAttribute("data-count"), "4");
+    assert.equal(await stack.getAttribute("data-browse"), "false");
+    assert.equal(await stack.getAttribute("data-active-index"), "0");
+
+    await stack.hover();
+    await page.waitForFunction(() => document.querySelector(".markdown-image-stack")?.getAttribute("data-browse") === "true");
+
+    await stack.locator(".markdown-image-stack-nav.next").click();
+    assert.equal(await stack.getAttribute("data-active-index"), "1");
+
+    await stack.locator(".markdown-image-stack-nav.prev").click();
+    assert.equal(await stack.getAttribute("data-active-index"), "0");
+
+    // Click the peeking right-wing card to flip forward.
+    await stack.locator('.markdown-image-stack-card[data-slot="1"]').click({ position: { x: 10, y: 10 }, force: true });
+    assert.equal(await stack.getAttribute("data-active-index"), "1");
+
+    // Jump via pagination dot and flip with keyboard arrow.
+    await stack.locator(".markdown-image-stack-dot").nth(3).click();
+    assert.equal(await stack.getAttribute("data-active-index"), "3");
+    await stack.focus();
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(await stack.getAttribute("data-active-index"), "2");
+
+    // Open fullscreen lightbox from the stack and close it.
+    await stack.locator(".markdown-image-stack-expand").click();
+    await page.locator(".image-preview-dialog").waitFor();
+    assert.equal(await page.locator(".image-preview-counter").textContent(), "3 / 4");
+    await page.keyboard.press("Escape");
+    await page.locator(".image-preview-dialog").waitFor({ state: "detached" });
+
+    // A failed workspace image inside a stack renders its error fallback cleanly without crashing React.
+    await page.evaluate(() => {
+      window.audit.setMarkdown("![Alpha](a.png)\n\n![Broken](broken.png)\n\n![Gamma](c.png)");
+    });
+    await page.getByRole("img", { name: "Unable to load image · Broken", exact: true }).waitFor();
+    assert.equal(await stack.getAttribute("data-count"), "3");
+
+    // Leaving hover returns to resting stacked state.
+    await page.mouse.move(1, 1);
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());
+    await page.waitForFunction(() => document.querySelector(".markdown-image-stack")?.getAttribute("data-browse") === "false");
+
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -803,39 +878,28 @@ test("an exiting provider login panel is inert until its animation finishes", { 
   } finally { await context.close(); }
 });
 
-test("provider loading stays in the Refresh icon without a status panel or layout shift", { timeout: 30_000 }, async () => {
+test("provider loading keeps Settings stable without a status panel or layout shift", { timeout: 30_000 }, async () => {
   const requests = [];
   const { context, page, errors } = await fixture("settings", async (route, command, body) => {
     if (command !== "provider_auth" || body.operation !== "catalog") return false;
     requests.push(route);
     return true;
   });
-  const refresh = page.locator(".pi-auth-actions-row .compact-btn");
   const save = page.locator(".save-config-btn");
-  const assertLoading = async () => {
-    await refresh.locator(".spin-icon").waitFor();
-    assert.equal(await refresh.isDisabled(), true);
-    assert.equal(await refresh.getAttribute("aria-busy"), "true");
+  try {
+    await waitFor(() => requests.length === 1);
+    assert.equal(await page.locator(".pi-auth-actions-row .compact-btn").count(), 0, "redundant refresh button is removed");
     assert.equal(await page.locator(".provider-status-loading").count(), 0);
     assert.equal(await page.getByText("Communicating with Pi and syncing provider status...", { exact: true }).count(), 0);
     assert.equal(await save.isDisabled(), true, "catalog loading still prevents saving");
-    assert.equal(await save.getAttribute("aria-busy"), "false", "refresh is not a settings save");
-  };
-  const assertReady = async () => {
-    await page.waitForFunction(() => document.querySelector(".pi-auth-actions-row .compact-btn")?.disabled === false);
-    assert.equal(await refresh.getAttribute("aria-busy"), "false");
-    assert.equal(await refresh.locator(".spin-icon").count(), 0);
-  };
-  try {
-    await waitFor(() => requests.length === 1);
-    await assertLoading();
+    assert.equal(await save.getAttribute("aria-busy"), "false", "catalog load is not a settings save");
     await requests[0].fulfill({ json: { result: catalog } });
-    await assertReady();
+    await page.waitForFunction(() => document.querySelector(".save-config-btn")?.disabled === false);
+
     await page.getByRole("button", { name: "Close dialog", exact: true }).click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     await page.evaluate(() => window.audit.open());
-    await refresh.waitFor();
-    await assertReady();
+    await page.locator(".provider-search-box input").waitFor();
     await page.locator(".settings-modal").evaluate(el => Promise.allSettled(el.getAnimations().map(a => a.finished)));
     // Wait for JS-driven modal entrance transform (Framer Motion) to settle before measuring layout.
     await page.waitForFunction(() => {
@@ -846,24 +910,7 @@ test("provider loading stays in the Refresh icon without a status panel or layou
     });
     assert.equal(requests.length, 1, "reopening Settings reuses the catalog without a loading panel");
     assert.equal(await page.locator(".provider-status-loading").count(), 0);
-
-    const providerPanel = page.locator(".provider-settings-container");
-    const idleBounds = await providerPanel.boundingBox();
     assert.equal(await save.isDisabled(), false);
-    await refresh.click();
-    await waitFor(() => requests.length === 2);
-    await assertLoading();
-    assert.deepEqual(await providerPanel.boundingBox(), idleBounds, "refresh does not insert a row or move Settings sections");
-    await requests[1].fulfill({ json: { result: catalog } });
-    await assertReady();
-    assert.deepEqual(await providerPanel.boundingBox(), idleBounds);
-
-    await refresh.click();
-    await waitFor(() => requests.length === 3);
-    await assertLoading();
-    await requests[2].fulfill({ status: 500, json: { error: "Mock provider refresh failed" } });
-    await page.getByText("Error: Mock provider refresh failed", { exact: true }).waitFor();
-    await assertReady();
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -1632,7 +1679,7 @@ test("a rejected send can be retried immediately during pointer grace", { timeou
 test("pending sends expose a localized busy label", { timeout: 30_000 }, async () => {
   for (const [language, label] of [["en", "Sending…"], ["zh-CN", "正在发送…"]]) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(value => localStorage.setItem("grapher_language_v1", value), language);
+    await context.addInitScript(value => localStorage.setItem("pi_n_language_v1", value), language);
     const page = await context.newPage(), errors = [];
     page.on("pageerror", error => errors.push(String(error)));
     try {
@@ -2274,10 +2321,10 @@ test("scrolling over a short reasoning card does not leave its future content un
 });
 
 test("a growing reasoning card reserves its scrollbar track instead of rewrapping mid-stream", { timeout: 30_000 }, async () => {
-  // Playwright hides scrollbars by default, while Grapher paints its own 10px
+  // Playwright hides scrollbars by default, while Pi^n paints its own 10px
   // track. Launch with classic scrollbars so the width change is observable.
   const scrollbarBrowser = await chromium.launch({
-    channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
+    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
     headless: true, ignoreDefaultArgs: ["--hide-scrollbars"],
   });
   let context;
@@ -2546,7 +2593,7 @@ test("an upward gesture with no conversation scroll range keeps following", { ti
 
 test("symmetric scrollbar gutters do not turn adjacent content into a scrollbar hit", { timeout: 30_000 }, async () => {
   const scrollbarBrowser = await chromium.launch({
-    channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
+    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
     headless: true, ignoreDefaultArgs: ["--hide-scrollbars"],
   });
   let context;
@@ -3008,7 +3055,7 @@ test("a scrollbar drag back to the bottom releases the history-reading anchor", 
     await scroller.evaluate(el => {
       el.scrollTop -= 300;
       el.dataset.transcriptHistoryReading = "true";
-      el.dispatchEvent(new Event("grapher:history-prepend"));
+      el.dispatchEvent(new Event("pi-n:history-prepend"));
       el.dispatchEvent(new Event("scroll"));
       const rect = el.getBoundingClientRect();
       el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 6, clientX: rect.right - 7, clientY: rect.top + 40 }));
@@ -3063,7 +3110,7 @@ test("clicking to interrupt Latest does not let new output resume it", { timeout
     assert.ok(before.gap > 100, `the click interrupted Latest in transit: ${JSON.stringify(before)}`);
     await scroller.evaluate(el => {
       window.audit.outputNotifications = 0;
-      el.addEventListener("grapher:transcript-final-output", () => { window.audit.outputNotifications += 1; });
+      el.addEventListener("pi-n:transcript-final-output", () => { window.audit.outputNotifications += 1; });
     });
     await page.evaluate(() => window.audit.appendToolEvents([{
       type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "AFTER_LATEST_CANCEL" }] },
@@ -3083,8 +3130,8 @@ test("a reflow displacement never parks a follower, and a gesture still wins", {
     await page.getByText("Virtualized message 79", { exact: true }).waitFor();
     await page.waitForTimeout(300);
     const state = await page.locator(".initial-query-scroll").evaluate(async el => {
-      el.dispatchEvent(new Event("grapher:transcript-content-growth"));
-      el.dispatchEvent(new Event("grapher:transcript-final-output"));
+      el.dispatchEvent(new Event("pi-n:transcript-content-growth"));
+      el.dispatchEvent(new Event("pi-n:transcript-final-output"));
       // Model a reflow-induced upward scroll after both notifications but
       // before the shared animation frame; no reader gesture occurred.
       el.scrollTop -= 120;
@@ -3095,7 +3142,7 @@ test("a reflow displacement never parks a follower, and a gesture still wins", {
       const following = el.dataset.transcriptFollowing;
       // A real user gesture between notification and frame must win over the
       // same scheduled recovery, even if it was queued while following.
-      el.dispatchEvent(new Event("grapher:transcript-final-output"));
+      el.dispatchEvent(new Event("pi-n:transcript-final-output"));
       el.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
       el.scrollTop -= 120;
       el.dispatchEvent(new Event("scroll"));
@@ -3152,7 +3199,7 @@ test("Planner forward output is distinguished from a historical prepend and fina
     await page.getByText("PLANNER_TAIL", { exact: true }).waitFor();
     await page.locator("[data-transcript-events]").evaluate(el => {
       window.audit.outputNotifications = 0;
-      el.addEventListener("grapher:transcript-final-output", () => { window.audit.outputNotifications += 1; });
+      el.addEventListener("pi-n:transcript-final-output", () => { window.audit.outputNotifications += 1; });
     });
     await page.evaluate(() => window.audit.prependPlannerHistory());
     await page.getByText("PLANNER_PREPENDED", { exact: true }).waitFor();
@@ -3321,17 +3368,17 @@ for (const fixtureName of ["landingPrompt"]) {
       await modes.filter({ hasText: "Auto" }).waitFor();
       await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(true));
       await page.waitForFunction(() => document.querySelectorAll(".prompt-box-mode-btn").length === 2);
-      assert.deepEqual(await modes.allTextContents(), ["Serial", "Graph"]);
-      assert.equal(await modes.filter({ hasText: "Graph" }).getAttribute("aria-pressed"), "true");
-      await modes.filter({ hasText: "Serial" }).click();
+      assert.deepEqual(await modes.allTextContents(), ["Direct", "Compile"]);
+      assert.equal(await modes.filter({ hasText: "Direct" }).getAttribute("aria-pressed"), "true");
+      await modes.filter({ hasText: "Compile" }).click();
       await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(false));
       await modes.filter({ hasText: "Auto" }).waitFor();
-      assert.equal(await modes.filter({ hasText: "Serial" }).getAttribute("aria-pressed"), "true");
+      assert.equal(await modes.filter({ hasText: "Compile" }).getAttribute("aria-pressed"), "true");
       await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(true));
       await page.reload({ waitUntil: "domcontentloaded" });
-      await modes.filter({ hasText: "Graph" }).waitFor();
-      assert.deepEqual(await modes.allTextContents(), ["Serial", "Graph"]);
-      assert.equal(await modes.filter({ hasText: "Graph" }).getAttribute("aria-pressed"), "true", "a hidden controlled Auto selection projects to Graph on mount");
+      await modes.filter({ hasText: "Direct" }).waitFor();
+      assert.deepEqual(await modes.allTextContents(), ["Direct", "Compile"]);
+      assert.equal(await modes.filter({ hasText: "Direct" }).getAttribute("aria-pressed"), "true", "a hidden controlled Auto selection projects to Direct on mount");
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
@@ -3339,7 +3386,7 @@ for (const fixtureName of ["landingPrompt"]) {
   test(`${fixtureName} fades and shrinks Auto without leaving a gap or an active exit control`, { timeout: 30_000 }, async () => {
     const { context, page, errors } = await fixture(fixtureName, undefined, "no-preference");
     try {
-      for (const selected of ["Auto", "Serial"]) {
+      for (const selected of ["Auto", "Compile"]) {
         await page.setViewportSize({ width: selected === "Auto" ? 1280 : 350, height: 900 });
         await page.getByRole("button", { name: selected, exact: true }).click();
         await page.waitForTimeout(300);
@@ -3373,7 +3420,7 @@ for (const fixtureName of ["landingPrompt"]) {
         assert.ok(frames.some(frame => frame.width !== null && frame.inert && frame.disabled && !frame.active.includes("Auto")),
           "the disappearing option cannot be selected or retain its selected pill");
         assert.equal(final.width, null);
-        assert.deepEqual(final.active, [selected === "Auto" ? "Graph" : "Serial"]);
+        assert.deepEqual(final.active, [selected === "Auto" ? "Direct" : "Compile"]);
         assert.ok(final.track < first.track - 10);
         const gapError = await page.locator(".prompt-box-mode-selector").evaluate(selector => {
           const style = getComputedStyle(selector);
@@ -3415,7 +3462,7 @@ for (const fixtureName of ["landingPrompt"]) {
           requestAnimationFrame(step);
         });
       });
-      assert.deepEqual(await selector.locator("button").allTextContents(), ["Auto", "Serial", "Graph"]);
+      assert.deepEqual(await selector.locator("button").allTextContents(), ["Auto", "Direct", "Compile"]);
       const final = await selector.evaluate(element => ({ width: element.getBoundingClientRect().width,
         clipped: [...element.querySelectorAll(".prompt-box-mode-option")].some(option => getComputedStyle(option).overflow !== "visible"),
         inert: [...element.querySelectorAll(".prompt-box-mode-option")].some(option => option.inert),
@@ -3434,7 +3481,7 @@ for (const fixtureName of ["landingPrompt"]) {
       try {
         const selector = page.locator(".prompt-box-mode-selector");
         await selector.waitFor();
-        for (const mode of ["Graph", "Serial", "Auto"]) {
+        for (const mode of ["Compile", "Direct", "Auto"]) {
           const frames = await selector.evaluate((selector, mode) => new Promise(resolve => {
             const rect = element => {
               const { x, y, width, height } = element.getBoundingClientRect();
@@ -3477,7 +3524,7 @@ for (const fixtureName of ["landingPrompt"]) {
         // Repeated reversals arrive before the spring settles, not only after
         // completed animations. The track and labels must not accumulate drift.
         const rapidFrames = await selector.evaluate(selector => new Promise(resolve => {
-          const modes = ["Graph", "Auto", "Serial", "Graph", "Auto", "Graph", "Serial", "Auto"];
+          const modes = ["Compile", "Auto", "Direct", "Compile", "Auto", "Compile", "Direct", "Auto"];
           const frames = [];
           const started = performance.now();
           let next = 0;
@@ -4603,7 +4650,7 @@ for (const approved of [false, true]) {
     const errors = [];
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(() => {
-      localStorage.setItem("grapher_language_v1", "en");
+      localStorage.setItem("pi_n_language_v1", "en");
       const fetch = window.fetch.bind(window);
       window.fetch = async (...args) => {
         const response = await fetch(...args);
@@ -4697,7 +4744,7 @@ for (const wireStatus of ["completed"]) {
     const info = { path: config.repository, name: "Status labels", branch: "main", head: "", clean: true };
     const errors = [];
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
       const body = route.request().postDataJSON();
@@ -4816,7 +4863,7 @@ test("topology Pause/Continue controls running nodes and distinguishes paused at
   const empty = { ...current, runId: "", approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [] };
   const actions = [], errors = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;
@@ -4937,7 +4984,7 @@ test("recovered planning polls activity before route discovery and opens the com
   let output = "", finished = false;
   const offsets = [], errors = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;
@@ -5016,7 +5063,7 @@ test("pure frontend refresh during active planning re-attaches silently without 
   const offsets = [], errors = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
+    localStorage.setItem("pi_n_language_v1", "en");
     window.recoveryBanner = { shown: 0, removed: 0 };
     new MutationObserver(records => {
       for (const record of records) {
@@ -5084,7 +5131,7 @@ test("node follow-ups keep records expanded and completed nodes continue instead
   const empty = { ...current, runId: "", config: null, approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [] };
   const gates = [deferred(), deferred()], controls = [], errors = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;
@@ -5190,7 +5237,7 @@ for (const [planType, publicationPhase] of [["graph", null], ["serial", null], [
     const empty = { ...current, runId: "", config: null, approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [] };
     const actions = [], errors = [];
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
       let result;
@@ -5374,7 +5421,7 @@ for (const nodeId of ["merger", "merge:join"]) {
       graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [], events: [] };
     const errors = [], edits = [];
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
       let result;
@@ -5434,7 +5481,7 @@ test("editing a node objective replaces the opening turn without creating a chat
   const empty = { ...current, runId: "", config: null, approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [], events: [] };
   const errors = [], edits = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;
@@ -5543,7 +5590,7 @@ for (const planType of ["graph", "serial"]) {
     const empty = { ...current, runId: "", config: null, approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [] };
     const gate = deferred(), controls = [], edits = [], errors = [];
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
       let result;
@@ -5684,7 +5731,7 @@ test("pausing a node returns an unread steer to the composer and removes its car
   const empty = { ...current, runId: "", config: null, approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [] };
   const actions = [], errors = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;
@@ -5772,7 +5819,7 @@ test("a partially loaded transcript never rolls back a repeated consumed steer",
   const empty = { ...current, runId: "", config: null, approved: false, phase: "draft", graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, executions: [], events: [] };
   const actions = [], errors = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
     let result;
@@ -5848,12 +5895,12 @@ test("late node sends and edits cannot overwrite another workspace or its compos
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
   const errors = [];
   await context.addInitScript(({ config }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([
       { path: "/a", id: "/a", name: "Alpha", branch: "main", clean: true, lastOpened: 2 },
       { path: "/b", id: "/b", name: "Beta", branch: "main", clean: true, lastOpened: 1 },
     ]));
-    localStorage.setItem("grapher_config", JSON.stringify(config));
+    localStorage.setItem("pi_n_config", JSON.stringify(config));
   }, { config });
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
@@ -6147,7 +6194,7 @@ for (const kind of ["publication", "node"]) {
     const actions = [], errors = [];
     const continueGate = deferred();
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5), body = route.request().postDataJSON();
       let result;

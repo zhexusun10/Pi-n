@@ -78,7 +78,7 @@ before(async () => {
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   browser = await chromium.launch({
-    channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
+    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
     headless: true,
   });
 });
@@ -115,8 +115,8 @@ async function setupContext({
         configurable: true,
       });
     }
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{
       id: repository,
       path: repository,
       name: "DesktopTransport",
@@ -304,7 +304,7 @@ async function setupContext({
       "Access-Control-Allow-Origin": reqOrigin,
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Expose-Headers": "X-Grapher-Events",
+      "Access-Control-Expose-Headers": "X-Pi-N-Events",
     };
     if (req.method() === "OPTIONS") {
       await route.fulfill({ status: 204, headers: corsHeaders });
@@ -316,7 +316,7 @@ async function setupContext({
     if (command === "save_config" && saveConfigError) {
       await route.fulfill({
         status: 500,
-        headers: { ...corsHeaders, "X-Grapher-Events": "1" },
+        headers: { ...corsHeaders, "X-Pi-N-Events": "1" },
         json: { error: saveConfigError },
       });
       return;
@@ -339,7 +339,7 @@ async function setupContext({
     };
     await route.fulfill({
       status: 200,
-      headers: { ...corsHeaders, "X-Grapher-Events": "1" },
+      headers: { ...corsHeaders, "X-Pi-N-Events": "1" },
       json: { result: defaults[command] ?? null },
     });
   });
@@ -379,8 +379,8 @@ test("browser mode keeps relative /api URLs, SSE path, localStorage settings, an
     assert.equal(await page.evaluate(() => Boolean(window.isTauri || window.__TAURI_INTERNALS__ || window.__TAURI__)), false);
     assert.equal(await page.locator('[data-testid="autostart-toggle"]').count(), 0);
     assert.equal(await page.locator(".autostart-settings .autostart-settings-browser").count(), 1);
-    assert.match(await page.locator(".autostart-settings").textContent() || "", /Launch at login is only available in the Grapher desktop app/);
-    assert.match(await page.locator(".update-settings").textContent() || "", /In-app updates are only available in the Grapher desktop app/);
+    assert.match(await page.locator(".autostart-settings").textContent() || "", /Launch at login is available in the Pi\^n desktop app/);
+    assert.match(await page.locator(".update-settings").textContent() || "", /In-app updates are available in the Pi\^n desktop app/);
 
     const commands = new Set(requests.map(r => r.command));
     assert.ok(commands.has("bootstrap"), "bootstrap ran");
@@ -391,7 +391,7 @@ test("browser mode keeps relative /api URLs, SSE path, localStorage settings, an
     const eventSourceUrls = await page.evaluate(() => window.__TEST_EVENT_SOURCES__.map(es => es.url));
     assert.deepEqual(eventSourceUrls, ["/api/events"]);
 
-    const storedDataPath = await page.evaluate(() => localStorage.getItem("grapher_data_path"));
+    const storedDataPath = await page.evaluate(() => localStorage.getItem("pi_n_data_path"));
     assert.equal(storedDataPath, "/mock/desktop-data");
     assert.deepEqual(pageErrors, []);
   } finally {
@@ -468,7 +468,7 @@ for (const platformOverride of [
       const eventSourceUrls = await page.evaluate(() => window.__TEST_EVENT_SOURCES__.map(es => es.url));
       assert.deepEqual(eventSourceUrls, [`${dynamicOrigin}/api/events`]);
 
-      const storedDataPath = await page.evaluate(() => localStorage.getItem("grapher_data_path"));
+      const storedDataPath = await page.evaluate(() => localStorage.getItem("pi_n_data_path"));
       assert.equal(storedDataPath, "/mock/desktop-data");
       assert.deepEqual(pageErrors, []);
     } finally {
@@ -515,7 +515,7 @@ test("Windows startup stops retrying persistent window IPC failures without unha
   });
   const diagnostics = [];
   page.on("console", message => {
-    if (message.type() === "error" && message.text().includes("Failed to show the Grapher window")) diagnostics.push(message.text());
+    if (message.type() === "error" && message.text().includes("Failed to show the Pi^n window")) diagnostics.push(message.text());
   });
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded" });
@@ -537,7 +537,7 @@ test("Tauri mode surfaces closed backend feedback with Retry recovery and reconn
     platformOverride: { platform: "Win32", uaPlatform: "Windows", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
     initialBackendResult: {
       kind: "error",
-      error: "Grapher backend exited before becoming ready (exit status: 1).",
+      error: "Pi^n backend exited before becoming ready (exit status: 1).",
     },
   });
   try {
@@ -548,7 +548,7 @@ test("Tauri mode surfaces closed backend feedback with Retry recovery and reconn
     assert.equal(await statusBanner.getAttribute("data-phase"), "error");
     await page.waitForFunction(() => window.__TEST_WINDOW__.state.shownShells.length === 1);
     const errorText = await statusBanner.textContent() || "";
-    assert.match(errorText, /The desktop backend stopped running: Grapher backend exited before becoming ready/);
+    assert.match(errorText, /The desktop backend stopped running: Pi\^n backend exited before becoming ready/);
     assert.doesNotMatch(errorText, /npm run backend/);
     // No duplicate generic floating error banner for the same desktop readiness failure.
     assert.equal(
@@ -611,7 +611,7 @@ test("first launch displays actionable Git / Xcode Command Line Tools diagnostic
     initialBackendResult: { kind: "ok", value: "http://127.0.0.1:45126" },
     initialHostPreflight: {
       gitAvailable: false,
-      gitError: "Git is required by Grapher, but macOS /usr/bin/git is an uninstalled Xcode Command Line Tools shim; run `xcode-select --install` or install Git from https://git-scm.com/download/mac.",
+      gitError: "Git is required by Pi^n, but macOS /usr/bin/git is an uninstalled Xcode Command Line Tools shim; run `xcode-select --install` or install Git from https://git-scm.com/download/mac.",
       xcodeCltMissing: true,
       platform: "macos",
     },
@@ -639,7 +639,7 @@ test("first launch displays actionable Git / Xcode Command Line Tools diagnostic
   }
 });
 
-test("macOS and Windows Tauri render an independent desktop titlebar above background, collapse in fullscreen, and keep modals below the safe area", async () => {
+test("macOS Tauri renders a transparent overlay titlebar over full-bleed background, Windows renders a bordered strip, both collapse in fullscreen, and modals stay below the safe area", async () => {
   const mac = await setupContext({
     tauriMode: true,
     platformOverride: {
@@ -660,26 +660,37 @@ test("macOS and Windows Tauri render an independent desktop titlebar above backg
     const macLayout = await mac.page.evaluate(() => {
       const bar = document.querySelector(".desktop-titlebar");
       const bgStage = document.querySelector(".app-background-root > .relative");
+      const appShell = document.querySelector(".app-shell");
       const sidebar = document.querySelector(".sidebar");
+      const main = document.querySelector(".main");
       const barCs = bar ? getComputedStyle(bar) : null;
+      const topCenterHit = document.elementFromPoint(Math.floor(window.innerWidth / 2), 16);
       return {
         barHeight: barCs?.height,
         barBorderBottomWidth: barCs?.borderBottomWidth,
         barBackgroundColor: barCs?.backgroundColor,
+        barTop: bar?.getBoundingClientRect().top,
         barBottom: bar?.getBoundingClientRect().bottom,
         bgStageTop: bgStage?.getBoundingClientRect().top,
+        appShellTop: appShell?.getBoundingClientRect().top,
         sidebarTop: sidebar?.getBoundingClientRect().top,
         sidebarMarginTop: sidebar ? getComputedStyle(sidebar).marginTop : null,
+        mainTop: main?.getBoundingClientRect().top,
+        topCenterIsDragRegion: Boolean(topCenterHit?.closest("[data-tauri-drag-region]")),
         insetVar: getComputedStyle(document.documentElement).getPropertyValue("--desktop-titlebar-inset").trim(),
       };
     });
     assert.equal(macLayout.barHeight, "32px");
     assert.equal(macLayout.barBorderBottomWidth, "0px");
-    assert.equal(macLayout.barBackgroundColor, "rgb(255, 255, 255)");
+    assert.equal(macLayout.barBackgroundColor, "rgba(0, 0, 0, 0)");
+    assert.equal(macLayout.barTop, 0);
     assert.equal(macLayout.barBottom, 32);
-    assert.equal(macLayout.bgStageTop, 32, "landing background starts below the independent titlebar instead of being clipped");
+    assert.equal(macLayout.bgStageTop, 0, "landing background extends to the top edge behind the transparent macOS titlebar");
+    assert.equal(macLayout.appShellTop, 0, "app shell extends to the top edge so dot-pattern backgrounds reach behind the transparent macOS titlebar");
     assert.equal(macLayout.sidebarTop, 32, "macOS sidebar sits directly beneath the 32px overlay titlebar without a redundant 12px top margin");
     assert.equal(macLayout.sidebarMarginTop, "0px");
+    assert.equal(macLayout.mainTop, 32, "macOS workspace main area sits directly beneath the 32px overlay titlebar");
+    assert.equal(macLayout.topCenterIsDragRegion, true, "transparent macOS titlebar remains hit-testable for window dragging");
     assert.equal(macLayout.insetVar, "32px");
 
     // Modal backdrop reserves top padding below the 32px titlebar safe area.
@@ -726,7 +737,7 @@ test("macOS and Windows Tauri render an independent desktop titlebar above backg
         insetVar: getComputedStyle(document.documentElement).getPropertyValue("--desktop-titlebar-inset").trim(),
       };
     });
-    assert.equal(restoredLayout.bgStageTop, 32);
+    assert.equal(restoredLayout.bgStageTop, 0);
     assert.equal(restoredLayout.sidebarTop, 32);
     assert.equal(restoredLayout.sidebarMarginTop, "0px");
     assert.equal(restoredLayout.insetVar, "32px");

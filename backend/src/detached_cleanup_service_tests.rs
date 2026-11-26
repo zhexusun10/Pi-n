@@ -30,7 +30,7 @@ fn fixture(retire: bool) -> (tempfile::TempDir, PathBuf, PathBuf, Arc<Service>) 
             &runtime.state.run_id,
             &std::collections::BTreeSet::from([crate::cleanup::Target::Workspace {
                 parent: temp.path().canonicalize().unwrap(),
-                bucket: ".grapher-worktrees".into(),
+                bucket: ".pi-n-worktrees".into(),
                 owner: runtime.state.run_id.clone(),
                 checkout: None,
             }]),
@@ -38,7 +38,7 @@ fn fixture(retire: bool) -> (tempfile::TempDir, PathBuf, PathBuf, Arc<Service>) 
         .unwrap();
     let workspace = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&runtime.state.run_id);
     fs::create_dir_all(&workspace).unwrap();
     fs::write(workspace.join("old.txt"), "retired execution").unwrap();

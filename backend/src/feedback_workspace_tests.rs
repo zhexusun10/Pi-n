@@ -158,7 +158,7 @@ pub(super) fn history(runtime: &crate::runtime::Runtime, job: &Job, text: &str) 
     let directory = runtime.root.join("sessions").join(&job.execution.id);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(format!("test_{}.jsonl", job.execution.session_id)), format!("{}\n{}\n",
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":job.execution.session_id, "cwd":job.execution.worktree}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":job.execution.session_id, "cwd":job.execution.worktree}),
         serde_json::json!({"type":"message", "id":"user", "parentId":null, "message":{"role":"user", "content":text, "timestamp":job.execution.started_at}}))).unwrap();
 }
 
@@ -197,7 +197,7 @@ fn feedback_workspace_round_trip_preserves_evidence_cache_and_owner_history() {
     execute(&mut runtime, &repair);
     let directory = runtime.root.join("sessions").join(&repair.execution.id);
     let text = fs::read_to_string(
-        directory.join(format!("grapher_{}.jsonl", repair.execution.session_id)),
+        directory.join(format!("pi_n_{}.jsonl", repair.execution.session_id)),
     )
     .unwrap();
     assert!(text.contains("OWNER PRIVATE HISTORY"));
@@ -231,7 +231,7 @@ fn feedback_workspace_round_trip_preserves_evidence_cache_and_owner_history() {
                 .root
                 .join("sessions")
                 .join(&job.execution.id)
-                .join(format!("grapher_{}.jsonl", job.execution.session_id)),
+                .join(format!("pi_n_{}.jsonl", job.execution.session_id)),
         )
         .unwrap();
         assert!(retained.contains(if job.execution.node == "related" {
@@ -287,7 +287,7 @@ fn feedback_redispatch_uses_the_latest_conversation_model() {
             fs::write(
                 &script,
                 format!(
-                    "printf '%s\\n' \"$@\" > \"$GRAPHER_ENVIRONMENT_DATA/launch-$GRAPHER_NODE_EXECUTION_ID\"\n{original_script}"
+                    "printf '%s\\n' \"$@\" > \"$PI_N_ENVIRONMENT_DATA/launch-$PI_N_NODE_EXECUTION_ID\"\n{original_script}"
                 ),
             )
             .unwrap();
@@ -383,7 +383,7 @@ fn feedback_redispatch_uses_the_latest_conversation_model() {
                     .root
                     .join("sessions")
                     .join(&repair.execution.id)
-                    .join(format!("grapher_{}.jsonl", repair.execution.session_id)),
+                    .join(format!("pi_n_{}.jsonl", repair.execution.session_id)),
             )
             .unwrap();
             assert!(history.contains("OWNER PRIVATE HISTORY"));
@@ -593,7 +593,7 @@ fn parallel_feedback_delivers_batch_code_and_forks_only_owner_history() {
             .root
             .join("sessions")
             .join(&repair.execution.id)
-            .join(format!("grapher_{}.jsonl", repair.execution.session_id)),
+            .join(format!("pi_n_{}.jsonl", repair.execution.session_id)),
     )
     .unwrap();
     assert!(session.contains("OWNER PRIVATE HISTORY"));
@@ -871,7 +871,7 @@ fn terminal_node_followup_uses_the_shared_workspace_and_preserves_its_conversati
             .root
             .join("sessions")
             .join(&next.execution.id)
-            .join(format!("grapher_{}.jsonl", next.execution.session_id)),
+            .join(format!("pi_n_{}.jsonl", next.execution.session_id)),
     )
     .unwrap();
     assert!(text.contains("REVIEW HISTORY"));
@@ -916,7 +916,7 @@ fn failed_source_preparation_before_session_fork_retries_without_resetting_files
         .root
         .join("sessions")
         .join(&retry.execution.id)
-        .join(format!("grapher_{}.jsonl", retry.execution.session_id));
+        .join(format!("pi_n_{}.jsonl", retry.execution.session_id));
     assert!(fs::read_to_string(fork).unwrap().contains("OWNER HISTORY"));
     assert_eq!(
         fs::read_to_string(Path::new(&retry.execution.worktree).join("owner.txt"))
@@ -1162,7 +1162,7 @@ fn continue_recovers_feedback_that_failed_before_its_session_fork() {
     let fork = root
         .join("sessions")
         .join(&retry.execution.id)
-        .join(format!("grapher_{}.jsonl", retry.execution.session_id));
+        .join(format!("pi_n_{}.jsonl", retry.execution.session_id));
     assert!(fs::read_to_string(fork)
         .unwrap()
         .contains("OWNER HISTORY MUST SURVIVE"));

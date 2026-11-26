@@ -1,4 +1,4 @@
-use grapher::{
+use pi_n::{
     graph_merge::{merge_graph, merge_graph_with_workspace, publication_workspace},
     workspace::{
         git, prepare, prepare_with_merger_expected, repository_git, snapshot_node_for_run,
@@ -21,7 +21,7 @@ fn test_data() {
     static ROOT: std::sync::OnceLock<TempDir> = std::sync::OnceLock::new();
     ROOT.get_or_init(|| {
         let dir = TempDir::new().unwrap();
-        std::env::set_var("GRAPHER_DATA_DIR", dir.path());
+        std::env::set_var("PI_N_DATA_DIR", dir.path());
         dir
     });
 }
@@ -79,7 +79,7 @@ fn concurrent_graph_preparation_never_uses_another_runs_base() {
     });
     assert_eq!(a.join().unwrap().unwrap().replace("\r\n", "\n"), "base\n");
     assert_eq!(b.join().unwrap().unwrap().replace("\r\n", "\n"), "newer\n");
-    assert!(git(&source, &["rev-parse", "refs/grapher/base"]).is_err());
+    assert!(git(&source, &["rev-parse", "refs/pi-n/base"]).is_err());
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn concurrent_runs_with_identical_node_names_keep_parent_commits_isolated() {
             &source,
             &[
                 "rev-parse",
-                &format!("refs/grapher/runs/{run_a}/nodes/worker")
+                &format!("refs/pi-n/runs/{run_a}/nodes/worker")
             ]
         )
         .unwrap(),
@@ -112,13 +112,13 @@ fn concurrent_runs_with_identical_node_names_keep_parent_commits_isolated() {
             &source,
             &[
                 "rev-parse",
-                &format!("refs/grapher/runs/{run_b}/nodes/worker")
+                &format!("refs/pi-n/runs/{run_b}/nodes/worker")
             ]
         )
         .unwrap(),
         head_b
     );
-    assert!(git(&source, &["rev-parse", "refs/grapher/nodes/worker"]).is_err());
+    assert!(git(&source, &["rev-parse", "refs/pi-n/nodes/worker"]).is_err());
     let child = temp.path().join("child-a");
     prepare_with_merger_expected(&source, &child, &base, &[head_a], &base, || {
         Err("Unexpected conflict".into())
@@ -151,7 +151,7 @@ fn chained_source_alternates_fall_back_to_independent_fetch() {
     let alternate = fs::read_to_string(child.join(".git/objects/info/alternates")).unwrap();
     assert_eq!(
         Path::new(alternate.trim()).canonicalize().unwrap(),
-        grapher::workspace::shadow_repo_dir(&source)
+        pi_n::workspace::shadow_repo_dir(&source)
             .unwrap()
             .join("objects")
             .canonicalize()
@@ -197,14 +197,14 @@ fn node_reuses_source_objects_without_copying_history() {
     let objects = fs::read_to_string(child.join(".git/objects/info/alternates")).unwrap();
     assert_eq!(
         Path::new(objects.trim()).canonicalize().unwrap(),
-        grapher::workspace::shadow_repo_dir(&source)
+        pi_n::workspace::shadow_repo_dir(&source)
             .unwrap()
             .join("objects")
             .canonicalize()
             .unwrap()
     );
     assert_eq!(
-        git(&child, &["rev-parse", "refs/grapher/parents/parent"]).unwrap(),
+        git(&child, &["rev-parse", "refs/pi-n/parents/parent"]).unwrap(),
         head
     );
     assert_eq!(fs::read_to_string(child.join("new")).unwrap(), "parent");
@@ -383,7 +383,7 @@ fn resolved_descendant_avoids_reopening_ancestor_conflicts() {
     let a = branch(&source, &base, &temp.path().join("a"), "shared", "first\n");
     let b = branch(&source, &base, &temp.path().join("b"), "shared", "second\n");
     let resolved = temp.path().join("resolved");
-    grapher::workspace::prepare_with_merger(
+    pi_n::workspace::prepare_with_merger(
         &source,
         &resolved,
         &base,

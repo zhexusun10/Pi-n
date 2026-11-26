@@ -28,7 +28,7 @@ fn record_input_history(runtime: &Runtime, execution: &Execution) {
     let directory = runtime.root.join("sessions").join(&execution.id);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(format!("test_{}.jsonl", execution.session_id)), format!("{}\n{}\n",
-        serde_json::json!({"type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id, "id":execution.session_id, "cwd":execution.worktree}),
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":execution.session_id, "cwd":execution.worktree}),
         serde_json::json!({"type":"message", "id":"opening", "parentId":null,
             "message":{"role":"user", "content":"retained history"}}))).unwrap();
 }
@@ -102,7 +102,7 @@ fn consume_input(runtime: &mut Runtime, job: &Job) {
         .unwrap_or_else(|| directory.join(format!("test{suffix}")));
     if !session.exists() {
         fs::write(&session, format!("{}\n", serde_json::json!({
-            "type":"session", "version":3, "grapherFormat":1, "grapherRunId":runtime.state.run_id,
+            "type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id,
             "id":job.execution.session_id, "cwd":job.execution.worktree,
         }))).unwrap();
     }

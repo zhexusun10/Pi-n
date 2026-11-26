@@ -9,7 +9,7 @@ import { ensureDependencies, findCargoExecutable, root } from './ensure-deps.mjs
 import { toolchainEnv, prependPath } from './cargo.mjs';
 import { cleanStaleArtifacts } from './clean-stale-artifacts.mjs';
 
-const DEV_BUILD_STAMP = '.grapher-dev-build.json';
+const DEV_BUILD_STAMP = '.pi-n-dev-build.json';
 
 function devDebugDir(installationRoot, env = process.env) {
   const targetBase = env.CARGO_TARGET_DIR
@@ -21,7 +21,7 @@ function devDebugDir(installationRoot, env = process.env) {
 export function recordDevBuildStamp(installationRoot, env = process.env) {
   try {
     const debugDir = devDebugDir(installationRoot, env);
-    const binary = join(debugDir, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
+    const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
     const stat = statSync(binary);
     if (!stat.isFile() || stat.size === 0) return;
     writeFileSync(
@@ -33,17 +33,17 @@ export function recordDevBuildStamp(installationRoot, env = process.env) {
 
 export function devBackendExecutable(installationRoot, env = process.env) {
   const debugDir = devDebugDir(installationRoot, env);
-  const binary = join(debugDir, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
-  // On macOS, even a no-op `cargo build` unlinks and re-clones `target/debug/grapher`
+  const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
+  // On macOS, even a no-op `cargo build` unlinks and re-clones `target/debug/pi-n`
   // with a fresh inode, invalidating AMFI/XProtect binary trust caching (~500ms per launch).
-  // The underlying `deps/grapher-<hash>` keeps a stable inode until rustc actually relinks.
+  // The underlying `deps/pi_n-<hash>` keeps a stable inode until rustc actually relinks.
   if (process.platform === 'darwin' && existsSync(binary)) {
     try {
       const binStat = lstatSync(binary);
       const depsDir = join(debugDir, 'deps');
       const matches = [];
       for (const name of readdirSync(depsDir)) {
-        if (!/^grapher-[0-9a-f]{16}$/.test(name)) continue;
+        if (!/^pi_n-[0-9a-f]{16}$/.test(name)) continue;
         const candidate = join(depsDir, name);
         const stat = lstatSync(candidate);
         if (stat.isFile() && !stat.isSymbolicLink() && stat.size === binStat.size && Math.trunc(stat.mtimeMs) === Math.trunc(binStat.mtimeMs)) {
@@ -57,7 +57,7 @@ export function devBackendExecutable(installationRoot, env = process.env) {
 }
 
 export function backendBuildUpToDate(installationRoot, env = process.env) {
-  if (env.GRAPHER_FORCE_BUILD === '1' || env.RUSTFLAGS || env.CARGO_ENCODED_RUSTFLAGS) {
+  if (env.PI_N_FORCE_BUILD === '1' || env.RUSTFLAGS || env.CARGO_ENCODED_RUSTFLAGS) {
     return false;
   }
   if (Object.keys(env).some(key => key.startsWith('CARGO_PROFILE_DEV_'))) {
@@ -65,7 +65,7 @@ export function backendBuildUpToDate(installationRoot, env = process.env) {
   }
   try {
     const debugDir = devDebugDir(installationRoot, env);
-    const binary = join(debugDir, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
+    const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
     const binStat = statSync(binary);
     if (!binStat.isFile() || binStat.size === 0) return false;
     if (!existsSync(join(debugDir, '.fingerprint'))) return false;
@@ -137,7 +137,7 @@ export function backendBuildUpToDate(installationRoot, env = process.env) {
 export function loadDevEnvironment(installationRoot, base = process.env) {
   const env = { ...base };
   // Match the backend's first-existing-file and inherited-environment precedence.
-  // Pass the same values to Vite so .env-only GRAPHER_PORT cannot split the proxy.
+  // Pass the same values to Vite so .env-only PI_N_PORT cannot split the proxy.
   for (const path of ['.env', 'backend/.env']) {
     let content;
     try { content = readFileSync(join(installationRoot, path), 'utf8'); } catch { continue; }
@@ -245,8 +245,8 @@ export async function runDev({
   const handle = { stop, completed };
   try {
     const env = loadDevEnvironment(installationRoot, baseEnv);
-    const frontendPort = devPort(env.GRAPHER_FRONTEND_PORT, 1420, 'GRAPHER_FRONTEND_PORT');
-    const backendPort = devPort(env.GRAPHER_PORT, 1421, 'GRAPHER_PORT');
+    const frontendPort = devPort(env.PI_N_FRONTEND_PORT, 1420, 'PI_N_FRONTEND_PORT');
+    const backendPort = devPort(env.PI_N_PORT, 1421, 'PI_N_PORT');
     if (frontendPort === backendPort) throw new Error('Frontend and backend ports must be different.');
     await assertPortAvailable(frontendPort);
     await assertPortAvailable(backendPort);
@@ -271,7 +271,7 @@ export async function runDev({
     const cargo = findCargoExecutable(env) ?? 'cargo';
     // Keep Cargo's versioned progress lines out of startup; warnings and errors
     // still inherit the terminal, alongside our version-independent status.
-    const cargoArgs = ['--quiet', '--locked', '--manifest-path', 'backend/Cargo.toml', '--bin', 'grapher'];
+    const cargoArgs = ['--quiet', '--locked', '--manifest-path', 'backend/Cargo.toml', '--bin', 'pi-n'];
     const skipBuild = backendBuildUpToDate(installationRoot, env);
     if (!skipBuild) {
       log('[dev] Building backend. The first download/compilation can take several minutes; Ctrl+C cancels.');
@@ -292,7 +292,7 @@ export async function runDev({
     };
     log(`[dev] Starting backend; waiting for port ${backendPort}...`);
     const backendEnv = {
-      ...env, GRAPHER_DEV_LAZY_PRIMARY: '1', GRAPHER_DEV_HIDE_BACKEND_URL: '1',
+      ...env, PI_N_DEV_LAZY_PRIMARY: '1', PI_N_DEV_HIDE_BACKEND_URL: '1',
     };
     // Cargo just built this target; launch the compiled binary directly when
     // present instead of paying for a second `cargo run` invocation on every start.

@@ -1,11 +1,11 @@
-// Global Grapher model-picker scope, independent of Run model selections.
+// Global Pi^n model-picker scope, independent of Run model selections.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { toHostInput } from './path-identity.mjs';
 
-const directory = () => toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.grapher', 'pi-agent'));
+const directory = () => toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
 const validId = id => typeof id === 'string' && id.includes('/') && id.trim() === id && id.length <= 2048;
 
 export function readModelVisibility(dir = directory()) {

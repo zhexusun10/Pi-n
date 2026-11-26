@@ -53,27 +53,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 let input = ''; for await (const chunk of process.stdin) input += chunk;
-  if (process.env.GRAPHER_MODE === 'planner') {
+  if (process.env.PI_N_MODE === 'planner') {
   const context = input.startsWith('You are now at ') && input.includes('\nCurrent graph node status:\n');
   const bare = input === 'additional information';
   if (!context && !bare)
     throw Error('Planner follow-up must be either transport context or a bare instruction');
   if (context && !input.endsWith('\nadditional information'))
     throw Error('Transport context must end with the user instruction');
-  if (context && process.env.GRAPHER_PLANNER_FOLLOWUP !== 'true')
+  if (context && process.env.PI_N_PLANNER_FOLLOWUP !== 'true')
     throw Error('Context-bearing Planner turn must expose follow-up workspace mode');
-  if (bare && process.env.GRAPHER_PLANNER_FOLLOWUP !== 'false')
+  if (bare && process.env.PI_N_PLANNER_FOLLOWUP !== 'false')
     throw Error('Context-free Planner turn must not expose switch_workspace');
   const arg = name => process.argv[process.argv.indexOf(name)+1];
   const directory = arg('--session-dir'), id = arg('--session-id');
-  const file = path.join(directory, `grapher_${id}.jsonl`);
+  const file = path.join(directory, `pi_n_${id}.jsonl`);
   const rework = `Modifying a completed node's task re-runs that node in a fresh session and invalidates all its downstream dependents (they re-run their previous tasks with the updated dependencies' workspace states); unrelated branches keep their work.`;
   const priorTurn = fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes('preserved history');
   if (bare && input.includes(rework))
     throw Error('A bare Planner turn must not contain the rework note');
   if (context && input.includes(rework) !== !priorTurn)
     throw Error('Planner rework note must appear only on the first context-bearing follow-up');
-  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({type:'session',version:3,grapherFormat:1,grapherRunId:process.env.GRAPHER_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n');
+  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({type:'session',version:3,piNFormat:1,piNRunId:process.env.PI_N_ACTIVE_RUN_ID,id,cwd:process.cwd()})+'\n');
   const header = JSON.parse(fs.readFileSync(file,'utf8').split('\n')[0]);
   // Pi matches a custom-session-dir resume by the literal header cwd
   // (resolvePath comparison, no realpath). Assert exactly that contract and
@@ -92,10 +92,10 @@ let input = ''; for await (const chunk of process.stdin) input += chunk;
     if (actionText.startsWith('delete-right')) {
       if (!input.includes('retained workspace from a superseded or removed execution'))
         throw Error('Planner must know this is a historical workspace');
-      const graph = JSON.parse(fs.readFileSync(process.env.GRAPHER_GRAPH_PATH, 'utf8'));
+      const graph = JSON.parse(fs.readFileSync(process.env.PI_N_GRAPH_PATH, 'utf8'));
       graph.nodes = graph.nodes.filter(node => node.id !== 'right');
       graph.edges = graph.edges.filter(edge => edge.from !== 'right' && edge.to !== 'right');
-      fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+      fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
     }
   }
 } else {
@@ -104,8 +104,8 @@ let input = ''; for await (const chunk of process.stdin) input += chunk;
 }
 const actionText = fs.existsSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'action'))
   ? fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'action'),'utf8') : '';
-if (process.env.GRAPHER_MODE === 'planner' && actionText === 'move-left') {
-  const target = JSON.parse(process.env.GRAPHER_PLANNER_WORKSPACES || '{}').left;
+if (process.env.PI_N_MODE === 'planner' && actionText === 'move-left') {
+  const target = JSON.parse(process.env.PI_N_PLANNER_WORKSPACES || '{}').left;
   console.log(JSON.stringify({type:'tool_execution_end',toolName:'switch_workspace',isError:false,result:{content:[{type:'text',text:JSON.stringify({requestedId:'left'})}]}}));
 }
 const finalText = 'done';
@@ -1179,7 +1179,7 @@ fn planner_keeps_a_superseded_physical_owner_without_attributing_it_to_an_older_
                 .contains(&selected.id));
             assert!(!runtime.state.superseded_execution_ids.contains(&prior.id));
             let run = runtime.state.run_id.clone();
-            let node_ref = format!("refs/grapher/runs/{run}/nodes/left");
+            let node_ref = format!("refs/pi-n/runs/{run}/nodes/left");
             let original_ref =
                 crate::workspace::repository_git(&repo, &["rev-parse", "--verify", &node_ref]).ok();
             (selected, prior, run, original_ref)
@@ -1279,13 +1279,13 @@ fn planner_keeps_a_superseded_physical_owner_without_attributing_it_to_an_older_
                 Some(detached[0].0.as_str())
             );
         }
-        let node_ref = format!("refs/grapher/runs/{run}/nodes/left");
+        let node_ref = format!("refs/pi-n/runs/{run}/nodes/left");
         assert_eq!(
             crate::workspace::repository_git(&repo, &["rev-parse", "--verify", &node_ref]).ok(),
             original_ref,
             "historical Planner capture must not advance the active node ref"
         );
-        let detached_ref = format!("refs/grapher/runs/{run}/planner-detached/{}", selected.id);
+        let detached_ref = format!("refs/pi-n/runs/{run}/planner-detached/{}", selected.id);
         let retained =
             crate::workspace::repository_git(&repo, &["rev-parse", "--verify", &detached_ref])
                 .unwrap();
@@ -1326,7 +1326,7 @@ fn check_interrupted_detached_recovery(sealed_before_event: bool) {
     let root_job = runtime.jobs().unwrap().remove(0);
     let root = complete(&mut runtime, root_job);
     let run = runtime.state.run_id.clone();
-    let node_ref = format!("refs/grapher/runs/{run}/nodes/root");
+    let node_ref = format!("refs/pi-n/runs/{run}/nodes/root");
     let original_ref =
         crate::workspace::repository_git(&repo, &["rev-parse", "--verify", &node_ref]).unwrap();
     let mut graph = runtime.state.graph.clone();
@@ -1423,7 +1423,7 @@ fn check_interrupted_detached_recovery(sealed_before_event: bool) {
         crate::workspace::repository_git(&repo, &["rev-parse", "--verify", &node_ref]).unwrap(),
         original_ref
     );
-    let detached_ref = format!("refs/grapher/runs/{run}/planner-detached/{}", root.id);
+    let detached_ref = format!("refs/pi-n/runs/{run}/planner-detached/{}", root.id);
     assert_eq!(
         crate::workspace::repository_git(&repo, &["rev-parse", "--verify", &detached_ref]).unwrap(),
         historical.after.as_ref().unwrap().as_str()
@@ -1989,7 +1989,7 @@ fn planner_conversation_stop_undoes_a_revision_drain_pause_and_keeps_scheduling(
         r#"
 import fs from 'node:fs';
 for await (const _ of process.stdin) {}
-fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify({
+fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify({
   originalGoal: 'frontier',
   nodes: [{ id: 'root', task: 'root revised' }, { id: 'join', task: 'join' }],
   edges: [{ from: 'root', to: 'join', feedback: false }],

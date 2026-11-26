@@ -438,7 +438,7 @@ fn feedback_delivery_missing_or_damaged_consumption_evidence_never_resends() {
             .finish(&recheck.execution, Err("provider stopped".into()))
             .unwrap();
         let directory = runtime.root.join("sessions").join(&recheck.execution.id);
-        let session = directory.join(format!("grapher_{}.jsonl", recheck.execution.session_id));
+        let session = directory.join(format!("pi_n_{}.jsonl", recheck.execution.session_id));
         match damage {
             "receipt" => fs::remove_file(directory.join("feedback-input.json")).unwrap(),
             "session" => fs::remove_file(session).unwrap(),

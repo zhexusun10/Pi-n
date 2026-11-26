@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scope: [grapher, pi]
+        scope: [pi-n, pi]
     steps:
       - uses: actions/checkout@v5
         with:

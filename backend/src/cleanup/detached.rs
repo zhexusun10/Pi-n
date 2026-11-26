@@ -39,7 +39,7 @@ impl Record {
         };
         let destination = parent
             .join(bucket)
-            .join(format!(".grapher-cleanup-{}", self.id));
+            .join(format!(".pi-n-cleanup-{}", self.id));
         Ok((root, destination))
     }
 }
@@ -91,7 +91,7 @@ pub(crate) fn retire(
     if real_child_path(&parent, &destination, false)?.is_some() {
         return Err("Detached workspace destination already exists".into());
     }
-    // Use the existing, checked physical bucket directory (`.grapher-worktrees`).
+    // Use the existing, checked physical bucket directory (`.pi-n-worktrees`).
     // Rename stays on this volume; no project bytes are copied while the Run is
     // locked, and retired slots never live inside the active Run directory.
     let destination_parent = destination

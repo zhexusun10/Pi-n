@@ -187,7 +187,7 @@ pub(super) fn publish_batch(
             .map_err(|e| e.to_string())?
             .exclusions()?;
         let publication_path = crate::workspace::workspaces_parent(root)
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(run_id)
             .join(
                 crate::graph_merge::publication_workspace(&repository, &publication.heads)?
@@ -228,13 +228,13 @@ pub(super) fn publish_batch(
             Ok(Some(job)) => match job.validate().and_then(|_| job.descriptor(&head)) {
                 Ok(descriptor) => Some(descriptor),
                 Err(error) => {
-                    eprintln!("[Grapher] Result descriptor unavailable; publishing code without it: {error}");
+                    eprintln!("[Pi^n] Result descriptor unavailable; publishing code without it: {error}");
                     None
                 }
             },
             Ok(None) => None,
             Err(error) => {
-                eprintln!("[Grapher] Environment preflight unavailable; publishing code without it: {error}");
+                eprintln!("[Pi^n] Environment preflight unavailable; publishing code without it: {error}");
                 None
             }
         };
@@ -249,7 +249,7 @@ pub(super) fn publish_batch(
     {
         return Err("Stale publication worker cannot commit to this Run".into());
     }
-    eprintln!("[Grapher] [Publication] Files delivered; internal result: {head}");
+    eprintln!("[Pi^n] [Publication] Files delivered; internal result: {head}");
     let base_commit = runtime.state.base.clone();
     let published_commit = head.clone();
     let mut events = Vec::new();

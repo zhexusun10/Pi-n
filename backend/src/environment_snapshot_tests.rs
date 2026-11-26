@@ -18,7 +18,7 @@ fn fixture() -> (tempfile::TempDir, Environments, PathBuf, CompositeResult) {
     let run = Uuid::new_v4().to_string();
     let path = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&run)
         .join("node");
     workspace::prepare(&source, &path, &code, &[]).unwrap();

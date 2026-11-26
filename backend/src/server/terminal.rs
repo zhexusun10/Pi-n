@@ -220,7 +220,7 @@ impl WebTerminals {
 fn manager() -> &'static WebTerminals {
     TERMINALS.get_or_init(|| {
         let _ = std::thread::Builder::new()
-            .name("grapher-terminal-reaper".into())
+            .name("pi-n-terminal-reaper".into())
             .spawn(|| loop {
                 std::thread::sleep(Duration::from_secs(30));
                 if let Some(manager) = TERMINALS.get() {

@@ -97,7 +97,7 @@ pub(super) fn apply_output(state: &mut Snapshot, id: &str, text: &str, bytes: us
     {
         append_live_output(execution, text);
         execution.output_bytes = bytes;
-        if text.contains("\"tool") || text.contains("\"grapher_process") {
+        if text.contains("\"tool") || text.contains("\"pi_n_process") {
             crate::file_changes::update_from_log_chunk(
                 &state.run_id,
                 &execution.id,
@@ -339,7 +339,7 @@ impl Store {
         })
     }
 
-    /// Return the exact UTF-8 byte offset of each `grapherRequestId`-tagged
+    /// Return the exact UTF-8 byte offset of each `piNRequestId`-tagged
     /// user turn in `0..end_offset`. Only chunks mentioning the marker (or a
     /// possible split boundary) are inspected, so multi-megabyte logs stay fast.
     pub fn execution_steer_offsets(
@@ -377,12 +377,12 @@ impl Store {
                 .map_err(|e| e.to_string())?
                 .unwrap_or(0)
         };
-        // Split-proof half-token filter: `"grapherRequestId"` is `"grapher"` (0..7)
-        // + `"RequestId"` (7..16), so ANY 32KB chunk boundary leaves either `"RequestId"`
-        // intact in the right chunk or `"grapher"` intact near the left chunk's tail.
+        // Split-proof half-token filter: `"piNRequestId"` is `"piN"` (0..3)
+        // + `"RequestId"` (3..12), so ANY 32KB chunk boundary leaves either `"RequestId"`
+        // intact in the right chunk or `"piN"` intact near the left chunk's tail.
         let mut stmt = self.connection.prepare(
             "SELECT offset, text FROM execution_logs WHERE execution_id=?1 AND run_id=?2 AND offset>=?3 AND offset<?4 \
-             AND (instr(text, 'RequestId')>0 OR instr(substr(text, -16), 'grapher')>0) \
+             AND (instr(text, 'RequestId')>0 OR instr(substr(text, -16), 'piN')>0) \
              ORDER BY offset",
         ).map_err(|e| e.to_string())?;
         let candidates: Vec<(usize, String)> = stmt
@@ -408,7 +408,7 @@ impl Store {
             let tail_start = floor_boundary(slice, slice.len().saturating_sub(16));
             if slice.len() == chunk_text.len()
                 && chunk_offset + chunk_text.len() < end_offset
-                && slice[tail_start..].contains("grapher")
+                && slice[tail_start..].contains("piN")
             {
                 match_positions.push(slice.len());
             }
@@ -428,7 +428,7 @@ impl Store {
                     continue;
                 }
                 let trimmed = line_text.trim();
-                if !trimmed.contains("\"grapherRequestId\"") {
+                if !trimmed.contains("\"piNRequestId\"") {
                     continue;
                 }
                 if let Some(request_id) = parse_steer_event_request_id(trimmed, truncated) {
@@ -448,7 +448,7 @@ impl Store {
         rel_pos: usize,
         end_offset: usize,
     ) -> Result<Option<(usize, String, bool)>, String> {
-        // Tagged user turns emitted by pi-compat place `"grapherRequestId"` at
+        // Tagged user turns emitted by pi-compat place `"piNRequestId"` at
         // the start of the JSON line. Reject matches deep inside multi-KB tool
         // outputs or assistant bodies without scanning megabytes of log chunks.
         const MAX_LOOKBACK: usize = 4 * 1024;
@@ -572,15 +572,15 @@ fn parse_steer_event_request_id(trimmed: &str, truncated: bool) -> Option<String
         {
             return None;
         }
-        return event["grapherRequestId"]
+        return event["piNRequestId"]
             .as_str()
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
     }
     // Oversized line (e.g. a multi-MB base64 image steer): parse only the
-    // leading envelope emitted by pi-compat (`{"grapherRequestId":"...",
+    // leading envelope emitted by pi-compat (`{"piNRequestId":"...",
     // "type":"message_start"|"message_end","message":{"role":"user",...`).
-    let rest = trimmed.strip_prefix("{\"grapherRequestId\":")?;
+    let rest = trimmed.strip_prefix("{\"piNRequestId\":")?;
     let mut stream = serde_json::Deserializer::from_str(rest).into_iter::<String>();
     let request_id = stream.next()?.ok()?;
     if request_id.is_empty() {

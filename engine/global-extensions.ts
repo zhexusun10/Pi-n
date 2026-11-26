@@ -5,14 +5,14 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { isCaseInsensitive, pathKey, toHostInput } from './path-identity.mjs';
 import { fileURLToPath } from 'node:url';
 import { DefaultPackageManager, SettingsManager, createBashTimeoutBridge, createMcpExtension, composerCommandsExtension, loadBundledSimpleTimeout, loadBundledWebSearch, type InlineExtension } from './pi-compat.ts';
-import { loadGrapherMcpConfig } from './mcp-config.ts';
+import { loadPiNMcpConfig } from './mcp-config.ts';
 import { hasConfiguredDedicatedSearchApiInDir, isKeenableDisabledInDir } from './search-credentials.mjs';
 import workspacePolicy, { createWorkspacePolicy } from './prompt-extension.ts';
 
 // Native ESM reuses the already loaded Pi SDK. Passing this mandatory adapter
 // through jiti would load its relative SDK dependency graph a second time.
 // Import only code here: the factory captures task paths/role after binding.
-export const workspacePolicyName = 'grapher-workspace-policy';
+export const workspacePolicyName = 'pi-n-workspace-policy';
 export const simpleTimeoutName = 'pi-simple-timeout';
 
 const builtins = ['llama.cpp', 'codemode', 'tool-search', 'mcp'];
@@ -32,11 +32,11 @@ const bundledExtensions = [
   { id: trimId, name: 'pi-trim', path: bundledTrim, required: true, defaultEnabled: true },
   { id: continuityId, name: 'pi-continuity', path: bundledContinuity, required: false, defaultEnabled: true },
   { id: simpleTimeoutId, name: 'pi-simple-timeout', path: bundledSimpleTimeout, required: false, defaultEnabled: true },
-  { id: webSearchId, name: 'pi-better-web-search', path: bundledWebSearch, required: false, defaultEnabled: false },
+  { id: webSearchId, name: 'pi-better-web-search', path: bundledWebSearch, required: false, defaultEnabled: true },
 ];
 const bundledDefault = (id: string) => bundledExtensions.find(extension => extension.id === id)?.defaultEnabled ?? true;
 export const globalAgentDir = () => {
-  const path = toHostInput(process.env.GRAPHER_GLOBAL_PI_AGENT_DIR || join(homedir(), '.pi', 'agent'));
+  const path = toHostInput(process.env.PI_N_GLOBAL_PI_AGENT_DIR || join(homedir(), '.pi', 'agent'));
   return resolve(path === '~' || /^~[\\/]/.test(path) ? homedir() + path.slice(1) : path);
 };
 const identity = (path: string) => pathKey(path);
@@ -113,18 +113,18 @@ function readExtensionState(directory: string): ExtensionState {
   const parsed = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
   const value = parsed?.overrides;
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some(v => typeof v !== 'boolean')) {
-    throw new Error('Invalid Grapher extensions.json');
+    throw new Error('Invalid Pi^n extensions.json');
   }
   if (Object.hasOwn(value, trimId)) throw new Error('Unsupported pi-trim override; pi-trim is required');
   let webSearch: { keenablePublic?: boolean } | undefined;
   if (parsed.webSearch !== undefined) {
     if (!parsed.webSearch || typeof parsed.webSearch !== 'object' || Array.isArray(parsed.webSearch)) {
-      throw new Error('Invalid Grapher extensions.json');
+      throw new Error('Invalid Pi^n extensions.json');
     }
     if (parsed.webSearch.keenablePublic !== undefined && typeof parsed.webSearch.keenablePublic !== 'boolean') {
-      throw new Error('Invalid Grapher extensions.json');
+      throw new Error('Invalid Pi^n extensions.json');
     }
-    if (parsed.webSearch.keenablePublic === true) webSearch = { keenablePublic: true };
+    if (parsed.webSearch.keenablePublic !== undefined) webSearch = { keenablePublic: parsed.webSearch.keenablePublic };
   }
   return webSearch ? { overrides: value, webSearch } : { overrides: value };
 }
@@ -164,11 +164,12 @@ export async function extensionCatalog(directory: string) {
       path: resource.path, enabled: state[id] === true, bundled: false, required: false });
   }
   const globalDirectory = globalAgentDir();
+  const webSearchEnabled = state[webSearchId] ?? bundledDefault(webSearchId);
   return {
     globalDirectory,
     extensions,
     webSearch: {
-      keenablePublic: persisted.webSearch?.keenablePublic === true && !isKeenableDisabledInDir(directory),
+      keenablePublic: webSearchEnabled && persisted.webSearch?.keenablePublic !== false && !isKeenableDisabledInDir(directory),
       hasDedicatedApi: hasConfiguredDedicatedSearchApiInDir(directory, globalDirectory),
     },
   };
@@ -187,10 +188,8 @@ export async function setExtensionEnabled(
   if (id === webSearchId) {
     if (!enabled) {
       delete persisted.webSearch;
-    } else if (options?.keenablePublic === true) {
-      persisted.webSearch = { keenablePublic: true };
-    } else if (options?.keenablePublic === false) {
-      delete persisted.webSearch;
+    } else if (options?.keenablePublic !== undefined) {
+      persisted.webSearch = { keenablePublic: options.keenablePublic };
     }
   }
   const target = join(directory, 'extensions.json');
@@ -205,7 +204,7 @@ export async function setExtensionEnabled(
   return extensionCatalog(directory);
 }
 
-export async function executionResources(args: string[], directory: string, role = process.env.GRAPHER_MODE) {
+export async function executionResources(args: string[], directory: string, role = process.env.PI_N_MODE) {
   const state = overrides(directory);
   const discoverExtensions = !args.includes('--no-extensions') && !args.includes('-ne');
   const discoverSkills = !args.includes('--no-skills') && !args.includes('-ns');
@@ -268,8 +267,8 @@ export async function executionResources(args: string[], directory: string, role
       const originalId = original ? identity(original.path) : undefined;
       const explicitOverride = state[id] ?? (originalId ? state[originalId] : undefined);
       // Discovered external Pi extensions are opt-in: users must explicitly add
-      // them in Grapher Settings before they are mounted. Trusted project-local
-      // and dedicated-only Grapher extensions keep their local enable state.
+      // them in Pi^n Settings before they are mounted. Trusted project-local
+      // and dedicated-only Pi^n extensions keep their local enable state.
       const requiresOptIn = !isLocal || (resource.metadata.scope === 'user' && (sameGlobalAndDedicated || original !== undefined));
       const enabled = builtin
         ? (original?.enabled ?? true) && (local.extensions.find(r => r.path === id)?.enabled ?? true)
@@ -308,17 +307,17 @@ export async function executionResources(args: string[], directory: string, role
         }
       }
     }
-    // Web search follows the normal extension opt-in and only augments roles
+    // Web search is enabled by default for Planner/Node and only augments roles
     // that already receive user extensions.
     if (discoverExtensions && (state[webSearchId] ?? bundledDefault(webSearchId))) {
       extensionFactories.push(webSearchExtension);
     }
-    // Keep credentials in Grapher's dedicated agent directory; read global MCP
+    // Keep credentials in Pi^n's dedicated agent directory; read global MCP
     // config fresh, then let dedicated/project entries win name collisions.
     if (extensions.includes('builtin:mcp')) {
       extensions.splice(extensions.indexOf('builtin:mcp'), 1);
-      extensionFactories.push({ name: 'grapher-mcp', factory: createMcpExtension({
-        loadConfig: ctx => loadGrapherMcpConfig({
+      extensionFactories.push({ name: 'pi-n-mcp', factory: createMcpExtension({
+        loadConfig: ctx => loadPiNMcpConfig({
           globalDir: globalAgentDir(), agentDir: directory, cwd: ctx.cwd, projectTrusted: ctx.isProjectTrusted(),
         }),
       }) });

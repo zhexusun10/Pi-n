@@ -1503,30 +1503,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "grapher-desktop"
-version = "1.9.18"
-dependencies = [
- "cc",
- "libc",
- "portable-pty",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-notification",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tempfile",
- "uuid",
- "webview2-com",
- "windows-core",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2912,6 +2888,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6fd9027e2d9319be6349febd1db4e8d02aa544921200c9b777720ac34a3aa89"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "pi-n-desktop"
+version = "1.9.18"
+dependencies = [
+ "cc",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-notification",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tempfile",
+ "uuid",
+ "webview2-com",
+ "windows-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

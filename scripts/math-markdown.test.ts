@@ -17,7 +17,7 @@ test("display math renders KaTeX blocks instead of literal dollar delimiters", (
     assert.match(output, /<annotation encoding="application\/x-tex">/);
     assert.match(output, /Robust Score/);
     assert.doesNotMatch(output, /\$\$/);
-    assert.doesNotMatch(output, /class="grapher-math/);
+    assert.doesNotMatch(output, /class="pi-n-math/);
   }
 });
 
@@ -57,7 +57,7 @@ test("math uses KaTeX's untrusted-input mode and cannot inject HTML", () => {
   assert.match(output, /&lt;img/);
   // A model can spoof the internal placeholder, but its payload is still only
   // interpreted as TeX and rendered with trust disabled.
-  const spoofed = sanitizeHtml('<span class="grapher-math">0%5Ctext%7B%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E%7D</span>');
+  const spoofed = sanitizeHtml('<span class="pi-n-math">0%5Ctext%7B%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E%7D</span>');
   assert.doesNotMatch(spoofed, /<img\b|<script\b/i);
   assert.match(spoofed, /&lt;img/);
 });

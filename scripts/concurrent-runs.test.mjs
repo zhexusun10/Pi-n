@@ -12,7 +12,7 @@ if (process.platform === 'win32') {
   process.exit(0);
 }
 
-const root = await mkdtemp(join(tmpdir(), 'grapher-parallel-'));
+const root = await mkdtemp(join(tmpdir(), 'pi-n-parallel-'));
 let backend;
 try {
   const repository = join(root, 'repo');
@@ -26,8 +26,8 @@ try {
   const port = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
   const target = resolve(process.env.CARGO_TARGET_DIR || 'backend/target');
-  backend = spawn(join(target, 'debug/grapher'), [], {
-    env: { ...process.env, GRAPHER_DATA_DIR: join(root, 'data'), GRAPHER_PORT: String(port) },
+  backend = spawn(join(target, 'debug/pi-n'), [], {
+    env: { ...process.env, PI_N_DATA_DIR: join(root, 'data'), PI_N_PORT: String(port) },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let diagnostics = '';

@@ -54,7 +54,7 @@ export const piExtensions = {
     return () => { selectionListeners.delete(listener); };
   },
   // `refresh` bypasses the page-session catalog; the refresh control and a mount
-  // that already had cached rows use it to pick up edits made outside Grapher.
+  // that already had cached rows use it to pick up edits made outside Pi^n.
   catalog: (refresh = false): Promise<ExtensionCatalog> => {
     if (!refresh && cachedCatalog) return Promise.resolve(cachedCatalog);
     if (inFlightCatalog) return inFlightCatalog;

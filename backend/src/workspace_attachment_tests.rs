@@ -149,8 +149,8 @@ fn malformed_attachment_content_fails_before_any_files_are_created() {
         }
     }
     assert!(!root.join(attachment_inputs::BUCKET).exists());
-    assert!(!repo.join("grapher-attachments").exists());
-    assert!(!worktree.join("grapher-attachments").exists());
+    assert!(!repo.join("pi-n-attachments").exists());
+    assert!(!worktree.join("pi-n-attachments").exists());
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn raw_and_data_url_uploads_store_externally_and_support_idempotent_retries() {
     }
 
     // Repository remains completely untouched.
-    assert!(!repo.join("grapher-attachments").exists());
+    assert!(!repo.join("pi-n-attachments").exists());
     assert_eq!(fs::read_to_string(repo.join("original.txt")).unwrap(), "project file");
 }
 
@@ -480,7 +480,7 @@ fn serial_initial_route_delivers_images_to_first_job_and_survives_replay() {
         serde_json::to_value(&jobs[0].images).unwrap(),
         serde_json::to_value(&Some(vec![image])).unwrap(),
     );
-    assert!(!repo.join("grapher-attachments").exists());
+    assert!(!repo.join("pi-n-attachments").exists());
 }
 
 #[cfg(target_os = "macos")]
@@ -732,7 +732,7 @@ fn graph_planner_images_persist_under_run_attachments_and_support_session_branch
     let session_id = Uuid::new_v4().to_string();
     let cwd = temp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
-    let session_file = session_dir.join(format!("grapher_{session_id}.jsonl"));
+    let session_file = session_dir.join(format!("pi_n_{session_id}.jsonl"));
     let followup_prompt = format!(
         "You are now at nodeA's workspace.\nCurrent graph node status:\n- nodeA: completed\n{}",
         attachment_inputs::prepend_mentions(&stored, "Refine spacing")
@@ -741,7 +741,7 @@ fn graph_planner_images_persist_under_run_attachments_and_support_session_branch
         serde_json::json!({
             "type": "session",
             "version": 3,
-            "grapherFormat": 1,
+            "piNFormat": 1,
             "id": session_id,
             "cwd": cwd.to_string_lossy(),
         }),

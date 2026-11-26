@@ -22,19 +22,19 @@ import {
 } from '../engine/pi-compat.ts';
 
 test('retired Pi sessions are rejected before migration and current sessions retain Run identity', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-session-format-'));
-  const previous = process.env.GRAPHER_ACTIVE_RUN_ID;
-  process.env.GRAPHER_ACTIVE_RUN_ID = '11111111-1111-4111-8111-111111111111';
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-session-format-'));
+  const previous = process.env.PI_N_ACTIVE_RUN_ID;
+  process.env.PI_N_ACTIVE_RUN_ID = '11111111-1111-4111-8111-111111111111';
   try {
     for (const version of [undefined, 1, 2, 3, 4]) {
       const path = join(root, `old-${version}.jsonl`);
       const bytes = `${JSON.stringify({ type: 'session', version, id: 'old', cwd: root })}\n`;
       writeFileSync(path, bytes);
-      assert.throws(() => SessionManager.open(path), /Unsupported Grapher Pi session/);
+      assert.throws(() => SessionManager.open(path), /Unsupported Pi\^n Pi session/);
       const openDirectory = join(root, `open-${version}`);
-      assert.throws(() => SessionManager.open(path, openDirectory), /Unsupported Grapher Pi session/);
+      assert.throws(() => SessionManager.open(path, openDirectory), /Unsupported Pi\^n Pi session/);
       assert.equal(existsSync(openDirectory), false, 'opening a rejected file must not create its target directory');
-      assert.throws(() => SessionManager.forkFrom(path, root, join(root, 'forbidden')), /Unsupported Grapher Pi session/);
+      assert.throws(() => SessionManager.forkFrom(path, root, join(root, 'forbidden')), /Unsupported Pi\^n Pi session/);
       assert.equal(readFileSync(path, 'utf8'), bytes);
       assert.equal(existsSync(join(root, 'forbidden')), false, 'reject before creating a fork directory');
     }
@@ -43,17 +43,17 @@ test('retired Pi sessions are rejected before migration and current sessions ret
     const path = current.getSessionFile()!;
     const bytes = readFileSync(path, 'utf8');
     const reopened = SessionManager.open(path);
-    assert.equal((reopened.getHeader() as any).grapherFormat, 1);
+    assert.equal((reopened.getHeader() as any).piNFormat, 1);
     const forked = SessionManager.forkFrom(path, root, join(root, 'forked'));
     assert.deepEqual(forked.getEntries(), reopened.getEntries());
-    assert.equal((forked.getHeader() as any).grapherRunId, process.env.GRAPHER_ACTIVE_RUN_ID);
+    assert.equal((forked.getHeader() as any).piNRunId, process.env.PI_N_ACTIVE_RUN_ID);
     assert.equal(readFileSync(path, 'utf8'), bytes, 'fork leaves the source append history untouched');
-    process.env.GRAPHER_ACTIVE_RUN_ID = '22222222-2222-4222-8222-222222222222';
-    assert.throws(() => SessionManager.open(path), /another Grapher Run/);
+    process.env.PI_N_ACTIVE_RUN_ID = '22222222-2222-4222-8222-222222222222';
+    assert.throws(() => SessionManager.open(path), /another Pi\^n Run/);
     assert.equal(readFileSync(path, 'utf8'), bytes);
   } finally {
-    if (previous === undefined) delete process.env.GRAPHER_ACTIVE_RUN_ID;
-    else process.env.GRAPHER_ACTIVE_RUN_ID = previous;
+    if (previous === undefined) delete process.env.PI_N_ACTIVE_RUN_ID;
+    else process.env.PI_N_ACTIVE_RUN_ID = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -66,7 +66,7 @@ test('Pi settings and startup directories reject retired inputs without changing
     assert.throws(() => SettingsManager.inMemory(settings as any), /Unsupported Pi settings/);
     assert.deepEqual(settings, before);
   }
-  const root = mkdtempSync(join(tmpdir(), 'grapher-pi-format-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-pi-format-'));
   try {
     for (const relative of ['commands/prompt.md', 'tools/rg', 'old.jsonl', 'oauth.json', 'keybindings.json', 'settings.json']) {
       const agent = join(root, relative.replaceAll('/', '-'));
@@ -103,14 +103,14 @@ test('current in-memory entry lists retain their tree without requiring a persis
   assert.equal(restored.getSessionId(), 'memory-copy');
   assert.equal(restored.isPersisted(), false);
   assert.equal(restored.getSessionFile(), undefined);
-  assert.equal((restored.getHeader() as any).grapherFormat, 1);
+  assert.equal((restored.getHeader() as any).piNFormat, 1);
   assert.throws(() => SessionManager.inMemory(process.cwd(), undefined,
-    [...entries, { type: 'session', version: 2 } as any]), /Unsupported Grapher Pi session/);
+    [...entries, { type: 'session', version: 2 } as any]), /Unsupported Pi\^n Pi session/);
   assert.deepEqual(source.getEntries(), entries);
 });
 
 test('Pi directory checks use the same path spelling rules as the SDK', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-pi-path-format-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-pi-path-format-'));
   try {
     const agent = join(root, 'agent');
     mkdirSync(join(agent, 'commands'), { recursive: true });
@@ -128,7 +128,7 @@ test('Pi directory checks use the same path spelling rules as the SDK', () => {
 });
 
 test('global settings discovery leaves untrusted project settings unread', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-pi-project-trust-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-pi-project-trust-'));
   try {
     mkdirSync(join(root, '.pi'));
     const path = join(root, '.pi/settings.json'), bytes = '{"queueMode":"all"}\n';
@@ -141,9 +141,9 @@ test('global settings discovery leaves untrusted project settings unread', () =>
 });
 
 test('SDK branch extraction keeps current ownership, labels and a reopenable file', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-pi-branch-format-'));
-  const previous = process.env.GRAPHER_ACTIVE_RUN_ID;
-  process.env.GRAPHER_ACTIVE_RUN_ID = '11111111-1111-4111-8111-111111111111';
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-pi-branch-format-'));
+  const previous = process.env.PI_N_ACTIVE_RUN_ID;
+  process.env.PI_N_ACTIVE_RUN_ID = '11111111-1111-4111-8111-111111111111';
   try {
     for (const persisted of [true, false]) {
       const session = persisted ? SessionManager.create(root, join(root, 'sessions')) : SessionManager.inMemory(root);
@@ -156,8 +156,8 @@ test('SDK branch extraction keeps current ownership, labels and a reopenable fil
       assert.throws(() => session.createBranchedSession('missing-entry'), /not found/);
       assert.deepEqual(Object.getOwnPropertyDescriptor(session, '_rewriteFile'), rewrite);
       const path = session.createBranchedSession(second);
-      assert.equal((session.getHeader() as any).grapherFormat, 1);
-      assert.equal((session.getHeader() as any).grapherRunId, process.env.GRAPHER_ACTIVE_RUN_ID);
+      assert.equal((session.getHeader() as any).piNFormat, 1);
+      assert.equal((session.getHeader() as any).piNRunId, process.env.PI_N_ACTIVE_RUN_ID);
       assert.equal(session.getEntry(second)?.parentId, first, 'removing label entries must preserve the branch chain');
       assert.equal(session.getTree().length, 1);
       assert.ok(session.getEntries().some(entry => entry.type === 'label' && entry.label === 'anchor'));
@@ -173,10 +173,10 @@ test('SDK branch extraction keeps current ownership, labels and a reopenable fil
     const path = unflushed.createBranchedSession(model)!;
     assert.equal(existsSync(path), false, 'a branch without messages stays unflushed');
     unflushed.appendMessage({ role: 'user', content: 'first branch input', timestamp: 2 });
-    assert.equal((SessionManager.open(path).getHeader() as any).grapherRunId, process.env.GRAPHER_ACTIVE_RUN_ID);
+    assert.equal((SessionManager.open(path).getHeader() as any).piNRunId, process.env.PI_N_ACTIVE_RUN_ID);
   } finally {
-    if (previous === undefined) delete process.env.GRAPHER_ACTIVE_RUN_ID;
-    else process.env.GRAPHER_ACTIVE_RUN_ID = previous;
+    if (previous === undefined) delete process.env.PI_N_ACTIVE_RUN_ID;
+    else process.env.PI_N_ACTIVE_RUN_ID = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -336,24 +336,24 @@ test('bundled web search loads its provider-native tool against the pinned Pi pu
   }
 });
 
-test('bundled pi-simple-timeout cooperates with grapher-workspace-policy without bash tool conflicts', async () => {
+test('bundled pi-simple-timeout cooperates with pi-n-workspace-policy without bash tool conflicts', async () => {
   const standalone = await loadExtensions([bundledSimpleTimeout], process.cwd());
   assert.deepEqual(standalone.errors, []);
   assert.equal(standalone.extensions.length, 1);
   assert.ok(standalone.extensions[0].tools.has('bash'));
   assert.ok(standalone.extensions[0].commands.has('timeout'));
 
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-simple-timeout-bridge-'));
-  const envKeys = ['GRAPHER_MODE', 'GRAPHER_AGENT_KIND', 'GRAPHER_EXECUTION_KIND', 'PI_TIMEOUT_SETTINGS'];
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-simple-timeout-bridge-'));
+  const envKeys = ['PI_N_MODE', 'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_TIMEOUT_SETTINGS'];
   const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
   try {
     const settingsPath = join(dir, 'pi-timeout.json');
     process.env.PI_TIMEOUT_SETTINGS = settingsPath;
 
-    // Non-serial role: grapher-workspace-policy owns `bash`, pi-simple-timeout bridges schema/default timeout & /timeout live updates.
-    process.env.GRAPHER_MODE = 'node';
-    process.env.GRAPHER_AGENT_KIND = 'node';
-    process.env.GRAPHER_EXECUTION_KIND = 'source';
+    // Non-serial role: pi-n-workspace-policy owns `bash`, pi-simple-timeout bridges schema/default timeout & /timeout live updates.
+    process.env.PI_N_MODE = 'node';
+    process.env.PI_N_AGENT_KIND = 'node';
+    process.env.PI_N_EXECUTION_KIND = 'source';
     const bridge = createBashTimeoutBridge();
     const loader = new DefaultResourceLoader({
       cwd: dir,
@@ -372,7 +372,7 @@ test('bundled pi-simple-timeout cooperates with grapher-workspace-policy without
     assert.deepEqual(loaded.errors, [], 'must not trigger Tool "bash" conflict');
     const policyExt = loaded.extensions.find(ext => ext.path.includes(workspacePolicyName))!;
     const timeoutExt = loaded.extensions.find(ext => ext.path.includes(simpleTimeoutName))!;
-    assert.ok(policyExt.tools.has('bash'), 'grapher-workspace-policy remains the sole bash owner');
+    assert.ok(policyExt.tools.has('bash'), 'pi-n-workspace-policy remains the sole bash owner');
     assert.equal(timeoutExt.tools.has('bash'), false, 'pi-simple-timeout delegates bash registration through the bridge');
     assert.ok(timeoutExt.commands.has('timeout'), '/timeout command stays registered');
     assert.match(
@@ -380,7 +380,7 @@ test('bundled pi-simple-timeout cooperates with grapher-workspace-policy without
       /default 180s/,
     );
 
-    // Live /timeout update refreshes grapher-workspace-policy's bash schema and applies default timeout + prefix.
+    // Live /timeout update refreshes pi-n-workspace-policy's bash schema and applies default timeout + prefix.
     const timeoutCmd = timeoutExt.commands.get('timeout')!;
     const notices: string[] = [];
     await timeoutCmd.handler('0.2s', { hasUI: false, ui: { notify: (msg: string) => notices.push(msg) } } as any);
@@ -407,8 +407,8 @@ test('bundled pi-simple-timeout cooperates with grapher-workspace-policy without
       /no default timeout/,
     );
 
-    // Serial role: grapher-workspace-policy does not register bash, so pi-simple-timeout registers bash directly.
-    process.env.GRAPHER_AGENT_KIND = 'serial';
+    // Serial role: pi-n-workspace-policy does not register bash, so pi-simple-timeout registers bash directly.
+    process.env.PI_N_AGENT_KIND = 'serial';
     const serialBridge = createBashTimeoutBridge();
     const serialLoader = new DefaultResourceLoader({
       cwd: dir,
@@ -436,14 +436,14 @@ test('bundled pi-simple-timeout cooperates with grapher-workspace-policy without
   }
 });
 
-test('bundled pi-trim replaces Grapher prompt trimming', async () => {
+test('bundled pi-trim replaces Pi^n prompt trimming', async () => {
   const prompt = [
     'You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files.',
     '<rules>\n- Be concise\n</rules>',
     '<docs>\nPi documentation (read only when the user asks about Pi): /path/to/pi/docs\n- Read it when asked about Pi\n</docs>',
     '<cwd>\n/workspace\n</cwd>',
   ].join('\n');
-  const trimAgentDir = mkdtempSync(join(tmpdir(), 'grapher-pi-trim-compat-'));
+  const trimAgentDir = mkdtempSync(join(tmpdir(), 'pi-n-pi-trim-compat-'));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = trimAgentDir;
   try {
@@ -485,7 +485,7 @@ test('pi-trim handles Pi 1.5 prompt sections and mid-turn updates without alteri
     { role: 'toolResult', toolCallId: 'read-1', toolName: 'read', content: [{ type: 'text', text: projectText }], timestamp: 5 },
   ];
   const snapshot = structuredClone(messages);
-  const trimAgentDir = mkdtempSync(join(tmpdir(), 'grapher-pi-trim-agent-'));
+  const trimAgentDir = mkdtempSync(join(tmpdir(), 'pi-n-pi-trim-agent-'));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = trimAgentDir;
   try {
@@ -535,7 +535,7 @@ test('pi-trim handles Pi 1.5 prompt sections and mid-turn updates without alteri
 });
 
 test('installDefaultAggressiveTrim defaults bundled pi-trim without double-wrapping or masking saved settings', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-trim-default-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-trim-default-'));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
   const restore = installDefaultAggressiveTrim();
@@ -608,7 +608,7 @@ test('installDefaultAggressiveTrim defaults bundled pi-trim without double-wrapp
   }
 });
 
-test('Pi SDK surface required by Grapher remains available', () => {
+test('Pi SDK surface required by Pi^n remains available', () => {
   assert.equal(typeof ModelRuntime.create, 'function');
   assert.equal(typeof SettingsManager.inMemory, 'function');
   const cwd = process.cwd();
@@ -755,7 +755,7 @@ test('refreshed catalog exposes reviewed API changes and does not resurrect reti
   }
 });
 
-test('installQueueIdentity tags emitted message_start/message_end with grapherRequestId even when text is rewritten', async () => {
+test('installQueueIdentity tags emitted message_start/message_end with piNRequestId even when text is rewritten', async () => {
   const originalPrompt = AgentSession.prototype.prompt;
   const originalSubscribe = AgentSession.prototype.subscribe;
   const originalAgentSteer = Agent.prototype.steer;
@@ -798,24 +798,24 @@ test('installQueueIdentity tags emitted message_start/message_end with grapherRe
       fakeSession.agent = fakeAgent;
       fakeSession.subscribe((event: any) => emitted.push(event));
 
-      await fakeSession.prompt(`original steer\n\n<grapher-node-steer-id>${steerId}</grapher-node-steer-id>`, {
+      await fakeSession.prompt(`original steer\n\n<pi-n-node-steer-id>${steerId}</pi-n-node-steer-id>`, {
         source: 'rpc', streamingBehavior: 'steer',
       });
-      await fakeSession.prompt(`idle steer\n\n<grapher-node-steer-id>${idleId}</grapher-node-steer-id>`, {
+      await fakeSession.prompt(`idle steer\n\n<pi-n-node-steer-id>${idleId}</pi-n-node-steer-id>`, {
         source: 'rpc',
       });
       await fakeSession.prompt('unmarked prompt', { source: 'rpc' });
 
       assert.equal(emitted.length, 4);
       assert.equal(emitted[0].type, 'message_start');
-      assert.equal(emitted[0].grapherRequestId, steerId);
+      assert.equal(emitted[0].piNRequestId, steerId);
       assert.equal(emitted[0].message.content[0].text, 'REWRITTEN:original steer');
-      assert.equal('grapherRequestId' in emitted[0].message, false, 'must not mutate the AgentMessage object');
+      assert.equal('piNRequestId' in emitted[0].message, false, 'must not mutate the AgentMessage object');
       assert.equal(emitted[1].type, 'message_end');
-      assert.equal(emitted[1].grapherRequestId, steerId);
-      assert.equal(emitted[2].grapherRequestId, idleId);
+      assert.equal(emitted[1].piNRequestId, steerId);
+      assert.equal(emitted[2].piNRequestId, idleId);
       assert.equal(emitted[2].message.content[0].text, 'REWRITTEN:idle steer');
-      assert.equal(emitted[3].grapherRequestId, undefined);
+      assert.equal(emitted[3].piNRequestId, undefined);
     } finally {
       restore();
     }

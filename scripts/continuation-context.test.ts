@@ -4,61 +4,61 @@ import workspacePolicy from '../engine/prompt-extension.ts';
 import { transformMessages } from '../pi/packages/ai/src/api/transform-messages.ts';
 import { convertToLlm } from '../pi/packages/coding-agent/src/core/messages.ts';
 
-const marker = { role: 'custom', customType: 'grapher-interrupted-continuation', content: [] };
+const marker = { role: 'custom', customType: 'pi-n-interrupted-continuation', content: [] };
 const user = { role: 'user', content: 'task' };
 const toolCall = { role: 'assistant', stopReason: 'toolUse', timestamp: 42, content: [{ type: 'toolCall', id: 'call-1', name: 'bash' }] };
 const toolResult = { role: 'toolResult', toolCallId: 'call-1', content: [{ type: 'text', text: 'done' }] };
 const final = { role: 'assistant', stopReason: 'stop', content: 'finished' };
 
 function project(messages: unknown[], continuation = true) {
-  const previousMode = process.env.GRAPHER_MODE;
-  const previousContinuation = process.env.GRAPHER_CONTINUE_INTERRUPTED;
-  const previousKind = process.env.GRAPHER_EXECUTION_KIND;
+  const previousMode = process.env.PI_N_MODE;
+  const previousContinuation = process.env.PI_N_CONTINUE_INTERRUPTED;
+  const previousKind = process.env.PI_N_EXECUTION_KIND;
   try {
-    process.env.GRAPHER_MODE = continuation ? 'partition' : 'node';
-    process.env.GRAPHER_CONTINUE_INTERRUPTED = continuation ? 'true' : 'false';
-    delete process.env.GRAPHER_EXECUTION_KIND;
+    process.env.PI_N_MODE = continuation ? 'partition' : 'node';
+    process.env.PI_N_CONTINUE_INTERRUPTED = continuation ? 'true' : 'false';
+    delete process.env.PI_N_EXECUTION_KIND;
     const hooks = new Map<string, (event: any) => any>();
     workspacePolicy({ registerTool() {}, on(name: string, handler: (event: any) => any) { hooks.set(name, handler); } } as any);
     return hooks.get('context')!({ messages }).messages;
   } finally {
-    for (const [key, value] of Object.entries({ GRAPHER_MODE: previousMode,
-      GRAPHER_CONTINUE_INTERRUPTED: previousContinuation, GRAPHER_EXECUTION_KIND: previousKind })) {
+    for (const [key, value] of Object.entries({ PI_N_MODE: previousMode,
+      PI_N_CONTINUE_INTERRUPTED: previousContinuation, PI_N_EXECUTION_KIND: previousKind })) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   }
 }
 
 test('Planner continuation handles the private marker without adding a user prompt and repairs context', () => {
-  const oldMode = process.env.GRAPHER_MODE;
-  const oldContinuation = process.env.GRAPHER_CONTINUE_INTERRUPTED;
+  const oldMode = process.env.PI_N_MODE;
+  const oldContinuation = process.env.PI_N_CONTINUE_INTERRUPTED;
   try {
-    process.env.GRAPHER_MODE = 'planner';
-    process.env.GRAPHER_CONTINUE_INTERRUPTED = 'true';
+    process.env.PI_N_MODE = 'planner';
+    process.env.PI_N_CONTINUE_INTERRUPTED = 'true';
     const hooks = new Map<string, Array<(event: any) => any>>();
     const sent: any[] = [];
     workspacePolicy({ registerTool() {}, on(name: string, handler: (event: any) => any) {
       hooks.set(name, [...(hooks.get(name) ?? []), handler]);
     }, sendMessage(...args: any[]) { sent.push(args); } } as any);
     const handler = hooks.get('input')![0];
-    assert.deepEqual(handler({ text: '__grapher_continue_interrupted__' }), { action: 'handled' });
+    assert.deepEqual(handler({ text: '__pi_n_continue_interrupted__' }), { action: 'handled' });
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0][0].content, []);
     assert.equal(sent[0][0].display, false);
     assert.equal(sent[0][1].triggerTurn, true);
-    let messages: any[] = [{ role: 'user', content: 'goal\n\n<grapher-steer-id>00000000-0000-0000-0000-000000000000</grapher-steer-id>' }, toolCall, marker];
+    let messages: any[] = [{ role: 'user', content: 'goal\n\n<pi-n-steer-id>00000000-0000-0000-0000-000000000000</pi-n-steer-id>' }, toolCall, marker];
     for (const context of hooks.get('context') ?? []) messages = context({ messages })?.messages ?? messages;
     assert.deepEqual(messages, [{ role: 'user', content: 'goal' }, toolCall],
       'the original tool call is retained and the private marker is absent');
   } finally {
-    if (oldMode === undefined) delete process.env.GRAPHER_MODE; else process.env.GRAPHER_MODE = oldMode;
-    if (oldContinuation === undefined) delete process.env.GRAPHER_CONTINUE_INTERRUPTED; else process.env.GRAPHER_CONTINUE_INTERRUPTED = oldContinuation;
+    if (oldMode === undefined) delete process.env.PI_N_MODE; else process.env.PI_N_MODE = oldMode;
+    if (oldContinuation === undefined) delete process.env.PI_N_CONTINUE_INTERRUPTED; else process.env.PI_N_CONTINUE_INTERRUPTED = oldContinuation;
   }
 });
 
 test('feedback delivery identity stays in history but not model context after image normalization', () => {
   const id = '12345678-1234-4234-8234-123456789abc';
-  const envelope = `\n\n<grapher-feedback-id>${id}</grapher-feedback-id>`;
+  const envelope = `\n\n<pi-n-feedback-id>${id}</pi-n-feedback-id>`;
   const hint = '\n\n[Image: original 3000x2000, displayed at 2000x1333. Multiply coordinates by 1.50 to map to original image.]';
   const image = { type: 'image', data: 'normalized-image', mimeType: 'image/png' };
   const text = `review screenshot${envelope}${hint}`;
@@ -66,7 +66,7 @@ test('feedback delivery identity stays in history but not model context after im
     { role: 'user', content: [{ type: 'text', text }, image] },
     { role: 'user', content: `another turn${envelope}` },
     { role: 'assistant', stopReason: 'stop', content: text },
-    { role: 'user', content: 'literal\n\n<grapher-feedback-id>not-a-uuid</grapher-feedback-id>' },
+    { role: 'user', content: 'literal\n\n<pi-n-feedback-id>not-a-uuid</pi-n-feedback-id>' },
   ];
   const expected = [
     { role: 'user', content: [{ type: 'text', text: `review screenshot${hint}` }, image] },
@@ -91,7 +91,7 @@ test('ordinary tool-use turns are left to Pi; failed responses omit only associa
     'saved sibling results and their assistant message remain intact');
   const malformed = { ...toolCall, content: [{ type: 'toolCall', id: '', name: 'bash' }] };
   assert.deepEqual(project([user, malformed, toolResult, marker]), [user, malformed, toolResult],
-    'Pi, rather than Grapher, owns tool-use normalization');
+    'Pi, rather than Pi^n, owns tool-use normalization');
   const failed = { ...toolCall, stopReason: 'error' };
   const unrelatedResult = { role: 'toolResult', toolCallId: 'other', content: 'unrelated' };
   assert.deepEqual(project([user, failed, toolResult, unrelatedResult, marker]), [user, unrelatedResult],

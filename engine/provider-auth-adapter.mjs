@@ -11,7 +11,7 @@ import { KNOWN_PROVIDER_ENV_VARS } from './agent-dir.mjs';
 const PRINTABLE_ASCII = /^[\x20-\x7E]*$/;
 
 function getDisabledProvidersPath() {
-  const dir = toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".grapher", "pi-agent"));
+  const dir = toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi-n", "pi-agent"));
   return join(dir, "disabled-providers.json");
 }
 
@@ -40,7 +40,7 @@ function purgeEnvVarsForProvider(providerId) {
 }
 
 // Versioned transport DTOs only. Provider implementation, credential storage and
-// refresh are owned by the injected upstream ModelRuntime, never by Grapher.
+// refresh are owned by the injected upstream ModelRuntime, never by Pi^n.
 export class ProviderAuthAdapter {
   constructor(createRuntime, { timeoutMs = 600000, retentionMs = 60000, getDeviceId, getThinkingCapabilities } = {}) {
     this.createRuntime = createRuntime;

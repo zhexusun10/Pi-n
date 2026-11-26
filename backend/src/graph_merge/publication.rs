@@ -31,7 +31,7 @@ pub fn publication_workspace(repository: &Path, heads: &[String]) -> Result<Path
     workspace::shadow_repo_dir(repository)?.hash(&mut hash);
     let owner = uuid::Uuid::from_u128(((hash.finish() as u128) << 64) | result as u128);
     Ok(workspace::workspaces_parent(&workspace::data_root())
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(owner.to_string())
         .join(format!("publication-files-{result:016x}")))
 }
@@ -44,7 +44,7 @@ fn validate_private_paths(repository: &Path, path: &Path) -> Result<(), String> 
     if !path.is_absolute()
         || !root
             .file_name()
-            .is_some_and(|name| name == ".grapher-worktrees" || name == ".grapher-workspaces")
+            .is_some_and(|name| name == ".pi-n-worktrees" || name == ".pi-n-workspaces")
     {
         return Err("Publication requires an isolated Graph workspace".into());
     }
@@ -177,7 +177,7 @@ fn publication_pin(path: &Path, head: &str) -> Result<String, String> {
         parent.hash(&mut hash);
         uuid::Uuid::from_u128(hash.finish() as u128)
     });
-    Ok(format!("refs/grapher/runs/{owner}/publications/{head}"))
+    Ok(format!("refs/pi-n/runs/{owner}/publications/{head}"))
 }
 
 fn release_publication_pin(repository: &Path, pin: &str) -> Result<(), String> {
@@ -197,7 +197,7 @@ fn record_delivery(
     let _guard = lock.lock().map_err(|e| e.to_string())?;
     if let Ok(latest) = repository_git(
         repository,
-        &["rev-parse", "--verify", "refs/grapher/published/result"],
+        &["rev-parse", "--verify", "refs/pi-n/published/result"],
     ) {
         if latest == prepared.result {
             if repository_git(repository, &["rev-parse", "HEAD"])? == prepared.result {
@@ -221,7 +221,7 @@ fn record_delivery(
     } else {
         &prepared.input
     };
-    let refs = format!("start\nupdate refs/grapher/published/source {source}\nupdate refs/grapher/published/composed {0}\nupdate refs/grapher/published/result {0}\nupdate HEAD {0}\nprepare\ncommit\n", prepared.result);
+    let refs = format!("start\nupdate refs/pi-n/published/source {source}\nupdate refs/pi-n/published/composed {0}\nupdate refs/pi-n/published/result {0}\nupdate HEAD {0}\nprepare\ncommit\n", prepared.result);
     let shadow = workspace::shadow_repo_dir(repository)?;
     workspace::git_bytes(
         repository,
@@ -391,7 +391,7 @@ pub(super) fn publish(
                 repository,
                 &[
                     "update-ref",
-                    &format!("refs/grapher/heads/{result}"),
+                    &format!("refs/pi-n/heads/{result}"),
                     &result,
                 ],
             )?;
@@ -448,7 +448,7 @@ fn compose_virtual_publication(
         )?;
         repository_git(
             repository,
-            &["update-ref", &format!("refs/grapher/heads/{head}"), &head],
+            &["update-ref", &format!("refs/pi-n/heads/{head}"), &head],
         )?;
         head
     };
@@ -634,7 +634,7 @@ fn with_source_lease<T>(
     } else {
         workspace::shadow_repo_dir(repository)?.join("publication.lock")
     };
-    let marker = format!("Grapher publication {}\n", journal.display());
+    let marker = format!("Pi^n publication {}\n", journal.display());
     // Only this interrupted attempt's marker may be reclaimed.
     release_owned_lock(&lock_path, marker.as_bytes())?;
     let mut lease = OpenOptions::new()
@@ -671,7 +671,7 @@ fn deliver(
     } else {
         workspace::shadow_repo_dir(repository)?.join("publication.lock")
     };
-    let marker = format!("Grapher publication {}\n", journal.display());
+    let marker = format!("Pi^n publication {}\n", journal.display());
     let pin = publication_pin(path, &prepared.result)?;
     if installed(journal, &prepared.result)? {
         release_owned_lock(&lock_path, marker.as_bytes())?;
@@ -753,7 +753,7 @@ mod tests {
         .unwrap();
         let path = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(uuid::Uuid::new_v4().to_string())
             .join("publication");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -797,7 +797,7 @@ mod tests {
         let run_id = uuid::Uuid::new_v4().to_string();
         let path = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&run_id)
             .join("publication");
         if materialized {
@@ -826,7 +826,7 @@ mod tests {
             &source,
             &[
                 "update-ref",
-                &format!("refs/grapher/runs/{other}/test"),
+                &format!("refs/pi-n/runs/{other}/test"),
                 &base,
             ],
         )
@@ -855,7 +855,7 @@ mod tests {
             &[
                 "for-each-ref",
                 "--format=%(refname)",
-                &format!("refs/grapher/runs/{run_id}/publications/")
+                &format!("refs/pi-n/runs/{run_id}/publications/")
             ]
         )
         .unwrap()
@@ -929,7 +929,7 @@ mod tests {
         let run_id = uuid::Uuid::new_v4().to_string();
         let path = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(&run_id)
             .join("publication-files-test");
 
@@ -945,7 +945,7 @@ mod tests {
         let metadata = path
             .parent()
             .unwrap()
-            .join(".grapher-git")
+            .join(".pi-n-git")
             .join(format!("{}.git", &slot_digest[..16]));
         fs::create_dir_all(&metadata).unwrap();
         fs::write(

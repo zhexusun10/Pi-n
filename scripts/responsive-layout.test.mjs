@@ -65,21 +65,21 @@ test(`desktop workbench adapts to available width and short windows (${reducedMo
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US", reducedMotion });
     await context.addInitScript(({ config, projects }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_execution_overview_v1", "1");
-      localStorage.setItem("grapher_projects", JSON.stringify(projects));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
-      localStorage.setItem("grapher_workbench_split_ratio", "0.15");
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_execution_overview_v1", "1");
+      localStorage.setItem("pi_n_projects", JSON.stringify(projects));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_workbench_split_ratio", "0.15");
     }, { config, projects });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
       const body = route.request().postDataJSON();
       let result;
       switch (command) {
-        case "bootstrap": case "save_config": result = { config, snapshot: empty, runs: [snapshot.runId], conversations: fixtureSummaries([snapshot]), repositoryInfo, dataPath: "/mock/.grapher" }; break;
+        case "bootstrap": case "save_config": result = { config, snapshot: empty, runs: [snapshot.runId], conversations: fixtureSummaries([snapshot]), repositoryInfo, dataPath: "/mock/.pi-n" }; break;
         case "get_file_changes": result = fixtureFileChanges(body); break;
         case "get_execution_output": result = fixtureExecutionPage(body, [snapshot]); break;
         case "load_run": case "history": case "snapshot": result = body.runId === snapshot.runId ? snapshot : empty; break;
@@ -275,7 +275,7 @@ test(`desktop workbench adapts to available width and short windows (${reducedMo
     }
     assert.ok(labelLayouts[1].width > labelLayouts[0].width && labelLayouts[3].width > labelLayouts[2].width,
       "the shared label column grows with two- and three-digit batch numbers");
-    const storedRatio = await page.evaluate(() => localStorage.getItem("grapher_workbench_split_ratio"));
+    const storedRatio = await page.evaluate(() => localStorage.getItem("pi_n_workbench_split_ratio"));
 
     // The graph canvas has its own sizing container. Both the workbench and
     // its children must still switch on the same outer stage at the exact
@@ -340,7 +340,7 @@ test(`desktop workbench adapts to available width and short windows (${reducedMo
     await switcher.waitFor({ state: "hidden" });
     await page.locator(".graph-pane").waitFor({ state: "visible" });
     assert.equal(await composer.inputValue(), "Draft survives resizing");
-    assert.equal(await page.evaluate(() => localStorage.getItem("grapher_workbench_split_ratio")), storedRatio);
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_workbench_split_ratio")), storedRatio);
     await page.getByRole("separator", { name: "Resize execution graph" }).press("Enter");
     await page.getByRole("button", { name: "Expand execution graph" }).waitFor();
     await page.locator(".graph-pane").waitFor({ state: "detached" });

@@ -22,7 +22,7 @@ const safeRm = async (target: string) => {
 };
 
 test('production Windows Planner/Graph: concurrent shared-source runs, dependencies, cancellation and crash recovery', { skip: !windows, timeout: 240000 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-windows-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-windows-'));
   const agent = join(directory, 'agent');
   const data = join(directory, 'data');
   let backend: ChildProcess | undefined;
@@ -114,13 +114,13 @@ test('production Windows Planner/Graph: concurrent shared-source runs, dependenc
     await new Promise<void>(completed => listener.listen(0, '127.0.0.1', completed));
     const port = (listener.address() as AddressInfo).port;
     await new Promise<void>(completed => listener.close(() => completed()));
-    const env = { ...process.env, GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(port), PI_CODING_AGENT_DIR: agent,
-      GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'),
+    const env = { ...process.env, PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
+      PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
       PLANNER_MODEL: 'windows-test/native', NODE_AGENT_MODEL: 'windows-test/native', PARTITIONER_MODEL: 'windows-test/native', MERGER_MODEL: 'windows-test/native',
       PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PARTITIONER_THINKING: 'off', MERGER_THINKING: 'off' };
     const startBackend = () => {
       const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
-      backend = spawn(join(target, 'debug/grapher.exe'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+      backend = spawn(join(target, 'debug/pi-n.exe'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
       backend.stderr!.on('data', value => { diagnostics += value.toString(); });
       backend.on('error', error => { diagnostics += `${error}\n`; });
       progress(`Backend started: PID ${backend.pid}`);
@@ -188,7 +188,7 @@ test('production Windows Planner/Graph: concurrent shared-source runs, dependenc
       assert.match(git(plan.repository, 'status', '--porcelain'), /a\.txt/);
       assert.match(git(plan.repository, 'status', '--porcelain'), /joined\.txt/);
       assert.equal(git(plan.repository, 'rev-parse', 'HEAD'), initialHeads.get(plan.label));
-      assert.equal(git(plan.repository, 'for-each-ref', '--format=%(refname)', 'refs/grapher'), '');
+      assert.equal(git(plan.repository, 'for-each-ref', '--format=%(refname)', 'refs/pi-n'), '');
       const executions = snapshot.executions;
       assert.equal(executions.length, 3);
       assert.equal(new Set(executions.map((execution: any) => execution.sessionId)).size, 3);

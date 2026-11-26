@@ -1,6 +1,6 @@
-//! Owned Grapher backend child-process supervisor.
+//! Owned Pi^n backend child-process supervisor.
 //!
-//! Launches the compiled `grapher` binary in `--desktop-sidecar` dynamic-port
+//! Launches the compiled `pi-n` binary in `--desktop-sidecar` dynamic-port
 //! mode, reads the machine-readable stdout readiness handshake with bounded
 //! timeout and early-exit diagnostics, and shuts down cleanly by closing stdin
 //! before falling back to bounded force-termination.
@@ -146,7 +146,7 @@ impl SidecarJobObject {
         unsafe {
             let job = CreateJobObjectW(ptr::null(), ptr::null());
             if job.is_null() {
-                eprintln!("[grapher-desktop] Warning: failed to create Windows Job Object for backend sidecar");
+                eprintln!("[Pi^n-desktop] Warning: failed to create Windows Job Object for backend sidecar");
                 return None;
             }
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
@@ -158,13 +158,13 @@ impl SidecarJobObject {
                 size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             ) == 0
             {
-                eprintln!("[grapher-desktop] Warning: failed to configure Windows Job Object kill-on-close");
+                eprintln!("[Pi^n-desktop] Warning: failed to configure Windows Job Object kill-on-close");
                 CloseHandle(job);
                 return None;
             }
             let process_handle = child.as_raw_handle();
             if AssignProcessToJobObject(job, process_handle) == 0 {
-                eprintln!("[grapher-desktop] Warning: failed to assign backend sidecar to Windows Job Object");
+                eprintln!("[Pi^n-desktop] Warning: failed to assign backend sidecar to Windows Job Object");
                 CloseHandle(job);
                 return None;
             }
@@ -203,7 +203,7 @@ impl BackendSidecar {
         let mut command = build_sidecar_command(&config)?;
         let mut child = command.spawn().map_err(|error| {
             format!(
-                "Cannot launch Grapher backend `{}`: {error}",
+                "Cannot launch Pi^n backend `{}`: {error}",
                 config.backend_executable.display()
             )
         })?;
@@ -213,15 +213,15 @@ impl BackendSidecar {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "Failed to attach stdin pipe to Grapher backend".to_string())?;
+            .ok_or_else(|| "Failed to attach stdin pipe to Pi^n backend".to_string())?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "Failed to attach stdout pipe to Grapher backend".to_string())?;
+            .ok_or_else(|| "Failed to attach stdout pipe to Pi^n backend".to_string())?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| "Failed to attach stderr pipe to Grapher backend".to_string())?;
+            .ok_or_else(|| "Failed to attach stderr pipe to Pi^n backend".to_string())?;
 
         let stderr_buffer = Arc::new(Mutex::new(StderrBuffer::new()));
         spawn_stderr_drain(stderr, Arc::clone(&stderr_buffer));
@@ -263,9 +263,9 @@ impl BackendSidecar {
         let mut guard = self
             .running
             .lock()
-            .map_err(|_| "Grapher backend supervisor state was poisoned".to_string())?;
+            .map_err(|_| "Pi^n backend supervisor state was poisoned".to_string())?;
         let Some(running) = guard.as_mut() else {
-            return Err("Grapher backend has already shut down.".into());
+            return Err("Pi^n backend has already shut down.".into());
         };
         match running.child.try_wait() {
             Ok(None) => Ok(self.info.base_url.clone()),
@@ -273,12 +273,12 @@ impl BackendSidecar {
                 let tail = read_stderr_tail(&self.stderr_buffer);
                 *guard = None;
                 Err(format_early_exit(
-                    "Grapher backend exited unexpectedly after startup",
+                    "Pi^n backend exited unexpectedly after startup",
                     status,
                     &tail,
                 ))
             }
-            Err(error) => Err(format!("Cannot inspect Grapher backend process state: {error}")),
+            Err(error) => Err(format!("Cannot inspect Pi^n backend process state: {error}")),
         }
     }
 
@@ -329,12 +329,12 @@ pub fn build_sidecar_command(config: &SidecarConfig) -> Result<Command, String> 
     command
         .arg("--desktop-sidecar")
         .args(&config.extra_args)
-        .env("GRAPHER_PORT", "0")
-        .env("GRAPHER_DATA_DIR", &config.data_dir)
-        // Supply both the backend contract env var (`GRAPHER_INSTALLATION_ROOT`)
-        // and `GRAPHER_INSTALLATION_DIR` so bundled resources resolve uniformly.
-        .env("GRAPHER_INSTALLATION_ROOT", &config.installation_root)
-        .env("GRAPHER_INSTALLATION_DIR", &config.installation_root)
+        .env("PI_N_PORT", "0")
+        .env("PI_N_DATA_DIR", &config.data_dir)
+        // Supply both the backend contract env var (`PI_N_INSTALLATION_ROOT`)
+        // and `PI_N_INSTALLATION_DIR` so bundled resources resolve uniformly.
+        .env("PI_N_INSTALLATION_ROOT", &config.installation_root)
+        .env("PI_N_INSTALLATION_DIR", &config.installation_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -342,20 +342,20 @@ pub fn build_sidecar_command(config: &SidecarConfig) -> Result<Command, String> 
     let mut fallback_dirs = Vec::new();
     if let Some(node) = &config.bundled_node {
         command
-            .env("GRAPHER_TRUSTED_NODE", node)
-            .env("GRAPHER_NODE_PATH", node);
+            .env("PI_N_TRUSTED_NODE", node)
+            .env("PI_N_NODE_PATH", node);
         if let Some(parent) = node.parent() {
             fallback_dirs.push(parent.to_path_buf());
         }
     }
     if let Some(git) = &config.trusted_git {
-        command.env("GRAPHER_TRUSTED_GIT", git);
+        command.env("PI_N_TRUSTED_GIT", git);
         if let Some(parent) = git.parent() {
             fallback_dirs.push(parent.to_path_buf());
         }
     }
     if let Some(managed_git) = &config.managed_git_path {
-        command.env("GRAPHER_MANAGED_GIT_PATH", managed_git);
+        command.env("PI_N_MANAGED_GIT_PATH", managed_git);
     }
     if !fallback_dirs.is_empty() || config.base_path.is_some() {
         let key = path_env_key();
@@ -400,7 +400,7 @@ const MAX_READY_LINE_BYTES: usize = 64 * 1024;
 
 fn spawn_stderr_drain(stderr: impl std::io::Read + Send + 'static, buffer: Arc<Mutex<StderrBuffer>>) {
     let _ = thread::Builder::new()
-        .name("grapher-sidecar-stderr".into())
+        .name("pi-n-sidecar-stderr".into())
         .spawn(move || {
             let mut reader = BufReader::new(stderr);
             let mut line = Vec::with_capacity(512);
@@ -413,7 +413,7 @@ fn spawn_stderr_drain(stderr: impl std::io::Read + Send + 'static, buffer: Arc<M
                     trimmed = &trimmed[..trimmed.len() - 1];
                 }
                 let text = String::from_utf8_lossy(trimmed).into_owned();
-                eprintln!("[grapher-backend] {text}");
+                eprintln!("[Pi^n-backend] {text}");
                 if let Ok(mut guard) = buffer.lock() {
                     guard.push(text);
                 }
@@ -463,7 +463,7 @@ fn spawn_stdout_reader(
 ) -> mpsc::Receiver<StdoutEvent> {
     let (tx, rx) = mpsc::channel();
     let _ = thread::Builder::new()
-        .name("grapher-sidecar-stdout".into())
+        .name("pi-n-sidecar-stdout".into())
         .spawn(move || {
             let mut reader = BufReader::new(stdout);
             let mut raw = Vec::with_capacity(256);
@@ -535,7 +535,7 @@ fn spawn_stdout_reader(
 pub fn parse_ready_line(line: &str) -> Result<ReadyInfo, String> {
     let parsed: ReadyMessage = serde_json::from_str(line)
         .map_err(|error| format!("Invalid backend readiness JSON: {error}"))?;
-    if parsed.kind != "grapher_ready" {
+    if parsed.kind != "pi_n_ready" {
         return Err(format!(
             "Unexpected backend readiness event type: {:?}",
             parsed.kind
@@ -565,7 +565,7 @@ fn wait_for_readiness(
             let tail = read_stderr_tail(stderr_buffer);
             return Err(format_with_stderr(
                 &format!(
-                    "Timed out after {}ms waiting for Grapher backend readiness signal.",
+                    "Timed out after {}ms waiting for Pi^n backend readiness signal.",
                     timeout.as_millis()
                 ),
                 &tail,
@@ -579,7 +579,7 @@ fn wait_for_readiness(
                 thread::sleep(Duration::from_millis(50));
                 let tail = read_stderr_tail(stderr_buffer);
                 return Err(format_with_stderr(
-                    &format!("Grapher backend violated readiness protocol: {detail}"),
+                    &format!("Pi^n backend violated readiness protocol: {detail}"),
                     &tail,
                 ));
             }
@@ -590,13 +590,13 @@ fn wait_for_readiness(
                 let tail = read_stderr_tail(stderr_buffer);
                 if let Some(status) = status {
                     return Err(format_early_exit(
-                        "Grapher backend exited before becoming ready",
+                        "Pi^n backend exited before becoming ready",
                         status,
                         &tail,
                     ));
                 }
                 return Err(format_with_stderr(
-                    "Grapher backend closed stdout before emitting a readiness signal.",
+                    "Pi^n backend closed stdout before emitting a readiness signal.",
                     &tail,
                 ));
             }
@@ -605,13 +605,13 @@ fn wait_for_readiness(
                 let tail = read_stderr_tail(stderr_buffer);
                 if let Some(status) = status {
                     return Err(format_early_exit(
-                        "Grapher backend exited before becoming ready",
+                        "Pi^n backend exited before becoming ready",
                         status,
                         &tail,
                     ));
                 }
                 return Err(format_with_stderr(
-                    "Grapher backend readiness channel closed unexpectedly.",
+                    "Pi^n backend readiness channel closed unexpectedly.",
                     &tail,
                 ));
             }
@@ -620,7 +620,7 @@ fn wait_for_readiness(
                     thread::sleep(Duration::from_millis(75));
                     let tail = read_stderr_tail(stderr_buffer);
                     return Err(format_early_exit(
-                        "Grapher backend exited before becoming ready",
+                        "Pi^n backend exited before becoming ready",
                         status,
                         &tail,
                     ));
@@ -710,14 +710,14 @@ mod tests {
     #[test]
     fn parse_ready_line_accepts_valid_payload_and_rejects_invalid_ones() {
         let info = parse_ready_line(
-            r#"{"type":"grapher_ready","port":54321,"dataDir":"/tmp/grapher/data"}"#,
+            r#"{"type":"pi_n_ready","port":54321,"dataDir":"/tmp/pi-n/data"}"#,
         )
         .unwrap();
         assert_eq!(info.port, 54321);
         assert_eq!(info.base_url, "http://127.0.0.1:54321");
-        assert_eq!(info.data_dir, "/tmp/grapher/data");
+        assert_eq!(info.data_dir, "/tmp/pi-n/data");
 
-        assert!(parse_ready_line(r#"{"type":"grapher_ready","port":0,"dataDir":"/x"}"#).is_err());
+        assert!(parse_ready_line(r#"{"type":"pi_n_ready","port":0,"dataDir":"/x"}"#).is_err());
         assert!(parse_ready_line(r#"{"type":"other","port":1234,"dataDir":"/x"}"#).is_err());
         assert!(parse_ready_line("not json").is_err());
     }
@@ -739,8 +739,8 @@ mod tests {
             temp.path(),
             "fake-backend.sh",
             &format!(
-                r#"printf 'ARGS=%s\nPORT=%s\nDATA=%s\nROOT=%s\nDIR=%s\nNODE=%s\nPATH=%s\n' "$*" "$GRAPHER_PORT" "$GRAPHER_DATA_DIR" "$GRAPHER_INSTALLATION_ROOT" "$GRAPHER_INSTALLATION_DIR" "$GRAPHER_TRUSTED_NODE" "$PATH" > "{}"
-printf '{{"type":"grapher_ready","port":43210,"dataDir":"%s"}}\n' "$GRAPHER_DATA_DIR"
+                r#"printf 'ARGS=%s\nPORT=%s\nDATA=%s\nROOT=%s\nDIR=%s\nNODE=%s\nPATH=%s\n' "$*" "$PI_N_PORT" "$PI_N_DATA_DIR" "$PI_N_INSTALLATION_ROOT" "$PI_N_INSTALLATION_DIR" "$PI_N_TRUSTED_NODE" "$PATH" > "{}"
+printf '{{"type":"pi_n_ready","port":43210,"dataDir":"%s"}}\n' "$PI_N_DATA_DIR"
 # Block until parent closes stdin, then exit cleanly.
 cat >/dev/null
 exit 0"#,
@@ -859,7 +859,7 @@ exit 0"#,
         let script = write_script(
             temp.path(),
             "stubborn-backend.sh",
-            r#"printf '{"type":"grapher_ready","port":43211,"dataDir":"/tmp/d"}\n'
+            r#"printf '{"type":"pi_n_ready","port":43211,"dataDir":"/tmp/d"}\n'
 # Ignore stdin EOF and keep sleeping so bounded force-kill fallback triggers.
 sleep 30"#,
         );

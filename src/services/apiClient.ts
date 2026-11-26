@@ -46,18 +46,18 @@ export interface ApiRequestOptions<T> {
 
 export function observeApiResponse(response: Response): void {
   if (!isCurrentApiResponse(response)) return;
-  const instance = response.headers.get('x-grapher-instance');
+  const instance = response.headers.get('x-pi-n-instance');
   if (instance && /^[0-9a-f-]{36}$/i.test(instance)) {
     const generation = getApiTransportGeneration();
     // Keep issued tokens across URL invalidation; their backend epoch remains authoritative.
     backendInstance = { value: instance, generation };
   }
-  if (response.headers.get('x-grapher-events') === '1') enableRuntimeEvents();
+  if (response.headers.get('x-pi-n-events') === '1') enableRuntimeEvents();
 }
 
 export function requestHeaders(command: string, body: Record<string, unknown>, options: Pick<ApiRequestOptions<unknown>, 'operationId' | 'operationKey'> = {}) {
   const requestId = createUuid();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Grapher-Request-Id': requestId };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Pi-N-Request-Id': requestId };
   let operationId = options.operationId ?? (options.operationKey ? operationKeys.get(options.operationKey) : undefined);
   if (!isReadRequest(command, body)) {
     const instance = backendInstance?.generation === getApiTransportGeneration() ? backendInstance.value : null;
@@ -70,7 +70,7 @@ export function requestHeaders(command: string, body: Record<string, unknown>, o
         operationKeys.set(options.operationKey, operationId);
       }
     }
-    if (operationId) headers['X-Grapher-Operation'] = operationId;
+    if (operationId) headers['X-Pi-N-Operation'] = operationId;
   }
   return { headers, requestId, operationId };
 }
@@ -126,7 +126,7 @@ export async function jsonRequest<T>(command: string, body: Record<string, unkno
     if (!response.ok || envelope.error) throw responseError(data, response.status, requestId, operationId);
     if (!Object.hasOwn(envelope, 'result')) throw new Error('Invalid API response envelope');
     const result = options.validate ? options.validate(envelope.result) : envelope.result as T;
-    return response.headers.get('x-grapher-replayed') === '1' && options.revalidateReplay
+    return response.headers.get('x-pi-n-replayed') === '1' && options.revalidateReplay
       ? options.revalidateReplay(result, signal) : result;
   };
   try {
@@ -151,6 +151,6 @@ export async function recoverOperationResponse(operationId: string, signal?: Abo
     if (receipt?.state !== 'completed' || !receipt.response ||
         !Number.isInteger(receipt.response.status) || receipt.response.status < 200 || receipt.response.status > 599) return null;
     return new Response(JSON.stringify(receipt.response.body), { status: receipt.response.status,
-      headers: { 'Content-Type': 'application/json', 'X-Grapher-Replayed': '1' } });
+      headers: { 'Content-Type': 'application/json', 'X-Pi-N-Replayed': '1' } });
   } catch { return null; }
 }

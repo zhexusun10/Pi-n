@@ -17,7 +17,7 @@ before(async () => {
   });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
@@ -50,7 +50,7 @@ function defaultDiffFor(body) {
 
 async function fixture(mode, viewport = { width: 1280, height: 850 }, getFileChanges, getExecutionOutput, waitUntil = getExecutionOutput ? "domcontentloaded" : "networkidle", getFileDiff) {
   const context = await browser.newContext({ viewport, locale: "en-US", reducedMotion: "reduce" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   let page;
   await context.route("**/api/*", async route => {
@@ -416,7 +416,7 @@ test("graph mode right pane switches cleanly between Execution graph and File ch
 for (const mode of ["serial", "planner"]) {
   test(`${mode}: closing File changes animates smoothly when motion is enabled`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US", reducedMotion: "no-preference" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     const errors = [];
     let page;
     await context.route("**/api/*", async route => {
@@ -864,7 +864,7 @@ test("collapse cards preference is shared across conversations and persists acro
 
 test("collapse and expand cards animate height progressively when motion is enabled", { timeout: 30_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US", reducedMotion: "no-preference" });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   const errors = [];
   let page;
   await context.route("**/api/*", async route => {
@@ -1181,8 +1181,8 @@ test("collapsed conversations fetch compact transcripts without tool results and
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -1286,8 +1286,8 @@ test("collapsing and expanding cards in a tall virtualized conversation has zero
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 760 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -1393,8 +1393,8 @@ test("collapsed summary rows with raw ranges hydrate only the clicked group with
       toolName: "bash",
       isError: false,
       result: { details: { exitCode: 0 } },
-      grapherBodyOmitted: true,
-      grapherRawRange: [100, 1200],
+      piNBodyOmitted: true,
+      piNRawRange: [100, 1200],
     }),
     JSON.stringify({
       type: "message_end",
@@ -1402,10 +1402,10 @@ test("collapsed summary rows with raw ranges hydrate only the clicked group with
     }),
     JSON.stringify({
       type: "message_end",
-      grapherRawRange: [2000, 3200],
+      piNRawRange: [2000, 3200],
       message: {
         role: "assistant",
-        content: [{ type: "thinking", thinking: "", grapherBodyOmitted: true, grapherThinkingChars: 2400 }],
+        content: [{ type: "thinking", thinking: "", piNBodyOmitted: true, piNThinkingChars: 2400 }],
       },
     }),
     JSON.stringify({
@@ -1421,19 +1421,19 @@ test("collapsed summary rows with raw ranges hydrate only the clicked group with
       toolName: "bash",
       isError: false,
       result: { content: [{ type: "text", text: "TARGETED_BASH_RESULT_OK" }], details: { exitCode: 0 } },
-      grapherRawRange: [100, 1200],
+      piNRawRange: [100, 1200],
     }) + "\n",
     "2000:3200": JSON.stringify({
       type: "message_end",
-      grapherRawRange: [2000, 3200],
+      piNRawRange: [2000, 3200],
       message: { role: "assistant", content: [{ type: "thinking", thinking: "TARGETED_THINKING_BODY_OK" }] },
     }) + "\n",
   };
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -1517,9 +1517,9 @@ test("expanded settled history uses CardShell projection and hydrates large card
       toolName: "bash",
       isError: false,
       result: { details: { exitCode: 0 } },
-      grapherBodyOmitted: true,
-      grapherRawRange: [400, 8400],
-      grapherSubcommandWarning: true,
+      piNBodyOmitted: true,
+      piNRawRange: [400, 8400],
+      piNSubcommandWarning: true,
     }),
     JSON.stringify({
       type: "message_end",
@@ -1529,8 +1529,8 @@ test("expanded settled history uses CardShell projection and hydrates large card
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "0");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "0");
   });
   const errors = [];
   let page;
@@ -1548,7 +1548,7 @@ test("expanded settled history uses CardShell projection and hydrates large card
             toolName: "bash",
             isError: false,
             result: { content: [{ type: "text", text: "HYDRATED_LARGE_BASH_OUTPUT_OK\nnot ok 1 - detail" }], details: { exitCode: 0 } },
-            grapherRawRange: [400, 8400],
+            piNRawRange: [400, 8400],
           }) + "\n",
           startOffset: 400, nextOffset: 8400, totalBytes: 10_000,
           complete: true, status: "completed", projection: "hydrated",
@@ -1753,8 +1753,8 @@ test("clicking a collapsed card summary strip always expands downward without sh
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 760 }, locale: "en-US", reducedMotion: "no-preference" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -1909,8 +1909,8 @@ test("live collapsed summary strip stays compact without stretching horizontally
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 760 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -1989,8 +1989,8 @@ test("live collapsed summary strip stays compact without stretching horizontally
 test("expanding all cards does not replay the expand animation for already-opened summary rows", { timeout: 30_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US", reducedMotion: "no-preference" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -2150,8 +2150,8 @@ test("live updates after expanding a collapsed summary strip never remount it, j
   let running = true;
   const context = await browser.newContext({ viewport: { width: 1280, height: 640 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -2290,8 +2290,8 @@ test("already-expanded running tool card inside a collapsed summary auto-hydrate
       toolName: "bash",
       isError: false,
       result: { details: { exitCode: 0 } },
-      grapherBodyOmitted: true,
-      grapherRawRange: [100, 220],
+      piNBodyOmitted: true,
+      piNRawRange: [100, 220],
     }),
     JSON.stringify({ type: "tool_execution_start", toolCallId: "hyd-t2", toolName: "bash", args: { command: "npm run verify" } }),
   ].join("\n") + "\n";
@@ -2301,16 +2301,16 @@ test("already-expanded running tool card inside a collapsed summary auto-hydrate
     toolName: "bash",
     isError: false,
     result: { details: { exitCode: 0 } },
-    grapherBodyOmitted: true,
-    grapherRawRange: [300, 480],
+    piNBodyOmitted: true,
+    piNRawRange: [300, 480],
   }) + "\n";
 
   let stage = 1;
   const hydratedRanges = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 700 }, locale: "en-US" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -2329,7 +2329,7 @@ test("already-expanded running tool card inside a collapsed summary auto-hydrate
               toolName: "bash",
               isError: false,
               result: { content: [{ type: "text", text: "HYDRATED_T1_BODY" }], details: { exitCode: 0 } },
-              grapherRawRange: [100, 220],
+              piNRawRange: [100, 220],
             }));
           } else if (start === 300) {
             lines.push(JSON.stringify({
@@ -2338,7 +2338,7 @@ test("already-expanded running tool card inside a collapsed summary auto-hydrate
               toolName: "bash",
               isError: false,
               result: { content: [{ type: "text", text: "HYDRATED_T2_LIVE_RESULT_OK" }], details: { exitCode: 0 } },
-              grapherRawRange: [300, 480],
+              piNRawRange: [300, 480],
             }));
           }
         }
@@ -2389,7 +2389,7 @@ test("already-expanded running tool card inside a collapsed summary auto-hydrate
     await page.waitForTimeout(260);
     await expect(tool2Header).toHaveAttribute("aria-expanded", "true");
 
-    // Now tool 2 completes in summary projection with grapherBodyOmitted + grapherRawRange.
+    // Now tool 2 completes in summary projection with piNBodyOmitted + piNRawRange.
     stage = 2;
     await page.evaluate(() => window.changesAudit.update());
 
@@ -2431,8 +2431,8 @@ test("global expand and collapse in a long virtualized conversation animate only
 
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US", reducedMotion: "no-preference" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "1");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
   });
   const errors = [];
   let page;
@@ -2503,8 +2503,8 @@ test("global expand and collapse in a long virtualized conversation animate only
 test("planner global collapse and expand keep expanded thinking cards matched with zero boundary snap", { timeout: 30_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 }, locale: "en-US", reducedMotion: "no-preference" });
   await context.addInitScript(() => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_collapse_cards_v1", "0");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "0");
   });
   const errors = [];
   let page;

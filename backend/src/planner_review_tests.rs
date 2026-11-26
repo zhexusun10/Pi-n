@@ -46,8 +46,8 @@ import fs from 'node:fs';
 let task = ''; for await (const chunk of process.stdin) task += chunk;
 const emit = event => console.log(JSON.stringify(event));
 const say = text => emit({type:'message_end',message:{role:'assistant',content:[{type:'text',text}]}});
-if (process.env.GRAPHER_MODE === 'planner') {
-  fs.appendFileSync(new URL('./feedback-enabled.jsonl', import.meta.url), JSON.stringify(process.env.GRAPHER_FEEDBACK_ENABLED)+'\n');
+if (process.env.PI_N_MODE === 'planner') {
+  fs.appendFileSync(new URL('./feedback-enabled.jsonl', import.meta.url), JSON.stringify(process.env.PI_N_FEEDBACK_ENABLED)+'\n');
   fs.appendFileSync(new URL('./planner-tasks.jsonl', import.meta.url), JSON.stringify(task)+'\n');
   if (task.endsWith('\nFollow up')) { say('Follow-up reply'); process.exit(0); }
   if (!fs.existsSync('first.txt')) throw Error('review ran before publication');
@@ -55,15 +55,15 @@ if (process.env.GRAPHER_MODE === 'planner') {
   emit({type:'message_end',message:{role:'user',content:[{type:'text',text:task}]}});
   if (fs.existsSync('second.txt')) { say('Final reply'); process.exit(0); }
   fs.writeFileSync('review.txt', 'fresh source');
-  const graph = JSON.parse(fs.readFileSync(process.env.GRAPHER_GRAPH_PATH));
+  const graph = JSON.parse(fs.readFileSync(process.env.PI_N_GRAPH_PATH));
   graph.nodes.push({id:'second',task:'second'});
   if (fs.existsSync('parallel-review')) graph.nodes.push({id:'third',task:'second'}, {id:'fourth',task:'second'}, {id:'fifth',task:'second'});
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
   emit({type:'tool_execution_end',toolName:'edit_graph',isError:false});
   if (fs.existsSync('fail-review')) throw Error('review failed deliberately');
   while (!fs.existsSync('release-review')) await new Promise(completed=>setTimeout(completed,20));
   for (const node of graph.nodes.filter(node => node.id !== 'first')) graph.edges.push({from:'first',to:node.id,feedback:false});
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH, JSON.stringify(graph));
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH, JSON.stringify(graph));
   emit({type:'tool_execution_end',toolName:'edit_graph',isError:false});
   say('A next step');
 } else {
@@ -485,14 +485,14 @@ fn planner_revision_tool_start_receives_live_runtime_context() {
         fs::write(&script, r#"
 import fs from 'node:fs';
 let task = ''; for await (const chunk of process.stdin) task += chunk;
-if (process.env.GRAPHER_MODE !== 'planner') {
+if (process.env.PI_N_MODE !== 'planner') {
   fs.writeFileSync('first.txt', 'published');
   console.log(JSON.stringify({type:'message_end', message:{role:'assistant',content:[{type:'text',text:'Completed'}]}}));
   process.exit(0);
 }
 const id = 'call/一';
 console.log(JSON.stringify({type:'tool_execution_start', toolName:'edit_graph', toolCallId:id, args:{edges:[]}}));
-const path = `${process.env.GRAPHER_GRAPH_PATH}.impact-3fb43c6ba852b42a.json`;
+const path = `${process.env.PI_N_GRAPH_PATH}.impact-3fb43c6ba852b42a.json`;
 const until = Date.now() + 3000;
 while (!fs.existsSync(path) && Date.now() < until) await new Promise(done => setTimeout(done, 10));
 const context = JSON.parse(fs.readFileSync(path, 'utf8'));
@@ -713,7 +713,7 @@ fn post_task_review_rejects_header_only_history_and_preserves_failure_after_rest
     let header = format!(
         "{}\n",
         serde_json::json!({
-            "type": "session", "version": 3, "grapherFormat": 1, "grapherRunId": run_id, "id": run_id,
+            "type": "session", "version": 3, "piNFormat": 1, "piNRunId": run_id, "id": run_id,
             "cwd": crate::native::host_path(&repo)
         })
     );
@@ -728,7 +728,7 @@ fn post_task_review_rejects_header_only_history_and_preserves_failure_after_rest
     let expected_history = format!(
         "{}\n{turn}",
         serde_json::json!({
-            "type": "session", "version": 3, "grapherFormat": 1, "grapherRunId": run_id, "id": run_id,
+            "type": "session", "version": 3, "piNFormat": 1, "piNRunId": run_id, "id": run_id,
             "cwd": crate::session_branch::session_cwd(&repo).unwrap()
         })
     );
@@ -934,7 +934,7 @@ fn transcript_projection_hides_the_synthetic_review_turn_everywhere() {
     // A resumed conversation can embed both review variants. Hide both but
     // preserve real user messages, assistant errors, metrics and the newline.
     let agent_end = serde_json::json!({
-        "grapherReceivedAt": 1000u64, "type": "agent_end", "willRetry": true,
+        "piNReceivedAt": 1000u64, "type": "agent_end", "willRetry": true,
         "messages": [
             { "role": "user", "content": [{ "type": "text", "text": post_task_review_task(true) }] },
             { "role": "user", "content": [{ "type": "text", "text": post_task_review_task(false) }] },
@@ -974,9 +974,9 @@ fn foreground_planner_preview_progress_rebuilds_the_topology_before_the_turn_com
     fs::write(&script, r#"
 import fs from 'node:fs';
 let task = ''; for await (const chunk of process.stdin) task += chunk;
-if (process.env.GRAPHER_MODE !== 'planner') process.exit(0);
+if (process.env.PI_N_MODE !== 'planner') process.exit(0);
 const emit = event => console.log(JSON.stringify(event));
-const path = process.env.GRAPHER_GRAPH_PATH;
+const path = process.env.PI_N_GRAPH_PATH;
 const graph = JSON.parse(fs.readFileSync(path, 'utf8'));
 graph.nodes.push({ id: 'one', task: 'Do one' });
 fs.writeFileSync(path, JSON.stringify(graph));

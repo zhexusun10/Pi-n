@@ -10,7 +10,7 @@ import { build, createServer, preview } from "vite";
 
 let directory, server, browser, chunks, origin;
 before(async () => {
-  directory = await mkdtemp(path.join(tmpdir(), "grapher-frontend-bundle-"));
+  directory = await mkdtemp(path.join(tmpdir(), "pi-n-frontend-bundle-"));
   chunks = new Map();
   await build({
     logLevel: "error",
@@ -25,7 +25,7 @@ before(async () => {
   server = await preview({ logLevel: "error", build: { outDir: directory },
     preview: { host: "127.0.0.1", port: 0, strictPort: false } });
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => {
   await browser?.close();
@@ -81,9 +81,9 @@ async function setupPage({ planType = "graph", running = false, twoRuns = false 
   const repositoryInfo = { path: repository, name: "Project", branch: "main", head: "", clean: true };
   const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, reducedMotion: "no-preference" });
   await context.addInitScript(({ repository, config }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
-    localStorage.setItem("grapher_config", JSON.stringify(config));
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_config", JSON.stringify(config));
   }, { repository, config });
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -179,12 +179,16 @@ test("a pending snapshot makes the retained conversation inert and failure resto
     while (!pending) { assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 20)); }
     assert.equal(await page.locator(".workspace-view-wrapper").getAttribute("inert"), "",
       "the previous Run must not remain interactive under another card's loading state");
-    assert.equal(await composer.isDisabled(), true);
+    assert.equal(await page.locator(".workspace-view-wrapper").getAttribute("aria-busy"), "true");
+    assert.equal(await composer.isDisabled(), false,
+      "pending navigation relies on inert rather than toggling disabled opacity");
     await page.keyboard.press("Enter");
     release();
     await page.getByRole("alert").filter({ hasText: "Delayed snapshot failed" }).waitFor();
-    await page.waitForFunction(() => document.querySelector(".pane-bottom-chat textarea")?.disabled === false);
+    await page.waitForFunction(() => document.querySelector(".workspace-view-wrapper")?.getAttribute("inert") === null);
     assert.equal(await page.locator(".workspace-view-wrapper").getAttribute("inert"), null);
+    assert.equal(await page.locator(".workspace-view-wrapper").getAttribute("aria-busy"), null);
+    assert.equal(await composer.isDisabled(), false);
     assert.equal(await composer.inputValue(), "Draft belongs to the current conversation");
     assert.deepEqual(mutations, []);
     assert.deepEqual(errors, []);
@@ -359,7 +363,7 @@ test("a failed workbench load preserves the draft without a reload button and lo
 });
 
 test("development source saves do not cache a temporarily empty module", { timeout: 30_000 }, async () => {
-  const root = await realpath(await mkdtemp(path.join(tmpdir(), "grapher-source-save-")));
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "pi-n-source-save-")));
   const source = path.join(root, "NodeTaskCard.js");
   let dev, watcherReady;
   const ready = new Promise(resolve => { watcherReady = resolve; });

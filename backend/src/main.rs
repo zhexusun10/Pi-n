@@ -1,8 +1,8 @@
 use std::io::{self, Read};
 
 fn main() {
-    if std::env::args().nth(1).as_deref() == Some("--grapher-env-tool") {
-        let status = match grapher::environment_discovery::tool(std::env::args().skip(2).collect())
+    if std::env::args().nth(1).as_deref() == Some("--pi-n-env-tool") {
+        let status = match pi_n::environment_discovery::tool(std::env::args().skip(2).collect())
         {
             Ok(status) => status,
             Err(error) => {
@@ -14,8 +14,8 @@ fn main() {
     }
 
     if std::env::args().nth(1).as_deref() == Some("--build-identity") {
-        let revision = env!("GRAPHER_BUILD_COMMIT");
-        if env!("GRAPHER_BUILD_DIRTY") == "0" {
+        let revision = env!("PI_N_BUILD_COMMIT");
+        if env!("PI_N_BUILD_DIRTY") == "0" {
             println!("{revision}");
         } else {
             println!("dirty:{revision}");
@@ -30,12 +30,12 @@ fn main() {
             .expect("Cannot read graph");
         let result = serde_json::from_str::<serde_json::Value>(&input).and_then(|value| {
             let graph = serde_json::from_value(value["graph"].clone())?;
-            let previous: Option<grapher::model::Graph> = value
+            let previous: Option<pi_n::model::Graph> = value
                 .get("previousGraph")
                 .filter(|graph| !graph.is_null())
                 .map(|graph| serde_json::from_value(graph.clone()))
                 .transpose()?;
-            let revision: Option<grapher::runtime::PlannerRevisionContext> = value
+            let revision: Option<pi_n::runtime::PlannerRevisionContext> = value
                 .get("revisionContext")
                 .filter(|context| !context.is_null())
                 .map(|context| serde_json::from_value(context.clone()))
@@ -52,16 +52,16 @@ fn main() {
                 })
                 .unwrap_or_default();
             Ok(
-                match grapher::compiler::compile(
+                match pi_n::compiler::compile(
                     &graph,
                     value["finalCheck"].as_bool().unwrap_or(true),
                 ) {
                     Ok(mut plan) => {
                         let diagnostics =
-                            grapher::compiler::unremovable_node_diagnostics(&graph, &unremovable);
+                            pi_n::compiler::unremovable_node_diagnostics(&graph, &unremovable);
                         if diagnostics.is_empty() {
                             let mut mutation_warnings = previous.as_ref()
-                                .map(|before| grapher::compiler::changed_advisories(before, &graph));
+                                .map(|before| pi_n::compiler::changed_advisories(before, &graph));
                             let mut revision_impact = None;
                             if let Some(revision) = revision {
                                 let (updated_tasks, original_tasks) = revision.invalidated_completed_by_task(&graph);
@@ -87,7 +87,7 @@ fn main() {
                                     );
                                     plan.warnings.push(format!("W304: {message}"));
                                     if let Some(warnings) = &mut mutation_warnings {
-                                        warnings.insert(0, grapher::compiler::Diagnostic {
+                                        warnings.insert(0, pi_n::compiler::Diagnostic {
                                             code: "W304".into(),
                                             message,
                                             dependency_path: None,
@@ -116,7 +116,7 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("--cleanup-workspaces") {
         if let Err(error) =
-            grapher::maintenance::cleanup_workspaces(std::env::args().skip(2).collect())
+            pi_n::maintenance::cleanup_workspaces(std::env::args().skip(2).collect())
         {
             eprintln!("{error}");
             std::process::exit(1);
@@ -124,7 +124,7 @@ fn main() {
         return;
     }
 
-    let mut options = grapher::server::ServerOptions::from_env();
+    let mut options = pi_n::server::ServerOptions::from_env();
     for argument in std::env::args().skip(1) {
         match argument.as_str() {
             "--desktop-sidecar" => {
@@ -139,13 +139,13 @@ fn main() {
                 options.shutdown_on_stdin_eof = true;
             }
             _ => {
-                eprintln!("Unknown Grapher argument: {argument}");
+                eprintln!("Unknown Pi^n argument: {argument}");
                 std::process::exit(1);
             }
         }
     }
 
-    if let Err(error) = grapher::server::run_with_options(options) {
+    if let Err(error) = pi_n::server::run_with_options(options) {
         eprintln!("{error}");
         std::process::exit(1);
     }

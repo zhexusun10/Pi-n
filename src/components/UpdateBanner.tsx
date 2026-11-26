@@ -50,7 +50,7 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = React.memo(({
   const progress = snapshot.progress;
 
   let title = versionLabel
-    ? t("发现新版本 Grapher {0}", versionLabel)
+    ? t("发现新版本 Pi^n {0}", versionLabel)
     : t("发现新版本");
   let subtitle: string | null = update?.currentVersion
     ? `${formatVersion(update.currentVersion)} → ${versionLabel}`
@@ -74,16 +74,16 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = React.memo(({
         : t("正在安装更新…");
     subtitle =
       snapshot.platform === "windows"
-        ? t("Grapher 将自动关闭并重启")
-        : t("请勿关闭 Grapher");
+        ? t("Pi^n 将自动关闭并重启")
+        : t("请勿关闭 Pi^n");
   } else if (snapshot.status === "ready-to-restart") {
     title = t("更新已安装，重启即可生效");
     subtitle = null;
   } else if (snapshot.status === "restarting") {
     title =
       snapshot.platform === "windows"
-        ? t("正在交由安装程序重启 Grapher…")
-        : t("正在重启 Grapher…");
+        ? t("正在交由安装程序重启 Pi^n…")
+        : t("正在重启 Pi^n…");
     subtitle = null;
   }
 

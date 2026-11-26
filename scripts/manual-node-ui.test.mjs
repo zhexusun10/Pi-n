@@ -23,12 +23,12 @@ test("returning from node creation keeps Planner history scrollable and restores
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repository, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -95,7 +95,7 @@ test("returning from node creation keeps Planner history scrollable and restores
     const afterWheel = await scroll.evaluate(el => ({ top: el.scrollTop, following: el.dataset.transcriptFollowing }));
     assert.ok(afterWheel.top < initialTop - 100, `wheel scrollback should not snap to the bottom: ${JSON.stringify({ initialTop, afterWheel })}`);
     assert.equal(afterWheel.following, undefined, "upward input releases bottom following");
-    await scroll.evaluate(el => el.dispatchEvent(new Event("grapher:transcript-content-growth")));
+    await scroll.evaluate(el => el.dispatchEvent(new Event("pi-n:transcript-content-growth")));
     await page.waitForTimeout(100);
     assert.ok(Math.abs(await scroll.evaluate(el => el.scrollTop) - afterWheel.top) <= 3,
       "new output must not pull a reader back to the bottom");
@@ -197,19 +197,19 @@ test("graph background menu creates nodes with explicit completed-result confirm
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repository, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
       const body = route.request().postDataJSON();
       let result;
       switch (command) {
-        case "bootstrap": result = { config, snapshot: empty, runs: ["graph-a"], conversations: fixtureSummaries([snapshot]), repositoryInfo, dataPath: "/mock/.grapher" }; break;
+        case "bootstrap": result = { config, snapshot: empty, runs: ["graph-a"], conversations: fixtureSummaries([snapshot]), repositoryInfo, dataPath: "/mock/.pi-n" }; break;
         case "get_file_changes": result = fixtureFileChanges(body); break;
         case "history": case "snapshot": case "load_run": result = snapshot; break;
         case "snapshot_if_changed": result = { version: String(requests.length), snapshot }; break;

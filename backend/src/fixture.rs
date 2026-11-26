@@ -22,7 +22,7 @@ pub fn repository(root: &Path) -> Result<PathBuf, String> {
         crate::workspace::git(&path, &["init"])?;
         fs::write(
             path.join("README.md"),
-            "# Grapher fixture\nAn isolated repository; no model calls.\n",
+            "# Pi^n fixture\nAn isolated repository; no model calls.\n",
         )
         .map_err(|error| error.to_string())?;
         crate::workspace::git(&path, &["add", "README.md"])?;

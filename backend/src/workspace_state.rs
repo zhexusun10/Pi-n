@@ -13,9 +13,9 @@ pub(crate) fn is_managed_worktrees_bucket(path: &Path) -> bool {
                 || (cfg!(target_os = "macos")
                     && crate::path_identity::case_insensitive_volume(path))
             {
-                name.eq_ignore_ascii_case(".grapher-worktrees")
+                name.eq_ignore_ascii_case(".pi-n-worktrees")
             } else {
-                name == ".grapher-worktrees"
+                name == ".pi-n-worktrees"
             }
         })
 }
@@ -54,7 +54,7 @@ pub(crate) fn root(workspace: &Path) -> Result<PathBuf, String> {
     if !is_managed_worktrees_bucket(bucket) {
         return Err("External runtime state requires a recorded managed workspace slot".into());
     }
-    Ok(run.join(".grapher-state").join(slot_digest(workspace)?))
+    Ok(run.join(".pi-n-state").join(slot_digest(workspace)?))
 }
 
 pub(crate) fn process_root(workspace: &Path) -> Result<PathBuf, String> {

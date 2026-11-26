@@ -73,7 +73,7 @@ before(async () => {
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   browser = await chromium.launch({
-    channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
+    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
     headless: true,
   });
 });
@@ -103,12 +103,12 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
       value: { platform: platformConfig.uaPlatform },
       configurable: true,
     });
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_projects", JSON.stringify([
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([
       { id: repoA, path: repoA, name: "workspace-alpha", lastOpened: 2 },
       { id: repoB, path: repoB, name: "workspace-beta", lastOpened: 1 },
     ]));
-    localStorage.setItem("grapher_last_workspace", repoA);
+    localStorage.setItem("pi_n_last_workspace", repoA);
 
     if (!tauriMode) return;
 
@@ -170,19 +170,19 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
           const sessionId = `pty-${nextSessionNum++}`;
           terminalCalls.push({ cmd, args, sessionId });
           if (earlyCursorQuery) {
-            window.__terminalTest.emit("grapher://terminal-output", { sessionId, data: btoa("\x1b[6n") });
+            window.__terminalTest.emit("pi-n://terminal-output", { sessionId, data: btoa("\x1b[6n") });
             await new Promise(resolve => setTimeout(resolve, 50));
             return { sessionId, shell: platformConfig.shell, cwd: args.workspacePath, ptyBackend };
           }
           if (earlyExit) {
-            window.__terminalTest.emit("grapher://terminal-output", { sessionId, data: btoa("FAST_STARTUP_ERROR\r\n") });
-            window.__terminalTest.emit("grapher://terminal-exit", { sessionId, exitCode: 1 });
+            window.__terminalTest.emit("pi-n://terminal-output", { sessionId, data: btoa("FAST_STARTUP_ERROR\r\n") });
+            window.__terminalTest.emit("pi-n://terminal-exit", { sessionId, exitCode: 1 });
             await new Promise(resolve => setTimeout(resolve, 50));
             return { sessionId, shell: platformConfig.shell, cwd: args.workspacePath, ptyBackend };
           }
           // Emit a welcome prompt shortly after creation.
           setTimeout(() => {
-            window.__terminalTest.emit("grapher://terminal-output", {
+            window.__terminalTest.emit("pi-n://terminal-output", {
               sessionId,
               data: btoa(`welcome:${args.workspacePath}\r\n$ `),
             });
@@ -443,9 +443,9 @@ for (const platform of ["macos", "windows"]) {
       assert.ok(cardBox.y >= composerAfter.y + composerAfter.height - 2,
         "terminal card must sit below the composer");
 
-      // Border radius aligns with workbench (18px).
+      // Border radius aligns with workbench (16px).
       const cardRadius = await card.evaluate((el) => getComputedStyle(el).borderRadius);
-      assert.equal(cardRadius, "18px");
+      assert.equal(cardRadius, "16px");
 
       // 3. Switching conversations keeps the exact same terminal open without recreating or killing it.
       await page.locator(`[data-run-id="${runA1.runId}"]`).click();
@@ -569,7 +569,7 @@ for (const tauriMode of [true, false]) {
         : webCalls.filter(c => c.command === 'terminal_resize').at(-1)?.body.rows;
       const emit = async text => {
         const data = Buffer.from(text).toString('base64');
-        if (tauriMode) await page.evaluate(data => window.__terminalTest.emit('grapher://terminal-output', { sessionId: 'pty-1', data }), data);
+        if (tauriMode) await page.evaluate(data => window.__terminalTest.emit('pi-n://terminal-output', { sessionId: 'pty-1', data }), data);
         else webSessions.get('web-pty-1').chunks.push(data);
       };
       const maximize = page.locator('[data-terminal-action="maximize"]');

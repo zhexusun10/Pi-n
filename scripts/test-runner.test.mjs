@@ -8,7 +8,7 @@ import { checkInventory, root, runSteps } from './test.mjs';
 import { suiteSteps } from './test-suites.mjs';
 
 function fixture(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-tests-中文 space-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-tests-中文 space-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   mkdirSync(join(directory, 'scripts'));
   // macOS may expose its temporary directory through the /var symlink.

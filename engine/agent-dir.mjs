@@ -21,7 +21,7 @@ export const KNOWN_PROVIDER_ENV_VARS = {
 };
 
 export function applyDisabledProviders(env = process.env) {
-  const dir = env.PI_CODING_AGENT_DIR || join(homedir(), '.grapher', 'pi-agent');
+  const dir = env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent');
   let disabled = [];
   try {
     disabled = JSON.parse(readFileSync(join(dir, 'disabled-providers.json'), 'utf8'));
@@ -71,7 +71,7 @@ export function ensureDefaultModelsFile(directory) {
 // Provider/Auth, local login and native executions use the same dedicated
 // upstream-owned configuration directory.
 export function configureAgentDir() {
-  let directory = toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.grapher', 'pi-agent'));
+  let directory = toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
   if (directory === '~' || /^~[\\/]/.test(directory)) directory = homedir() + directory.slice(1);
   directory = resolve(directory);
   mkdirSync(directory, { recursive: true, mode: 0o700 });

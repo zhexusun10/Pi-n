@@ -32,7 +32,7 @@ pub struct ManagedGitSpec {
     pub archive_filename: &'static str,
     pub archive_kind: ManagedGitArchiveKind,
     /// Relative path inside `<install_root>` to the executable passed as
-    /// `GRAPHER_TRUSTED_GIT` / `GRAPHER_MANAGED_GIT_PATH`.
+    /// `PI_N_TRUSTED_GIT` / `PI_N_MANAGED_GIT_PATH`.
     pub git_relpath: &'static str,
 }
 
@@ -42,7 +42,7 @@ const MACOS_ARM64_SPEC: ManagedGitSpec = ManagedGitSpec {
     sha256: "a882ec6882416b57d212a22bac845ae27944f96cf73453a864f6a12c17863a79",
     archive_filename: "dugite-native-v2.56.1-238326e-macOS-arm64.tar.gz",
     archive_kind: ManagedGitArchiveKind::TarGz,
-    git_relpath: "bin/git-grapher",
+    git_relpath: "bin/git-pi-n",
 };
 
 const MACOS_X64_SPEC: ManagedGitSpec = ManagedGitSpec {
@@ -51,7 +51,7 @@ const MACOS_X64_SPEC: ManagedGitSpec = ManagedGitSpec {
     sha256: "3fdb0c2f102fe0273d64b5d5fb77315c19f2b4648a154593723cb9ed98f2bc7d",
     archive_filename: "dugite-native-v2.56.1-238326e-macOS-x64.tar.gz",
     archive_kind: ManagedGitArchiveKind::TarGz,
-    git_relpath: "bin/git-grapher",
+    git_relpath: "bin/git-pi-n",
 };
 
 const WINDOWS_X64_SPEC: ManagedGitSpec = ManagedGitSpec {
@@ -85,7 +85,7 @@ pub fn install_dir_for_spec(app_data_dir: &Path, spec: ManagedGitSpec) -> PathBu
 }
 
 /// Expected executable path for the current platform's managed Git. Passed to
-/// the backend sidecar via `GRAPHER_MANAGED_GIT_PATH` so the backend picks it
+/// the backend sidecar via `PI_N_MANAGED_GIT_PATH` so the backend picks it
 /// up automatically as soon as background provisioning finishes.
 pub fn expected_managed_git_path(app_data_dir: &Path) -> Option<PathBuf> {
     let spec = current_platform_spec()?;
@@ -214,7 +214,7 @@ impl GitBootstrapManager {
         let status = Arc::clone(&self.status);
         let worker_status = Arc::clone(&status);
         if let Err(error) = thread::Builder::new()
-            .name("grapher-git-bootstrap".into())
+            .name("pi-n-git-bootstrap".into())
             .spawn(move || {
                 let Some(spec) = current_platform_spec() else {
                     set_status(
@@ -226,21 +226,21 @@ impl GitBootstrapManager {
                     return;
                 };
                 eprintln!(
-                    "[grapher-desktop] Host Git not found; provisioning managed Git ({}) into {}...",
+                    "[Pi^n-desktop] Host Git not found; provisioning managed Git ({}) into {}...",
                     spec.id,
                     install_dir_for_spec(&app_data_dir, spec).display()
                 );
                 match provision_managed_git(&app_data_dir, spec) {
                     Ok(git_path) => {
                         eprintln!(
-                            "[grapher-desktop] Managed Git ready at {}",
+                            "[Pi^n-desktop] Managed Git ready at {}",
                             git_path.display()
                         );
                         set_status(&worker_status, GitBootstrapStatus::ready(git_path));
                     }
                     Err(error) => {
                         eprintln!(
-                            "[grapher-desktop] Managed Git provisioning failed: {error}"
+                            "[Pi^n-desktop] Managed Git provisioning failed: {error}"
                         );
                         set_status(&worker_status, GitBootstrapStatus::failed(error));
                     }
@@ -351,7 +351,7 @@ pub fn provision_managed_git(
     verify_git_executable(&final_git)
 }
 
-/// Write a tiny self-contained POSIX wrapper (`bin/git-grapher`) around
+/// Write a tiny self-contained POSIX wrapper (`bin/git-pi-n`) around
 /// dugite-native's `bin/git` so `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR`, and
 /// `GIT_SSL_CAINFO` resolve relative to the install directory even when callers
 /// invoke Git with `env_clear()`.
@@ -359,7 +359,7 @@ pub fn write_posix_git_wrapper(install_root: &Path) -> Result<PathBuf, String> {
     let bin_dir = install_root.join("bin");
     fs::create_dir_all(&bin_dir)
         .map_err(|error| format!("Cannot create {}: {error}", bin_dir.display()))?;
-    let wrapper_path = bin_dir.join("git-grapher");
+    let wrapper_path = bin_dir.join("git-pi-n");
     let script = concat!(
         "#!/bin/sh\n",
         "ROOT=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd -P)\"\n",

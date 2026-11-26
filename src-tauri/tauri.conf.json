@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Grapher",
+  "productName": "Pi^n",
   "version": "1.9.18",
-  "identifier": "io.github.zhexusun10.grapher",
+  "identifier": "io.github.zhexusun10.pi-n",
   "build": {
     "beforeDevCommand": "node scripts/desktop-dev.mjs --vite-only",
     "devUrl": "http://127.0.0.1:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Grapher",
+        "title": "Pi^n",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "width": 1280,
@@ -80,7 +80,7 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM1RDQ2RTQyNzVGMEVFMTQKUldRVTd2QjFRbTdVTmJVSy9NMjZ5YVNiUnpWcVlvb1lMaVdrZURhZUZHVEZjU0VGK0Z6OUoyNFgK",
       "requireSignedVersion": true,
       "endpoints": [
-        "https://github.com/zhexusun10/grapher/releases/latest/download/latest.json"
+        "https://github.com/zhexusun10/pi-n/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

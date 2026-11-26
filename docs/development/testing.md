@@ -218,7 +218,7 @@ node scripts/cargo.mjs test --manifest-path backend/Cargo.toml --no-default-feat
 | --- | --- | --- |
 | `environment_project_baseline` | [environment_probe.rs](../../backend/src/workspace_view/environment_probe.rs) | Offline Node/npm, Python venv/PEP-517/uv, and Rustup/Cargo baseline (source drift, forks, composition, managed E sealing/materialization, storage ratios). Missing `uv` is `NOT RUN` unless required. See [environment-baselines.md](environment-baselines.md). |
 | `managed_recovery_preflight_benchmark` | [environment_probe.rs](../../backend/src/workspace_view/environment_probe.rs) | Dirty managed-state preflight/materialization cost without project Git preparation; see [managed dirty-view recovery](environment-baselines.md#managed-dirty-view-recovery-cost-opt-in). |
-| `environment_dependency_sealing_benchmark` | [seal_tests.rs](../../backend/src/workspace_files/seal_tests.rs) | No-op/changed E capture, duplicate dependencies, concurrent writers, and store growth (`GRAPHER_ENV_SEAL_PROBE_REPORT`); see [sealing optimization](environment-baselines.md#immutable-dependency-sealing-optimization). |
+| `environment_dependency_sealing_benchmark` | [seal_tests.rs](../../backend/src/workspace_files/seal_tests.rs) | No-op/changed E capture, duplicate dependencies, concurrent writers, and store growth (`PI_N_ENV_SEAL_PROBE_REPORT`); see [sealing optimization](environment-baselines.md#immutable-dependency-sealing-optimization). |
 | `staging_bench::delta_index_staging` | [staging_bench.rs](../../backend/src/graph_merge/publication/staging_bench.rs) | Warm full-index vs. delta-index staging on 64 and 50,000 paths (excludes source collection, composition, and atomic delivery). |
 | `view_equality_benchmark` | [equality_tests.rs](../../backend/src/workspace_view/equality_tests.rs) | Legacy normalized-JSON vs. borrowed-field equality on 5,000 project + 1,000 Git metadata entries (excludes scanning/checksums). |
 | `view_normalization_benchmark` | [equality_tests.rs](../../backend/src/workspace_view/equality_tests.rs) | Legacy JSON DOM vs. direct borrowed serialization for schema-6 checksums (in-memory only; use `--lib workspace_view::acl_tests` for native ACL regressions). |
@@ -235,10 +235,10 @@ node scripts/cargo.mjs test --manifest-path backend/Cargo.toml --no-default-feat
 | Script | Scope / prerequisites |
 | --- | --- |
 | `test:frontend`, `test:backend` | Frontend logic; full Rust fixture suite. |
-| `test:ui` | Fast mocked-API feature browser flows. Needs Chromium or `GRAPHER_BROWSER_CHANNEL` (Edge on Windows). No production build. |
+| `test:ui` | Fast mocked-API feature browser flows. Needs Chromium or `PI_N_BROWSER_CHANNEL` (Edge on Windows). No production build. |
 | `test:ui:audit` | Deep mocked-API transcript, history and layout audit browser suites; same browser requirement. |
 | `test:bundle` | Separate temporary production build and deferred-loading browser checks; same browser requirement. |
-| `test:ui-polish` | Separate bilingual home/settings viewport sweep; same browser requirement. `GRAPHER_UI_SCREENSHOTS` optionally saves screenshots. |
+| `test:ui-polish` | Separate bilingual home/settings viewport sweep; same browser requirement. `PI_N_UI_SCREENSHOTS` optionally saves screenshots. |
 | `test:pi`, `test:extensions` | Pi transport and [role/tool contracts](pi-integration.md#role-loading-policy). `test:extensions` also typechecks the Planner extension, which is outside the frontend `npm run check` scope. |
 | `test:native`, `test:native:scripts`, `test:planner-bash` | Native paths, launchers, Planner workspace rebinding and Bash semantics. `test:native:scripts` omits Rust tests; it still needs pinned Pi and Git/Bash. |
 | `test:filesystem` | Native ACLs, path identity, links and versioned snapshot integrity; Rust/Git, no browser or model calls. |
@@ -250,7 +250,7 @@ node scripts/cargo.mjs test --manifest-path backend/Cargo.toml --no-default-feat
 | `test:conversation-acceptance` | Current-format logs, restart and browser acceptance; see [prerequisites](conversation-logs.md#acceptance-prerequisites). |
 | `test:build-cache`, `test:release`, `test:desktop` | Temporary Cargo target isolation (`build-cache`), release launcher/updater/signing contracts (`release`), and full Tauri v2 desktop shell/migration/packaging suite (`desktop`). |
 
-Native suites need the real [platform boundary](../architecture/filesystem-isolation.md#platform-boundaries): bubblewrap/permitted namespaces on Linux, Seatbelt on macOS. Windows environment tests accept `GRAPHER_ENV_TEST_PARENT` for a short path. Environment-native, environment-chain and node-Merger fixtures seed historical runs to test retained private-workspace compatibility; new adaptive behavior lives in workspace-policy/batch tests and shared-native acceptance.
+Native suites need the real [platform boundary](../architecture/filesystem-isolation.md#platform-boundaries): bubblewrap/permitted namespaces on Linux, Seatbelt on macOS. Windows environment tests accept `PI_N_ENV_TEST_PARENT` for a short path. Environment-native, environment-chain and node-Merger fixtures seed historical runs to test retained private-workspace compatibility; new adaptive behavior lives in workspace-policy/batch tests and shared-native acceptance.
 
 Native extension relocation fixtures select a Python on `PATH` with a file-backed
 `_hashlib` module so they can copy and corrupt a genuine shared library. Other
@@ -260,7 +260,7 @@ require changing the runner's umask. Linux process-drain regressions include
 zombie-only groups and zombie leaders with live threads; the latter builds a
 small pthread fixture with the C compiler already required by the native build.
 
-Offline Conda/ML profiles are opt-in via `GRAPHER_ENV_TEST_CONDA_MANIFEST` or `GRAPHER_ENV_TEST_ML_MANIFEST`; [environment-native.test.ts](../../scripts/environment-native.test.ts) defines inputs. Harbor has separate [Linux prerequisites](../benchmarks/harbor.md#adapter-tests).
+Offline Conda/ML profiles are opt-in via `PI_N_ENV_TEST_CONDA_MANIFEST` or `PI_N_ENV_TEST_ML_MANIFEST`; [environment-native.test.ts](../../scripts/environment-native.test.ts) defines inputs. Harbor has separate [Linux prerequisites](../benchmarks/harbor.md#adapter-tests).
 
 ## Files-only publication acceptance
 
@@ -269,7 +269,7 @@ Focused coverage lives in [files_only_publication.rs](../../backend/tests/files_
 For changes that need the complete real-backend path:
 
 ```sh
-node scripts/cargo.mjs build --manifest-path backend/Cargo.toml --no-default-features --bin grapher
+node scripts/cargo.mjs build --manifest-path backend/Cargo.toml --no-default-features --bin pi-n
 node scripts/accept-files-only-publication.mjs
 ```
 

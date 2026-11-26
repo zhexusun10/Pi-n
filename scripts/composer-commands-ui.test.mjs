@@ -19,7 +19,7 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     let pendingExecute;
     let standaloneCatalogs = 0;
@@ -158,7 +158,7 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
     // Paths, unknown/unregistered slash text, and bare-only commands followed by prompt text
     // pass through as ordinary prompts instead of failing as invalid commands.
     const passthroughPrompts = [
-      "/Users/jerry/Desktop/grapher/src/App.tsx 请帮我看看",
+      "/Users/jerry/Desktop/pi-n/src/App.tsx 请帮我看看",
       "/new/tree",
       "/login 接口返回 401",
       "/settings 页面白屏",
@@ -259,7 +259,7 @@ test("standalone extension commands work before a conversation and follow the se
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     for (const suffix of ["", "?run=1"]) {
       const page = await browser.newPage();
       const jobs = new Map();
@@ -345,7 +345,7 @@ test("extension catalogs show loading and retry, refresh selections and reject s
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     const reads = [];
     page.setDefaultTimeout(5_000);
@@ -407,7 +407,7 @@ test("arbitrary extension dialogs support filtering, keyboard selection, IME and
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     const jobs = new Map();
     const replies = [];
@@ -482,7 +482,7 @@ test("a delayed model command cannot overwrite newer settings in the same conver
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     for (const command of ["/thinking low", "/model test/one"]) {
       const page = await browser.newPage();
       let catalogRequest;
@@ -528,7 +528,7 @@ test("returning to a live process cannot let an old command cancel the new comma
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     let owner;
     let slowExecute;
@@ -608,7 +608,7 @@ test("scope changes and unmount cancel in-flight and subsequent Pi dialogs on th
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     for (const change of ["Switch node", "Switch run", "Toggle composer"]) {
       const page = await browser.newPage();
       const errors = [];
@@ -679,7 +679,7 @@ test("slash command confirmation notices auto-dismiss and reset on repeat, while
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     const errors = [];
     page.on("pageerror", error => errors.push(String(error)));
@@ -743,7 +743,7 @@ test("unrecognized slash prompts work with attachments and catalog failures whil
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     const errors = [];
     let catalogFails = false;
@@ -789,9 +789,9 @@ test("unrecognized slash prompts work with attachments and catalog failures whil
     await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 2);
     assert.deepEqual((await output()).calls[1], { prompt: "/foo bar" });
 
-    await submit("/Users/jerry/Desktop/grapher/src/App.tsx");
+    await submit("/Users/jerry/Desktop/pi-n/src/App.tsx");
     await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 3);
-    assert.deepEqual((await output()).calls[2], { prompt: "/Users/jerry/Desktop/grapher/src/App.tsx" });
+    assert.deepEqual((await output()).calls[2], { prompt: "/Users/jerry/Desktop/pi-n/src/App.tsx" });
 
     await submit("/compact");
     await expect(page.locator('.prompt-command-popover[role="alert"]')).toContainText("扩展指令加载失败");
@@ -809,7 +809,7 @@ test("/reload invalidates cached command catalog so newly registered commands ar
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     const errors = [];
     const executed = [];

@@ -9,6 +9,6 @@ const [{ executionResources }, { runPiCommandCli }] = await Promise.all([
   import('./pi-compat.ts'),
 ]);
 const args = ['--mode', 'rpc', '--no-session', '--no-context-files', '--no-skills', '--offline'];
-if (process.env.GRAPHER_COMMAND_PROJECT === '1') args.push('--approve');
+if (process.env.PI_N_COMMAND_PROJECT === '1') args.push('--approve');
 const resources = await executionResources(args, directory, 'node');
 await runPiCommandCli(resources.args, { extensionFactories: resources.extensionFactories });

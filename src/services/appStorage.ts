@@ -2,24 +2,24 @@ import type { Config, PlanMode, ProjectItem, RoleModelConfig, ThinkingLevel } fr
 import { normalizeWorkspacePath } from "./workspaceConversations";
 
 export const STORAGE_KEYS = {
-  projects: "grapher_projects",
-  lastWorkspace: "grapher_last_workspace",
-  workspaceRuns: "grapher_workspace_runs",
-  archivedRuns: "grapher_archived_runs",
-  runLabels: "grapher_run_labels",
-  runModes: "grapher_run_modes",
-  config: "grapher_config",
-  dataPath: "grapher_data_path",
-  planMode: "grapher_plan_mode",
+  projects: "pi_n_projects",
+  lastWorkspace: "pi_n_last_workspace",
+  workspaceRuns: "pi_n_workspace_runs",
+  archivedRuns: "pi_n_archived_runs",
+  runLabels: "pi_n_run_labels",
+  runModes: "pi_n_run_modes",
+  config: "pi_n_config",
+  dataPath: "pi_n_data_path",
+  planMode: "pi_n_plan_mode",
 } as const;
 
 type StoredJson = {
-  grapher_projects: ProjectItem[];
-  grapher_workspace_runs: Record<string, string[]>;
-  grapher_archived_runs: string[];
-  grapher_run_labels: Record<string, string>;
-  grapher_run_modes: Record<string, PlanMode>;
-  grapher_config: Partial<Config>;
+  pi_n_projects: ProjectItem[];
+  pi_n_workspace_runs: Record<string, string[]>;
+  pi_n_archived_runs: string[];
+  pi_n_run_labels: Record<string, string>;
+  pi_n_run_modes: Record<string, PlanMode>;
+  pi_n_config: Partial<Config>;
 };
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -72,17 +72,17 @@ function config(value: unknown): Partial<Config> | null {
 }
 
 const decoders: { [K in keyof StoredJson]: (value: unknown) => StoredJson[K] | null } = {
-  grapher_projects: projects,
-  grapher_config: config,
-  grapher_workspace_runs: value => record(value) ? Object.fromEntries(Object.entries(value)
+  pi_n_projects: projects,
+  pi_n_config: config,
+  pi_n_workspace_runs: value => record(value) ? Object.fromEntries(Object.entries(value)
     .filter(([, ids]) => Array.isArray(ids))
     .map(([path, ids]) => [path, (ids as unknown[]).filter((id): id is string => typeof id === "string")])) : null,
-  grapher_archived_runs: value => Array.isArray(value)
+  pi_n_archived_runs: value => Array.isArray(value)
     ? [...new Set(value.filter((id): id is string => typeof id === "string" && id.length > 0 && !id.startsWith("pending-")))]
     : null,
-  grapher_run_labels: value => record(value) ? Object.fromEntries(Object.entries(value)
+  pi_n_run_labels: value => record(value) ? Object.fromEntries(Object.entries(value)
     .filter((entry): entry is [string, string] => typeof entry[1] === "string")) : null,
-  grapher_run_modes: value => record(value) ? Object.fromEntries(Object.entries(value)
+  pi_n_run_modes: value => record(value) ? Object.fromEntries(Object.entries(value)
     .filter((entry): entry is [string, PlanMode] => ["auto", "serial", "graph"].includes(entry[1] as string))) : null,
 };
 
@@ -92,7 +92,7 @@ export function readStorageString(key: string): string | null {
 
 export function storageJsonKey(key: string): string {
   if ([STORAGE_KEYS.workspaceRuns, STORAGE_KEYS.archivedRuns, STORAGE_KEYS.runLabels, STORAGE_KEYS.runModes, STORAGE_KEYS.config].includes(key as any)) {
-    return `grapher-format-1:${readStorageString(STORAGE_KEYS.dataPath) ?? ""}:${key}`;
+    return `pi-n-format-1:${readStorageString(STORAGE_KEYS.dataPath) ?? ""}:${key}`;
   }
   return key;
 }

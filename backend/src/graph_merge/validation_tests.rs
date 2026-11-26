@@ -65,7 +65,7 @@ impl Fixture {
         }
         let base = workspace::snapshot_repository(&source).unwrap();
         let run = Uuid::new_v4().to_string();
-        let slot = |name: &str| temp.path().join(".grapher-worktrees").join(&run).join(name);
+        let slot = |name: &str| temp.path().join(".pi-n-worktrees").join(&run).join(name);
         let mut parents = Vec::new();
         for label in ["left", "right"] {
             let path = slot(label);

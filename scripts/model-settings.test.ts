@@ -360,12 +360,14 @@ test('only required pi-trim is locked; bundled continuity and user extensions re
     assert.ok(!required.includes('<button'));
     assert.match(required, /role="img"/);
     assert.ok(required.includes(t('始终启用，不可移除')));
+    assert.ok(required.includes(t('精简冗余系统提示词，节省 Token 消耗，让模型更专注于你的任务。')),
+      'pi-trim describes its prompt trimming purpose');
     assert.ok(render(false).includes(t('{0}扩展 {1}', t('移除'), 'probe')));
     assert.ok(render(false, false).includes(t('{0}扩展 {1}', t('添加'), 'probe')));
     assert.ok(render(true, true, false).includes(t('{0}扩展 {1}', t('移除'), 'pi-continuity')));
     assert.ok(render(true, false, false).includes(t('{0}扩展 {1}', t('添加'), 'pi-continuity')));
     assert.ok(!render(true, true, false).includes(t('始终启用，不可移除')));
-    assert.ok(render(true, true, false).includes(t('更稳健的循环工程：自动恢复意外的流式中断、消息截断、网络断连，以及 API 5 小时/每周额度限制。')),
+    assert.ok(render(true, true, false).includes(t('自动从流式中断、网络波动或额度限制中无缝恢复，让长任务稳定跑完。')),
       'continuity describes its recovery guarantees');
     for (const enabled of [true, false]) {
       const path = '/Users/jerry/.pi/agent/npm/node_modules/pi-continuity/extensions/index.ts';
@@ -383,8 +385,8 @@ test('only required pi-trim is locked; bundled continuity and user extensions re
         required: false, enabled: false },
       disabled: false, onToggle() {},
     }));
-    assert.ok(webSearch.includes(t('支持已配置的专用搜索 API 和已认证的兼容 Provider；仅在有可用搜索接口时注册 web_search 工具。')),
-      'web search describes its configured API and provider-gated tool registration');
+    assert.ok(webSearch.replace(/&#x27;/g, "'").includes(t('提供网页搜索与内容抓取能力，默认启用keenable公共端点。')),
+      'web search describes its web search and fetch capabilities');
     assert.ok(!webSearch.includes('extensions/index.ts'), 'bundled web search describes its purpose instead of exposing a local path');
     const webSearchWithNote = renderToStaticMarkup(React.createElement(ExtensionItem, {
       extension: { id: 'npm:pi-better-web-search', name: 'pi-better-web-search', source: 'npm:pi-better-web-search',
@@ -476,7 +478,7 @@ test('Harness settings preserve defaults and explicit selections, with feedback 
     const markup = renderToStaticMarkup(React.createElement(SettingsModal, {
       isOpen: true, onClose() {}, config: defaultConfig, dataPath: '', onSaveConfig() {},
     }));
-    const headings = [t('Harness设置'), t('UI设置'), t('界面语言')]
+    const headings = [t('Compile模式设置'), t('UI设置'), t('界面语言')]
       .map(label => markup.indexOf(`>${label}<`));
     assert.ok(headings.every(index => index >= 0), 'all requested setting sections are present');
     assert.deepEqual([...headings].sort((a, b) => a - b), headings,
@@ -488,7 +490,7 @@ test('Harness settings preserve defaults and explicit selections, with feedback 
       assert.ok(planningCard.includes(`aria-label="${t(label)}"`), `${label} is inside the combined card`);
       assert.match(checkbox(defaultConfig, label), /checked=""/, `${label} is checked by default`);
     }
-    assert.ok(planningCard.includes(t('空闲时派发不超过 3 个节点共用源目录，超过 3 个启用独立工作区。共享执行中按依赖补位，不等待无关节点。关闭后始终共享源码，并发修改可能互相覆盖。')));
+    assert.ok(planningCard.includes(t('多节点大规模并行时自动分配独立工作区，避免并发修改互相冲突。')));
     const maxParallelMarkup = (config: Config) => {
       const rendered = renderToStaticMarkup(React.createElement(SettingsModal, {
         isOpen: true, onClose() {}, config, dataPath: '', onSaveConfig() {},
@@ -599,7 +601,7 @@ test("credentials outside printable ASCII are rejected before reaching Pi", () =
   assert.equal(hasUnsupportedCredentialCharacters("oc_sk_live-1234._~+/="), false);
   assert.equal(hasUnsupportedCredentialCharacters("sk-ant-api03-abc_DEF"), false);
   assert.equal(hasUnsupportedCredentialCharacters(""), false);
-  assert.equal(hasUnsupportedCredentialCharacters("https://github.com/zhexusun10/grapher 上面"), true);
+  assert.equal(hasUnsupportedCredentialCharacters("https://github.com/zhexusun10/pi-n 上面"), true);
   assert.equal(hasUnsupportedCredentialCharacters("ｓｋ－１２３"), true);
   assert.equal(hasUnsupportedCredentialCharacters("sk-abc\ndef"), true);
   assert.equal(hasUnsupportedCredentialCharacters("sk-abc\tdef"), true);
@@ -1011,7 +1013,7 @@ test("ProviderSettings does not include 'configured API key' cards under bound c
       assert.ok(markup.includes(`${t("已绑定的 Provider 凭据 (")}1)`));
       assert.ok(!markup.includes(`${t("已绑定的 Provider 凭据 (")}2)`));
       assert.ok(!markup.includes("configured API key"));
-      assert.ok(markup.includes(t("点击任意 Provider 登陆/配置API 或管理凭据")));
+      assert.ok(markup.includes(t("点击任意 Provider 快速登录或配置 API Key。")));
       assert.ok(!markup.includes("/login"));
     } finally {
       ssrAuth.setCachedCatalog(null);

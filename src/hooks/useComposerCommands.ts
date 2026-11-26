@@ -207,7 +207,7 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
     };
     if (blockedCommands.has(command.name.toLowerCase())) {
       if (command.args) return "prompt";
-      throw new Error(t("此指令由 Grapher 管理，不支持在输入框中执行。"));
+      throw new Error(t("此指令由 Pi^n 管理，不支持在输入框中执行。"));
     }
     if (command.name === "scoped-models") {
       ensureNoAttachment();

@@ -323,7 +323,7 @@ export function ProviderSettings({ onCatalogChange, onBusyChange }: {
       if (activeProvider?.id === p.id) setLogin(undefined);
       setActionSuccess(
         p.authSource === "env"
-          ? t("已在 Grapher 中屏蔽 {0} ({1}) 的环境变量凭据。", p.name, p.id)
+          ? t("已在 Pi^n 中屏蔽 {0} ({1}) 的环境变量凭据。", p.name, p.id)
           : t("已成功删除 {0} ({1}) 的 API Key 凭据。", p.name, p.id)
       );
       if (successTimer.current) clearTimeout(successTimer.current);
@@ -394,7 +394,7 @@ export function ProviderSettings({ onCatalogChange, onBusyChange }: {
       <div className="pi-auth-header-card">
         <div className="pi-auth-title-group">
           <div className="pi-auth-main-title">
-            <h5>{t("Provider 认证")}</h5>
+            <h5 id="provider-settings-title">{t("Provider 认证")}</h5>
           </div>
         </div>
 
@@ -413,14 +413,6 @@ export function ProviderSettings({ onCatalogChange, onBusyChange }: {
               }}
             />
           </div>
-          <button
-            type="button"
-            className="secondary compact-btn"
-            disabled={busy || pending}
-            aria-busy={busy}
-            onClick={() => void load(true)}
-          >
-            <RefreshCw size={13} className={busy ? "spin-icon" : ""} />{t(" 刷新")}</button>
         </div>
       </div>
 
@@ -817,7 +809,7 @@ export function ProviderSettings({ onCatalogChange, onBusyChange }: {
       >
         <div style={{ display: "flex", flexDirection: "column" }}>
           <span>{t("支持的 Provider 列表")}</span>
-          <small>{t("点击任意 Provider 登陆/配置API 或管理凭据")}</small>
+          <small>{t("点击任意 Provider 快速登录或配置 API Key。")}</small>
         </div>
         <ChevronDown
           size={16}
@@ -970,8 +962,8 @@ export function ProviderSettings({ onCatalogChange, onBusyChange }: {
                   <h4 id="confirm-delete-title">{t("确认移除该 API 凭据？")}</h4>
                   <p className="confirm-delete-subtitle">
                     {confirmDeleteProvider.authSource === "env"
-                      ? t("检测到该凭据来自系统环境变量，确认后将在 Grapher 中屏蔽")
-                      : t("确认后将从 Grapher 本地密钥库中彻底清除")}
+                      ? t("检测到该凭据来自系统环境变量，确认后将在 Pi^n 中屏蔽")
+                      : t("确认后将从 Pi^n 本地密钥库中彻底清除")}
                   </p>
                 </div>
                 <button
@@ -1008,7 +1000,7 @@ export function ProviderSettings({ onCatalogChange, onBusyChange }: {
 
                 <p className="confirm-delete-warning">
                   {confirmDeleteProvider.authSource === "env"
-                    ? t("屏蔽后，Grapher 不再向此 Provider 发送请求，相关模型将从可用列表中隐藏。您随时可在下方 Provider 列表中点击“登录”输入新密钥重新激活。")
+                    ? t("屏蔽后，Pi^n 不再向此 Provider 发送请求，相关模型将从可用列表中隐藏。您随时可在下方 Provider 列表中点击“登录”输入新密钥重新激活。")
                     : t("清除后，该 Provider 下的所有模型将无法调用。您可以在下方列表中随时重新输入 API Key 绑定。")}
                 </p>
               </div>

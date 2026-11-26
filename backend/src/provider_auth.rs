@@ -1,5 +1,5 @@
 //! Local-only Provider/Auth transport. The child owns upstream ModelRuntime;
-//! Grapher never reads auth.json or implements credential refresh/storage.
+//! Pi^n never reads auth.json or implements credential refresh/storage.
 #[cfg(not(feature = "fixture"))]
 use crate::engine::prewarm::{Pool, Ticket, Worker};
 use serde_json::Value;
@@ -152,7 +152,7 @@ impl Bridge {
         let id = uuid::Uuid::new_v4().to_string();
         let response = bridge.call(
             &serde_json::json!({
-                "version": 1, "operation": "grapher_prepare", "id": id,
+                "version": 1, "operation": "pi_n_prepare", "id": id,
             }),
             Duration::from_secs(30),
             || ticket.cancelled(),
@@ -312,7 +312,7 @@ impl Transport {
         }
         #[cfg(not(feature = "fixture"))]
         if !self.prepared.wait_idle(Duration::from_secs(5)) {
-            eprintln!("[Grapher] Provider/Auth preparation shutdown timed out");
+            eprintln!("[Pi^n] Provider/Auth preparation shutdown timed out");
         }
     }
 }
@@ -435,9 +435,9 @@ mod tests {
                         ))
                         .current_dir(&root)
                         .env("PI_CODING_AGENT_DIR", &own)
-                        .env("GRAPHER_GLOBAL_PI_AGENT_DIR", &global)
-                        .env("GRAPHER_ISOLATED_PI_MODELS", "1")
-                        .env("GRAPHER_ISOLATED_PI_SEARCH", "1")
+                        .env("PI_N_GLOBAL_PI_AGENT_DIR", &global)
+                        .env("PI_N_ISOLATED_PI_MODELS", "1")
+                        .env("PI_N_ISOLATED_PI_SEARCH", "1")
                         .env("PI_OFFLINE", "1")
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
@@ -524,7 +524,7 @@ mod tests {
             assert_eq!(starts.load(Ordering::SeqCst), 1);
             assert!(
                 transport
-                    .request(serde_json::json!({"version":1,"operation":"grapher_prepare"}))
+                    .request(serde_json::json!({"version":1,"operation":"pi_n_prepare"}))
                     .is_err(),
                 "private readiness is not a public auth operation"
             );

@@ -132,7 +132,7 @@ before(async () => {
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   browser = await chromium.launch({
-    channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
+    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
     headless: true,
   });
 });
@@ -153,13 +153,13 @@ async function openSearchHarness({ failSearch = false } = {}) {
   const errors = [];
 
   await context.addInitScript(({ repository, archivedId }) => {
-    localStorage.setItem("grapher_language_v1", "en");
-    localStorage.setItem("grapher_data_path", "/mock");
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_data_path", "/mock");
     localStorage.setItem(
-      "grapher_projects",
+      "pi_n_projects",
       JSON.stringify([{ id: repository, path: repository, name: "SearchWorkspace", lastOpened: 1 }]),
     );
-    localStorage.setItem("grapher-format-1:/mock:grapher_archived_runs", JSON.stringify([archivedId]));
+    localStorage.setItem("pi-n-format-1:/mock:pi_n_archived_runs", JSON.stringify([archivedId]));
   }, { repository, archivedId: runArchived.runId });
 
   await context.route("**/api/*", async (route) => {

@@ -1,1 +1,1 @@
-"""Grapher benchmark adapters (no bundled benchmark host or dataset)."""
+"""Pi^n benchmark adapters (no bundled benchmark host or dataset)."""

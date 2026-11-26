@@ -11,7 +11,7 @@ This page owns managed state outside project Git. [Workspace allocation](workspa
 | Term | Meaning |
 | --- | --- |
 | W | Current physical project directory; ownership follows Runtime's allocator, not a permanent node identity. |
-| S | External process-state root for a current slot: `<run>/.grapher-state/<slot-digest>/process/`, never inside W. |
+| S | External process-state root for a current slot: `<run>/.pi-n-state/<slot-digest>/process/`, never inside W. |
 | D | `Domain`: platform, architecture, baseline, policy, and execution-contract identity. |
 | E / `environmentRef` | Immutable managed-environment filesystem snapshot, separate from project Git files. |
 | L / `launchRef` | Versioned `LaunchConfig`: business entry, PATH, variables, hooks, and verified binding metadata; inherited credentials are named, not stored as values. |
@@ -87,7 +87,7 @@ tracked-file conflicts fail. Windows case aliases and reserved names are checked
 
 New automatic launches inherit ordinary host business variables transiently,
 including proxy/certificate settings, package-manager configuration, credentials
-and Bash startup controls. They do not inherit an outer Agent's `GRAPHER_*`/`PI_*`
+and Bash startup controls. They do not inherit an outer Agent's `PI_N_*`/`PI_*`
 identity. Before private-HOME redirection replaces `HOME`/`USERPROFILE`, automatic
 policies and workspace environments also resolve existing host `$HOME/.rustup`
 (`RUSTUP_HOME`) and `$HOME/.cargo` (`CARGO_HOME`) directories outside the
@@ -130,7 +130,7 @@ also follow the selected workspace's recorded files, not today's source files.
 Existing project-owned absolute `PIP_CONFIG_FILE` and `npm_config_userconfig`
 references follow those same recorded project bytes, including a downstream
 node's latest config edits; npm's case-insensitive variable names are respected.
-These are existing tool variables, not Grapher declarations or a host-config
+These are existing tool variables, not Pi^n declarations or a host-config
 import. File contents (including paths written inside config files) are not
 rewritten. Effective overrides/removals are respected; external paths, relative
 paths, startup expressions and Conda names stay unchanged. Arbitrary variable
@@ -177,7 +177,7 @@ interface is accepted as satisfying this contract.
 
 The required business contract is:
 
-- The original project, command and setup scripts run unchanged. No Grapher query
+- The original project, command and setup scripts run unchanged. No Pi^n query
   API, tool-path manifest, environment selector or added model instruction.
 - Runtime supplies the first private workspace's necessary source discovery
   context without running the business workload on the host as a compatibility
@@ -562,8 +562,8 @@ wrappers that bypass observation; the OS permission boundary is unchanged.
 Scopes support basic files/directories, Unix modes/Windows readonly and supported
 links. Special files, escaping directory links and managed scopes that are themselves
 Git/Runtime metadata paths are rejected; managed Unix trees also reject hardlinks
-and special permission bits. Nested `.git` or `.grapher*` directories inside an
-otherwise valid managed scope (for example `$HOME/.grapher/pi-agent` or editable
+and special permission bits. Nested `.git` or `.pi-n*` directories inside an
+otherwise valid managed scope (for example `$HOME/.pi-n/pi-agent` or editable
 `.venv` git checkouts) cannot enter snapshot manifests and are skipped untouched
 with a log instead of failing the whole environment snapshot. Similarly, an
 unreadable or unresolvable link (for example a Windows reparse point
@@ -606,7 +606,7 @@ per-process limits. Disk quotas are not implemented.
 
 CUDA declarations bind exact NVIDIA GPU UUIDs through an absolute native
 `nvidia-smi` probe. Host-user file locks coordinate execution scopes across
-Grapher data roots/processes; partial multi-device acquisition releases its locks,
+Pi^n data roots/processes; partial multi-device acquisition releases its locks,
 and OS handles release after a crash. These leases do not reserve against other
 users, unrelated host applications or hostile tenants. A busy/unavailable device
 fails without selecting another GPU or falling back to CPU.

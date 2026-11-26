@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { corePackages } from './pi-dependencies.mjs';
 
-const marker = root => join(root, 'pi/node_modules/.grapher-pi-build.json');
+const marker = root => join(root, 'pi/node_modules/.pi-n-pi-build.json');
 export const piBuildArtifacts = [
   ...corePackages.map(name => `packages/${name}/dist/index.js`),
   'packages/coding-agent/dist/cli.js',

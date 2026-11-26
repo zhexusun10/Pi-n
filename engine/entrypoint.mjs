@@ -1,4 +1,4 @@
-// Grapher-owned launcher. No global Pi fallback and no changes to upstream code.
+// Pi^n-owned launcher. No global Pi fallback and no changes to upstream code.
 import { root, verifyRuntimeBaseline } from "../scripts/pi-baseline.mjs";
 import { applyDisabledProviders, configureAgentDir } from "./agent-dir.mjs";
 

@@ -872,7 +872,7 @@ fn bootstrap_projection(
             Err(error) => {
                 // A display projection is not a prerequisite for settings or
                 // startup. Omit it (not an authoritative empty list) on failure.
-                eprintln!("[Grapher] Sidebar metadata unavailable: {error}");
+                eprintln!("[Pi^n] Sidebar metadata unavailable: {error}");
                 (None, Vec::new())
             }
         }
@@ -1157,7 +1157,7 @@ fn save_config_projection(
         Ok(true) => drive(service.clone()),
         Ok(false) => {}
         Err(error) => eprintln!(
-            "[Grapher] Auto Approve saved but could not start Run {}: {error}",
+            "[Pi^n] Auto Approve saved but could not start Run {}: {error}",
             run_id.as_deref().unwrap_or_default()
         ),
     }
@@ -1188,7 +1188,7 @@ fn accumulate_planning_role_line(metrics: &mut PlanningRoleMetrics, line: &str) 
         return false;
     };
     if let Some(ts) = value
-        .get("grapherReceivedAt")
+        .get("piNReceivedAt")
         .or_else(|| value.get("timestamp"))
     {
         let ts_str = if let Some(s) = ts.as_str() {
@@ -1210,7 +1210,7 @@ fn accumulate_planning_role_line(metrics: &mut PlanningRoleMetrics, line: &str) 
         .and_then(|v| v.as_str())
         .unwrap_or_default()
     {
-        "grapher_process_exited" => {
+        "pi_n_process_exited" => {
             if let Some(elapsed) = value.get("elapsedMs").and_then(|v| v.as_f64()) {
                 metrics.duration_seconds += elapsed / 1000.0;
             }
@@ -1218,7 +1218,7 @@ fn accumulate_planning_role_line(metrics: &mut PlanningRoleMetrics, line: &str) 
         }
         // Every role process reports the Pi session it appends to, so a
         // resumed Planner turn stays in the same session bucket.
-        "grapher_process_started" => {
+        "pi_n_process_started" => {
             if let Some(id) = value
                 .get("sessionId")
                 .and_then(|v| v.as_str())
@@ -1267,7 +1267,7 @@ fn accumulate_planning_role_line(metrics: &mut PlanningRoleMetrics, line: &str) 
             }
             false
         }
-        "grapher_context_usage" => crate::model::record_context_usage(
+        "pi_n_context_usage" => crate::model::record_context_usage(
             &value,
             &mut metrics.context_tokens,
             &mut metrics.context_peak,
@@ -1796,11 +1796,11 @@ fn stored_planner_session_id(
             || id != expected
             || value.get("version").and_then(serde_json::Value::as_u64) != Some(3)
             || value
-                .get("grapherFormat")
+                .get("piNFormat")
                 .and_then(serde_json::Value::as_u64)
                 != Some(1)
             || value
-                .get("grapherRunId")
+                .get("piNRunId")
                 .and_then(serde_json::Value::as_str)
                 != Some(expected)
             || !entry
@@ -2072,14 +2072,14 @@ fn project_planner_graph_preview(
     let graph = match candidate {
         Ok(graph) => graph,
         Err(error) => {
-            eprintln!("[Grapher] [Planner] Cannot read the draft graph for preview: {error}");
+            eprintln!("[Pi^n] [Planner] Cannot read the draft graph for preview: {error}");
             return;
         }
     };
     let mut runtime = match service.runtime.lock() {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("[Grapher] [Planner] Cannot project the draft graph: {error}");
+            eprintln!("[Pi^n] [Planner] Cannot project the draft graph: {error}");
             return;
         }
     };
@@ -2099,7 +2099,7 @@ fn project_planner_graph_preview(
         runtime.emit(EventKind::PlannerPreviewProgress { graph })
     };
     if let Err(error) = emitted {
-        eprintln!("[Grapher] [Planner] Cannot persist the draft graph preview: {error}");
+        eprintln!("[Pi^n] [Planner] Cannot persist the draft graph preview: {error}");
     }
 }
 
@@ -2631,8 +2631,8 @@ fn plan_goal_internal_with_options(
                                     session_id: None,
                                     extra_args: partitioner_extra_args,
                                     environment: vec![
-                                        ("GRAPHER_MODE", "partition".into()),
-                                        ("GRAPHER_GRAPH_PATH", route_path.to_string_lossy().into()),
+                                        ("PI_N_MODE", "partition".into()),
+                                        ("PI_N_GRAPH_PATH", route_path.to_string_lossy().into()),
                                     ],
                                     system_prompt: Some(&partitioner_system_prompt),
                                     images: images.as_deref(),
@@ -2663,7 +2663,7 @@ fn plan_goal_internal_with_options(
                                 .map_err(|error| error.to_string())?;
                             on_route(&route);
                             eprintln!(
-                        "[Grapher] [Router] Goal routed as '{}' in {:.2}s (tokens: in={}, out={})",
+                        "[Pi^n] [Router] Goal routed as '{}' in {:.2}s (tokens: in={}, out={})",
                         route.plan_type, partition_metrics.duration_seconds, partition_metrics.usage.input, partition_metrics.usage.output
                     );
                             (route, partition_metrics)
@@ -2840,7 +2840,7 @@ fn plan_goal_internal_with_options(
                                         .as_object()
                                         .is_some_and(|targets| !targets.is_empty());
                                 let task = if continue_planning_id.is_some() {
-                                    "__grapher_continue_interrupted__".to_string()
+                                    "__pi_n_continue_interrupted__".to_string()
                                 } else if background_review {
                                     post_task_review_task(include_rework_note)
                                 } else if is_followup {
@@ -2976,35 +2976,35 @@ fn plan_goal_internal_with_options(
                                     session_id: Some(&planner_session_id),
                                     extra_args: planner_extra_args,
                                     environment: vec![
-                                        ("GRAPHER_MODE", "planner".into()),
+                                        ("PI_N_MODE", "planner".into()),
                                         (
-                                            "GRAPHER_CONTINUE_INTERRUPTED",
+                                            "PI_N_CONTINUE_INTERRUPTED",
                                             continue_planning_id.is_some().to_string(),
                                         ),
                                         (
-                                            "GRAPHER_PLANNER_RUN_ID",
+                                            "PI_N_PLANNER_RUN_ID",
                                             revision_run_id.clone().unwrap_or_default(),
                                         ),
-                                        ("GRAPHER_PLANNER_FOLLOWUP", is_followup.to_string()),
+                                        ("PI_N_PLANNER_FOLLOWUP", is_followup.to_string()),
                                         (
-                                            "GRAPHER_PLANNER_WORKSPACES",
+                                            "PI_N_PLANNER_WORKSPACES",
                                             planner_workspace_targets.to_string(),
                                         ),
                                         (
-                                            "GRAPHER_PLANNER_WORKSPACES_FILE",
+                                            "PI_N_PLANNER_WORKSPACES_FILE",
                                             planner_workspace_targets_file.to_string_lossy().into(),
                                         ),
-                                        ("GRAPHER_ACTIVE_RUN_ID", owner.clone()),
-                                        ("GRAPHER_GRAPH_PATH", graph_path.to_string_lossy().into()),
+                                        ("PI_N_ACTIVE_RUN_ID", owner.clone()),
+                                        ("PI_N_GRAPH_PATH", graph_path.to_string_lossy().into()),
                                         (
-                                            "GRAPHER_COMPILER_PATH",
+                                            "PI_N_COMPILER_PATH",
                                             std::env::current_exe()
                                                 .map_err(|error| error.to_string())?
                                                 .to_string_lossy()
                                                 .into(),
                                         ),
                                         (
-                                            "GRAPHER_UNREMOVABLE_NODES",
+                                            "PI_N_UNREMOVABLE_NODES",
                                             serde_json::to_string(&unremovable_nodes)
                                                 .unwrap_or_else(|_| "[]".into()),
                                         ),
@@ -3071,7 +3071,7 @@ fn plan_goal_internal_with_options(
                                                     &service, &owner, &graph_path, tool_call_id,
                                                 ) {
                                                     Ok(path) => revision_context_files.push(path),
-                                                    Err(error) => eprintln!("[Grapher] [Planner] Cannot inspect revision impact: {error}"),
+                                                    Err(error) => eprintln!("[Pi^n] [Planner] Cannot inspect revision impact: {error}"),
                                                 }
                                             }
                                         }
@@ -3207,7 +3207,7 @@ fn plan_goal_internal_with_options(
                     }
                     if let Some(m) = roles.get("planner") {
                         eprintln!(
-                    "[Grapher] [Planner] Plan compiled: {} nodes, {} edges in {:.2}s (tokens: {}, tools: {}, errors: {})",
+                    "[Pi^n] [Planner] Plan compiled: {} nodes, {} edges in {:.2}s (tokens: {}, tools: {}, errors: {})",
                     graph.nodes.len(),
                     graph.edges.len(),
                     m.duration_seconds,
@@ -3887,7 +3887,7 @@ fn reclaim_source_snapshot(service: &Arc<Service>, repository: &std::path::Path)
         Ok(())
     })();
     if let Err(error) = result {
-        eprintln!("[Grapher] Cannot reclaim source snapshot: {error}");
+        eprintln!("[Pi^n] Cannot reclaim source snapshot: {error}");
     }
 }
 
@@ -3914,10 +3914,10 @@ fn drive(service: Arc<Service>) {
         .map(|runtime| runtime.state.run_id.clone())
         .unwrap_or_default();
     let drive_service = service.clone();
-    if let Err(error) = thread::Builder::new().name("grapher-drive".into()).spawn(move || {
+    if let Err(error) = thread::Builder::new().name("pi-n-drive".into()).spawn(move || {
         let (output_tx, output_rx) = std::sync::mpsc::sync_channel(256);
         let writer_service = service.clone();
-        let writer = match thread::Builder::new().name("grapher-output".into())
+        let writer = match thread::Builder::new().name("pi-n-output".into())
             .spawn(move || persist_outputs(writer_service, output_rx)) {
             Ok(writer) => writer,
             Err(error) => {
@@ -3980,7 +3980,7 @@ fn drive(service: Arc<Service>) {
                         let run_id = run_id.clone();
                         let root = root.clone();
                         let completed_tx = completed_tx.clone();
-                        thread::Builder::new().name("grapher-publication".into()).spawn(move || {
+                        thread::Builder::new().name("pi-n-publication".into()).spawn(move || {
                             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                                 publication_driver::publish_batch(&service, &root, &run_id, config, query, publication)
                             )).unwrap_or_else(|_| Err("Publication worker panicked".into()));
@@ -4053,11 +4053,11 @@ fn drive(service: Arc<Service>) {
                     let completed_tx = completed_tx.clone();
                     let output_tx = output_tx.clone();
                     eprintln!(
-                        "[Grapher] [Execution] Started node '{}' (id: {}, attempt: {})",
+                        "[Pi^n] [Execution] Started node '{}' (id: {}, attempt: {})",
                         job.execution.node, job.execution.id, job.execution.attempt
                     );
                     let run_id = run_id.clone();
-                    let spawned = thread::Builder::new().name("grapher-node".into()).spawn(move || {
+                    let spawned = thread::Builder::new().name("pi-n-node".into()).spawn(move || {
                         let mut job = job;
                         let node_owner = crate::process_control::execution_owner(
                             &run_id, &job.execution.node, &job.execution.id,
@@ -4166,7 +4166,7 @@ fn drive(service: Arc<Service>) {
                                 }
                                 DriverCompletion::Publication(Err(error)) => {
                                     publication_in_flight = false;
-                                    eprintln!("[Grapher] [Publication] Failed: {error}");
+                                    eprintln!("[Pi^n] [Publication] Failed: {error}");
                                     service.runtime.lock().map_err(|e| e.to_string())?
                                         .emit(EventKind::PublicationFailed { error })?;
                                 }
@@ -4198,7 +4198,7 @@ fn drive(service: Arc<Service>) {
         if let Ok(runtime) = service.runtime.lock() {
             if let Some(m) = &runtime.state.run_metrics {
                 eprintln!(
-                    "[Grapher] [RunSummary] Run '{}' settled (phase: {}, wall-clock: {:.2}s, total tokens: {}, tools: {}, errors: {})",
+                    "[Pi^n] [RunSummary] Run '{}' settled (phase: {}, wall-clock: {:.2}s, total tokens: {}, tools: {}, errors: {})",
                     runtime.state.run_id,
                     runtime.state.phase,
                     m.total_duration_seconds,
@@ -4248,7 +4248,7 @@ fn drive(service: Arc<Service>) {
 /// context. An extension that removes it makes delivery unknown, never guessed
 /// from text (which may be repeated or transformed).
 fn planner_steer_marker(request_id: &str) -> String {
-    format!("\n\n<grapher-steer-id>{request_id}</grapher-steer-id>")
+    format!("\n\n<pi-n-steer-id>{request_id}</pi-n-steer-id>")
 }
 
 fn planner_steer_status(state: &Snapshot, planning_id: &str, request_id: &str) -> Option<String> {
@@ -4295,7 +4295,7 @@ fn expire_planner_steer_confirmation(
         status: "unknown".into(),
         error: None,
     }) {
-        eprintln!("[Grapher] Cannot record Planner steer confirmation timeout: {error}");
+        eprintln!("[Pi^n] Cannot record Planner steer confirmation timeout: {error}");
     }
 }
 
@@ -4343,8 +4343,8 @@ fn observe_planner_steer_line(service: &Arc<Service>, owner: &str, planning_id: 
             let ids: BTreeSet<String> = texts
                 .iter()
                 .filter_map(|text| {
-                    let (_, tail) = text.rsplit_once("\n\n<grapher-steer-id>")?;
-                    let id = tail.strip_suffix("</grapher-steer-id>")?;
+                    let (_, tail) = text.rsplit_once("\n\n<pi-n-steer-id>")?;
+                    let id = tail.strip_suffix("</pi-n-steer-id>")?;
                     Uuid::parse_str(id).ok().map(|_| id.to_string())
                 })
                 .collect();
@@ -4378,7 +4378,7 @@ fn observe_planner_steer_line(service: &Arc<Service>, owner: &str, planning_id: 
         status: next.to_string(),
         error,
     }) {
-        eprintln!("[Grapher] Cannot record Planner steer status: {error}");
+        eprintln!("[Pi^n] Cannot record Planner steer status: {error}");
     }
 }
 
@@ -5095,7 +5095,7 @@ fn control_with_request_id(
         let worker_instruction = instruction.trim().to_string();
         let worker_images = images.clone();
         let spawned = thread::Builder::new()
-            .name("grapher-merger".into())
+            .name("pi-n-merger".into())
             .spawn(move || {
                 crate::process_control::with_owner(&run_id, || {
                     let result = crate::graph_merge::continue_merger_for_node(
@@ -5114,7 +5114,7 @@ fn control_with_request_id(
                         },
                     );
                     if let Err(error) = result {
-                        eprintln!("[Grapher] [Merger] Continuation worker failed: {error}");
+                        eprintln!("[Pi^n] [Merger] Continuation worker failed: {error}");
                         // An early filesystem error may return before the model
                         // turn recorded its terminal event; never leave a running
                         // merger behind without a native process.
@@ -5624,7 +5624,7 @@ fn retry_cleanup_tasks(service: &Arc<Service>) -> Result<(), String> {
     for task in tasks {
         if task.manifest.sequence.is_none() || store.run_was_deleted(&task.run_id)? {
             if let Err(error) = crate::cleanup::attempt(&root, &store, &task) {
-                eprintln!("[Grapher] Pending cleanup {}: {error}", task.run_id);
+                eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
             }
             continue;
         }
@@ -5646,7 +5646,7 @@ fn retry_cleanup_tasks(service: &Arc<Service>) -> Result<(), String> {
             continue;
         }
         if let Err(error) = runtime.retry_cleanup_deferred(&task.run_id) {
-            eprintln!("[Grapher] Pending cleanup {}: {error}", task.run_id);
+            eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
         }
     }
     if let Err(error) = crate::attachment_inputs::prune_orphaned_unscoped(
@@ -5654,7 +5654,7 @@ fn retry_cleanup_tasks(service: &Arc<Service>) -> Result<(), String> {
         &store,
         std::time::Duration::from_secs(24 * 60 * 60),
     ) {
-        eprintln!("[Grapher] Orphaned attachment cleanup: {error}");
+        eprintln!("[Pi^n] Orphaned attachment cleanup: {error}");
     }
     crate::cleanup::detached::drain(&root, &store)
 }
@@ -6176,6 +6176,8 @@ fn get_file_changes(
     } else {
         crate::file_changes::get_cached_run_changes(&state).unwrap_or_default()
     };
+    // Bash rows are only leads (`rm x`, `sed -i x`): keep those Git confirms.
+    let summary = crate::file_changes::verify_snapshot_changes(summary, &state);
     // The browser renders at most a small slice; keep the true totals and cap
     // the transferred rows so a build-heavy Run stays cheap to display.
     let summary = crate::file_changes::cap_summary_files(
@@ -6940,10 +6942,10 @@ impl ServerOptions {
     }
 
     pub fn from_env() -> Self {
-        let desktop = env_flag("GRAPHER_DESKTOP_SIDECAR");
+        let desktop = env_flag("PI_N_DESKTOP_SIDECAR");
         Self {
-            emit_ready: desktop || env_flag("GRAPHER_READY_PROTOCOL"),
-            shutdown_on_stdin_eof: desktop || env_flag("GRAPHER_SHUTDOWN_ON_STDIN_EOF"),
+            emit_ready: desktop || env_flag("PI_N_READY_PROTOCOL"),
+            shutdown_on_stdin_eof: desktop || env_flag("PI_N_SHUTDOWN_ON_STDIN_EOF"),
             allow_desktop_origins: desktop,
         }
     }
@@ -6967,7 +6969,7 @@ fn bound_server_port(server: &tiny_http::Server) -> Result<u16, String> {
 
 fn format_ready_line(port: u16, data_dir: &std::path::Path) -> String {
     serde_json::json!({
-        "type": "grapher_ready",
+        "type": "pi_n_ready",
         "port": port,
         "dataDir": crate::native::host_path(data_dir).to_string_lossy(),
     })
@@ -7038,7 +7040,7 @@ fn is_trusted_origin_for(origin: &str, backend_port: u16, allow_desktop_origins:
         return true;
     }
     // Opt-in for nonstandard frontends only. Never use this to authorize Host.
-    std::env::var("GRAPHER_ALLOWED_ORIGINS")
+    std::env::var("PI_N_ALLOWED_ORIGINS")
         .is_ok_and(|allowed| origin_matches_allowlist(origin, &allowed))
 }
 
@@ -7131,14 +7133,14 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
     let configured_root = crate::workspace::data_root();
     // Resolve format admission and directory ownership before reading config,
     // replacing adapters, or recovering any persisted session/workspace.
-    let lazy_primary = std::env::var_os("GRAPHER_DEV_LAZY_PRIMARY").is_some();
+    let lazy_primary = std::env::var_os("PI_N_DEV_LAZY_PRIMARY").is_some();
     let directory = crate::startup::select(&configured_root)?;
     // Recovery and every later path (including child engines) must already
     // observe the selected root, rather than the incompatible configured one.
-    std::env::set_var("GRAPHER_DATA_DIR", &directory.root);
+    std::env::set_var("PI_N_DATA_DIR", &directory.root);
     let runtime = directory.open(!lazy_primary)?;
     let root = runtime.root.clone();
-    let extension = root.join("grapher-planner.ts");
+    let extension = root.join("pi-n-planner.ts");
     // Format refusal precedes replacement of any persisted adapter resource.
     fs::write(&extension, include_str!("../resources/planner.ts"))
         .map_err(|error| error.to_string())?;
@@ -7156,10 +7158,10 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
     // Enqueue pending cleanup metadata synchronously before binding, and run
     // actual directory deletions in the background cleanup thread after bind.
     enqueue_recovered_cleanup_tasks(&service)?;
-    let requested_port: u16 = std::env::var("GRAPHER_PORT")
+    let requested_port: u16 = std::env::var("PI_N_PORT")
         .unwrap_or_else(|_| "1421".into())
         .parse()
-        .map_err(|_| "Invalid GRAPHER_PORT")?;
+        .map_err(|_| "Invalid PI_N_PORT")?;
     let server =
         Arc::new(Server::http(("127.0.0.1", requested_port)).map_err(|error| error.to_string())?);
     let bound_port = bound_server_port(&server)?;
@@ -7210,7 +7212,7 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
             }
             if let Some(service) = cleanup_service.upgrade() {
                 if let Err(error) = retry_cleanup_tasks(&service) {
-                    eprintln!("[Grapher] Cleanup retry failed: {error}");
+                    eprintln!("[Pi^n] Cleanup retry failed: {error}");
                 }
             } else {
                 break;
@@ -7221,7 +7223,7 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
     {
         let signal_tx = shutdown_tx.clone();
         thread::Builder::new()
-            .name("grapher-signal-watcher".into())
+            .name("pi-n-signal-watcher".into())
             .spawn(move || {
                 #[cfg(unix)]
                 let stop = signals.forever().next().is_some();
@@ -7241,7 +7243,7 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
     if options.shutdown_on_stdin_eof {
         let stdin_tx = shutdown_tx.clone();
         thread::Builder::new()
-            .name("grapher-stdin-shutdown".into())
+            .name("pi-n-stdin-shutdown".into())
             .spawn(move || {
                 watch_stdin_for_shutdown(BufReader::new(std::io::stdin()));
                 let _ = stdin_tx.send("stdin");
@@ -7254,7 +7256,7 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
     #[cfg(not(feature = "fixture"))]
     let warm_stop = cleanup_stopped.clone();
     let shutdown_handle = thread::Builder::new()
-        .name("grapher-shutdown".into())
+        .name("pi-n-shutdown".into())
         .spawn(move || {
             if shutdown_rx.recv().is_ok() {
                 cleanup_stopped.store(true, Ordering::SeqCst);
@@ -7310,9 +7312,9 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
         });
     }
     // Dev uses Vite's frontend URL; do not invite users into stale dist assets.
-    if std::env::var_os("GRAPHER_DEV_HIDE_BACKEND_URL").is_none() {
+    if std::env::var_os("PI_N_DEV_HIDE_BACKEND_URL").is_none() {
         eprintln!(
-            "Grapher backend: http://127.0.0.1:{bound_port} (data: {})",
+            "Pi^n backend: http://127.0.0.1:{bound_port} (data: {})",
             root.display()
         );
     }
@@ -7331,11 +7333,11 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
         .name("sidebar-prewarm".into())
         .spawn(move || {
             if let Err(error) = crate::store::conversation_summaries(&catalog_path) {
-                eprintln!("[Grapher] Sidebar prewarm unavailable: {error}");
+                eprintln!("[Pi^n] Sidebar prewarm unavailable: {error}");
             }
         })
     {
-        eprintln!("[Grapher] Cannot start sidebar prewarm: {error}");
+        eprintln!("[Pi^n] Cannot start sidebar prewarm: {error}");
     }
     // HTTP workers and shutdown handling are ready before any speculative work.
     // Do not scan the installation cwd or serialize history just to choose a warm key.
@@ -7426,16 +7428,16 @@ fn respond_api_json(
     let mut headers = vec![
         ("Cache-Control", "no-store"),
         ("Content-Type", "application/json"),
-        ("X-Grapher-Events", "1"),
-        ("X-Grapher-Instance", api_transport::instance()),
-        ("X-Grapher-Request-Id", request_id),
-        ("X-Grapher-Replayed", if replayed { "1" } else { "0" }),
+        ("X-Pi-N-Events", "1"),
+        ("X-Pi-N-Instance", api_transport::instance()),
+        ("X-Pi-N-Request-Id", request_id),
+        ("X-Pi-N-Replayed", if replayed { "1" } else { "0" }),
     ];
     if let Some(origin) = origin {
         headers.push(("Access-Control-Allow-Origin", origin));
         headers.push((
             "Access-Control-Expose-Headers",
-            "X-Grapher-Events, X-Grapher-Instance, X-Grapher-Request-Id, X-Grapher-Replayed",
+            "X-Pi-N-Events, X-Pi-N-Instance, X-Pi-N-Request-Id, X-Pi-N-Replayed",
         ));
     }
     respond_closed(request, status, &headers, payload.as_bytes());
@@ -7533,7 +7535,7 @@ fn handle_http_request_with_options(
     let request_id = request
         .headers()
         .iter()
-        .find(|h| h.field.equiv("X-Grapher-Request-Id"))
+        .find(|h| h.field.equiv("X-Pi-N-Request-Id"))
         .map(|h| h.value.as_str())
         .filter(|id| Uuid::parse_str(id).is_ok())
         .map(str::to_owned)
@@ -7541,14 +7543,14 @@ fn handle_http_request_with_options(
     let operation_id = request
         .headers()
         .iter()
-        .find(|h| h.field.equiv("X-Grapher-Operation"))
+        .find(|h| h.field.equiv("X-Pi-N-Operation"))
         .map(|h| h.value.as_str().to_owned());
     if request.method() == &tiny_http::Method::Options {
         let mut headers = vec![
             ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
             (
                 "Access-Control-Allow-Headers",
-                "Content-Type, X-Grapher-Request-Id, X-Grapher-Operation",
+                "Content-Type, X-Pi-N-Request-Id, X-Pi-N-Operation",
             ),
         ];
         if let Some(ref origin) = req_origin {
@@ -7842,6 +7844,9 @@ fn handle_http_request_with_options(
                 ("Cache-Control", "no-store"),
                 ("X-Content-Type-Options", "nosniff"),
             ];
+            if mime == "image/svg+xml" {
+                headers.push(("Content-Security-Policy", "sandbox"));
+            }
             if let Some(ref origin) = req_origin {
                 headers.push(("Access-Control-Allow-Origin", origin.as_str()));
             }

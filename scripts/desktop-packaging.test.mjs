@@ -43,7 +43,7 @@ import { buildDesktopIconSvg, REQUIRED_DESKTOP_ICONS } from './desktop-icons.mjs
 import { inflateSync } from 'node:zlib';
 
 function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-desktop-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-desktop-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -53,12 +53,12 @@ test('Tauri v2 config enforces least privilege, synced versions, and .dmg / NSIS
   assert.match(version, /^\d+\.\d+\.\d+/);
 
   const conf = JSON.parse(readFileSync(join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
-  assert.equal(conf.productName, 'Grapher');
-  assert.equal(conf.identifier, 'io.github.zhexusun10.grapher');
+  assert.equal(conf.productName, 'Pi^n');
+  assert.equal(conf.identifier, 'io.github.zhexusun10.pi-n');
   assert.equal(conf.app.withGlobalTauri, false);
   const mainWindow = conf.app.windows.find(win => win.label === 'main');
   assert.ok(mainWindow, 'main window must be configured');
-  assert.equal(mainWindow.title, 'Grapher');
+  assert.equal(mainWindow.title, 'Pi^n');
   assert.equal(mainWindow.titleBarStyle, 'Overlay');
   assert.equal(mainWindow.hiddenTitle, true);
   assert.equal(mainWindow.dragDropEnabled, false, 'HTML5 drag-and-drop must not be intercepted by Tauri native dragDropHandler');
@@ -114,7 +114,7 @@ test('Tauri v2 config enforces least privilege, synced versions, and .dmg / NSIS
   // Base config keeps createUpdaterArtifacts off so unsigned local/CI builds succeed without a private key.
   assert.equal(conf.bundle.createUpdaterArtifacts, false);
   assert.deepEqual(conf.plugins?.updater?.endpoints, [
-    'https://github.com/zhexusun10/grapher/releases/latest/download/latest.json',
+    'https://github.com/zhexusun10/pi-n/releases/latest/download/latest.json',
   ]);
   assert.equal(typeof conf.plugins?.updater?.pubkey, 'string');
   assert.doesNotMatch(conf.plugins.updater.pubkey, /PRIVATE KEY|encrypted secret key/i);
@@ -288,10 +288,14 @@ test('desktop icon assets are reproducibly derived from assets/icon-dots.svg wit
   const webSvg = readFileSync(join(root, 'assets', 'icon-dots.svg'), 'utf8');
   const generatedSvg = buildDesktopIconSvg(webSvg);
   assert.match(generatedSvg, /fill="#FFFFFF"/);
-  assert.match(generatedSvg, /stroke="#4A4A4A"/);
-  assert.equal((generatedSvg.match(/<path\b/gu) ?? []).length, 4);
-  // 1 white rounded-square tile + 4 graph node rects = 5 <rect> elements.
-  assert.equal((generatedSvg.match(/<rect\b/gu) ?? []).length, 5);
+  assert.match(generatedSvg, /fill="#262B34"/);
+  assert.match(generatedSvg, /fill="#F09082"/);
+  assert.match(generatedSvg, /fill="#4D9ABF"/);
+  assert.match(generatedSvg, /fill="#F1BE58"/);
+  // 3 Pi brand blocks + 2 superscript `n` blocks = 5 <path> elements.
+  assert.equal((generatedSvg.match(/<path\b/gu) ?? []).length, 5);
+  // 1 white rounded-square canvas tile.
+  assert.equal((generatedSvg.match(/<rect\b/gu) ?? []).length, 1);
 
   const conf = JSON.parse(readFileSync(join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
   const iconsDir = join(root, 'src-tauri', 'icons');
@@ -314,22 +318,14 @@ test('desktop icon assets are reproducibly derived from assets/icon-dots.svg wit
     assert.equal(info.height, size, `${fileName} height`);
   }
 
-  // Verify icon.png has transparent outer padding, a white canvas tile, and gray graph strokes (not a black square).
+  // Verify icon.png has transparent outer padding, a white canvas tile, and crisp pi^n brand blocks.
   const masterPng = readPngInfo(join(iconsDir, 'icon.png'));
   assert.deepEqual(sampleRgbaPngPixel(masterPng, 0, 0), [0, 0, 0, 0]);
-  assert.deepEqual(sampleRgbaPngPixel(masterPng, 256, 256), [255, 255, 255, 255]);
-  // Top node top-edge stroke: 512-space (256, 62) -> 1024-space (512, 275.56) -> 512-space (256, 138)
-  const topStrokePixel = sampleRgbaPngPixel(masterPng, 256, 138);
-  assert.equal(topStrokePixel[3], 255);
-  assert.ok(topStrokePixel[0] >= 65 && topStrokePixel[0] <= 85, `expected gray stroke (~#4a4a4a), got ${topStrokePixel}`);
-  assert.equal(topStrokePixel[0], topStrokePixel[1]);
-  assert.equal(topStrokePixel[1], topStrokePixel[2]);
-  // Left node left-edge stroke: 512-space (92, 256) -> 1024-space (312.125, 512) -> 512-space (156, 256)
-  const leftStrokePixel = sampleRgbaPngPixel(masterPng, 156, 256);
-  assert.equal(leftStrokePixel[3], 255);
-  assert.ok(leftStrokePixel[0] >= 65 && leftStrokePixel[0] <= 85, `expected gray stroke (~#4a4a4a), got ${leftStrokePixel}`);
-  assert.equal(leftStrokePixel[0], leftStrokePixel[1]);
-  assert.equal(leftStrokePixel[1], leftStrokePixel[2]);
+  assert.deepEqual(sampleRgbaPngPixel(masterPng, 206, 229), [255, 255, 255, 255]);
+  assert.deepEqual(sampleRgbaPngPixel(masterPng, 206, 176), [240, 144, 130, 255]); // Pi coral (#F09082)
+  assert.deepEqual(sampleRgbaPngPixel(masterPng, 152, 283), [77, 154, 191, 255]);  // Pi blue (#4D9ABF)
+  assert.deepEqual(sampleRgbaPngPixel(masterPng, 313, 310), [241, 190, 88, 255]);  // Pi yellow (#F1BE58)
+  assert.deepEqual(sampleRgbaPngPixel(masterPng, 325, 185), [38, 43, 52, 255]);    // Exponent ink (#262B34)
 
   const icns = readFileSync(join(iconsDir, 'icon.icns'));
   assert.equal(icns.subarray(0, 4).toString('ascii'), 'icns');
@@ -343,7 +339,7 @@ test('desktop icon assets are reproducibly derived from assets/icon-dots.svg wit
 
 test('Vite config keeps browser dev/build defaults intact and suppresses auto-open in desktop dev', async () => {
   const viteSource = readFileSync(join(root, 'vite.config.ts'), 'utf8');
-  assert.match(viteSource, /GRAPHER_DESKTOP_DEV/);
+  assert.match(viteSource, /PI_N_DESKTOP_DEV/);
   assert.match(viteSource, /TAURI_ENV_PLATFORM/);
   assert.match(viteSource, /\*\*\/src-tauri\/\*\*/);
   assert.match(viteSource, /open:\s*!isDesktopDev/);
@@ -362,12 +358,12 @@ test('desktop staging resolves macOS arm64/x64 and Windows x64 targets with pinn
   assert.equal(resolveDesktopTarget(null, 'darwin', 'x64'), DESKTOP_TARGETS['macos-x64']);
   assert.equal(resolveDesktopTarget(null, 'win32', 'x64'), DESKTOP_TARGETS['windows-x64']);
   // Verify exact Windows sidecar/Node resource names and bundle kind.
-  assert.equal(DESKTOP_TARGETS['windows-x64'].backendBinary, 'grapher.exe');
+  assert.equal(DESKTOP_TARGETS['windows-x64'].backendBinary, 'pi-n.exe');
   assert.equal(DESKTOP_TARGETS['windows-x64'].nodeRelPath, 'node/node.exe');
   assert.equal(DESKTOP_TARGETS['windows-x64'].bundleKind, 'nsis');
-  assert.equal(DESKTOP_TARGETS['macos-arm64'].backendBinary, 'grapher');
+  assert.equal(DESKTOP_TARGETS['macos-arm64'].backendBinary, 'pi-n');
   assert.equal(DESKTOP_TARGETS['macos-arm64'].nodeRelPath, 'node/bin/node');
-  assert.equal(DESKTOP_TARGETS['macos-x64'].backendBinary, 'grapher');
+  assert.equal(DESKTOP_TARGETS['macos-x64'].backendBinary, 'pi-n');
   assert.equal(DESKTOP_TARGETS['macos-x64'].nodeRelPath, 'node/bin/node');
   assert.throws(() => resolveDesktopTarget('linux-riscv64'), /Unknown desktop target/);
 
@@ -420,7 +416,7 @@ test('ensureBundleableGitMetadata materializes a valid ref so bundlers preserve 
 
   ensureBundleableGitMetadata(piDir);
   assert.equal(
-    readFileSync(join(piDir, '.git', 'refs', 'heads', 'grapher-baseline'), 'utf8'),
+    readFileSync(join(piDir, '.git', 'refs', 'heads', 'pi-n-baseline'), 'utf8'),
     `${commit}\n`,
   );
 });
@@ -435,10 +431,10 @@ test('macOS nested signer identifies Mach-O binaries, excludes Java classes, and
   // Plain JS/shell script
   assert.equal(isMachOBuffer(Buffer.from('#!/bin/sh\necho hi\n')), false);
 
-  const app = join(tempDir(t), 'Grapher.app');
+  const app = join(tempDir(t), 'Pi^n.app');
   const machO64 = Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]);
-  const mainBin = join(app, 'Contents', 'MacOS', 'Grapher');
-  const backendBin = join(app, 'Contents', 'Resources', 'runtime', 'grapher');
+  const mainBin = join(app, 'Contents', 'MacOS', 'Pi^n');
+  const backendBin = join(app, 'Contents', 'Resources', 'runtime', 'pi-n');
   const nodeBin = join(app, 'Contents', 'Resources', 'node', 'bin', 'node');
   const nativeAddon = join(
     app,
@@ -470,7 +466,7 @@ test('macOS nested signer identifies Mach-O binaries, excludes Java classes, and
     mkdirSync(join(file, '..'), { recursive: true });
     writeFileSync(file, machO64);
   }
-  writeFileSync(textFile, '# Grapher\n');
+  writeFileSync(textFile, '# Pi^n\n');
 
   const foundBundled = findMachOBinaries(app);
   assert.equal(foundBundled.length, 5);
@@ -483,7 +479,7 @@ test('macOS nested signer identifies Mach-O binaries, excludes Java classes, and
   assert.equal(foundBundled[0], trackedPiPrebuild);
   assert.equal(foundBundled.at(-1), mainBin);
 
-  // Re-sealing updates `.grapher-pi-runtime-manifest.json` after signing mutates a bundled prebuild.
+  // Re-sealing updates `.pi-n-pi-runtime-manifest.json` after signing mutates a bundled prebuild.
   const bundledPiRoot = join(app, 'Contents', 'Resources', 'runtime', 'pi');
   const bundledManifestPath = join(bundledPiRoot, BUNDLED_PI_MANIFEST_FILE);
   writeFileSync(bundledManifestPath, '{}\n');
@@ -634,8 +630,8 @@ test('stageLeanPiRuntime omits .git, devDependencies, dist/test/docs/apps, and w
     encoding: 'utf8',
     env: {
       ...process.env,
-      GRAPHER_NATIVE_RUNTIME_PARENT: runtimeParent,
-      GRAPHER_TRUSTED_GIT: join(outRoot, 'missing-git-binary'),
+      PI_N_NATIVE_RUNTIME_PARENT: runtimeParent,
+      PI_N_TRUSTED_GIT: join(outRoot, 'missing-git-binary'),
     },
     timeout: 60000,
   }).trim();
@@ -689,8 +685,8 @@ test('runHdiutilCreateWithRetry retries transient Resource busy errors with expo
   let attempts = 0;
 
   const result = await runHdiutilCreateWithRetry(
-    ['create', '-format', 'ULMO', 'Grapher.dmg'],
-    '/tmp/Grapher.dmg',
+    ['create', '-format', 'ULMO', 'Pi-n.dmg'],
+    '/tmp/Pi-n.dmg',
     {
       maxAttempts: 4,
       baseDelayMs: 100,
@@ -706,12 +702,12 @@ test('runHdiutilCreateWithRetry retries transient Resource busy errors with expo
           err.stderr = 'hdiutil: create failed - Resource busy\n';
           throw err;
         }
-        return 'created: Grapher.dmg\n';
+        return 'created: Pi-n.dmg\n';
       },
     },
   );
 
-  assert.equal(result, 'created: Grapher.dmg\n');
+  assert.equal(result, 'created: Pi-n.dmg\n');
   assert.equal(attempts, 3);
   assert.deepEqual(sleeps, [100, 200]);
   assert.equal(cleanups.length, 3);

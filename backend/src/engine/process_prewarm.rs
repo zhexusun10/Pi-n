@@ -55,7 +55,7 @@ pub(super) fn request(config: &Config, role: PiRole, refill: bool) {
     }
     if let Err(error) = schedule(config, role, refill, Duration::from_secs(30)) {
         eprintln!(
-            "[Grapher] {} process preparation unavailable: {error}",
+            "[Pi^n] {} process preparation unavailable: {error}",
             role.name()
         );
     }
@@ -74,8 +74,8 @@ fn schedule(
     let prepare = move |ticket: Ticket| {
         let mut command = native::command(role, &prepare_key.repository, &prepare_key.repository)?;
         command
-            .args(["--grapher-prewarm", mode(role)])
-            .env("GRAPHER_MODE", mode(role))
+            .args(["--pi-n-prewarm", mode(role)])
+            .env("PI_N_MODE", mode(role))
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -84,7 +84,7 @@ fn schedule(
             &mut command,
             &ticket,
             readiness_timeout,
-            json!({"type":"grapher_prepare", "role":mode(role)}),
+            json!({"type":"pi_n_prepare", "role":mode(role)}),
         )?;
         Ok((prepare_key, process))
     };
@@ -151,7 +151,7 @@ pub(super) fn bind(
         })
         .collect::<Result<Map<String, Value>, String>>()?;
     let cwd = command.get_current_dir().ok_or("Missing task cwd")?;
-    process.exchange(json!({"type":"grapher_bind", "role":mode(role), "cwd":cwd, "args":args, "environment":environment}), Duration::from_secs(30))?;
+    process.exchange(json!({"type":"pi_n_bind", "role":mode(role), "cwd":cwd, "args":args, "environment":environment}), Duration::from_secs(30))?;
     // Host-ready is not session-ready. No user prompt is sent until the actual
     // freshly created/resumed Pi session has acknowledged this second probe.
     process.exchange(json!({"type":"get_state"}), Duration::from_secs(30))?;
@@ -174,7 +174,7 @@ pub(super) fn shutdown() {
     for slot in [&PARTITIONER, &PLANNER, &NODE_SOURCE] {
         if let Some(pool) = slot.get() {
             if !pool.wait_idle(Duration::from_secs(5)) {
-                eprintln!("[Grapher] Process preparation shutdown timed out");
+                eprintln!("[Pi^n] Process preparation shutdown timed out");
             }
         }
     }

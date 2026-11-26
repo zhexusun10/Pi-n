@@ -12,19 +12,19 @@ const shell = process.platform === 'win32'
 const module = pathToFileURL(resolve('engine/launch-binding.mjs')).href;
 const base = () => ({ entry: process.execPath, path: [dirname(process.execPath)], shell, variables: { LAUNCH_TEST: 'configured' }, inherit: [], hook: null });
 const run = (launch, code, extra = {}, cwd = undefined) => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-launch-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-launch-'));
   try {
     const binding = join(directory, 'launch.json'); writeFileSync(binding, JSON.stringify(launch));
     return spawnSync(process.execPath, ['--input-type=module', '-e', `import {applyLaunchBinding,managedBashOptions,managedBashCommand,managedBusinessEnvironment} from ${JSON.stringify(module)}; import {execFileSync} from 'node:child_process'; applyLaunchBinding(); ${code}`], {
-      cwd, encoding: 'utf8', env: { ...process.env, GRAPHER_LAUNCH_BINDING: binding, GRAPHER_MODE: 'node', ...extra }, timeout: 15000,
+      cwd, encoding: 'utf8', env: { ...process.env, PI_N_LAUNCH_BINDING: binding, PI_N_MODE: 'node', ...extra }, timeout: 15000,
     });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 };
 
 test('declared hook runs before factories and cannot change Pi/Runtime identity or Shell bootstrap', () => {
   const launch = base();
-  launch.hook = 'export LAUNCH_TEST=hook; export CONDA_PREFIX="declared-prefix"; export GRAPHER_MODE=other; export NODE_OPTIONS=poison; export BASH_ENV=poison';
-  const result = run(launch, "console.log(JSON.stringify({value:process.env.LAUNCH_TEST,prefix:process.env.CONDA_PREFIX,role:process.env.GRAPHER_MODE,options:process.env.NODE_OPTIONS,bash:process.env.BASH_ENV}))");
+  launch.hook = 'export LAUNCH_TEST=hook; export CONDA_PREFIX="declared-prefix"; export PI_N_MODE=other; export NODE_OPTIONS=poison; export BASH_ENV=poison';
+  const result = run(launch, "console.log(JSON.stringify({value:process.env.LAUNCH_TEST,prefix:process.env.CONDA_PREFIX,role:process.env.PI_N_MODE,options:process.env.NODE_OPTIONS,bash:process.env.BASH_ENV}))");
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), { value: 'hook', prefix: 'declared-prefix', role: 'node' });
 });
@@ -40,7 +40,7 @@ test('Pi PATH preprocessing cannot change an explicit managed Bash PATH and shel
 });
 
 test('automatic unbound Bash preserves business PATH precedence without weakening bound entries', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-business-path-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-business-path-'));
   try {
     const first = join(directory, 'host-first');
     const second = join(directory, 'bootstrap-second');
@@ -66,7 +66,7 @@ test('automatic unbound Bash preserves business PATH precedence without weakenin
 });
 
 test('automatic PATH keeps relative, empty and future entries with native cd semantics', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-relative-path-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-relative-path-'));
   try {
     const script = (path, output) => writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, { mode: 0o755 });
     mkdirSync(join(directory, 'bin'));
@@ -93,7 +93,7 @@ test('automatic PATH keeps relative, empty and future entries with native cd sem
 });
 
 test('Windows PATH keeps a semicolon directory as one entry through validation and Bash', { skip: process.platform !== 'win32' }, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-path-list-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-path-list-'));
   try {
     const bin = join(directory, 'native;bin');
     mkdirSync(bin);
@@ -117,7 +117,7 @@ console.log(JSON.stringify({shell,entry,path:env.PATH}));`);
 });
 
 test('Windows hook capture preserves changed PATH order, relative entries and new quoted directories', { skip: process.platform !== 'win32' }, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-hook-search-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-hook-search-'));
   try {
     const workspace = join(directory, 'workspace');
     const added = join(directory, 'hook;bin');
@@ -152,7 +152,7 @@ console.log(JSON.stringify({shell,path:env.PATH,direct}));`, {}, workspace);
 });
 
 test('bound hooks cannot replace their absolute entry directory with cwd or an absent PATH', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-hook-path-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-hook-path-'));
   try {
     const entry = join(directory, 'entry');
     writeFileSync(entry, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -167,7 +167,7 @@ test('bound hooks cannot replace their absolute entry directory with cwd or an a
 });
 
 test('activation hooks restore the workspace after inherited Bash startup changes cwd', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-hook-cwd-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-hook-cwd-'));
   try {
     const workspace = join(directory, 'workspace');
     const elsewhere = join(directory, 'startup-directory');
@@ -186,7 +186,7 @@ test('activation hooks restore the workspace after inherited Bash startup change
 });
 
 test('workspace cwd binding does not overwrite OLDPWD when Bash is already in the workspace', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-cwd-oldpwd-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-cwd-oldpwd-'));
   try {
     const workspace = join(directory, 'workspace');
     const previous = join(directory, 'previous');
@@ -209,7 +209,7 @@ console.log(JSON.stringify({native:execute(${JSON.stringify(command)}),unmanaged
 });
 
 test('cwd aliases and activation capture preserve unset or readonly OLDPWD', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-cwd-alias-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-cwd-alias-'));
   try {
     const workspace = join(directory, 'workspace');
     const alias = join(directory, 'workspace-alias');
@@ -230,7 +230,7 @@ console.log(JSON.stringify({hook:process.env.HOOK_OLDPWD,child}));`, { BASH_ENV:
 });
 
 test('business Node options and module paths reach children but not engine factories or hook capture', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-business-node-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-business-node-'));
   try {
     const preload = join(directory, 'preload.cjs');
     writeFileSync(preload, "globalThis.businessPreload='loaded';\n");
@@ -244,17 +244,17 @@ test('business Node options and module paths reach children but not engine facto
     const launch = { ...base(), hook: 'export NODE_OPTIONS=invalid-hook-option; export NODE_PATH=invalid-hook-modules' };
     const result = run(launch, `
 if(process.env.NODE_OPTIONS || process.env.NODE_PATH || globalThis.businessPreload) throw Error('Business Node setup reached factories');
-if(process.env.GRAPHER_BUSINESS_NODE_ENV) throw Error('Transient transport was not consumed');
+if(process.env.PI_N_BUSINESS_NODE_ENV) throw Error('Transient transport was not consumed');
 const code="process.stdout.write(JSON.stringify([globalThis.businessPreload,require('business-only'),Error.stackTraceLimit]))";
 const direct=execFileSync(process.execPath,['-e',code],{env:managedBusinessEnvironment(),encoding:'utf8'});
 const quote=s=>"'"+s.replaceAll("'","'\\\\''")+"'";
 const bash=execFileSync(${JSON.stringify(shell)},['--noprofile','--norc','-c',managedBashCommand(quote(process.execPath.replaceAll('\\\\','/'))+' -e '+quote(code))],{env:managedBashOptions({env:{...process.env}}).env,encoding:'utf8'});
 console.log(JSON.stringify({direct:JSON.parse(direct),bash:JSON.parse(bash),override:managedBusinessEnvironment({NODE_OPTIONS:'--stack-trace-limit=7'}).NODE_OPTIONS}));
-`, { NODE_OPTIONS: undefined, NODE_PATH: undefined, GRAPHER_BUSINESS_NODE_ENV: JSON.stringify(values) });
+`, { NODE_OPTIONS: undefined, NODE_PATH: undefined, PI_N_BUSINESS_NODE_ENV: JSON.stringify(values) });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), { direct: ['loaded', 42, 29], bash: ['loaded', 42, 29], override: '--stack-trace-limit=7' });
     for (const invalid of [[], null, { PATH: 'poison' }, { NODE_OPTIONS: 3 }]) {
-      const refused = run(base(), "console.log('FACTORY_RAN')", { GRAPHER_BUSINESS_NODE_ENV: JSON.stringify(invalid) });
+      const refused = run(base(), "console.log('FACTORY_RAN')", { PI_N_BUSINESS_NODE_ENV: JSON.stringify(invalid) });
       assert.notEqual(refused.status, 0);
       assert.match(refused.stderr, /Invalid transient business Node binding/);
       assert.doesNotMatch(refused.stdout, /FACTORY_RAN/);
@@ -263,14 +263,14 @@ console.log(JSON.stringify({direct:JSON.parse(direct),bash:JSON.parse(bash),over
 });
 
 test('discovery preserves startup functions, readonly wrappers and aliases', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-shell-wrappers-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-shell-wrappers-'));
   try {
     const startup = join(directory, 'startup.sh');
     writeFileSync(startup, `python() { printf 'host-python\\n'; }\npip() { printf 'host-pip\\n'; }\nreadonly -f pip\nshopt -s expand_aliases\nalias conda='printf "host-conda\\n"'\n`);
     const result = run(base(), `console.log(execFileSync(${JSON.stringify(shell)},['--noprofile','--norc','-c',managedBashCommand('python; pip; conda; type -t python3')],{env:managedBashOptions({env:{...process.env}}).env,encoding:'utf8'}).trim())`, {
       BASH_ENV: startup,
-      GRAPHER_ENVIRONMENT_DISCOVERY: join(directory, 'observer.json'),
-      GRAPHER_ENVIRONMENT_HELPER: process.execPath,
+      PI_N_ENVIRONMENT_DISCOVERY: join(directory, 'observer.json'),
+      PI_N_ENVIRONMENT_HELPER: process.execPath,
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim().replaceAll('\r', ''), 'host-python\nhost-pip\nhost-conda\nfunction');
@@ -280,7 +280,7 @@ test('discovery preserves startup functions, readonly wrappers and aliases', () 
 test('a managed shell without an explicit environment preserves PATH and shell controls', () => {
   const moduleUrl = JSON.stringify(module);
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `import {managedBashOptions} from ${moduleUrl}; console.log(JSON.stringify(managedBashOptions({env:{PATH:'host-path',BASH_ENV:'host-startup',SHELLOPTS:'pipefail',TMPDIR:'host-tmp'}},true).env))`], {
-    encoding: 'utf8', env: { ...process.env, GRAPHER_LAUNCH_BINDING: '', GRAPHER_EXECUTION_KIND: '' }, timeout: 15000,
+    encoding: 'utf8', env: { ...process.env, PI_N_LAUNCH_BINDING: '', PI_N_EXECUTION_KIND: '' }, timeout: 15000,
   });
   assert.equal(result.status, 0, result.stderr);
   const env = JSON.parse(result.stdout);
@@ -292,10 +292,10 @@ test('a managed shell without an explicit environment preserves PATH and shell c
 
 test('a source-direct Graph Node Agent retains host temp variables while private roles get cache scratch', () => {
   const moduleUrl = JSON.stringify(module);
-  const cache = mkdtempSync(join(tmpdir(), 'grapher-bash-cache-'));
+  const cache = mkdtempSync(join(tmpdir(), 'pi-n-bash-cache-'));
   const runOptions = (kind, agentKind) => spawnSync(process.execPath, ['--input-type=module', '-e',
     `import {managedBashOptions} from ${moduleUrl}; console.log(JSON.stringify(managedBashOptions({env:{PATH:'host-path',XDG_CACHE_HOME:${JSON.stringify(cache)},TMPDIR:'host-tmp',TMP:'host-TMP',TEMP:'host-TEMP'}},true).env))`], {
-      encoding: 'utf8', env: { ...process.env, XDG_CACHE_HOME: cache, GRAPHER_LAUNCH_BINDING: '', GRAPHER_MODE: 'node', GRAPHER_EXECUTION_KIND: kind, GRAPHER_AGENT_KIND: agentKind }, timeout: 15000,
+      encoding: 'utf8', env: { ...process.env, XDG_CACHE_HOME: cache, PI_N_LAUNCH_BINDING: '', PI_N_MODE: 'node', PI_N_EXECUTION_KIND: kind, PI_N_AGENT_KIND: agentKind }, timeout: 15000,
     });
   try {
     const source = runOptions('source', 'node');
@@ -323,7 +323,7 @@ test('actual native Bash PATH has no implicit MSYS host bins and temporary expor
 });
 
 test('workspace cwd restoration works in Bash and Pi fallback POSIX sh', { skip: process.platform === 'win32' }, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-shell-cwd-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-shell-cwd-'));
   const workspace = join(directory, 'workspace');
   const startupCwd = join(directory, 'startup cwd');
   const startup = join(directory, 'bash-env');
@@ -352,7 +352,7 @@ test('workspace cwd restoration works in Bash and Pi fallback POSIX sh', { skip:
 });
 
 test('symlinked PATH directories identify the declared entry directory', { skip: process.platform === 'win32' }, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-launch-alias-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-launch-alias-'));
   try {
     const real = join(directory, 'real');
     const alias = join(directory, 'alias');
@@ -370,7 +370,7 @@ test('failed activation, replaced default PATH and corrupted reserved variables 
     const result = run({ ...base(), hook }, "console.log('FACTORY_RAN')");
     assert.notEqual(result.status, 0); assert.doesNotMatch(result.stdout, /FACTORY_RAN/);
   }
-  for (const key of ['NODE_OPTIONS', 'GRAPHER_MODE', 'PI_CODING_AGENT_DIR', 'PATH']) {
+  for (const key of ['NODE_OPTIONS', 'PI_N_MODE', 'PI_CODING_AGENT_DIR', 'PATH']) {
     const result = run({ ...base(), variables: { [key]: 'poison' } }, "console.log('FACTORY_RAN')");
     assert.notEqual(result.status, 0); assert.match(result.stderr, /Invalid native launch/); assert.doesNotMatch(result.stdout, /FACTORY_RAN/);
   }
@@ -380,7 +380,7 @@ test('an explicit leased CUDA UUID overrides hook/device visibility before facto
   const id = 'GPU-01234567-89ab-cdef-0123-456789abcdef';
   const launch = base(); launch.hook = `test "$CUDA_VISIBLE_DEVICES" = '${id}' || exit 9; export CUDA_VISIBLE_DEVICES=all-host-devices; export HIP_VISIBLE_DEVICES=0`;
   const result = run(launch, "const env=managedBashOptions({env:{CUDA_VISIBLE_DEVICES:'host-default'}}).env; const child=execFileSync(process.execPath,['-e','process.stdout.write(JSON.stringify({device:process.env.CUDA_VISIBLE_DEVICES,order:process.env.CUDA_DEVICE_ORDER,hip:process.env.HIP_VISIBLE_DEVICES}))'],{env,encoding:'utf8'}); console.log(JSON.stringify({device:process.env.CUDA_VISIBLE_DEVICES,order:process.env.CUDA_DEVICE_ORDER,hip:process.env.HIP_VISIBLE_DEVICES,child:JSON.parse(child)}))", {
-    GRAPHER_ACCELERATOR_BINDING: JSON.stringify({ backend: 'cuda', ids: [id], probe: 'trusted-native-probe' }),
+    PI_N_ACCELERATOR_BINDING: JSON.stringify({ backend: 'cuda', ids: [id], probe: 'trusted-native-probe' }),
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
@@ -390,7 +390,7 @@ test('an explicit leased CUDA UUID overrides hook/device visibility before facto
 });
 
 test('activation hooks and managed Bash environment retain external runtime paths', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-state-binding-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-state-binding-'));
   try {
     const launch = base();
     launch.variables = { HOME: directory, USERPROFILE: directory, XDG_CACHE_HOME: join(directory, 'cache'), npm_config_cache: join(directory, 'npm') };
@@ -403,14 +403,14 @@ test('activation hooks and managed Bash environment retain external runtime path
 
 test('unmanaged compatibility process has no binding or additional PATH processing', () => {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `import {applyLaunchBinding,managedBashOptions} from ${JSON.stringify(module)}; applyLaunchBinding(); console.log(JSON.stringify(managedBashOptions({env:{PATH:'legacy'}})))`], {
-    encoding: 'utf8', env: { ...process.env, GRAPHER_LAUNCH_BINDING: '' }, timeout: 15000,
+    encoding: 'utf8', env: { ...process.env, PI_N_LAUNCH_BINDING: '' }, timeout: 15000,
   });
   assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), { env: { PATH: 'legacy' } });
   assert.ok(delimiter);
 });
 
 test('Windows Git Bash promotes shell bins ahead of System32 without beating earlier host tools', { skip: process.platform !== 'win32' }, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-win-bash-order-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-win-bash-order-'));
   try {
     const customFirst = join(directory, 'custom-first');
     const customScripts = join(directory, 'scripts');

@@ -9,7 +9,7 @@ import { root } from './pi-baseline.mjs';
 
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
-test('macOS/Linux launcher checks Node version and Git, clears macOS quarantine, then execs Grapher', () => {
+test('macOS/Linux launcher checks Node version and Git, clears macOS quarantine, then execs Pi^n', () => {
   for (const platform of ['macos', 'linux']) {
     const { files, executableScripts } = launcherScripts(platform, version);
     assert.deepEqual(executableScripts, ['start.sh']);
@@ -20,16 +20,16 @@ test('macOS/Linux launcher checks Node version and Git, clears macOS quarantine,
     assert.ok(sh.includes('[ "$node_major" -eq 22 ] && [ "$node_minor" -lt 19 ]'), 'version comparison must cover 22.x below 19');
     assert.match(sh, /command -v git/);
     assert.ok(sh.includes('case "$0" in */*)'), 'the launcher must locate its folder without external dirname so preflight works on a stripped PATH');
-    assert.match(sh, /xattr -p com\.apple\.quarantine \.\/grapher/);
+    assert.match(sh, /xattr -p com\.apple\.quarantine \.\/pi-n/);
     assert.match(sh, platform === 'macos' ? /Darwin/ : /"Darwin"/);
     assert.match(sh, /http:\/\/127\.0\.0\.1:\$\{port\}/);
-    assert.match(sh, /GRAPHER_PORT:-1421/);
-    assert.match(sh, /exec \.\/grapher\n$/);
+    assert.match(sh, /PI_N_PORT:-1421/);
+    assert.match(sh, /exec \.\/pi-n\n$/);
     assert.doesNotMatch(sh, /^\s*sudo /m, 'the launcher must only advise about system installers, never elevate itself');
   }
 });
 
-test('Windows launcher keeps the console open, verifies Node 22.19+ and Git, and honors GRAPHER_PORT', () => {
+test('Windows launcher keeps the console open, verifies Node 22.19+ and Git, and honors PI_N_PORT', () => {
   const { files, executableScripts } = launcherScripts('windows', version);
   assert.deepEqual(executableScripts, ['start.bat']);
   const bat = files['start.bat'];
@@ -43,9 +43,11 @@ test('Windows launcher keeps the console open, verifies Node 22.19+ and Git, and
   assert.match(bat, /where git >nul 2>nul \|\| goto git-missing\r\n/);
   assert.match(bat, /nodejs\.org/);
   assert.match(bat, /git-scm\.com\/download\/win/);
-  assert.match(bat, /echo Grapher: http:\/\/127\.0\.0\.1:%PORT%/);
-  assert.match(bat, /if not "%GRAPHER_PORT%"=="" set "PORT=%GRAPHER_PORT%"\r\n/);
-  assert.match(bat, /grapher\.exe\r\n/);
+  assert.match(bat, /title Pi\^\^n\r\n/);
+  assert.match(bat, /echo Pi\^\^n: http:\/\/127\.0\.0\.1:%PORT%/);
+  assert.match(bat, /echo Pi\^\^n exited with code %CODE%\./);
+  assert.match(bat, /if not "%PI_N_PORT%"=="" set "PORT=%PI_N_PORT%"\r\n/);
+  assert.match(bat, /pi-n\.exe\r\n/);
   assert.match(bat, /pause\r\n/);
   assert.match(bat, /exit \/b %CODE%\r\n/);
 });
@@ -64,7 +66,7 @@ test('in-package guide covers prerequisites, start, data and troubleshooting per
     assert.match(guide, extra);
     assert.match(guide, /Node\.js 22\.19\+\*\* and \*\*Git\*\*/);
     assert.match(guide, /http:\/\/127\.0\.0\.1:1421/);
-    assert.match(guide, /`.grapher\/`/);
+    assert.match(guide, /`.pi-n\/`/);
     if (platform === 'macos') {
       assert.match(guide, /Wrong macOS download/);
       assert.match(guide, /`uname -m` shows `arm64` \(Apple Silicon\) or `x86_64` \(Intel\); pick the `arm64` or `x64` archive respectively/);
@@ -76,9 +78,9 @@ test('in-package guide covers prerequisites, start, data and troubleshooting per
 });
 
 test('packaging locates release binaries in default or isolated Cargo targets', () => {
-  assert.equal(releaseExecutable('macos', {}), join(root, 'backend/target/release/grapher'));
-  assert.equal(releaseExecutable('linux', { CARGO_TARGET_DIR: 'isolated-target' }), resolve('isolated-target/release/grapher'));
-  assert.equal(releaseExecutable('windows', { CARGO_TARGET_DIR: 'isolated-target' }), resolve('isolated-target/release/grapher.exe'));
+  assert.equal(releaseExecutable('macos', {}), join(root, 'backend/target/release/pi-n'));
+  assert.equal(releaseExecutable('linux', { CARGO_TARGET_DIR: 'isolated-target' }), resolve('isolated-target/release/pi-n'));
+  assert.equal(releaseExecutable('windows', { CARGO_TARGET_DIR: 'isolated-target' }), resolve('isolated-target/release/pi-n.exe'));
 });
 
 test('packaging rejects a target that does not match this host', () => {

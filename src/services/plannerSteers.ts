@@ -83,7 +83,7 @@ export function planningOutputSteerIds(output: string): Set<string> {
   for (const line of output.split("\n")) {
     // queue_update and aggregate events can contain the marker before Pi takes
     // the turn. Only a user row that the transcript renders proves handoff.
-    if (!line.includes("grapher-steer-id")) continue;
+    if (!line.includes("pi-n-steer-id")) continue;
     try {
       const event = JSON.parse(line);
       if (!["message_start", "message_end", "message"].includes(event.type) || event.message?.role !== "user") continue;

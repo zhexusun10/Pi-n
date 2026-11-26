@@ -29,12 +29,12 @@ import {
 } from './desktop-updater-manifest.mjs';
 
 function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'grapher-updater-manifest-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'pi-n-updater-manifest-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
-function makeFakeSignature(version = '1.9.9', file = 'Grapher_1.9.9_aarch64.app.tar.gz') {
+function makeFakeSignature(version = '1.9.9', file = 'Pi-n_1.9.9_aarch64.app.tar.gz') {
   const payload = [
     'untrusted comment: signature from tauri secret key',
     'RUTI21Seiezr6GYYZQpvSHOPcJQoti+RDoD4K+pZ8pC8ltD2sDR8v8uekTzErszVCIYxh0gIuvIQvRf1sqbj1EfnIdLYwla/xg4=',
@@ -79,15 +79,15 @@ test('generates Tauri v2 plugin-compatible latest.json for macOS arm64, macOS x6
   mkdirSync(keyDir, { recursive: true });
 
   // Relocatable archives + installers + checksums (must be ignored by updater feed)
-  writeFileSync(join(assetsDir, 'grapher-linux-x64.tar.gz'), 'linux-archive');
-  writeFileSync(join(assetsDir, 'grapher-linux-x64.tar.gz.sha256'), 'deadbeef  grapher-linux-x64.tar.gz\n');
-  writeFileSync(join(assetsDir, 'Grapher_1.9.9_aarch64.dmg'), 'mac-arm64-dmg');
-  writeFileSync(join(assetsDir, 'Grapher_1.9.9_x64.dmg'), 'mac-x64-dmg');
+  writeFileSync(join(assetsDir, 'pi-n-linux-x64.tar.gz'), 'linux-archive');
+  writeFileSync(join(assetsDir, 'pi-n-linux-x64.tar.gz.sha256'), 'deadbeef  pi-n-linux-x64.tar.gz\n');
+  writeFileSync(join(assetsDir, 'Pi-n_1.9.9_aarch64.dmg'), 'mac-arm64-dmg');
+  writeFileSync(join(assetsDir, 'Pi-n_1.9.9_x64.dmg'), 'mac-x64-dmg');
 
   // Signed updater payloads for all 3 desktop targets
-  const armTar = join(assetsDir, 'Grapher_1.9.9_aarch64.app.tar.gz');
-  const x64Tar = join(assetsDir, 'Grapher_1.9.9_x64.app.tar.gz');
-  const winExe = join(assetsDir, 'Grapher_1.9.9_x64-setup.exe');
+  const armTar = join(assetsDir, 'Pi-n_1.9.9_aarch64.app.tar.gz');
+  const x64Tar = join(assetsDir, 'Pi-n_1.9.9_x64.app.tar.gz');
+  const winExe = join(assetsDir, 'Pi-n_1.9.9_x64-setup.exe');
   writeFileSync(armTar, 'arm64-app-tarball');
   writeFileSync(x64Tar, 'x64-app-tarball');
   writeFileSync(winExe, 'windows-nsis-installer');
@@ -120,7 +120,7 @@ test('generates Tauri v2 plugin-compatible latest.json for macOS arm64, macOS x6
     assetsDir,
     outputPath,
     tag: 'v1.9.9',
-    repo: 'zhexusun10/grapher',
+    repo: 'zhexusun10/pi-n',
     changelogPath,
     pubDate: '2026-11-19T12:30:00Z',
     pubkey: publicKey,
@@ -158,19 +158,19 @@ test('generates Tauri v2 plugin-compatible latest.json for macOS arm64, macOS x6
 
   assert.deepEqual(parsed.platforms['darwin-aarch64'], {
     signature: armSig,
-    url: 'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_aarch64.app.tar.gz',
+    url: 'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_aarch64.app.tar.gz',
   });
   assert.deepEqual(parsed.platforms['darwin-aarch64-app'], parsed.platforms['darwin-aarch64']);
 
   assert.deepEqual(parsed.platforms['darwin-x86_64'], {
     signature: x64Sig,
-    url: 'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64.app.tar.gz',
+    url: 'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64.app.tar.gz',
   });
   assert.deepEqual(parsed.platforms['darwin-x86_64-app'], parsed.platforms['darwin-x86_64']);
 
   assert.deepEqual(parsed.platforms['windows-x86_64'], {
     signature: winSig,
-    url: 'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64-setup.exe',
+    url: 'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64-setup.exe',
   });
   assert.deepEqual(parsed.platforms['windows-x86_64-nsis'], parsed.platforms['windows-x86_64']);
 });
@@ -179,9 +179,9 @@ test('unsigned releases cleanly skip latest.json generation and remove any stale
   const dir = tempDir(t);
   const assetsDir = join(dir, 'release-assets');
   mkdirSync(assetsDir, { recursive: true });
-  writeFileSync(join(assetsDir, 'Grapher_1.9.9_aarch64.dmg'), 'dmg-bytes');
-  writeFileSync(join(assetsDir, 'Grapher_1.9.9_x64.dmg'), 'dmg-bytes');
-  writeFileSync(join(assetsDir, 'Grapher_1.9.9_x64-setup.exe'), 'exe-bytes');
+  writeFileSync(join(assetsDir, 'Pi-n_1.9.9_aarch64.dmg'), 'dmg-bytes');
+  writeFileSync(join(assetsDir, 'Pi-n_1.9.9_x64.dmg'), 'dmg-bytes');
+  writeFileSync(join(assetsDir, 'Pi-n_1.9.9_x64-setup.exe'), 'exe-bytes');
 
   const outputPath = join(assetsDir, 'latest.json');
   writeFileSync(outputPath, '{"stale":true}\n');
@@ -217,10 +217,10 @@ test('partial signed targets warn by default and fail under requireAll', t => {
   const dir = tempDir(t);
   const assetsDir = join(dir, 'release-assets');
   mkdirSync(assetsDir, { recursive: true });
-  writeFileSync(join(assetsDir, 'Grapher_2.0.0-rc.1_x64-setup.exe'), 'exe-bytes');
+  writeFileSync(join(assetsDir, 'Pi-n_2.0.0-rc.1_x64-setup.exe'), 'exe-bytes');
   writeFileSync(
-    join(assetsDir, 'Grapher_2.0.0-rc.1_x64-setup.exe.sig'),
-    makeFakeSignature('2.0.0-rc.1', 'Grapher_2.0.0-rc.1_x64-setup.exe'),
+    join(assetsDir, 'Pi-n_2.0.0-rc.1_x64-setup.exe.sig'),
+    makeFakeSignature('2.0.0-rc.1', 'Pi-n_2.0.0-rc.1_x64-setup.exe'),
   );
 
   const warnings = [];
@@ -319,22 +319,22 @@ test('enforces cryptographic keypair verification, catches wrong target/artifact
   assert.equal(
     resolveConfiguredUpdaterPubkey({
       tauriConfPath: populatedConf,
-      env: { GRAPHER_UPDATER_PUBKEY: '   ', TAURI_UPDATER_PUBKEY: keyB.publicKey },
+      env: { PI_N_UPDATER_PUBKEY: '   ', TAURI_UPDATER_PUBKEY: keyB.publicKey },
     }),
     keyB.publicKey,
   );
   assert.equal(
     validateUpdaterSigningConfig({
-      env: { TAURI_SIGNING_PRIVATE_KEY: keyA.privateKey, GRAPHER_UPDATER_PUBKEY: keyA.publicKey },
+      env: { TAURI_SIGNING_PRIVATE_KEY: keyA.privateKey, PI_N_UPDATER_PUBKEY: keyA.publicKey },
       tauriConfPath: emptyConf,
     }).keyIdHex,
     parsedPubA.keyIdHex,
   );
 
   // Sign Windows NSIS .exe + macOS tarballs with keyA and verify cryptographic checks.
-  const armTar = join(assetsDir, 'Grapher_1.9.9_aarch64.app.tar.gz');
-  const x64Tar = join(assetsDir, 'Grapher_1.9.9_x64.app.tar.gz');
-  const winExe = join(assetsDir, 'Grapher_1.9.9_x64-setup.exe');
+  const armTar = join(assetsDir, 'Pi-n_1.9.9_aarch64.app.tar.gz');
+  const x64Tar = join(assetsDir, 'Pi-n_1.9.9_x64.app.tar.gz');
+  const winExe = join(assetsDir, 'Pi-n_1.9.9_x64-setup.exe');
   writeFileSync(armTar, 'arm-payload');
   writeFileSync(x64Tar, 'x64-payload');
   writeFileSync(winExe, 'win-nsis-exe-payload');
@@ -408,10 +408,10 @@ test('enforces cryptographic keypair verification, catches wrong target/artifact
 
   // Wrong Windows/macOS artifact extensions or version-mismatched filenames are rejected.
   for (const badAsset of [
-    'Grapher_1.9.9_x64-setup.nsis.zip',
-    'Grapher_1.9.9_x64.msi',
-    'Grapher_1.9.9_aarch64.dmg',
-    'Grapher_1.9.8_x64-setup.exe',
+    'Pi-n_1.9.9_x64-setup.nsis.zip',
+    'Pi-n_1.9.9_x64.msi',
+    'Pi-n_1.9.9_aarch64.dmg',
+    'Pi-n_1.9.8_x64-setup.exe',
   ]) {
     const badDir = tempDir(t);
     writeFileSync(join(badDir, badAsset), 'bytes');
@@ -436,7 +436,7 @@ test('enforces cryptographic keypair verification, catches wrong target/artifact
         pub_date: '2026-11-19T12:00:00Z',
         platforms: {
           'windows-x64': {
-            url: 'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64-setup.exe',
+            url: 'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64-setup.exe',
             signature: validSig,
           },
         },
@@ -450,12 +450,12 @@ test('enforces cryptographic keypair verification, catches wrong target/artifact
         pub_date: '2026-11-19T12:00:00Z',
         platforms: {
           'windows-x86_64-nsis': {
-            url: 'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64.msi',
+            url: 'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64.msi',
             signature: validSig,
           },
         },
       }),
-    /incompatible artifact "Grapher_1\.9\.9_x64\.msi"/,
+    /incompatible artifact "Pi-n_1\.9\.9_x64\.msi"/,
   );
   assert.throws(
     () =>
@@ -464,7 +464,7 @@ test('enforces cryptographic keypair verification, catches wrong target/artifact
         pub_date: '2026-11-19T12:00:00Z',
         platforms: {
           'windows-x86_64-nsis': {
-            url: 'http://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64-setup.exe',
+            url: 'http://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64-setup.exe',
             signature: validSig,
           },
         },
@@ -479,7 +479,7 @@ test('enforces cryptographic keypair verification, catches wrong target/artifact
           pub_date: '2026-11-19T12:00:00Z',
           platforms: {
             'windows-x86_64': {
-              url: 'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64-setup.exe',
+              url: 'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64-setup.exe',
               signature: validSig,
             },
           },
@@ -520,7 +520,7 @@ test('rejects secret key leaks, malformed/mismatched signatures, dangling .sig f
 
   // Dangling signature without payload
   const danglingDir = tempDir(t);
-  writeFileSync(join(danglingDir, 'Grapher_1.9.9_aarch64.app.tar.gz.sig'), makeFakeSignature('1.9.9'));
+  writeFileSync(join(danglingDir, 'Pi-n_1.9.9_aarch64.app.tar.gz.sig'), makeFakeSignature('1.9.9'));
   assert.throws(
     () => generateUpdaterManifest({ assetsDir: danglingDir, tag: 'v1.9.9', log: () => {} }),
     /missing a non-empty payload file/,
@@ -528,8 +528,8 @@ test('rejects secret key leaks, malformed/mismatched signatures, dangling .sig f
 
   // Unrecognized signature asset name
   const unknownDir = tempDir(t);
-  writeFileSync(join(unknownDir, 'Grapher_1.9.9_unknown.bin'), 'bytes');
-  writeFileSync(join(unknownDir, 'Grapher_1.9.9_unknown.bin.sig'), makeFakeSignature('1.9.9'));
+  writeFileSync(join(unknownDir, 'Pi-n_1.9.9_unknown.bin'), 'bytes');
+  writeFileSync(join(unknownDir, 'Pi-n_1.9.9_unknown.bin.sig'), makeFakeSignature('1.9.9'));
   assert.throws(
     () => generateUpdaterManifest({ assetsDir: unknownDir, tag: 'v1.9.9', log: () => {} }),
     /Unrecognized Tauri updater signature file/,
@@ -544,8 +544,8 @@ test('rejects secret key leaks, malformed/mismatched signatures, dangling .sig f
   assert.equal(normalizeVersion('v1.9.9'), '1.9.9');
   assert.throws(() => normalizeVersion('not-a-version'), /Invalid semantic version/);
   assert.equal(
-    buildReleaseDownloadUrl('zhexusun10/grapher', 'v1.9.9', 'Grapher_1.9.9_x64-setup.exe'),
-    'https://github.com/zhexusun10/grapher/releases/download/v1.9.9/Grapher_1.9.9_x64-setup.exe',
+    buildReleaseDownloadUrl('zhexusun10/pi-n', 'v1.9.9', 'Pi-n_1.9.9_x64-setup.exe'),
+    'https://github.com/zhexusun10/pi-n/releases/download/v1.9.9/Pi-n_1.9.9_x64-setup.exe',
   );
   assert.equal(extractChangelogNotes('## [1.9.9] - 2026-11-19\n- Fixed bug\n## [1.9.8]\n- Old', '1.9.9'), '- Fixed bug');
   assert.equal(extractChangelogNotes('## [Unreleased]\n- WIP', '1.9.9'), null);
@@ -557,11 +557,11 @@ test('desktop-updater-manifest CLI works end-to-end for both signed and unsigned
   const signedDir = join(dir, 'signed');
   mkdirSync(unsignedDir, { recursive: true });
   mkdirSync(signedDir, { recursive: true });
-  writeFileSync(join(unsignedDir, 'Grapher_1.9.9_aarch64.dmg'), 'dmg');
-  writeFileSync(join(signedDir, 'Grapher_1.9.9_aarch64.app.tar.gz'), 'tarball');
-  writeFileSync(join(signedDir, 'Grapher_1.9.9_aarch64.app.tar.gz.sig'), makeFakeSignature('1.9.9'));
+  writeFileSync(join(unsignedDir, 'Pi-n_1.9.9_aarch64.dmg'), 'dmg');
+  writeFileSync(join(signedDir, 'Pi-n_1.9.9_aarch64.app.tar.gz'), 'tarball');
+  writeFileSync(join(signedDir, 'Pi-n_1.9.9_aarch64.app.tar.gz.sig'), makeFakeSignature('1.9.9'));
   const notesFile = join(dir, 'release-notes.md');
-  writeFileSync(notesFile, '# Grapher v1.9.9\n\nCustom notes file.\n');
+  writeFileSync(notesFile, '# Pi^n v1.9.9\n\nCustom notes file.\n');
 
   const scriptPath = join(root, 'scripts', 'desktop-updater-manifest.mjs');
 
@@ -585,7 +585,7 @@ test('desktop-updater-manifest CLI works end-to-end for both signed and unsigned
       '--tag',
       'v1.9.9',
       '--repo',
-      'zhexusun10/grapher',
+      'zhexusun10/pi-n',
       '--notes-file',
       notesFile,
       '--pub-date',
@@ -596,7 +596,7 @@ test('desktop-updater-manifest CLI works end-to-end for both signed and unsigned
   assert.equal(signedRun.status, 0, signedRun.stderr);
   const manifest = JSON.parse(readFileSync(join(signedDir, 'latest.json'), 'utf8'));
   assert.equal(manifest.version, '1.9.9');
-  assert.equal(manifest.notes, '# Grapher v1.9.9\n\nCustom notes file.');
+  assert.equal(manifest.notes, '# Pi^n v1.9.9\n\nCustom notes file.');
   assert.ok(manifest.platforms['darwin-aarch64']);
   assert.ok(manifest.platforms['darwin-aarch64-app']);
 });
@@ -662,19 +662,19 @@ test('desktop-build helpers guard tags, signing secrets, notarization config, an
 
   // Distinct, collision-free per-target artifact names
   assert.deepEqual(desktopArtifactNames(DESKTOP_TARGETS['macos-arm64'], '1.9.9'), {
-    installerName: 'Grapher_1.9.9_aarch64.dmg',
-    updaterName: 'Grapher_1.9.9_aarch64.app.tar.gz',
-    signatureName: 'Grapher_1.9.9_aarch64.app.tar.gz.sig',
+    installerName: 'Pi-n_1.9.9_aarch64.dmg',
+    updaterName: 'Pi-n_1.9.9_aarch64.app.tar.gz',
+    signatureName: 'Pi-n_1.9.9_aarch64.app.tar.gz.sig',
   });
   assert.deepEqual(desktopArtifactNames(DESKTOP_TARGETS['macos-x64'], '1.9.9'), {
-    installerName: 'Grapher_1.9.9_x64.dmg',
-    updaterName: 'Grapher_1.9.9_x64.app.tar.gz',
-    signatureName: 'Grapher_1.9.9_x64.app.tar.gz.sig',
+    installerName: 'Pi-n_1.9.9_x64.dmg',
+    updaterName: 'Pi-n_1.9.9_x64.app.tar.gz',
+    signatureName: 'Pi-n_1.9.9_x64.app.tar.gz.sig',
   });
   assert.deepEqual(desktopArtifactNames(DESKTOP_TARGETS['windows-x64'], '1.9.9'), {
-    installerName: 'Grapher_1.9.9_x64-setup.exe',
-    updaterName: 'Grapher_1.9.9_x64-setup.exe',
-    signatureName: 'Grapher_1.9.9_x64-setup.exe.sig',
+    installerName: 'Pi-n_1.9.9_x64-setup.exe',
+    updaterName: 'Pi-n_1.9.9_x64-setup.exe',
+    signatureName: 'Pi-n_1.9.9_x64-setup.exe.sig',
   });
 });
 
@@ -689,10 +689,10 @@ test('release workflow enforces least-privilege permissions, desktop + archive b
 
   // Retains existing relocatable archive outputs
   for (const artifact of [
-    'grapher-linux-x64.tar.gz',
-    'grapher-macos-arm64.tar.gz',
-    'grapher-macos-x64.tar.gz',
-    'grapher-windows-x64.zip',
+    'pi-n-linux-x64.tar.gz',
+    'pi-n-macos-arm64.tar.gz',
+    'pi-n-macos-x64.tar.gz',
+    'pi-n-windows-x64.zip',
   ]) {
     assert.ok(workflow.includes(artifact), `missing archive output: ${artifact}`);
   }
@@ -741,24 +741,24 @@ test('consolidateReleaseAssets merges per-file checksums into SHA256SUMS.txt and
   mkdirSync(assetsDir, { recursive: true });
 
   const binaryAssets = [
-    'Grapher_1.9.10_aarch64.app.tar.gz',
-    'Grapher_1.9.10_aarch64.dmg',
-    'Grapher_1.9.10_x64-setup.exe',
-    'Grapher_1.9.10_x64.app.tar.gz',
-    'Grapher_1.9.10_x64.dmg',
-    'grapher-linux-x64.tar.gz',
-    'grapher-macos-arm64.tar.gz',
-    'grapher-macos-x64.tar.gz',
-    'grapher-windows-x64.zip',
+    'Pi-n_1.9.10_aarch64.app.tar.gz',
+    'Pi-n_1.9.10_aarch64.dmg',
+    'Pi-n_1.9.10_x64-setup.exe',
+    'Pi-n_1.9.10_x64.app.tar.gz',
+    'Pi-n_1.9.10_x64.dmg',
+    'pi-n-linux-x64.tar.gz',
+    'pi-n-macos-arm64.tar.gz',
+    'pi-n-macos-x64.tar.gz',
+    'pi-n-windows-x64.zip',
   ];
   for (const name of binaryAssets) {
     writeFileSync(join(assetsDir, name), `payload:${name}`);
     writeFileSync(join(assetsDir, `${name}.sha256`), `old  ${name}\n`);
   }
   for (const sigTarget of [
-    'Grapher_1.9.10_aarch64.app.tar.gz',
-    'Grapher_1.9.10_x64.app.tar.gz',
-    'Grapher_1.9.10_x64-setup.exe',
+    'Pi-n_1.9.10_aarch64.app.tar.gz',
+    'Pi-n_1.9.10_x64.app.tar.gz',
+    'Pi-n_1.9.10_x64-setup.exe',
   ]) {
     writeFileSync(join(assetsDir, `${sigTarget}.sig`), makeFakeSignature('1.9.10', sigTarget));
   }

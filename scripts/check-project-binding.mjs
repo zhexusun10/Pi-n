@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import net from 'node:net';
 
-const root = await mkdtemp(join(tmpdir(), 'grapher-binding-'));
+const root = await mkdtemp(join(tmpdir(), 'pi-n-binding-'));
 const source = join(root, 'source');
 const moved = join(root, 'moved');
 let child;
@@ -28,8 +28,8 @@ try {
   const port = listener.address().port;
   await new Promise(completed => listener.close(completed));
   const target = resolve(process.env.CARGO_TARGET_DIR || 'backend/target');
-  child = spawn(join(target, `debug/grapher${process.platform === 'win32' ? '.exe' : ''}`), [], {
-    env: { ...process.env, GRAPHER_DATA_DIR: join(root, 'data'), GRAPHER_PORT: String(port) },
+  child = spawn(join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`), [], {
+    env: { ...process.env, PI_N_DATA_DIR: join(root, 'data'), PI_N_PORT: String(port) },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   child.stderr.on('data', data => { diagnostics += data; });

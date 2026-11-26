@@ -30,14 +30,14 @@ function New-TestProcess([int] $Id, [string] $ImagePath) {
     return $process
 }
 
-$install = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), ("Grapher user's & workspace " + [char] 0x6d4b + [char] 0x8bd5))
-$target = [System.IO.Path]::Combine($install, 'runtime', 'grapher.exe')
+$install = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), ("Pi^n user's & workspace " + [char] 0x6d4b + [char] 0x8bd5))
+$target = [System.IO.Path]::Combine($install, 'runtime', 'pi-n.exe')
 $ours = New-TestProcess 1 $target.ToUpperInvariant()
-$cli = New-TestProcess 2 ([System.IO.Path]::Combine($install, 'cli', 'grapher.exe'))
-$gui = New-TestProcess 3 ([System.IO.Path]::Combine($install, 'Grapher.exe'))
-$other = New-TestProcess 4 ([System.IO.Path]::Combine(($install + '-other'), 'runtime', 'grapher.exe'))
+$cli = New-TestProcess 2 ([System.IO.Path]::Combine($install, 'cli', 'pi-n.exe'))
+$gui = New-TestProcess 3 ([System.IO.Path]::Combine($install, 'Pi^n.exe'))
+$other = New-TestProcess 4 ([System.IO.Path]::Combine(($install + '-other'), 'runtime', 'pi-n.exe'))
 $unknown = New-TestProcess 5 ''
-Stop-GrapherInstallationRuntime -InstallDirectory ([System.IO.Path]::Combine($install, '.')) -Processes @($ours, $cli, $gui, $other, $unknown)
+Stop-PiNInstallationRuntime -InstallDirectory ([System.IO.Path]::Combine($install, '.')) -Processes @($ours, $cli, $gui, $other, $unknown)
 Assert-True $ours.Killed 'The matching installation runtime must be stopped, including case differences'
 foreach ($process in @($cli, $gui, $other, $unknown)) {
     Assert-True (-not $process.Killed) 'A CLI, GUI, other installation or unknown image must remain alive'
@@ -47,7 +47,7 @@ Assert-True $ours.Disposed 'The terminated process handle must be released'
 
 $gone = New-TestProcess 6 $target
 $gone.ExitRace = $true
-Stop-GrapherInstallationRuntime -InstallDirectory $install -Processes @($gone)
+Stop-PiNInstallationRuntime -InstallDirectory $install -Processes @($gone)
 Assert-True $gone.Disposed 'Concurrent exit must release its inspection handle'
 
 foreach ($failure in @('KillFailure', 'WaitTimeout', 'QueryFailure')) {
@@ -55,7 +55,7 @@ foreach ($failure in @('KillFailure', 'WaitTimeout', 'QueryFailure')) {
     if ($failure -eq 'QueryFailure') { $script:queryFailures[7] = $true }
     else { $process.$failure = $true }
     $failed = $false
-    try { Stop-GrapherInstallationRuntime -InstallDirectory $install -Processes @($process) }
+    try { Stop-PiNInstallationRuntime -InstallDirectory $install -Processes @($process) }
     catch { $failed = $true }
     Assert-True $failed "$failure must stop the upgrade instead of allowing stale files to survive"
     Assert-True $process.Disposed "$failure must release its inspection handle"

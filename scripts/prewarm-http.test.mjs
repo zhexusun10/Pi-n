@@ -12,7 +12,7 @@ import { root } from './pi-baseline.mjs';
 const delay = ms => new Promise(completed => setTimeout(completed, ms));
 
 test('Auto refills during routing and older completions cannot revert a newly configured ready worker', { timeout: 180000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-prewarm-http-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-prewarm-http-'));
   let backend;
   let diagnostics = '';
   let executionSummary;
@@ -75,12 +75,12 @@ test('Auto refills during routing and older completions cannot revert a newly co
     await new Promise(completed => listener.close(completed));
     const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
     const env = { ...process.env, HOME: directory, USERPROFILE: directory,
-      GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(port), PI_CODING_AGENT_DIR: agent,
-      GRAPHER_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), GRAPHER_ISOLATED_PI_MODELS: '0',
-      GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'), PARTITIONER_MODEL: undefined,
+      PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
+      PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), PI_N_ISOLATED_PI_MODELS: '0',
+      PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'), PARTITIONER_MODEL: undefined,
       NODE_AGENT_MODEL: 'prewarm-test/node', PLANNER_MODEL: 'prewarm-test/planner', MERGER_MODEL: 'prewarm-test/node',
       PARTITIONER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PLANNER_THINKING: 'off', MERGER_THINKING: 'off' };
-    backend = spawn(join(target, `debug/grapher${process.platform === 'win32' ? '.exe' : ''}`), [], {
+    backend = spawn(join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`), [], {
       cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'],
     });
     backend.stdout.on('data', bytes => { diagnostics += bytes; });
@@ -147,7 +147,7 @@ test('Auto refills during routing and older completions cannot revert a newly co
     const assertReused = async (state, role = 'partition') => {
       const log = await readFile(join(data, 'planning', state.planningId, `${role}.jsonl`), 'utf8');
       const started = log.split(/\r?\n/).filter(line => line.startsWith('{')).map(line => JSON.parse(line))
-        .find(event => event.type === 'grapher_process_started');
+        .find(event => event.type === 'pi_n_process_started');
       assert.equal(started.prewarmed, true);
       assert.equal(started.prewarmStage, 'process');
       assert.equal(typeof started.taskBindingMs, 'number');
@@ -163,7 +163,7 @@ test('Auto refills during routing and older completions cannot revert a newly co
       if (!execution) return false;
       const output = await api('get_execution_output', { runId: state.runId, executionId: execution.id, full: true });
       const started = output.content.split(/\r?\n/).filter(line => line.startsWith('{')).map(JSON.parse)
-        .find(event => event.type === 'grapher_process_started');
+        .find(event => event.type === 'pi_n_process_started');
       assert.equal(started.prewarmed, true, 'Serial first turn must claim its independent prepared process');
       assert.equal(started.prewarmStage, 'process');
       assert.equal(started.sessionId, execution.sessionId);

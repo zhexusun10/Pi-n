@@ -2,7 +2,7 @@ import { t, localizeError, languagePreference, restartFrontendWithLanguage, type
 import React, { useEffect, useRef, useState, useId } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
-import { RotateCcw, Terminal, Cpu, Check, X, Copy, GitBranch, Languages, RefreshCw, Wallpaper, AlertTriangle, Info } from "lucide-react";
+import { RotateCcw, Terminal, Check, X, Copy, GitBranch, Languages, RefreshCw, Wallpaper, AlertTriangle, Info } from "lucide-react";
 import { Config, MAX_MAX_FEEDBACK, MAX_MAX_PARALLEL, MIN_MAX_FEEDBACK, MIN_MAX_PARALLEL, normalizeMaxFeedback, normalizeMaxParallel } from "../../types";
 import { normalizeModelThinkingLevels } from "../../modelConfig";
 import { providerAuth, type ProviderCatalog } from "../../services/providerAuth";
@@ -204,21 +204,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
         <div className="settings-modal-content">
           <div className="settings-sections">
             <section className="settings-card" aria-labelledby="provider-settings-title">
-              <div className="settings-card-title">
-                <Cpu size={16} />
-                <h4 id="provider-settings-title">{t("Provider配置")}</h4>
-              </div>
               <ProviderSettings onCatalogChange={setCatalog} onBusyChange={setCatalogBusy} />
             </section>
 
             <section className="settings-card" aria-labelledby="role-model-settings-title">
               <div className="settings-card-title">
                 <Terminal size={16} />
-                <h4 id="role-model-settings-title">{t("模型配置")}</h4>
+                <div className="settings-card-title-text">
+                  <h4 id="role-model-settings-title">{t("模型配置")}</h4>
+                  <span className="settings-card-inline-desc">{conversationScoped
+                    ? t("当前编辑此对话的模型配置，仅对当前对话生效。")
+                    : t("配置新对话的默认模型，不影响已有对话。")}</span>
+                </div>
               </div>
-              <p className="section-desc">{conversationScoped
-                ? t("当前显示并编辑此对话的模型配置；保存只影响此对话。")
-                : t("当前显示并编辑新对话的默认模型配置；已有对话保留各自配置。")}</p>
               <RoleModelSettings config={draftConfig} setConfig={updateDraftConfig} catalog={catalog} envOverrides={envOverrides} busy={catalogBusy || saving} hidePartitioner={hideAutoMode} />
             </section>
 
@@ -227,12 +225,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
             <section className="settings-card" aria-labelledby="execution-planning-settings-title">
               <div className="settings-card-title">
                 <GitBranch size={16} />
-                <h4 id="execution-planning-settings-title">{t("Harness设置")}</h4>
+                <h4 id="execution-planning-settings-title">{t("Compile模式设置")}</h4>
               </div>
               <label className="settings-toggle-row">
                 <span>
                   <strong>Auto Approve</strong>
-                  <small>{t("自动批准 Planner 生成的图纸并开始执行")}</small>
+                  <small>{t("自动批准执行计划并立即开始运行。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -245,7 +243,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("任务后 Planner 复盘")}</strong>
-                  <small>{t("任务完成并写回后，让 Planner 决定下一步。新任务遵循自动审批设置。")}</small>
+                  <small>{t("任务完成后由 Planner 自动复盘结果并推进下一步。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -258,7 +256,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("并行节点独立工作区")}</strong>
-                  <small>{t("空闲时派发不超过 3 个节点共用源目录，超过 3 个启用独立工作区。共享执行中按依赖补位，不等待无关节点。关闭后始终共享源码，并发修改可能互相覆盖。")}</small>
+                  <small>{t("多节点大规模并行时自动分配独立工作区，避免并发修改互相冲突。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -271,7 +269,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("挂载 Planner write 和 edit 工具")}</strong>
-                  <small>{t("允许 Planner 直接修改工作区文件；默认开启。关闭时不再挂载 write 和 edit，但 read、Bash、node/edge 及扩展工具仍然可用。对后续规划生效。")}</small>
+                  <small>{t("允许 Planner 直接编辑项目文件；关闭后仅负责只读分析与规划。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -284,7 +282,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("启用 Feedback")}</strong>
-                  <small>{t("允许创建反馈边，默认关闭。对后续规划和图编辑生效；已有会话的反馈边和执行不受影响，未启用 Feedback 的会话不显示边类型图例。")}</small>
+                  <small>{t("支持在执行图中添加反馈回路，让节点根据下游结果自动返工优化。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -297,7 +295,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-number-row">
                 <span>
                   <strong>{t("可并行 Agent 数量")}</strong>
-                  <small>{t("可并行 Agent 数量（范围 2–40，默认 20）。对新创建的运行生效。")}</small>
+                  <small>{t("同时运行的 Agent 上限（2–40，默认 20），提升复杂任务的并行速度。")}</small>
                 </span>
                 <input
                   type="number"
@@ -320,7 +318,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-number-row">
                 <span>
                   <strong>{t("反馈预算")}</strong>
-                  <small>{t("反馈边可触发的最大返工次数（范围 2–40，默认 4）。对新创建的运行生效。")}</small>
+                  <small>{t("单次运行中允许自动返工的最大次数（2–40，默认 4）。")}</small>
                 </span>
                 <input
                   type="number"
@@ -350,7 +348,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("隐藏 Auto 模式")}</strong>
-                  <small>{t("保存后隐藏输入框中的 Auto 和 Partitioner 模型配置，仅在此浏览器中生效。")}</small>
+                  <small>{t("隐藏输入框中的 Auto 模式与 Partitioner 模型选项，让界面更简洁。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -363,7 +361,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("执行时自动展开思维链")}</strong>
-                  <small>{t("节点或 Planner 思考时自动展开 COT 卡片。")}</small>
+                  <small>{t("Agent 思考时自动展开推理过程，实时查看思路。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -376,7 +374,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("显示执行拓扑概览")}</strong>
-                  <small>{t("在 Graph 规划对话底部显示执行拓扑概览与写回详情。保存后在此浏览器中生效。")}</small>
+                  <small>{t("在规划对话底部展示执行拓扑概览与结果写回状态。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -389,7 +387,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("对话完成系统通知")}</strong>
-                  <small>{t("窗口未在前台获得焦点时，对话完成后推送系统通知并显示 Agent 最后输出的内容。默认开启，保存后生效。")}</small>
+                  <small>{t("后台任务完成时推送系统通知并预览最终回复，无需一直盯屏。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -403,7 +401,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                 <div className="settings-notification-permission-bar is-warning" role="status">
                   <span className="settings-notification-permission-text">
                     <AlertTriangle size={14} aria-hidden="true" />
-                    <span>{t("系统通知权限未开启，请在系统设置中允许 Grapher 发送通知。")}</span>
+                    <span>{t("系统通知权限未开启，请在系统设置中允许 Pi^n 发送通知。")}</span>
                   </span>
                   <button
                     type="button"
@@ -442,7 +440,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
               <label className={`settings-toggle-row is-suboption${!completionNotifications ? " is-disabled" : ""}`}>
                 <span>
                   <strong>{t("通知提示音")}</strong>
-                  <small>{t("推送对话完成通知时播放系统提示音。关闭后将以静音方式推送通知，保存后生效。")}</small>
+                  <small>{t("收到完成通知时播放提示音；关闭则静音提醒。")}</small>
                 </span>
                 <input
                   type="checkbox"
@@ -453,9 +451,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                 />
               </label>
               <h5 className="settings-ui-group-title">{t("首页背景")}</h5>
-              <p className="section-desc">{t("选择首页背景，保存后在此浏览器中生效。")}</p>
+              <p className="section-desc">{t("自定义首页视觉风格。")}</p>
               <fieldset className="settings-background-options" disabled={saving}>
                 <legend className="sr-only">{t("首页背景")}</legend>
+                <label className={`settings-background-option ${landingBackground === "grid" ? "is-selected" : ""}`}>
+                  <span className="settings-background-preview settings-background-preview-grid" aria-hidden="true" />
+                  <span className="settings-background-option-label">
+                    <input type="radio" name="landing-background" value="grid" checked={landingBackground === "grid"}
+                      onChange={() => setLandingBackgroundDraft("grid")} />
+                    <span><strong>{t("三色格子")}</strong><small>{t("图标三色细线格子背景")}</small></span>
+                  </span>
+                </label>
                 <label className={`settings-background-option ${landingBackground === "dots" ? "is-selected" : ""}`}>
                   <span className="settings-background-preview" aria-hidden="true">
                     <DotPattern width={18} height={18} cr={1} className="[mask-image:radial-gradient(130px_circle_at_center,white,transparent)]" />
@@ -463,7 +469,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                   <span className="settings-background-option-label">
                     <input type="radio" name="landing-background" value="dots" checked={landingBackground === "dots"}
                       onChange={() => setLandingBackgroundDraft("dots")} />
-                    <span><strong>{t("点阵")}</strong><small>{t("默认的静态渐隐点阵")}</small></span>
+                    <span><strong>{t("点阵")}</strong><small>{t("简约静态渐隐点阵")}</small></span>
                   </span>
                 </label>
                 <label className={`settings-background-option ${landingBackground === "paths" ? "is-selected" : ""}`}>
@@ -478,7 +484,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                   <span className="settings-background-option-label">
                     <input type="radio" name="landing-background" value="paths" checked={landingBackground === "paths"}
                       onChange={() => setLandingBackgroundDraft("paths")} />
-                    <span><strong>{t("动态线条")}</strong><small>{t("流动的动态线条")}</small></span>
+                    <span><strong>{t("动态线条")}</strong><small>{t("流畅动态线条背景")}</small></span>
                   </span>
                 </label>
               </fieldset>
@@ -490,7 +496,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                 <h4 id="language-settings-title">{t("界面语言")}</h4>
               </div>
               <div className="settings-language-row">
-                <p className="section-desc">{t("切换语言需确认并重启前端后生效。")}</p>
+                <p className="section-desc">{t("选择界面显示语言，确认后将重新加载界面生效。")}</p>
                 <select
                   aria-label={t("界面语言")}
                   disabled={saving}

@@ -1,5 +1,5 @@
 // Explicitly adopt an already checked-out Pi commit after upstream model-data
-// hydration. This only stages the Grapher baseline; it never fetches or pulls.
+// hydration. This only stages the Pi^n baseline; it never fetches or pulls.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';

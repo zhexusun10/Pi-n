@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-runtime-安装 # %-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-runtime-安装 # %-'));
   t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const scripts = join(root, 'scripts');
   const parent = join(root, 'runtimes');
@@ -24,16 +24,16 @@ export function verifyBaseline() {}
   writeFileSync(join(scripts, 'bundled-extensions.mjs'), 'export const bundledExtensionNames = []; export function verifyBundledExtensions() {}');
   writeFileSync(join(scripts, 'cargo.mjs'), '');
   writeFileSync(join(scripts, 'model-data-manifest.mjs'), 'export function regenerateModelDataManifest() {}');
-  writeFileSync(join(root, 'package.json'), '{"name":"grapher","type":"module"}');
+  writeFileSync(join(root, 'package.json'), '{"name":"pi-n","type":"module"}');
   writeFileSync(join(root, 'package-lock.json'), '{}');
   const run = (destination, runtimeParent = parent) => spawnSync(process.execPath, [join(scripts, 'prepare-native-runtime.mjs')], {
     cwd: root, encoding: 'utf8', timeout: 10000,
-    env: { ...process.env, GRAPHER_NATIVE_RUNTIME_PARENT: runtimeParent, GRAPHER_NATIVE_RUNTIME_DIR: destination },
+    env: { ...process.env, PI_N_NATIVE_RUNTIME_PARENT: runtimeParent, PI_N_NATIVE_RUNTIME_DIR: destination },
   });
-  const child = () => join(parent, `grapher-native-engine-${randomUUID()}`);
+  const child = () => join(parent, `pi-n-native-engine-${randomUUID()}`);
   const keyResult = (installation = root, runtimeParent = parent, cachedCopy) => spawnSync(process.execPath, [join(installation, 'scripts/prepare-native-runtime.mjs'), '--cache-key', ...(cachedCopy ? [cachedCopy] : [])], {
     cwd: installation, encoding: 'utf8', timeout: 10000,
-    env: { ...process.env, GRAPHER_NATIVE_RUNTIME_PARENT: runtimeParent },
+    env: { ...process.env, PI_N_NATIVE_RUNTIME_PARENT: runtimeParent },
   });
   const key = (...args) => {
     const result = keyResult(...args);
@@ -59,7 +59,7 @@ function seedRuntimeInputs(f) {
 
 test('leased preparation rejects external, nonempty and linked destinations without deleting data', t => {
   const f = fixture(t);
-  const outside = join(f.root, `grapher-native-engine-${randomUUID()}`);
+  const outside = join(f.root, `pi-n-native-engine-${randomUUID()}`);
   const occupied = f.child();
   for (const path of [outside, occupied]) {
     mkdirSync(path);
@@ -90,7 +90,7 @@ test('cache identity follows engine inputs, not workspace, cache parent or insta
   assert.equal(existsSync(otherParent), false, 'computing identity does not allocate a cache');
   writeFileSync(join(f.root, 'project.txt'), 'another project');
   assert.equal(f.key(), initial);
-  const relocated = mkdtempSync(join(tmpdir(), 'grapher-runtime-relocated-'));
+  const relocated = mkdtempSync(join(tmpdir(), 'pi-n-runtime-relocated-'));
   t.after(() => rmSync(relocated, { recursive: true, force: true }));
   // Node 22's native recursive copy can crash on Unicode Windows paths.
   // Select the portable walker, matching prepare-native-runtime.mjs.
@@ -100,10 +100,10 @@ test('cache identity follows engine inputs, not workspace, cache parent or insta
   });
   assert.equal(f.key(relocated), initial);
   assert.equal(f.key(f.root, f.parent, relocated), initial, 'cached artifacts are checked by the installed verifier');
-  mkdirSync(join(relocated, '.grapher-runtime-cache/baseline'), { recursive: true });
-  writeFileSync(join(relocated, '.grapher-runtime-cache/baseline/seed.json'), '{}');
+  mkdirSync(join(relocated, '.pi-n-runtime-cache/baseline'), { recursive: true });
+  writeFileSync(join(relocated, '.pi-n-runtime-cache/baseline/seed.json'), '{}');
   assert.equal(f.key(f.root, f.parent, relocated), initial, 'host-owned runtime caches do not change code identity');
-  mkdirSync(join(relocated, 'engine/.grapher-masks-active/empty'), { recursive: true });
+  mkdirSync(join(relocated, 'engine/.pi-n-masks-active/empty'), { recursive: true });
   assert.equal(f.key(f.root, f.parent, relocated), initial, 'Linux mount staging is not an engine input');
   writeFileSync(join(relocated, 'engine/entrypoint.mjs'), 'modified cached adapter');
   assert.notEqual(f.key(f.root, f.parent, relocated), initial, 'a changed cached engine must not be reused');
@@ -176,14 +176,14 @@ test('preparation uses the already leased directory, including extended Windows 
   const destination = f.child();
   mkdirSync(destination);
   writeFileSync(join(destination, 'runtime.lock'), '');
-  writeFileSync(join(destination, '.grapher-native-runtime.json'), '{"kind":"grapher-native-runtime","version":1}');
+  writeFileSync(join(destination, '.pi-n-native-runtime.json'), '{"kind":"pi-n-native-runtime","version":1}');
   const backslash = String.fromCharCode(92);
   const parent = process.platform === 'win32' ? backslash + backslash + '?' + backslash + f.parent : f.parent;
   const result = f.run(destination, parent);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(realpathSync.native(result.stdout), realpathSync.native(destination));
   assert.equal(readFileSync(join(destination, 'engine/entrypoint.mjs'), 'utf8'), 'export {};');
-  assert.ok(existsSync(join(destination, '.grapher-native-runtime.json')));
+  assert.ok(existsSync(join(destination, '.pi-n-native-runtime.json')));
   assert.ok(existsSync(join(destination, 'runtime.lock')));
   assert.equal(execFileSync('git', ['-C', join(destination, 'pi'), 'config', '--get', 'core.longpaths'], { encoding: 'utf8', env }).trim(), 'true');
 });

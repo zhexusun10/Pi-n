@@ -1,11 +1,11 @@
-use grapher::workspace;
+use pi_n::workspace;
 use std::fs;
 use tempfile::tempdir;
 
 // Keep fixture shadow repositories outside the checkout.
 fn isolate_data_root() {
     #[cfg(feature = "fixture")]
-    grapher::ensure_test_data_root();
+    pi_n::ensure_test_data_root();
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn first_materialization_is_forced_and_reusable() {
     assert_ne!(node, head);
 
     let published =
-        grapher::graph_merge::merge_graph(&project, &[node], || Err("conflict".into())).unwrap();
+        pi_n::graph_merge::merge_graph(&project, &[node], || Err("conflict".into())).unwrap();
     assert_ne!(published, head);
     assert_eq!(
         fs::read_to_string(project.join("main.py"))

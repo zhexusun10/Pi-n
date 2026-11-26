@@ -1,6 +1,13 @@
-//! Read-only raster previews scoped to a retained conversation workspace or `/tmp`.
+//! Read-only image previews for conversation workspaces and local filesystem paths.
+//! All files are validated as regular files (<= 20 MiB) and verified by content
+//! header/structure rather than trusting model-supplied extensions.
 use super::{argument, open_file_context, open_file_roots, resolve_open_file_target, Service};
-use std::{fs, io::Read, path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    io::Read,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
 
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
@@ -15,27 +22,151 @@ fn system_temp_image_roots() -> Vec<PathBuf> {
     }
 }
 
-fn validate_relative_image_path(path: &str) -> Result<String, String> {
-    // Validate independently of the host: Windows prefixes/ADS and backslash
-    // traversal must remain invalid when a transcript is opened on Unix too.
-    let path = path.replace('\\', "/");
-    let path = path.strip_prefix("./").unwrap_or(&path);
-    if path.is_empty()
-        || path.contains(':')
-        || path.chars().any(char::is_control)
-        || path.split('/').any(|part| {
-            part.is_empty()
-                || matches!(part, "." | "..")
-                || part.eq_ignore_ascii_case(".git")
-                || part.eq_ignore_ascii_case(".grapher")
-        })
-    {
+fn user_home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn has_forbidden_segment(path: &Path) -> bool {
+    path.components().any(|component| match component {
+        Component::Normal(part) => {
+            let text = part.to_string_lossy();
+            text.eq_ignore_ascii_case(".git") || text.eq_ignore_ascii_case(".pi-n")
+        }
+        _ => false,
+    })
+}
+
+fn validate_segments(path: &str, allow_parent: bool) -> Result<String, String> {
+    if path.is_empty() || path.contains(':') || path.chars().any(char::is_control) {
+        return Err("Invalid workspace image path".into());
+    }
+    let mut has_non_parent = false;
+    for part in path.split('/') {
+        if part.is_empty()
+            || part == "."
+            || part.eq_ignore_ascii_case(".git")
+            || part.eq_ignore_ascii_case(".pi-n")
+        {
+            return Err("Invalid workspace image path".into());
+        }
+        if part == ".." {
+            if !allow_parent {
+                return Err("Invalid workspace image path".into());
+            }
+        } else {
+            has_non_parent = true;
+        }
+    }
+    if !has_non_parent {
         return Err("Invalid workspace image path".into());
     }
     Ok(path.to_string())
 }
 
-fn open_regular_image_file(target: &std::path::Path) -> Result<fs::File, String> {
+fn is_windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+}
+
+fn canonicalize_allowed_path(candidate: &Path) -> Result<PathBuf, String> {
+    let canonical = fs::canonicalize(candidate).map_err(|error| error.to_string())?;
+    if has_forbidden_segment(&canonical) {
+        return Err("Invalid workspace image path".into());
+    }
+    Ok(canonical)
+}
+
+fn resolve_from_roots_allowing_outside(roots: &[PathBuf], relative: &str) -> Result<PathBuf, String> {
+    let mut last_error: Option<String> = None;
+    for root in roots {
+        let candidate = root.join(relative);
+        match canonicalize_allowed_path(&candidate) {
+            Ok(canonical) => return Ok(canonical),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "Workspace image not found".into()))
+}
+
+fn resolve_image_target(
+    workspace_roots: &[PathBuf],
+    temp_roots: &[PathBuf],
+    raw_path: &str,
+) -> Result<PathBuf, String> {
+    if raw_path.is_empty() || raw_path.starts_with('\\') || raw_path.chars().any(char::is_control) {
+        return Err("Invalid workspace image path".into());
+    }
+    let normalized = raw_path.replace('\\', "/");
+
+    // 1. /tmp and /private/tmp paths resolve against temp_roots first (for deterministic
+    //    cross-platform temp handling and test isolation).
+    if let Some(rest) = normalized
+        .strip_prefix("/tmp/")
+        .or_else(|| normalized.strip_prefix("/private/tmp/"))
+    {
+        let relative = validate_segments(rest, false)?;
+        return resolve_open_file_target(temp_roots, &relative)
+            .or_else(|_| resolve_from_roots_allowing_outside(temp_roots, &relative));
+    }
+
+    // 2. Home-relative paths: ~/Desktop/screenshot.png
+    if let Some(rest) = normalized.strip_prefix("~/") {
+        let relative = validate_segments(rest, false)?;
+        let home = user_home_dir().ok_or_else(|| "Home directory unavailable".to_string())?;
+        return canonicalize_allowed_path(&home.join(relative));
+    }
+
+    // 3. Windows absolute drive path: C:/Users/name/screenshot.png
+    if is_windows_drive_path(&normalized) {
+        let rest = validate_segments(&normalized[3..], false)?;
+        #[cfg(windows)]
+        {
+            let full = format!("{}:/{}", &normalized[0..1], rest);
+            return canonicalize_allowed_path(Path::new(&full));
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = rest;
+            return Err("Invalid workspace image path".into());
+        }
+    }
+
+    // 4. Unix absolute path outside workspace (e.g. /Users/name/Desktop/shot.png)
+    if let Some(rest) = normalized.strip_prefix('/') {
+        if rest.eq_ignore_ascii_case("api")
+            || rest
+                .get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("api/"))
+        {
+            return Err("Invalid workspace image path".into());
+        }
+        let validated = validate_segments(rest, false)?;
+        let full = format!("/{validated}");
+        return canonicalize_allowed_path(Path::new(&full));
+    }
+
+    // 5. Relative path (workspace-relative or parent-relative like ../other/shot.png)
+    let mut relative = normalized.as_str();
+    while let Some(stripped) = relative.strip_prefix("./") {
+        relative = stripped;
+    }
+    let validated = validate_segments(relative, true)?;
+    let has_parent = validated.split('/').any(|part| part == "..");
+    if !has_parent {
+        if let Ok(scoped) = resolve_open_file_target(workspace_roots, &validated) {
+            return Ok(scoped);
+        }
+    }
+    resolve_from_roots_allowing_outside(workspace_roots, &validated)
+}
+
+fn open_regular_image_file(target: &Path) -> Result<fs::File, String> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -54,20 +185,189 @@ fn open_regular_image_file(target: &std::path::Path) -> Result<fs::File, String>
     Ok(file)
 }
 
+fn is_avif(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
+        return false;
+    }
+    let major = &bytes[8..12];
+    if major == b"avif" || major == b"avis" {
+        return true;
+    }
+    let declared_size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let box_end = if declared_size == 0 {
+        bytes.len()
+    } else {
+        declared_size.min(bytes.len())
+    };
+    if box_end < 20 {
+        return false;
+    }
+    bytes[16..box_end]
+        .chunks_exact(4)
+        .any(|brand| brand == b"avif" || brand == b"avis")
+}
+
+fn is_ico(bytes: &[u8]) -> bool {
+    bytes.len() >= 6
+        && bytes[0..4] == [0x00, 0x00, 0x01, 0x00]
+        && u16::from_le_bytes([bytes[4], bytes[5]]) > 0
+}
+
+fn has_svg_event_handler(lower: &str) -> bool {
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    while i + 4 < bytes.len() {
+        if (bytes[i].is_ascii_whitespace() || bytes[i] == b'/')
+            && bytes[i + 1] == b'o'
+            && bytes[i + 2] == b'n'
+            && bytes[i + 3].is_ascii_alphabetic()
+        {
+            let mut j = i + 4;
+            while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                j += 1;
+            }
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'=' {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn has_external_svg_href(lower: &str) -> bool {
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    while i + 5 < bytes.len() {
+        if bytes[i..].starts_with(b"href") {
+            let preceded_ok = i == 0
+                || bytes[i - 1].is_ascii_whitespace()
+                || bytes[i - 1] == b':'
+                || bytes[i - 1] == b'/';
+            if preceded_ok {
+                let mut j = i + 4;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'=' {
+                    j += 1;
+                    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if j < bytes.len() && (bytes[j] == b'"' || bytes[j] == b'\'') {
+                        j += 1;
+                        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                            j += 1;
+                        }
+                    }
+                    // Only internal fragment references (#id) are allowed in static SVG previews.
+                    if j < bytes.len() && bytes[j] != b'#' {
+                        return true;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn is_safe_svg(target: &Path, bytes: &[u8]) -> bool {
+    let is_svg_ext = target
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
+    if !is_svg_ext {
+        return false;
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut rest = text.trim_start_matches('\u{feff}').trim_start();
+    // Skip leading XML prolog, comments, and DOCTYPE declarations.
+    loop {
+        if let Some(after) = rest.strip_prefix("<?") {
+            let Some(end) = after.find("?>") else {
+                return false;
+            };
+            rest = after[end + 2..].trim_start();
+        } else if let Some(after) = rest.strip_prefix("<!--") {
+            let Some(end) = after.find("-->") else {
+                return false;
+            };
+            rest = after[end + 3..].trim_start();
+        } else if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+            let Some(end) = rest.find('>') else {
+                return false;
+            };
+            rest = rest[end + 1..].trim_start();
+        } else {
+            break;
+        }
+    }
+    if !(rest.len() >= 4
+        && rest[..4].eq_ignore_ascii_case("<svg")
+        && rest
+            .as_bytes()
+            .get(4)
+            .is_some_and(|b| b.is_ascii_whitespace() || *b == b'>' || *b == b'/'))
+    {
+        return false;
+    }
+    let lower = rest.to_ascii_lowercase();
+    for forbidden in [
+        "<script",
+        "</script",
+        "<foreignobject",
+        "<iframe",
+        "<object",
+        "<embed",
+        "<applet",
+        "<meta",
+        "<link",
+        "javascript:",
+        "vbscript:",
+        "data:text/html",
+        "data:image/svg",
+    ] {
+        if lower.contains(forbidden) {
+            return false;
+        }
+    }
+    !has_svg_event_handler(&lower) && !has_external_svg_href(&lower)
+}
+
+fn detect_image_mime(target: &Path, bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else if bytes.starts_with(b"BM") {
+        Some("image/bmp")
+    } else if is_avif(bytes) {
+        Some("image/avif")
+    } else if is_ico(bytes) {
+        Some("image/x-icon")
+    } else if is_safe_svg(target, bytes) {
+        Some("image/svg+xml")
+    } else {
+        None
+    }
+}
+
 fn read_image(
     workspace_roots: &[PathBuf],
     temp_roots: &[PathBuf],
     path: &str,
 ) -> Result<(Vec<u8>, &'static str), String> {
-    let (roots, relative) = if let Some(rest) = path
-        .strip_prefix("/tmp/")
-        .or_else(|| path.strip_prefix("/private/tmp/"))
-    {
-        (temp_roots, validate_relative_image_path(rest)?)
-    } else {
-        (workspace_roots, validate_relative_image_path(path)?)
-    };
-    let target = resolve_open_file_target(roots, &relative)?;
+    let target = resolve_image_target(workspace_roots, temp_roots, path)?;
     let file = open_regular_image_file(&target)?;
     let mut bytes = Vec::new();
     file.take(MAX_IMAGE_BYTES + 1)
@@ -76,21 +376,8 @@ fn read_image(
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         return Err("Workspace image exceeds 20 MiB".into());
     }
-    // Inspect bytes, not an extension supplied by the model. SVG/HTML are
-    // deliberately excluded: this endpoint never serves active documents.
-    let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "image/png"
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
-        "image/jpeg"
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        "image/gif"
-    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
-        "image/webp"
-    } else if bytes.starts_with(b"BM") {
-        "image/bmp"
-    } else {
-        return Err("Unsupported workspace image format".into());
-    };
+    let mime = detect_image_mime(&target, &bytes)
+        .ok_or_else(|| "Unsupported workspace image format".to_string())?;
     Ok((bytes, mime))
 }
 
@@ -175,7 +462,8 @@ mod tests {
             planning: AtomicBool::new(false),
             extension: PathBuf::new(),
         });
-        let body = serde_json::json!({ "runId": "image-run", "executionId": "first", "path": "image.png" });
+        let body =
+            serde_json::json!({ "runId": "image-run", "executionId": "first", "path": "image.png" });
         assert!(get_workspace_image(&service, &body)
             .unwrap()
             .0
@@ -240,32 +528,61 @@ mod tests {
     }
 
     #[test]
-    fn workspace_images_read_rasters_and_reject_unsafe_or_unbounded_files() {
+    fn workspace_images_support_formats_outside_paths_and_reject_unsafe_files() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("workspace");
         let temp_root = temp.path().join("system-tmp");
+        let outside = temp.path().join("outside");
         fs::create_dir_all(root.join("artifacts/中文 space")).unwrap();
         fs::create_dir_all(root.join(".tmp")).unwrap();
         fs::create_dir_all(temp_root.join("sub")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
         let png = b"\x89PNG\r\n\x1a\npreview";
         let tmp_png = b"\x89PNG\r\n\x1a\ntmp-preview";
+        let avif = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf";
+        let avif_compat = b"\x00\x00\x00\x1cftypmif1\x00\x00\x00\x00mif1avifmiaf";
+        let ico = b"\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00";
+        let clean_svg =
+            br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><defs><linearGradient id="g"/></defs><rect fill="url(#g)" width="10" height="10"/></svg>"#;
+
         fs::write(root.join("artifacts/中文 space/截图.png"), png).unwrap();
         fs::write(root.join(".tmp/card-preview.png"), png).unwrap();
+        fs::write(root.join("photo.avif"), avif).unwrap();
+        fs::write(root.join("compat.avif"), avif_compat).unwrap();
+        fs::write(root.join("favicon.ico"), ico).unwrap();
+        fs::write(root.join("diagram.svg"), clean_svg).unwrap();
         fs::write(temp_root.join("compacted-card-preview.png"), tmp_png).unwrap();
         fs::write(temp_root.join("sub/preview.png"), tmp_png).unwrap();
+        fs::write(outside.join("external.png"), png).unwrap();
+        fs::write(outside.join("secret.txt"), b"not an image").unwrap();
+
         let roots = vec![root.clone()];
         let temp_roots = vec![temp_root.clone()];
-        let (bytes, mime) =
-            read_image(&roots, &temp_roots, "./artifacts/中文 space/截图.png").unwrap();
-        assert_eq!(bytes, png);
-        assert_eq!(mime, "image/png");
+
+        assert_eq!(
+            read_image(&roots, &temp_roots, "./artifacts/中文 space/截图.png").unwrap(),
+            (png.to_vec(), "image/png")
+        );
         assert_eq!(
             read_image(&roots, &temp_roots, ".tmp/card-preview.png").unwrap(),
             (png.to_vec(), "image/png")
         );
         assert_eq!(
-            read_image(&roots, &temp_roots, "./.tmp/card-preview.png").unwrap(),
-            (png.to_vec(), "image/png")
+            read_image(&roots, &temp_roots, "photo.avif").unwrap(),
+            (avif.to_vec(), "image/avif")
+        );
+        assert_eq!(
+            read_image(&roots, &temp_roots, "compat.avif").unwrap(),
+            (avif_compat.to_vec(), "image/avif")
+        );
+        assert_eq!(
+            read_image(&roots, &temp_roots, "favicon.ico").unwrap(),
+            (ico.to_vec(), "image/x-icon")
+        );
+        assert_eq!(
+            read_image(&roots, &temp_roots, "diagram.svg").unwrap(),
+            (clean_svg.to_vec(), "image/svg+xml")
         );
         assert_eq!(
             read_image(&roots, &temp_roots, "/tmp/compacted-card-preview.png").unwrap(),
@@ -275,12 +592,39 @@ mod tests {
             read_image(&roots, &temp_roots, "/private/tmp/sub/preview.png").unwrap(),
             (tmp_png.to_vec(), "image/png")
         );
+
+        // Outside-workspace images via parent traversal, symlink, or absolute path are allowed
+        // when they are valid image files.
+        assert_eq!(
+            read_image(&roots, &temp_roots, "../outside/external.png").unwrap(),
+            (png.to_vec(), "image/png")
+        );
+        let outside_abs = outside.join("external.png");
+        assert_eq!(
+            read_image(&roots, &temp_roots, &outside_abs.to_string_lossy()).unwrap(),
+            (png.to_vec(), "image/png")
+        );
+        crate::path_safety::directory_link(&outside, &root.join("linked"));
+        assert_eq!(
+            read_image(&roots, &temp_roots, "linked/external.png").unwrap(),
+            (png.to_vec(), "image/png")
+        );
+
+        // Non-image files outside the workspace are still rejected by content inspection.
+        assert!(read_image(&roots, &temp_roots, "../outside/secret.txt").is_err());
+        assert!(read_image(
+            &roots,
+            &temp_roots,
+            &outside.join("secret.txt").to_string_lossy()
+        )
+        .is_err());
+
         // Workspace relative paths do not fall back to /tmp, and /tmp paths do not read workspace files.
         assert!(read_image(&roots, &temp_roots, "compacted-card-preview.png").is_err());
         assert!(read_image(&roots, &temp_roots, "/tmp/artifacts/中文 space/截图.png").is_err());
+
         for path in [
-            "../outside.png",
-            "/absolute.png",
+            "/api/control",
             "/tmp",
             "/tmp/",
             "/tmp/../outside.png",
@@ -288,42 +632,46 @@ mod tests {
             "/tmp//compacted-card-preview.png",
             "/tmp/a\\..\\outside.png",
             "/tmp/.git/image.png",
-            "/tmp/.grapher/image.png",
+            "/tmp/.pi-n/image.png",
             "/tmp/image.png:stream",
             "\\tmp\\compacted-card-preview.png",
-            "C:\\image.png",
-            "artifacts/../x.png",
-            "..\\outside.png",
             ".git/image.png",
-            ".GRAPHER/image.png",
+            ".PI-N/image.png",
             "image.png:stream",
             "missing.png",
             "artifacts",
         ] {
             assert!(read_image(&roots, &temp_roots, path).is_err(), "{path}");
         }
+
+        // Malicious or disguised SVGs are rejected.
         fs::write(root.join("fake.png"), b"<svg onload='evil()'></svg>").unwrap();
         assert!(read_image(&roots, &temp_roots, "fake.png").is_err());
-        fs::write(temp_root.join("fake.png"), b"<svg onload='evil()'></svg>").unwrap();
-        assert!(read_image(&roots, &temp_roots, "/tmp/fake.png").is_err());
+        fs::write(root.join("xss.svg"), b"<svg onload='evil()'></svg>").unwrap();
+        assert!(read_image(&roots, &temp_roots, "xss.svg").is_err());
+        fs::write(
+            root.join("script.svg"),
+            b"<svg><script>alert(1)</script></svg>",
+        )
+        .unwrap();
+        assert!(read_image(&roots, &temp_roots, "script.svg").is_err());
+        fs::write(
+            root.join("ext.svg"),
+            br#"<svg><image href="https://evil.test/x.png"/></svg>"#,
+        )
+        .unwrap();
+        assert!(read_image(&roots, &temp_roots, "ext.svg").is_err());
+
         let large = fs::File::create(root.join("large.png")).unwrap();
         large.set_len(MAX_IMAGE_BYTES + 1).unwrap();
         assert!(read_image(&roots, &temp_roots, "large.png")
             .unwrap_err()
             .contains("20 MiB"));
 
-        let outside = temp.path().join("outside");
-        fs::create_dir(&outside).unwrap();
-        fs::write(outside.join("image.png"), png).unwrap();
-        crate::path_safety::directory_link(&outside, &root.join("linked"));
-        assert!(read_image(&roots, &temp_roots, "linked/image.png").is_err());
-        crate::path_safety::directory_link(&outside, &temp_root.join("linked"));
-        assert!(read_image(&roots, &temp_roots, "/tmp/linked/image.png").is_err());
-
         #[cfg(unix)]
         {
             let real_tmp_dir = tempfile::Builder::new()
-                .prefix("grapher-workspace-image-")
+                .prefix("pi-n-workspace-image-")
                 .tempdir_in("/tmp")
                 .unwrap();
             let dir_name = real_tmp_dir.path().file_name().unwrap().to_str().unwrap();

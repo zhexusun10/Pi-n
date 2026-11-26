@@ -16,7 +16,7 @@ test("empty composer continues without submitting a message; drafts and stop ret
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
     const page = await browser.newPage();
     await page.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__composer-continuation`);

@@ -1,4 +1,4 @@
-// Grapher's only source-level Pi binding. Keep upstream paths and API
+// Pi^n's only source-level Pi binding. Keep upstream paths and API
 // assumptions here so a Pi upgrade can be reviewed and contract-tested in one place.
 // Use Pi's public SDK exports for the production tool/provider surface.
 export {
@@ -49,12 +49,12 @@ import { resolvePath as resolvePiPath } from '../pi/packages/coding-agent/src/ut
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { withGrapherSearchPreferences, withInheritedSearchCredentials } from './search-credentials.mjs';
+import { withPiNSearchPreferences, withInheritedSearchCredentials } from './search-credentials.mjs';
 import { samePath } from './path-identity.mjs';
 
 const bundledTrimPath = fileURLToPath(new URL('../node_modules/pi-trim/extensions/index.ts', import.meta.url));
 const PI_TRIM_MODE_ENTRY = 'pi-trim-mode';
-const DEFAULT_GRAPHER_TRIM_ENTRY = Object.freeze({
+const DEFAULT_PI_N_TRIM_ENTRY = Object.freeze({
   type: 'custom',
   customType: PI_TRIM_MODE_ENTRY,
   data: { mode: 'aggressive' },
@@ -85,7 +85,7 @@ function withAggressiveTrimDefault(sessionManager: any) {
             (entry?.data?.mode === 'default' || entry?.data?.mode === 'aggressive'))) {
             return branch;
           }
-          return [DEFAULT_GRAPHER_TRIM_ENTRY, ...branch];
+          return [DEFAULT_PI_N_TRIM_ENTRY, ...branch];
         };
       }
       const value = Reflect.get(target, prop, target);
@@ -96,7 +96,7 @@ function withAggressiveTrimDefault(sessionManager: any) {
 
 const wrappedTrimHandlers = new WeakSet<Function>();
 
-// Grapher defaults bundled pi-trim to aggressive mode (<tools> summary stripped
+// Pi^n defaults bundled pi-trim to aggressive mode (<tools> summary stripped
 // while preserving tool schemas and <rules>) without mutating session files on
 // startup; explicit /pi-trim mode entries on the branch still take precedence.
 export function installDefaultAggressiveTrim() {
@@ -143,7 +143,7 @@ export function installDefaultAggressiveTrim() {
 
 const parseModels = (content: string) => JSON.parse(stripJsonComments(content.replace(/^\uFEFF/, '')));
 export function modelRuntimeOptions(options: Parameters<typeof ModelRuntime.create>[0] = {}) {
-  const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.grapher', 'pi-agent');
+  const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent');
   return overlayRuntimeOptions(options, agentDir, parseModels, async (path: string) => !(await ModelConfig.load(path)).getError());
 }
 export async function loadBundledWebSearch() {
@@ -157,12 +157,12 @@ export async function loadBundledWebSearch() {
   const secretInputPath = fileURLToPath(new URL('../node_modules/pi-better-web-search/lib/secret-input.ts', import.meta.url));
   const loader = createJiti(import.meta.url, { moduleCache: false, virtualModules: VIRTUAL_MODULES, tsconfigPaths: true });
   const credentials = withInheritedSearchCredentials(await loader.import(credentialPath));
-  const preferences = withGrapherSearchPreferences(await loader.import(preferencesPath), credentials, getAgentDir);
+  const preferences = withPiNSearchPreferences(await loader.import(preferencesPath), credentials, getAgentDir);
   const originalSecretInput = await loader.import<Record<string, any>>(secretInputPath);
   const secretInput = {
     ...originalSecretInput,
     promptApiKey: async (ctx: any, provider: string) => {
-      if (ctx?.__grapherRpcLogin || ctx?.mode === 'rpc') {
+      if (ctx?.__piNRpcLogin || ctx?.mode === 'rpc') {
         return ctx.ui.input(
           `${provider} API key`,
           'Hidden input. Saved locally with restricted permissions, not encrypted.',
@@ -183,7 +183,7 @@ export async function loadBundledWebSearch() {
     }, tsconfigPaths: true });
   const factory = await jiti.import<import('../pi/packages/coding-agent/src/index.ts').ExtensionFactory>(
     fileURLToPath(new URL('../node_modules/pi-better-web-search/extensions/index.ts', import.meta.url)), { default: true });
-  // Allow /pi-better-web-search login|logout|status inside Grapher's trusted
+  // Allow /pi-better-web-search login|logout|status inside Pi^n's trusted
   // local RPC UI by bridging the TUI-only guard to the masked UI input prompt.
   return (pi: any) => {
     const wrappedPi = new Proxy(pi, {
@@ -199,7 +199,7 @@ export async function loadBundledWebSearch() {
                     const rpcLoginCtx = new Proxy(ctx, {
                       get(cTarget, cProp) {
                         if (cProp === 'mode') return 'tui';
-                        if (cProp === '__grapherRpcLogin') return true;
+                        if (cProp === '__piNRpcLogin') return true;
                         const val = Reflect.get(cTarget, cProp, cTarget);
                         return typeof val === 'function' ? val.bind(cTarget) : val;
                       },
@@ -283,7 +283,7 @@ export async function loadBundledSimpleTimeout(bridge?: BashTimeoutBridge) {
     fileURLToPath(new URL('../node_modules/pi-simple-timeout/extensions/index.ts', import.meta.url)),
     { default: true },
   );
-  // When grapher-workspace-policy owns `bash` (Planner, Graph Node, Merger),
+  // When pi-n-workspace-policy owns `bash` (Planner, Graph Node, Merger),
   // route timeout schema/policy updates through the shared bridge instead of
   // registering a second conflicting `bash` tool. Serial leaves Pi's bash
   // untouched, so pi-simple-timeout registers `bash` directly there.
@@ -314,14 +314,14 @@ export type { InlineExtension } from '../pi/packages/coding-agent/src/index.ts';
 // RPC does not dispatch interactive-mode builtins. Delegate command actions
 // through the SDK, keeping their idle/settle boundaries inside Pi.
 export const composerCommandsExtension: InlineExtension = {
-  name: 'grapher-composer-commands',
+  name: 'pi-n-composer-commands',
   factory: pi => {
     pi.on('session_start', (_event, ctx) => {
       if (ctx.mode !== 'rpc') return;
       // Pi's RPC custom() otherwise returns undefined silently. Arbitrary TUI
       // factories cannot run in a browser; make that limitation visible.
       ctx.ui.custom = async () => {
-        ctx.ui.notify('This extension requires a terminal-only custom UI. Use its text commands or subcommands in Grapher.', 'warning');
+        ctx.ui.notify('This extension requires a terminal-only custom UI. Use its text commands or subcommands in Pi^n.', 'warning');
         return undefined as never;
       };
     });
@@ -386,7 +386,7 @@ export function installQueueIdentity() {
   const context = new AsyncLocalStorage<{ agent: Agent; requestId: string; claimed: boolean; active: boolean } | undefined>();
   const identities = new WeakMap<object, string>();
   const deferredInputs = new WeakMap<object, { agent: Agent; requestId: string; text: string }>();
-  const marker = /\n\n<grapher-(node-|)steer-id>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})<\/grapher-\1steer-id>$/;
+  const marker = /\n\n<pi-n-(node-|)steer-id>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})<\/pi-n-\1steer-id>$/;
   const wrap = <T extends (this: AgentSession, text: string, ...args: any[]) => Promise<any>>(original: T, mayDefer = false): T => function (this: AgentSession, text: string, ...args: any[]) {
     // Pi defers prompt(text, options) during agent_settled and calls prompt
     // again after the first promise returns. Carry identity on its private
@@ -432,7 +432,7 @@ export function installQueueIdentity() {
     return subscribe.call(this, (event) => {
       if ((event.type === 'message_start' || event.type === 'message_end') && event.message?.role === 'user') {
         const requestId = identities.get(event.message);
-        if (requestId) return listener({ grapherRequestId: requestId, ...event } as typeof event);
+        if (requestId) return listener({ piNRequestId: requestId, ...event } as typeof event);
       }
       return listener(event);
     });
@@ -495,7 +495,7 @@ export async function runPiCommandCli(args: string[], options: MainOptions = {})
   finally { AgentSession.prototype.prompt = prompt; for (const reset of restore) reset(); }
 }
 
-export const GRAPHER_SESSION_FORMAT = 1;
+export const PI_N_SESSION_FORMAT = 1;
 
 // Keep the current edits normalization, but never fold retired top-level edits
 // into a second replacement, even when a valid edits array was also supplied.
@@ -513,7 +513,7 @@ export function assertCurrentPiSettings(settings: Record<string, any>) {
   if (['queueMode', 'websockets', 'apiKeys'].some(key => key in settings) ||
       (settings.skills !== null && typeof settings.skills === 'object' && !Array.isArray(settings.skills)) ||
       (settings.retry && typeof settings.retry === 'object' && 'maxDelayMs' in settings.retry)) {
-    throw new Error('Unsupported Pi settings format; update settings explicitly before using Grapher');
+    throw new Error('Unsupported Pi settings format; update settings explicitly before using Pi^n');
   }
 }
 
@@ -556,18 +556,18 @@ export function assertCurrentPiDirectories(cwd: string, agentDir: string, projec
 }
 
 export function assertCurrentSessionHeader(header: any) {
-  if (header?.type !== 'session' || header.version !== 3 || header.grapherFormat !== GRAPHER_SESSION_FORMAT) {
-    throw new Error('Unsupported Grapher Pi session format');
+  if (header?.type !== 'session' || header.version !== 3 || header.piNFormat !== PI_N_SESSION_FORMAT) {
+    throw new Error('Unsupported Pi^n Pi session format');
   }
-  const run = process.env.GRAPHER_ACTIVE_RUN_ID;
-  if (run && header.grapherRunId !== run) throw new Error('Pi session belongs to another Grapher Run');
+  const run = process.env.PI_N_ACTIVE_RUN_ID;
+  if (run && header.piNRunId !== run) throw new Error('Pi session belongs to another Pi^n Run');
 }
 
 function markNewSession(manager: SessionManager) {
   const header = manager.getHeader();
-  if (header?.type !== 'session' || header.version !== 3) throw new Error('Unsupported Grapher Pi session format');
-  Object.assign(header, { grapherFormat: GRAPHER_SESSION_FORMAT,
-    grapherRunId: process.env.GRAPHER_ACTIVE_RUN_ID ?? null });
+  if (header?.type !== 'session' || header.version !== 3) throw new Error('Unsupported Pi^n Pi session format');
+  Object.assign(header, { piNFormat: PI_N_SESSION_FORMAT,
+    piNRunId: process.env.PI_N_ACTIVE_RUN_ID ?? null });
 }
 
 function readPiHeader(path: string, limit = 1024 * 1024): { header: any; complete: boolean } {
@@ -585,14 +585,14 @@ function readPiHeader(path: string, limit = 1024 * 1024): { header: any; complet
       if (newline >= 0) return { header: JSON.parse(Buffer.concat(chunks).toString('utf8')), complete: true };
     }
     if (!count) return { header: null, complete: false };
-    if (count === limit) throw new Error('Unsupported Grapher Pi session header');
+    if (count === limit) throw new Error('Unsupported Pi^n Pi session header');
     return { header: JSON.parse(Buffer.concat(chunks).toString('utf8')), complete: false };
   } finally { closeSync(fd); }
 }
 
 export function assertCurrentSessionFile(path: string) {
   const { header, complete } = readPiHeader(path);
-  if (!complete) throw new Error('Unsupported Grapher Pi session header');
+  if (!complete) throw new Error('Unsupported Pi^n Pi session header');
   assertCurrentSessionHeader(header);
 }
 
@@ -672,7 +672,7 @@ piSettings.migrateSettings = function (settings: Record<string, any>) {
   return migrateSettings.call(this, settings);
 };
 const createSettings = SettingsManager.create;
-SettingsManager.create = function (cwd, agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.grapher', 'pi-agent'), ...args) {
+SettingsManager.create = function (cwd, agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'), ...args) {
   assertCurrentPiDirectories(cwd, agentDir, args[0]?.projectTrusted !== false);
   return createSettings.call(this, cwd, agentDir, ...args);
 };
@@ -682,7 +682,7 @@ packagePrototype.getNpmInstallPath = function (source: unknown, scope: unknown) 
 };
 
 export async function runPiCli(args: string[], options: MainOptions = {}) {
-  assertCurrentPiDirectories(process.cwd(), process.env.PI_CODING_AGENT_DIR || join(homedir(), '.grapher', 'pi-agent'));
+  assertCurrentPiDirectories(process.cwd(), process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
   const [{ setupCli }, { main }] = await preparePiCli();
   setupCli();
   // Pi's CLI creates its own runtime. Retarget its default models path while

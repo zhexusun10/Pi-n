@@ -1,5 +1,5 @@
 [package]
-name = "grapher"
+name = "pi-n"
 # Release versions live in package.json and Git tags, not this internal crate.
 publish = false
 edition = "2021"

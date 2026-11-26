@@ -50,7 +50,7 @@ test("Planner user turns follow the transcript parser's start/end rules", () => 
 });
 
 test("Planner user start/end matching resets at each revision boundary", () => {
-  const marker = (id: string) => JSON.stringify({ type: "grapher_planning_source", planningId: id, startOffset: 0 });
+  const marker = (id: string) => JSON.stringify({ type: "pi_n_planning_source", planningId: id, startOffset: 0 });
   const user = (type: string, text: string) => JSON.stringify({ type, message: { id: "reused", role: "user", content: [{ type: "text", text }] } });
   assert.deepEqual(plannerUserTurns([marker("first"), user("message_start", "interrupted"),
     marker("second"), user("message_end", "next")].join("\n")), ["interrupted", "next"]);
@@ -181,19 +181,19 @@ test("a partial transcript window keeps a later steer when the header is absent"
 
 test("Planner transport identity survives replay but is absent from model context", () => {
   const id = "12345678-1234-4234-8234-123456789abc";
-  const text = `Current graph node status:\n- worker: completed\n\ninspect 🚀\n\n<grapher-steer-id>${id}</grapher-steer-id>`;
+  const text = `Current graph node status:\n- worker: completed\n\ninspect 🚀\n\n<pi-n-steer-id>${id}</pi-n-steer-id>`;
   const image = { type: "image", mimeType: "image/png", data: "abc" };
   const messages = [{ role: "user", content: [{ type: "text", text }, image] },
     { role: "assistant", content: [{ type: "text", text }] }];
   const projected = plannerSteerContext(messages);
-  assert.equal(projected[0].content[0].text, text.replace(/\n\n<grapher-steer-id>.*$/, ""));
+  assert.equal(projected[0].content[0].text, text.replace(/\n\n<pi-n-steer-id>.*$/, ""));
   assert.equal(projected[0].content[1], image);
   assert.equal(projected[1], messages[1], "assistant output is never rewritten");
   assert.equal(plannerSteerId(text), id);
   const extended = [{ type: "text", text }, { type: "text", text: "extension note" }];
   assert.equal(plannerContentSteerId(extended), id, "a later extension text block does not hide the identity");
   assert.equal(stripPlannerContext(plannerContentText(extended)), "inspect 🚀\nextension note");
-  assert.equal(plannerContentSteerId([...extended, { type: "text", text: `other\n\n<grapher-steer-id>12345678-1234-4234-8234-123456789abd</grapher-steer-id>` }]), undefined,
+  assert.equal(plannerContentSteerId([...extended, { type: "text", text: `other\n\n<pi-n-steer-id>12345678-1234-4234-8234-123456789abd</pi-n-steer-id>` }]), undefined,
     "conflicting identities do not prove which request was consumed");
   assert.equal(stripPlannerContext(text), "inspect 🚀");
   const output = JSON.stringify({ type: "message_start", message: messages[0] });
@@ -205,8 +205,8 @@ test("Planner transport identity survives replay but is absent from model contex
     "a queued marker in Pi's queue update is not a consumed transcript row");
   assert.equal(planningOutputSteerIds(JSON.stringify({ type: "agent_end", messages: [messages[0]] })).size, 0,
     "an aggregate event does not itself render the user turn");
-  assert.equal(stripPlannerContext("literal <grapher-steer-id>not-a-uuid</grapher-steer-id>"),
-    "literal <grapher-steer-id>not-a-uuid</grapher-steer-id>");
+  assert.equal(stripPlannerContext("literal <pi-n-steer-id>not-a-uuid</pi-n-steer-id>"),
+    "literal <pi-n-steer-id>not-a-uuid</pi-n-steer-id>");
 });
 
 test("editing or branching a steer starts a new turn without its delivery identity", () => {

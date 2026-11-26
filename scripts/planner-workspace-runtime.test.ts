@@ -12,12 +12,12 @@ import workspacePolicy from '../engine/prompt-extension.ts';
 test('backend Planner target rebinds cwd, HOME/cache/Git and native Bash together', () => {
   const original = process.cwd();
   const originalEnvironment = { ...process.env };
-  const root = mkdtempSync(join(tmpdir(), 'grapher-planner-state-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-planner-state-'));
   try {
     const project = join(root, 'source'); mkdirSync(project);
-    const run = join(root, '.grapher-worktrees/run');
+    const run = join(root, '.pi-n-worktrees/run');
     const bindings = (label: string) => {
-      const state = join(run, '.grapher-state', label, 'process');
+      const state = join(run, '.pi-n-state', label, 'process');
       const home = join(state, '.agent-home');
       mkdirSync(home, { recursive: true });
       const config = join(state, 'git-global');
@@ -30,8 +30,8 @@ test('backend Planner target rebinds cwd, HOME/cache/Git and native Bash togethe
       mkdirSync(path, { recursive: true }); writeFileSync(join(path, 'project-file'), label);
     }
     const ae = bindings('a'), be = bindings('b');
-    process.env.GRAPHER_EXECUTION_KIND = 'graph';
-    delete process.env.GRAPHER_PLANNER_WORKSPACES_FILE;
+    process.env.PI_N_EXECUTION_KIND = 'graph';
+    delete process.env.PI_N_PLANNER_WORKSPACES_FILE;
     rebindWorkspaceEnvironment(ae, a);
     configurePlannerWorkspace(a, project, project, JSON.stringify({ b: {
       requestedNode: 'b', actualNode: 'b', executionId: 'execution-b', workspace: b, runtimeEnvironment: be,
@@ -46,7 +46,7 @@ test('backend Planner target rebinds cwd, HOME/cache/Git and native Bash togethe
     assert.equal(readFileSync('project-file', 'utf8'), 'b', 'arbitrary filesystem APIs follow the selection');
     const env = managedBashOptions({ env: { ...process.env, HOME: project, XDG_CACHE_HOME: project, GIT_CONFIG_GLOBAL: 'wrong' } }).env;
     for (const [key, value] of Object.entries(be)) assert.equal(env[key], value);
-    assert.ok(!Object.keys(env).some(key => /^GRAPHER_/i.test(key)), 'Grapher control keys must not reach the model shell');
+    assert.ok(!Object.keys(env).some(key => /^PI_N_/i.test(key)), 'Pi^n control keys must not reach the model shell');
     assert.equal(env.TMPDIR.replaceAll('\\', '/'), join(be.XDG_CACHE_HOME, 'tmp').replaceAll('\\', '/'), 'session temp is retargeted away from data/');
     assert.equal(env.XDG_RUNTIME_DIR, env.TMPDIR);
     const shell = process.platform === 'win32'
@@ -68,16 +68,16 @@ test('backend Planner target rebinds cwd, HOME/cache/Git and native Bash togethe
 test('Planner workspace lookup distinguishes literal ids from inherited object properties', () => {
   const original = process.cwd();
   const previous = { ...process.env };
-  const root = mkdtempSync(join(tmpdir(), 'grapher-planner-id-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-planner-id-'));
   const project = join(root, 'source');
   const workspace = join(root, 'task');
   mkdirSync(project); mkdirSync(workspace);
   try {
-    process.env.GRAPHER_EXECUTION_KIND = 'source';
+    process.env.PI_N_EXECUTION_KIND = 'source';
     for (const fromFile of [false, true]) {
       const file = join(root, 'targets.json');
-      if (fromFile) process.env.GRAPHER_PLANNER_WORKSPACES_FILE = file;
-      else delete process.env.GRAPHER_PLANNER_WORKSPACES_FILE;
+      if (fromFile) process.env.PI_N_PLANNER_WORKSPACES_FILE = file;
+      else delete process.env.PI_N_PLANNER_WORKSPACES_FILE;
       const bind = (targets: Record<string, unknown>) => {
         process.chdir(project);
         const raw = JSON.stringify(targets);
@@ -110,11 +110,11 @@ test('Planner workspace lookup distinguishes literal ids from inherited object p
 test('shared-source Planner exposes no workspace switch even on a follow-up', () => {
   const previous = { ...process.env };
   try {
-    process.env.GRAPHER_MODE = 'planner';
-    process.env.GRAPHER_EXECUTION_KIND = 'source';
-    process.env.GRAPHER_ORIGINAL_ROOT = process.cwd();
-    process.env.GRAPHER_PLANNER_FOLLOWUP = 'true';
-    process.env.GRAPHER_PLANNER_WORKSPACES = '{}';
+    process.env.PI_N_MODE = 'planner';
+    process.env.PI_N_EXECUTION_KIND = 'source';
+    process.env.PI_N_ORIGINAL_ROOT = process.cwd();
+    process.env.PI_N_PLANNER_FOLLOWUP = 'true';
+    process.env.PI_N_PLANNER_WORKSPACES = '{}';
     const tools: string[] = [];
     workspacePolicy({ on() {}, registerTool(tool: { name: string }) { tools.push(tool.name); } } as any);
     assert.ok(!tools.includes('switch_workspace'));
@@ -127,18 +127,18 @@ test('shared-source Planner exposes no workspace switch even on a follow-up', ()
 test('switch_workspace omits promptSnippet so it does not enter generated <tools> prompts', () => {
   const original = process.cwd();
   const previous = { ...process.env };
-  const root = mkdtempSync(join(tmpdir(), 'grapher-planner-switch-tool-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-planner-switch-tool-'));
   try {
     const project = join(root, 'source');
     const workspace = join(root, 'worktree');
     mkdirSync(project); mkdirSync(workspace);
     process.chdir(workspace);
-    process.env.GRAPHER_MODE = 'planner';
-    process.env.GRAPHER_EXECUTION_KIND = 'graph';
-    process.env.GRAPHER_ORIGINAL_ROOT = project;
-    process.env.GRAPHER_SOURCE_ALIAS = project;
-    process.env.GRAPHER_PLANNER_FOLLOWUP = 'true';
-    process.env.GRAPHER_PLANNER_WORKSPACES = JSON.stringify({
+    process.env.PI_N_MODE = 'planner';
+    process.env.PI_N_EXECUTION_KIND = 'graph';
+    process.env.PI_N_ORIGINAL_ROOT = project;
+    process.env.PI_N_SOURCE_ALIAS = project;
+    process.env.PI_N_PLANNER_FOLLOWUP = 'true';
+    process.env.PI_N_PLANNER_WORKSPACES = JSON.stringify({
       target: { requestedNode: 'target', actualNode: 'target', executionId: 'exec-target', workspace },
     });
     const tools: any[] = [];
@@ -158,14 +158,14 @@ test('switch_workspace omits promptSnippet so it does not enter generated <tools
 test('shared-source Graph nodes retain the existing Graph rules and feedback protocol', async () => {
   const previous = { ...process.env };
   try {
-    process.env.GRAPHER_MODE = 'node';
-    process.env.GRAPHER_AGENT_KIND = 'node';
-    process.env.GRAPHER_ORIGINAL_ROOT = process.cwd();
-    process.env.GRAPHER_FEEDBACK_SOURCE = 'true';
-    delete process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
+    process.env.PI_N_MODE = 'node';
+    process.env.PI_N_AGENT_KIND = 'node';
+    process.env.PI_N_ORIGINAL_ROOT = process.cwd();
+    process.env.PI_N_FEEDBACK_SOURCE = 'true';
+    delete process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS;
     const rules: string[] = [];
     for (const kind of ['graph', 'source']) {
-      process.env.GRAPHER_EXECUTION_KIND = kind;
+      process.env.PI_N_EXECUTION_KIND = kind;
       const handlers = new Map<string, (event: any) => any>();
       workspacePolicy({ on(name: string, handler: (event: any) => any) { handlers.set(name, handler); }, registerTool() {} } as any);
       const options = { sections: { rules: '- Show file paths clearly when working with files' }, customPrompt: false, appendSystemPrompt: '', promptGuidelines: [] };
@@ -183,17 +183,17 @@ test('shared-source Graph nodes retain the existing Graph rules and feedback pro
 test('the mandatory Planner extension removes steer identity from every model context', async () => {
   const previous = { ...process.env };
   try {
-    process.env.GRAPHER_MODE = 'planner';
-    delete process.env.GRAPHER_EXECUTION_KIND;
-    delete process.env.GRAPHER_CONTINUE_INTERRUPTED;
-    delete process.env.GRAPHER_PLANNER_FOLLOWUP;
+    process.env.PI_N_MODE = 'planner';
+    delete process.env.PI_N_EXECUTION_KIND;
+    delete process.env.PI_N_CONTINUE_INTERRUPTED;
+    delete process.env.PI_N_PLANNER_FOLLOWUP;
     const handlers = new Map<string, Array<(event: any) => any>>();
     const pi = { on(name: string, handler: (event: any) => any) {
       const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list);
     }, registerTool() {} };
     workspacePolicy(pi as any);
     const id = '12345678-1234-4234-8234-123456789abc';
-    const marked = `inspect 🚀\n\n<grapher-steer-id>${id}</grapher-steer-id>`;
+    const marked = `inspect 🚀\n\n<pi-n-steer-id>${id}</pi-n-steer-id>`;
     const image = { type: 'image', mimeType: 'image/png', data: 'abc' };
     const stored = [{ role: 'user', content: [{ type: 'text', text: marked }, image] }];
     let messages: any[] = stored;
@@ -212,7 +212,7 @@ test('the mandatory Planner extension removes steer identity from every model co
 test('Planner before_agent_start normalizes systemPromptOptions with switched active workspace paths', async () => {
   const original = process.cwd();
   const previous = { ...process.env };
-  const root = mkdtempSync(join(tmpdir(), 'grapher-planner-active-paths-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-planner-active-paths-'));
   try {
     const project = join(root, 'project');
     const wsA = join(root, 'ws-a');
@@ -221,12 +221,12 @@ test('Planner before_agent_start normalizes systemPromptOptions with switched ac
     mkdirSync(wsA);
     mkdirSync(wsB);
     process.chdir(wsA);
-    process.env.GRAPHER_MODE = 'planner';
-    process.env.GRAPHER_EXECUTION_KIND = 'source';
-    process.env.GRAPHER_ORIGINAL_ROOT = project;
-    process.env.GRAPHER_SOURCE_ALIAS = project;
-    process.env.GRAPHER_PLANNER_FOLLOWUP = 'true';
-    process.env.GRAPHER_PLANNER_WORKSPACES = JSON.stringify({
+    process.env.PI_N_MODE = 'planner';
+    process.env.PI_N_EXECUTION_KIND = 'source';
+    process.env.PI_N_ORIGINAL_ROOT = project;
+    process.env.PI_N_SOURCE_ALIAS = project;
+    process.env.PI_N_PLANNER_FOLLOWUP = 'true';
+    process.env.PI_N_PLANNER_WORKSPACES = JSON.stringify({
       a: { requestedNode: 'a', actualNode: 'a', executionId: 'exec-a', workspace: wsA },
       b: { requestedNode: 'b', actualNode: 'b', executionId: 'exec-b', workspace: wsB },
     });

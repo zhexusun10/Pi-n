@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createTemporaryTarget, runWithTemporaryTarget, withTemporaryTarget } from './temporary-target.mjs';
 
-const marker = '.grapher-temporary-target.json';
+const marker = '.pi-n-temporary-target.json';
 const exists = async path => access(path).then(() => true, () => false);
 const freshEnv = () => { const env = { ...process.env }; delete env.CARGO_TARGET_DIR; return env; };
 async function fixture(context) {
-  const root = await mkdtemp(join(tmpdir(), 'grapher-target-test-'));
+  const root = await mkdtemp(join(tmpdir(), 'pi-n-target-test-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   return root;
 }
@@ -125,8 +125,8 @@ test('npm script mode gives the whole suite one target and forwards arguments wi
   const parent = await fixture(context);
   const npm = join(parent, 'fake-npm.mjs');
   const evidence = join(parent, 'npm-result.json');
-  await writeFile(npm, 'import fs from "node:fs"; fs.writeFileSync(process.env.GRAPHER_TEST_EVIDENCE,JSON.stringify({args:process.argv.slice(2),target:process.env.CARGO_TARGET_DIR})); process.exit(4);');
-  const env = { ...freshEnv(), TMPDIR: parent, TMP: parent, TEMP: parent, npm_execpath: npm, GRAPHER_TEST_EVIDENCE: evidence };
+  await writeFile(npm, 'import fs from "node:fs"; fs.writeFileSync(process.env.PI_N_TEST_EVIDENCE,JSON.stringify({args:process.argv.slice(2),target:process.env.CARGO_TARGET_DIR})); process.exit(4);');
+  const env = { ...freshEnv(), TMPDIR: parent, TMP: parent, TEMP: parent, npm_execpath: npm, PI_N_TEST_EVIDENCE: evidence };
   const result = spawnSync(process.execPath, [resolve('scripts/temporary-target.mjs'), '--npm-script', 'fake-suite', 'space and 中文'], { env, encoding: 'utf8' });
   assert.equal(result.status, 4, result.stderr);
   const saved = JSON.parse(await readFile(evidence, 'utf8'));
@@ -141,8 +141,8 @@ test('locked Windows artifacts retain their marker and can be cleaned after rele
   const file = join(target.directory, 'in-use.exe');
   await writeFile(file, 'owned file');
   const child = spawn(join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-Command',
-    '$f=[IO.File]::Open($env:GRAPHER_TEST_LOCK,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None); [Console]::WriteLine("ready"); [Console]::ReadLine() | Out-Null; $f.Dispose()',
-  ], { env: { ...process.env, GRAPHER_TEST_LOCK: file }, stdio: ['pipe', 'pipe', 'pipe'] });
+    '$f=[IO.File]::Open($env:PI_N_TEST_LOCK,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None); [Console]::WriteLine("ready"); [Console]::ReadLine() | Out-Null; $f.Dispose()',
+  ], { env: { ...process.env, PI_N_TEST_LOCK: file }, stdio: ['pipe', 'pipe', 'pipe'] });
   try {
     await once(child.stdout, 'data');
     assert.equal(await target.cleanup(), false);

@@ -19,7 +19,7 @@ before(async () => {
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   browser = await chromium.launch({
-    channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
+    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
     headless: true,
   });
 });
@@ -29,7 +29,7 @@ async function fixture(t, options = {}) {
   const context = await browser.newContext({ viewport: { width: 1100, height: 800 }, reducedMotion: "reduce", ...options });
   const errors = [];
   t.after(async () => { await context.close(); assert.deepEqual(errors, []); });
-  await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+  await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
     const results = {

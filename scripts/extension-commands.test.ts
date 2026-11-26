@@ -8,7 +8,7 @@ import { ExtensionCommands } from '../engine/extension-commands.ts';
 import { pathKey } from '../engine/path-identity.mjs';
 
 async function fixture(run: (host: ExtensionCommands, paths: { base: string; own: string; global: string; a: string; b: string }) => Promise<void>) {
-  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'grapher-extension-commands-')));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'pi-n-extension-commands-')));
   const paths = { base, own: join(base, 'own'), global: join(base, 'global'), a: join(base, 'project-a'), b: join(base, 'project-b') };
   for (const directory of [paths.own, paths.global, paths.a, paths.b]) mkdirSync(directory);
   mkdirSync(join(paths.global, 'extensions'));
@@ -36,8 +36,8 @@ async function fixture(run: (host: ExtensionCommands, paths: { base: string; own
   writeFileSync(join(paths.global, 'mcp.json'), JSON.stringify({ mcpServers: { global: { command: 'must-not-start', enabled: false } } }));
   writeFileSync(join(paths.a, '.pi/mcp.json'), JSON.stringify({ mcpServers: { projectA: { command: 'must-not-start', enabled: false } } }));
   writeFileSync(join(paths.b, '.pi/mcp.json'), JSON.stringify({ mcpServers: { projectB: { command: 'must-not-start', enabled: false } } }));
-  const env = { PI_CODING_AGENT_DIR: paths.own, GRAPHER_GLOBAL_PI_AGENT_DIR: paths.global,
-    GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_ISOLATED_PI_SEARCH: '1', PI_OFFLINE: '1' };
+  const env = { PI_CODING_AGENT_DIR: paths.own, PI_N_GLOBAL_PI_AGENT_DIR: paths.global,
+    PI_N_ISOLATED_PI_MODELS: '1', PI_N_ISOLATED_PI_SEARCH: '1', PI_OFFLINE: '1' };
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
   const host = new ExtensionCommands();
@@ -133,7 +133,7 @@ test('unknown commands and commands requiring history never become model prompts
   assert.equal(existsSync(join(paths.own, 'sessions')), false);
 }));
 
-test('bundled pi-better-web-search login, status, and api menu work over Grapher RPC UI', { timeout: 30_000 }, () => fixture(async (host, paths) => {
+test('bundled pi-better-web-search login, status, and api menu work over Pi^n RPC UI', { timeout: 30_000 }, () => fixture(async (host, paths) => {
   const statusStart = await start(host, '', '/pi-better-web-search status');
   const statusResult = await poll(host, statusStart, state => state.status === 'complete');
   const statusMsg = statusResult.events.map((event: any) => event.message ?? '').join('\n');

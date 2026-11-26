@@ -160,10 +160,10 @@ export function cargoTestEnv(base = process.env) {
   for (const key of Object.keys(env)) {
     const upper = key.toUpperCase();
     if (
-      upper.startsWith("GRAPHER_") &&
-      upper !== "GRAPHER_ENV_SEAL_PROBE_REPORT" &&
-      !upper.startsWith("GRAPHER_ENV_PROBE_") &&
-      !upper.startsWith("GRAPHER_ENV_TEST_")
+      upper.startsWith("PI_N_") &&
+      upper !== "PI_N_ENV_SEAL_PROBE_REPORT" &&
+      !upper.startsWith("PI_N_ENV_PROBE_") &&
+      !upper.startsWith("PI_N_ENV_TEST_")
     ) {
       delete env[key];
     } else if (

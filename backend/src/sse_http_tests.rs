@@ -66,11 +66,11 @@ fn exercise_sse(http10: bool, advertise_events: bool) {
     assert!(headers.contains("Access-Control-Allow-Origin: http://127.0.0.1:1420\r\n"));
     assert_eq!(headers.contains("Transfer-Encoding: chunked\r\n"), !http10);
     assert_eq!(
-        headers.contains("X-Grapher-Events: 1\r\n"),
+        headers.contains("X-Pi-N-Events: 1\r\n"),
         advertise_events
     );
     assert_eq!(
-        headers.contains("Access-Control-Expose-Headers: X-Grapher-Events, X-Grapher-Instance\r\n"),
+        headers.contains("Access-Control-Expose-Headers: X-Pi-N-Events, X-Pi-N-Instance\r\n"),
         advertise_events
     );
 
@@ -205,7 +205,7 @@ fn planner_endpoint_delivers_thinking_while_the_model_is_still_running() {
 printf '%s\n' '{{"type":"message_start","message":{{"role":"assistant","content":[]}}}}'
 printf '%s\n' '{{"type":"message_update","assistantMessageEvent":{{"type":"thinking_delta","contentIndex":0,"delta":"LIVE_PROBE"}}}}'
 while [ ! -f {release:?} ]; do sleep 0.02; done
-printf '%s' '{{"originalGoal":"Goal","nodes":[{{"id":"work","task":"Do work"}}],"edges":[]}}' > "$GRAPHER_GRAPH_PATH"
+printf '%s' '{{"originalGoal":"Goal","nodes":[{{"id":"work","task":"Do work"}}],"edges":[]}}' > "$PI_N_GRAPH_PATH"
 printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"completed"}}],"stopReason":"stop"}}}}'
 "#, release = release.to_string_lossy())).unwrap();
     let service = Arc::new(Service {
@@ -246,7 +246,7 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
             headers.push_str(&line);
         }
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
-        assert!(headers.contains("X-Grapher-Events: 1\r\n"));
+        assert!(headers.contains("X-Pi-N-Events: 1\r\n"));
         let mut output = String::new();
         while !output.contains("LIVE_PROBE") {
             let frame = String::from_utf8(read_chunk(&mut reader)).unwrap();

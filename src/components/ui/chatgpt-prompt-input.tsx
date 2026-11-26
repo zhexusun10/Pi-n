@@ -145,6 +145,13 @@ interface PromptBoxProps
 export const PROMPT_BOX_RESIZE_DURATION = 0.3;
 const COMPOSER_EASE = [0.22, 1, 0.36, 1] as const;
 
+interface SendButtonHandoffSnapshot {
+  backgroundColor: string;
+  color: string;
+  opacity: string;
+  boxShadow: string;
+}
+
 interface ComposerHandoffSnapshot {
   left: number;
   bottom: number;
@@ -152,6 +159,7 @@ interface ComposerHandoffSnapshot {
   height: number;
   backgroundColor: string;
   hasModeSelector: boolean;
+  sendButton: SendButtonHandoffSnapshot | null;
   capturedAt: number;
 }
 
@@ -163,6 +171,19 @@ interface ActiveComposerRegistration {
 const activeComposers = new Map<string, ActiveComposerRegistration>();
 const departingComposerSnapshots = new Map<string, ComposerHandoffSnapshot>();
 const HANDOFF_SNAPSHOT_TTL_MS = 120;
+
+function measureSendButtonSnapshot(
+  button: HTMLButtonElement | null
+): SendButtonHandoffSnapshot | null {
+  if (!button) return null;
+  const style = getComputedStyle(button);
+  return {
+    backgroundColor: style.backgroundColor,
+    color: style.color,
+    opacity: style.opacity,
+    boxShadow: style.boxShadow,
+  };
+}
 
 function measureComposerSnapshot(
   element: HTMLDivElement,
@@ -177,6 +198,9 @@ function measureComposerSnapshot(
     height: rect.height,
     backgroundColor: getComputedStyle(element).backgroundColor,
     hasModeSelector,
+    sendButton: measureSendButtonSnapshot(
+      element.querySelector<HTMLButtonElement>(".prompt-box-send-btn")
+    ),
     capturedAt: performance.now(),
   };
 }
@@ -188,8 +212,8 @@ const SEND_GRACE_FALLBACK_MS = 1500;
 
 const MODE_OPTIONS: Array<{ id: "auto" | "serial" | "graph"; label: string }> = [
   { id: "auto", label: "Auto" },
-  { id: "serial", label: "Serial" },
-  { id: "graph", label: "Graph" },
+  { id: "serial", label: "Direct" },
+  { id: "graph", label: "Compile" },
 ];
 
 function PromptModeOption({ item, selected, onSelect, pillLayoutId, reduceMotion }: {
@@ -299,16 +323,18 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const reduceMotion = useReducedMotion();
     const hideAutoMode = useHideAutoMode();
     const workspaceTerminal = useWorkspaceTerminalControl();
-    const visiblePlanMode = hideAutoMode && planMode === "auto" ? "graph" : planMode;
+    const visiblePlanMode = hideAutoMode && planMode === "auto" ? "serial" : planMode;
     const isPresent = useIsPresent();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const flowRef = useRef<HTMLDivElement | null>(null);
     const textareaRowRef = useRef<HTMLDivElement | null>(null);
     const modeSelectorRef = useRef<HTMLDivElement | null>(null);
+    const sendButtonRef = useRef<HTMLButtonElement | null>(null);
     const resizeFromRef = useRef<number | null>(null);
     const resizeAnimationRef = useRef<Animation | null>(null);
     const handoffAnimationRef = useRef<Animation | null>(null);
     const modeSelectorAnimationRef = useRef<Animation | null>(null);
+    const sendButtonAnimationRef = useRef<Animation | null>(null);
     const hasMeasuredHeightRef = useRef(false);
     const hasModeSelector = planMode !== undefined && Boolean(onPlanModeChange);
     const hasModeSelectorRef = useRef(hasModeSelector);
@@ -600,7 +626,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             !lower.startsWith(".agents/") &&
             !lower.startsWith(".pi/") &&
             !lower.startsWith(".git/") &&
-            !lower.startsWith(".grapher/") &&
+            !lower.startsWith(".pi-n/") &&
             !lower.startsWith(".gemini/") &&
             !lower.startsWith(".codex/") &&
             !lower.startsWith("node_modules/") &&
@@ -978,6 +1004,51 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           modeAnim.onfinish = cleanupMode;
           modeAnim.oncancel = cleanupMode;
         }
+
+        const sendButton = sendButtonRef.current;
+        const targetSendButton = measureSendButtonSnapshot(sendButton);
+        if (
+          prev.sendButton &&
+          targetSendButton &&
+          sendButton &&
+          typeof sendButton.animate === "function" &&
+          (
+            prev.sendButton.backgroundColor !== targetSendButton.backgroundColor ||
+            prev.sendButton.color !== targetSendButton.color ||
+            prev.sendButton.opacity !== targetSendButton.opacity ||
+            prev.sendButton.boxShadow !== targetSendButton.boxShadow
+          )
+        ) {
+          const sendAnim = sendButton.animate(
+            [
+              {
+                backgroundColor: prev.sendButton.backgroundColor,
+                color: prev.sendButton.color,
+                opacity: prev.sendButton.opacity,
+                boxShadow: prev.sendButton.boxShadow,
+              },
+              {
+                backgroundColor: targetSendButton.backgroundColor,
+                color: targetSendButton.color,
+                opacity: targetSendButton.opacity,
+                boxShadow: targetSendButton.boxShadow,
+              },
+            ],
+            {
+              duration: 180,
+              easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+              fill: "backwards",
+            }
+          );
+          sendButtonAnimationRef.current = sendAnim;
+          const cleanupSend = () => {
+            if (sendButtonAnimationRef.current === sendAnim) {
+              sendButtonAnimationRef.current = null;
+            }
+          };
+          sendAnim.onfinish = cleanupSend;
+          sendAnim.oncancel = cleanupSend;
+        }
       }
 
       return () => {
@@ -992,6 +1063,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
         if (!resizeAnimationRef.current) box.removeAttribute("data-resizing");
         modeSelectorAnimationRef.current?.cancel();
         modeSelectorAnimationRef.current = null;
+        sendButtonAnimationRef.current?.cancel();
+        sendButtonAnimationRef.current = null;
       };
     }, [layoutId]);
 
@@ -1400,7 +1473,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
               if (item.file.size > MAX_EXTERNAL_ATTACHMENT_BYTES) {
                 throw new Error(t("文件「{0}」超过 22 MB 上限。", item.file.name));
               }
-              // Persist to Grapher's external attachment store (never inside the user's repository).
+              // Persist to Pi^n's external attachment store (never inside the user's repository).
               const uploaded = await runtimeService.writeWorkspaceFile(item.file, repository, {
                 runId, node, attachmentId: item.attachmentId,
               });
@@ -1584,6 +1657,15 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const showContinue = !hasText && !hasAttachment && !isWorking && !!onContinue;
     const canSubmit = (hasText || hasAttachment || showContinue) && !disabled && !isBusy && !isPreparing && !isSubmitting;
     const showWorkingStop = isWorking && !hasText && !hasAttachment && !sendGrace && !isSubmitting && !isPreparing && !recall.pending;
+    const sendButtonVisualKey = `${showWorkingStop ? "working" : canSubmit ? "active" : "idle"}:${isSubmitting}`;
+    const prevSendButtonVisualKeyRef = useRef(sendButtonVisualKey);
+    useLayoutEffect(() => {
+      if (prevSendButtonVisualKeyRef.current !== sendButtonVisualKey) {
+        prevSendButtonVisualKeyRef.current = sendButtonVisualKey;
+        sendButtonAnimationRef.current?.cancel();
+        sendButtonAnimationRef.current = null;
+      }
+    }, [sendButtonVisualKey]);
 
     const prompt = (
       <div
@@ -2005,6 +2087,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             )}
 
             <button
+              ref={sendButtonRef}
               type="submit"
               onClick={(e) => {
                 e.stopPropagation();

@@ -85,7 +85,7 @@ export function localizedUpdaterErrorBody(error: UpdaterErrorInfo): string {
     case "install":
       return t("未能完成更新包安装，请重试或前往 GitHub Releases 手动更新。");
     case "restart":
-      return t("更新已安装，请手动重启 Grapher 以启用新版本。");
+      return t("更新已安装，请手动重启 Pi^n 以启用新版本。");
     default:
       return t("请稍后重试，或前往 GitHub Releases 手动下载最新版本。");
   }
@@ -158,7 +158,7 @@ export const UpdateSettings: React.FC<UpdateSettingsProps> = ({
             <strong>{t("当前为浏览器模式")}</strong>
             <p>
               {t(
-                "应用内自动更新仅在 Grapher 桌面端中可用。浏览器模式请拉取新版本，或前往 GitHub Releases 下载桌面安装包。",
+                "应用内更新仅在 Pi^n 桌面端中可用，可在 GitHub Releases 下载桌面安装包。",
               )}
             </p>
           </div>
@@ -196,7 +196,7 @@ export const UpdateSettings: React.FC<UpdateSettingsProps> = ({
                 <p>
                   {snapshot.error
                     ? localizedUpdaterErrorBody(snapshot.error)
-                    : t("立即重启 Grapher 以切换到新版本。")}
+                    : t("立即重启 Pi^n 以切换到新版本。")}
                 </p>
                 {snapshot.error?.rawMessage && (
                   <p className="update-settings-error-detail">{snapshot.error.rawMessage}</p>
@@ -222,8 +222,8 @@ export const UpdateSettings: React.FC<UpdateSettingsProps> = ({
               <div className="update-settings-status-body">
                 <p>
                   {snapshot.platform === "windows"
-                    ? t("已交由 Windows 安装程序更新并重启 Grapher…")
-                    : t("正在重启 Grapher…")}
+                    ? t("已交由 Windows 安装程序更新并重启 Pi^n…")
+                    : t("正在重启 Pi^n…")}
                 </p>
               </div>
             </div>
@@ -333,8 +333,8 @@ export const UpdateSettings: React.FC<UpdateSettingsProps> = ({
                   <div className="update-settings-status-body">
                     <p>
                       {snapshot.platform === "windows"
-                        ? t("正在启动 Windows 安装程序，Grapher 将自动关闭并重启…")
-                        : t("正在安装更新并准备重启，请勿关闭 Grapher…")}
+                        ? t("正在启动 Windows 安装程序，Pi^n 将自动关闭并重启…")
+                        : t("正在安装更新并准备重启，请勿关闭 Pi^n…")}
                     </p>
                   </div>
                 </div>
@@ -374,16 +374,14 @@ export const UpdateSettings: React.FC<UpdateSettingsProps> = ({
 
           {snapshot.status === "idle" && (
             <p className="section-desc">
-              {t("点击「检查更新」以从 GitHub Releases 检查适用于当前平台的签名更新。")}
+              {t("点击「检查更新」获取最新版本。")}
             </p>
           )}
         </>
       )}
 
       <p className="update-settings-footnote">
-        {t(
-          "应用内更新仅接受经过签名验证的发布包；未签名的 CI 或本地构建不包含可安装的签名更新包，但不会影响应用启动。",
-        )}{" "}
+        {t("全部发布版本与更新日志均可在 GitHub Releases 查看：")}{" "}
         <a href={UPDATER_RELEASES_URL} target="_blank" rel="noopener noreferrer">
           GitHub Releases
         </a>

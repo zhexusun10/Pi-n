@@ -53,16 +53,16 @@ mod workspace_view;
 
 /// Process-wide disposable data root for tests. Fixtures that create or
 /// materialize shadow Git metadata must call this first so no test writes into
-/// the checkout's `.grapher`. Unit tests resolve it automatically through
+/// the checkout's `.pi-n`. Unit tests resolve it automatically through
 /// [`workspace::data_root`].
 #[cfg(any(test, feature = "fixture"))]
 #[doc(hidden)]
 pub fn ensure_test_data_root() -> std::path::PathBuf {
     static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     ROOT.get_or_init(|| {
-        let base = std::env::temp_dir().join(format!("grapher-tests-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("pi-n-tests-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&base);
-        std::env::set_var("GRAPHER_DATA_DIR", &base);
+        std::env::set_var("PI_N_DATA_DIR", &base);
         base
     })
     .clone()

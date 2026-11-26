@@ -1,4 +1,4 @@
-use grapher::{
+use pi_n::{
     cleanup::{Manifest, Target},
     model::{Config, EventKind, Graph, Node},
     runtime::Runtime,
@@ -12,12 +12,12 @@ use std::{
 use uuid::Uuid;
 
 fn cleanup(data: &Path, parent: &Path, flags: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_grapher"))
+    Command::new(env!("CARGO_BIN_EXE_pi-n"))
         .args(["--cleanup-workspaces", "--parent"])
         .arg(parent)
         .args(flags)
-        .env("GRAPHER_DATA_DIR", data)
-        .env("GRAPHER_NATIVE_RUNTIME_PARENT", parent.join("runtimes"))
+        .env("PI_N_DATA_DIR", data)
+        .env("PI_N_NATIVE_RUNTIME_PARENT", parent.join("runtimes"))
         .output()
         .unwrap()
 }
@@ -44,7 +44,7 @@ fn remember(runtime: &Runtime, parent: &Path, id: &str) {
             id,
             &BTreeSet::from([Target::Workspace {
                 parent: parent.canonicalize().unwrap(),
-                bucket: ".grapher-worktrees".into(),
+                bucket: ".pi-n-worktrees".into(),
                 owner: id.into(),
                 checkout: None,
             }]),
@@ -75,7 +75,7 @@ fn offline_cleanup_reclaims_recorded_workspaces_but_keeps_conversation_and_sessi
     remember(&runtime, temp.path(), &id);
     let worktree = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&id)
         .join("node/dependencies");
     fs::create_dir_all(&worktree).unwrap();
@@ -116,7 +116,7 @@ fn explicit_parent_does_not_adopt_unregistered_workspaces_or_clear_unresolved_ow
     let session_id = Uuid::new_v4().to_string();
     let worktree = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(&id)
         .join("node/dependencies");
     fs::create_dir_all(&worktree).unwrap();
@@ -171,12 +171,12 @@ fn offline_cleanup_requires_a_free_lease_and_apply_and_preserves_unmarked_engine
     remember(&runtime, temp.path(), &live);
     runtime.store.delete_run(&deleted).unwrap();
     let unknown = Uuid::new_v4().to_string();
-    let ws = temp.path().join(".grapher-worktrees");
+    let ws = temp.path().join(".pi-n-worktrees");
     for id in [&deleted, &live, &unknown] {
         fs::create_dir_all(ws.join(id).join("node/dependencies")).unwrap();
         fs::write(ws.join(id).join("node/dependencies/keep"), "workspace").unwrap();
     }
-    let unmarked = temp.path().join("runtimes/grapher-native-engine-unmarked");
+    let unmarked = temp.path().join("runtimes/pi-n-native-engine-unmarked");
     for path in ["engine", "scripts", "pi/.git"] {
         fs::create_dir_all(unmarked.join(path)).unwrap();
     }
@@ -189,7 +189,7 @@ fn offline_cleanup_requires_a_free_lease_and_apply_and_preserves_unmarked_engine
     }
     let blocked = cleanup(&data, temp.path(), &["--apply"]);
     assert!(!blocked.status.success());
-    assert!(String::from_utf8_lossy(&blocked.stderr).contains("Another Grapher instance"));
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("Another Pi^n instance"));
     assert!(ws.join(&deleted).exists());
     drop(runtime);
     let retired = cleanup(&data, temp.path(), &["--legacy-engines", "--apply"]);

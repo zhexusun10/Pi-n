@@ -445,7 +445,7 @@ fn managed_recovery_preflight_benchmark() {
         }
     }
     println!(
-        "GRAPHER_MANAGED_RECOVERY_PROBE {}",
+        "PI_N_MANAGED_RECOVERY_PROBE {}",
         serde_json::json!({"schema":1,
         "platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"samples":samples,
         "limits":"warm filesystem cache; test profile; logical bytes; excludes project Git preparation, child resources and native sandbox acceptance"})

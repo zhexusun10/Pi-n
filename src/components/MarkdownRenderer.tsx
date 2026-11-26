@@ -2,8 +2,10 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { StreamingMarkdownCache } from "../services/streamingMarkdown";
 import { observeElementResize } from "../services/sharedResizeObserver";
 import { copyTextToClipboard } from "../services/externalLink";
+import { segmentMarkdownImageStacks } from "../services/markdownImageStack";
 import { t } from "../i18n";
 import { useWorkspaceImages } from "./WorkspaceImages";
+import { MarkdownImageStack } from "./MarkdownImageStack";
 
 function syncCodeBlockOverflow(container: HTMLElement): void {
   const wrappers = container.querySelectorAll<HTMLElement>(".code-block-wrapper");
@@ -127,6 +129,46 @@ export function injectStreamingCursor(html: string, cursorHtml: string): string 
   return html + cursorHtml;
 }
 
+interface MarkdownHtmlBlocksProps {
+  blocks: string[] | null;
+  html: string;
+}
+
+const MarkdownHtmlBlocks: React.FC<MarkdownHtmlBlocksProps> = React.memo(({ blocks, html }) => {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const domSyncRef = useRef<DomSyncState>({ mode: "blocks", blocks: [], counts: [] });
+  const lastContainerRef = useRef<HTMLDivElement | null>(null);
+  const hasCodeBlocks = html.includes("code-block-wrapper");
+
+  useLayoutEffect(() => {
+    const container = hostRef.current;
+    if (!container) return;
+    if (lastContainerRef.current !== container) {
+      lastContainerRef.current = container;
+      domSyncRef.current = { mode: "blocks", blocks: [], counts: [] };
+    }
+    if (blocks !== null) {
+      domSyncRef.current = syncMarkdownBlocks(container, blocks, domSyncRef.current);
+    } else {
+      const prevKeys = domSyncRef.current.mode === "raw" ? domSyncRef.current.keys : [];
+      domSyncRef.current = { mode: "raw", keys: syncMarkdownDom(container, html, prevKeys) };
+    }
+    if (hasCodeBlocks) syncCodeBlockOverflow(container);
+  }, [blocks, html, hasCodeBlocks]);
+
+  useEffect(() => {
+    if (!hasCodeBlocks) return;
+    const container = hostRef.current;
+    if (!container) return;
+    return observeElementResize(container, () => syncCodeBlockOverflow(container));
+  }, [hasCodeBlocks]);
+
+  const ssrHtml = typeof document === "undefined" ? { dangerouslySetInnerHTML: { __html: html } } : {};
+  return <div ref={hostRef} className="markdown-blocks-host" {...ssrHtml} />;
+});
+
+MarkdownHtmlBlocks.displayName = "MarkdownHtmlBlocks";
+
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(
   ({ content, className = "", isStreaming = false, streamingCursor = false }) => {
     const root = useRef<HTMLDivElement>(null);
@@ -181,33 +223,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(
     }, [content, isStreaming, streamingCursor, copyLabel]);
     const sanitizedHtml = renderedResult.html;
 
+    const segments = useMemo(
+      () => segmentMarkdownImageStacks(renderedResult.blocks, sanitizedHtml),
+      [renderedResult, sanitizedHtml],
+    );
+
     const imageScopeKey = useWorkspaceImages(root, sanitizedHtml);
-    const hasCodeBlocks = sanitizedHtml.includes("code-block-wrapper");
-    const domSyncRef = useRef<DomSyncState>({ mode: "blocks", blocks: [], counts: [] });
-    const lastContainerRef = useRef<HTMLDivElement | null>(null);
-
-    useLayoutEffect(() => {
-      const container = root.current;
-      if (!container) return;
-      if (lastContainerRef.current !== container) {
-        lastContainerRef.current = container;
-        domSyncRef.current = { mode: "blocks", blocks: [], counts: [] };
-      }
-      if (renderedResult.blocks !== null) {
-        domSyncRef.current = syncMarkdownBlocks(container, renderedResult.blocks, domSyncRef.current);
-      } else {
-        const prevKeys = domSyncRef.current.mode === "raw" ? domSyncRef.current.keys : [];
-        domSyncRef.current = { mode: "raw", keys: syncMarkdownDom(container, sanitizedHtml, prevKeys) };
-      }
-      if (hasCodeBlocks) syncCodeBlockOverflow(container);
-    }, [renderedResult, sanitizedHtml, imageScopeKey, hasCodeBlocks]);
-
-    useEffect(() => {
-      if (!hasCodeBlocks) return;
-      const container = root.current;
-      if (!container) return;
-      return observeElementResize(container, () => syncCodeBlockOverflow(container));
-    }, [hasCodeBlocks, imageScopeKey]);
 
     const handleCopy = async (event: React.MouseEvent) => {
       const target = event.target;
@@ -234,14 +255,35 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(
       }
     };
 
-    const ssrHtml = typeof document === "undefined" ? { dangerouslySetInnerHTML: { __html: sanitizedHtml } } : {};
-
     return (
       <div key={imageScopeKey} ref={root}
         className={`markdown-content ${isStreaming ? "streaming" : ""} ${className}`}
-        {...ssrHtml}
         onClick={handleCopy}
-      />
+      >
+        {segments ? (
+          segments.map(segment =>
+            segment.type === "image-stack" ? (
+              <MarkdownImageStack
+                key={segment.key}
+                images={segment.images}
+                trailingCursor={segment.trailingCursor}
+              />
+            ) : (
+              <MarkdownHtmlBlocks
+                key={segment.key}
+                blocks={segment.blocks}
+                html={segment.html}
+              />
+            )
+          )
+        ) : (
+          <MarkdownHtmlBlocks
+            key="html-0"
+            blocks={renderedResult.blocks}
+            html={sanitizedHtml}
+          />
+        )}
+      </div>
     );
   }
 );

@@ -516,7 +516,7 @@ mod tests {
         let base = crate::workspace::snapshot_repository(&source).unwrap();
         let node = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(uuid::Uuid::new_v4().to_string())
             .join("node");
         crate::workspace::prepare(&source, &node, &base, &[]).unwrap();

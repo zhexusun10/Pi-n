@@ -27,7 +27,7 @@ const digest = content => createHash('sha256').update(content).digest('hex');
 const peers = ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent'];
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-pi-verify-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-pi-verify-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, content) => {
     const target = join(root, path);
@@ -134,7 +134,7 @@ function runtimeFixture(t) {
     f.write(`pi/node_modules/${name}/package.json`, JSON.stringify({ name, version: depVersion }));
   }
   f.write('engine/pi-dependencies/package-lock.json', JSON.stringify({ name: manifest.name, version, lockfileVersion: 3, packages }));
-  f.write('pi/node_modules/.grapher-pi-dependencies.json', JSON.stringify(dependencyProfileHashes(f.root)));
+  f.write('pi/node_modules/.pi-n-pi-dependencies.json', JSON.stringify(dependencyProfileHashes(f.root)));
 
   return f;
 }
@@ -142,39 +142,39 @@ function runtimeFixture(t) {
 test('verifyRuntimeBaseline deduplicates Git/dependency scans per backend context and invalidates on context or input drift', t => {
   const f = runtimeFixture(t);
 
-  const prevContext = process.env.GRAPHER_BASELINE_CONTEXT;
-  const prevVerified = process.env.GRAPHER_VERIFIED_BASELINE;
-  const prevGit = process.env.GRAPHER_TRUSTED_GIT;
+  const prevContext = process.env.PI_N_BASELINE_CONTEXT;
+  const prevVerified = process.env.PI_N_VERIFIED_BASELINE;
+  const prevGit = process.env.PI_N_TRUSTED_GIT;
   t.after(() => {
-    if (prevContext === undefined) delete process.env.GRAPHER_BASELINE_CONTEXT;
-    else process.env.GRAPHER_BASELINE_CONTEXT = prevContext;
-    if (prevVerified === undefined) delete process.env.GRAPHER_VERIFIED_BASELINE;
-    else process.env.GRAPHER_VERIFIED_BASELINE = prevVerified;
-    if (prevGit === undefined) delete process.env.GRAPHER_TRUSTED_GIT;
-    else process.env.GRAPHER_TRUSTED_GIT = prevGit;
+    if (prevContext === undefined) delete process.env.PI_N_BASELINE_CONTEXT;
+    else process.env.PI_N_BASELINE_CONTEXT = prevContext;
+    if (prevVerified === undefined) delete process.env.PI_N_VERIFIED_BASELINE;
+    else process.env.PI_N_VERIFIED_BASELINE = prevVerified;
+    if (prevGit === undefined) delete process.env.PI_N_TRUSTED_GIT;
+    else process.env.PI_N_TRUSTED_GIT = prevGit;
     verifyRuntimeBaseline({ installationRoot: realRoot });
   });
 
-  process.env.GRAPHER_BASELINE_CONTEXT = `test-ctx-1:${Date.now()}`;
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
+  process.env.PI_N_BASELINE_CONTEXT = `test-ctx-1:${Date.now()}`;
+  delete process.env.PI_N_VERIFIED_BASELINE;
 
   const first = verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline });
   assert.deepEqual(first, { verified: true, cached: false });
 
   // Subsequent prewarm workers in the same backend lifecycle reuse the verified stamp without spawning Git.
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
-  process.env.GRAPHER_TRUSTED_GIT = join(f.root, 'missing-git-binary');
+  delete process.env.PI_N_VERIFIED_BASELINE;
+  process.env.PI_N_TRUSTED_GIT = join(f.root, 'missing-git-binary');
   const second = verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline });
   assert.deepEqual(second, { verified: true, cached: true });
 
   // A new backend lifecycle context must re-run full verification (and therefore observe the missing Git binary).
-  process.env.GRAPHER_BASELINE_CONTEXT = `test-ctx-2:${Date.now()}`;
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
+  process.env.PI_N_BASELINE_CONTEXT = `test-ctx-2:${Date.now()}`;
+  delete process.env.PI_N_VERIFIED_BASELINE;
   assert.throws(() => verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline }), /Cannot inspect Pi checkout/);
 
   // Without an explicit backend context, standalone runs never reuse a shared stamp.
-  delete process.env.GRAPHER_BASELINE_CONTEXT;
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
+  delete process.env.PI_N_BASELINE_CONTEXT;
+  delete process.env.PI_N_VERIFIED_BASELINE;
   assert.throws(() => verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline }), /Cannot inspect Pi checkout/);
 });
 
@@ -186,9 +186,9 @@ test('host-primed baseline stamps survive private temp changes and still reject 
     const temp = join(f.root, session);
     mkdirSync(temp);
     const env = { ...process.env, TMPDIR: temp, TMP: temp, TEMP: temp,
-      GRAPHER_RUNTIME_CACHE_DIR: cache, GRAPHER_BASELINE_CONTEXT: backendContext };
-    delete env.GRAPHER_VERIFIED_BASELINE;
-    if (cached) env.GRAPHER_TRUSTED_GIT = join(f.root, 'missing-git');
+      PI_N_RUNTIME_CACHE_DIR: cache, PI_N_BASELINE_CONTEXT: backendContext };
+    delete env.PI_N_VERIFIED_BASELINE;
+    if (cached) env.PI_N_TRUSTED_GIT = join(f.root, 'missing-git');
     const code = `import { verifyRuntimeBaseline } from ${JSON.stringify(pathToFileURL(join(realRoot, 'scripts/pi-baseline.mjs')).href)};
       console.log(JSON.stringify(verifyRuntimeBaseline({ installationRoot: ${JSON.stringify(f.root)}, baseline: ${JSON.stringify(f.baseline)} })));`;
     return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', code], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
@@ -277,7 +277,7 @@ test('runtime-only dependency verification is restricted to trusted bundled inst
   }
   f.write('pi/node_modules/runtime-pkg/package.json', JSON.stringify({ name: 'runtime-pkg', version: '1.0.0' }));
   f.write(
-    'pi/node_modules/.grapher-pi-dependencies.json',
+    'pi/node_modules/.pi-n-pi-dependencies.json',
     JSON.stringify({ ...dependencyProfileHashes(f.root), mode: PI_DEPENDENCIES_MODE_RUNTIME_ONLY }),
   );
   f.write(`pi/${BUNDLED_PI_MANIFEST_FILE}`, `${JSON.stringify(buildBundledPiManifest(f.pi, f.baseline), null, 2)}\n`);
@@ -295,26 +295,26 @@ test('runtime-only dependency verification is restricted to trusted bundled inst
   f.write('pi/node_modules/runtime-pkg/package.json', JSON.stringify({ name: 'runtime-pkg', version: '1.0.0' }));
 
   // verifyRuntimeBaseline deduplicates scans on a .git-less bundled runtime and invalidates on manifest drift.
-  const prevContext = process.env.GRAPHER_BASELINE_CONTEXT;
-  const prevVerified = process.env.GRAPHER_VERIFIED_BASELINE;
-  const prevGit = process.env.GRAPHER_TRUSTED_GIT;
+  const prevContext = process.env.PI_N_BASELINE_CONTEXT;
+  const prevVerified = process.env.PI_N_VERIFIED_BASELINE;
+  const prevGit = process.env.PI_N_TRUSTED_GIT;
   t.after(() => {
-    if (prevContext === undefined) delete process.env.GRAPHER_BASELINE_CONTEXT;
-    else process.env.GRAPHER_BASELINE_CONTEXT = prevContext;
-    if (prevVerified === undefined) delete process.env.GRAPHER_VERIFIED_BASELINE;
-    else process.env.GRAPHER_VERIFIED_BASELINE = prevVerified;
-    if (prevGit === undefined) delete process.env.GRAPHER_TRUSTED_GIT;
-    else process.env.GRAPHER_TRUSTED_GIT = prevGit;
+    if (prevContext === undefined) delete process.env.PI_N_BASELINE_CONTEXT;
+    else process.env.PI_N_BASELINE_CONTEXT = prevContext;
+    if (prevVerified === undefined) delete process.env.PI_N_VERIFIED_BASELINE;
+    else process.env.PI_N_VERIFIED_BASELINE = prevVerified;
+    if (prevGit === undefined) delete process.env.PI_N_TRUSTED_GIT;
+    else process.env.PI_N_TRUSTED_GIT = prevGit;
   });
 
-  process.env.GRAPHER_BASELINE_CONTEXT = `bundled-ctx-${Date.now()}`;
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
-  process.env.GRAPHER_TRUSTED_GIT = join(f.root, 'missing-git-binary');
+  process.env.PI_N_BASELINE_CONTEXT = `bundled-ctx-${Date.now()}`;
+  delete process.env.PI_N_VERIFIED_BASELINE;
+  process.env.PI_N_TRUSTED_GIT = join(f.root, 'missing-git-binary');
 
   const first = verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline });
   assert.deepEqual(first, { verified: true, cached: false });
 
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
+  delete process.env.PI_N_VERIFIED_BASELINE;
   const second = verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline });
   assert.deepEqual(second, { verified: true, cached: true });
 
@@ -322,7 +322,7 @@ test('runtime-only dependency verification is restricted to trusted bundled inst
   const manifestPath = join(f.pi, BUNDLED_PI_MANIFEST_FILE);
   const currentManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   writeFileSync(manifestPath, `${JSON.stringify({ ...currentManifest, packageLockSha256: '0'.repeat(64) })}\n`);
-  delete process.env.GRAPHER_VERIFIED_BASELINE;
+  delete process.env.PI_N_VERIFIED_BASELINE;
   assert.throws(
     () => verifyRuntimeBaseline({ installationRoot: f.root, baseline: f.baseline }),
     /does not match engine\/pi-lock\.json/,

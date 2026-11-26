@@ -525,8 +525,8 @@ fn execution_steer_offsets_survive_chunk_boundaries_and_partial_tail_reads() {
     );
     let steer1_offset = prefix_pad.len();
     let steer1_line = format!(
-        "{{\"grapherRequestId\":\"{req1}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"REWRITTEN_1\"}}]}}}}\n\
-         {{\"grapherRequestId\":\"{req1}\",\"type\":\"message_end\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"REWRITTEN_1\"}}]}}}}\n"
+        "{{\"piNRequestId\":\"{req1}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"REWRITTEN_1\"}}]}}}}\n\
+         {{\"piNRequestId\":\"{req1}\",\"type\":\"message_end\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"REWRITTEN_1\"}}]}}}}\n"
     );
     let mid_pad = format!(
         "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{}\"}}]}}}}\n",
@@ -534,7 +534,7 @@ fn execution_steer_offsets_survive_chunk_boundaries_and_partial_tail_reads() {
     );
     let steer2_offset = steer1_offset + steer1_line.len() + mid_pad.len();
     let steer2_line = format!(
-        "{{\"grapherRequestId\":\"{req2}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"REWRITTEN_2\"}}]}}}}\n"
+        "{{\"piNRequestId\":\"{req2}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"REWRITTEN_2\"}}]}}}}\n"
     );
     let output = format!("{prefix_pad}{steer1_line}{mid_pad}{steer2_line}");
     runtime
@@ -622,31 +622,31 @@ fn steer_offsets_handle_multibyte_utf8_split_oversized_images_and_quoted_tool_pa
     }
 
     // Place multi-byte UTF-8 ("中文") within 16 bytes before a 32KB chunk boundary
-    // that splits `"grapherRequestId"` right between `grapherRe` and `questId`.
+    // that splits `"piNRequestId"` right between `piNRe` and `questId`.
     // `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"...中文"}]}}\n`
-    // followed by `{"grapherRe` (11 bytes) ending right at byte 32_768.
+    // followed by `{"piNRe` (11 bytes) ending right at byte 32_768.
     let suffix = "中文\"}]}}\n";
     let header = "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"";
-    let target_before_split = 32_768 - "{\"grapherRe".len();
+    let target_before_split = 32_768 - "{\"piNRe".len();
     let pad_len = target_before_split - header.len() - suffix.len();
     let prefix = format!("{header}{}{suffix}", "x".repeat(pad_len));
     let split_offset = prefix.len();
-    assert_eq!(split_offset + "{\"grapherRe".len(), 32_768);
+    assert_eq!(split_offset + "{\"piNRe".len(), 32_768);
     // Verify `chunk.len() - 16` inside chunk 0 lands on a non-char-boundary of "中文".
     let split_line = format!(
-        "{{\"grapherRequestId\":\"{req_split}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"ok\"}}]}}}}\n"
+        "{{\"piNRequestId\":\"{req_split}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"ok\"}}]}}}}\n"
     );
     // An oversized (> 128KB) base64 image steer line must still be indexed without parsing 128KB JSON.
     let image_offset = split_offset + split_line.len();
     let image_line = format!(
-        "{{\"grapherRequestId\":\"{req_image}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"see pic\"}},{{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"{}\"}}]}}}}\n",
+        "{{\"piNRequestId\":\"{req_image}\",\"type\":\"message_start\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"see pic\"}},{{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"{}\"}}]}}}}\n",
         "A".repeat(140_000)
     );
-    // A huge tool result quoting `"grapherRequestId"` deep inside its body must be ignored.
+    // A huge tool result quoting `"piNRequestId"` deep inside its body must be ignored.
     let quoted_tool_line = format!(
         "{{\"type\":\"tool_execution_end\",\"toolCallId\":\"t1\",\"result\":\"{}{}\"}}\n",
         "z".repeat(20_000),
-        format!("{{\\\"grapherRequestId\\\":\\\"{req_fake}\\\",\\\"type\\\":\\\"message_start\\\",\\\"message\\\":{{\\\"role\\\":\\\"user\\\"}}}}")
+        format!("{{\\\"piNRequestId\\\":\\\"{req_fake}\\\",\\\"type\\\":\\\"message_start\\\",\\\"message\\\":{{\\\"role\\\":\\\"user\\\"}}}}")
     );
     let output = format!("{prefix}{split_line}{image_line}{quoted_tool_line}");
     runtime
@@ -840,8 +840,8 @@ fn card_shell_projection_and_range_hydration_serve_settled_execution_and_plannin
     assert!(!cards_content.contains("WWWW"));
     assert!(!cards_content.contains("OOOO"));
     assert!(!cards_content.contains("TTTT"));
-    assert!(cards_content.contains(r#""grapherSubcommandWarning":true"#));
-    assert!(cards_content.contains(r#""grapherThinkingChars":4000"#));
+    assert!(cards_content.contains(r#""piNSubcommandWarning":true"#));
+    assert!(cards_content.contains(r#""piNThinkingChars":4000"#));
 
     // Extract the omitted tool result range and thinking range, then hydrate ONLY those lines.
     let parsed_lines: Vec<serde_json::Value> = cards_content
@@ -852,12 +852,12 @@ fn card_shell_projection_and_range_hydration_serve_settled_execution_and_plannin
         .iter()
         .find(|v| v["type"] == "tool_execution_end" && v["toolCallId"] == "big-call")
         .unwrap();
-    let big_end_range = big_end["grapherRawRange"].as_array().unwrap().clone();
+    let big_end_range = big_end["piNRawRange"].as_array().unwrap().clone();
     let msg_end = parsed_lines
         .iter()
         .find(|v| v["type"] == "message_end" && v["message"]["role"] == "assistant")
         .unwrap();
-    let thinking_range = msg_end["grapherRawRange"].as_array().unwrap().clone();
+    let thinking_range = msg_end["piNRawRange"].as_array().unwrap().clone();
 
     let hydrated = get_execution_output(
         &serde_json::json!({
@@ -912,4 +912,126 @@ fn card_shell_projection_and_range_hydration_serve_settled_execution_and_plannin
     .unwrap();
     assert_eq!(plan_hydrated["projection"], serde_json::json!("hydrated"));
     assert!(plan_hydrated["content"].as_str().unwrap().contains(&"T".repeat(4000)));
+}
+
+#[test]
+fn forward_and_tail_projections_skip_over_4mb_jsonl_lines_cleanly() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut runtime = Runtime::open(temp.path()).unwrap();
+    let run_id = "oversized-line-run";
+    let exec_id = "exec-oversized";
+    runtime.state.run_id = run_id.into();
+    let execution = Execution {
+        id: exec_id.into(),
+        node: "worker".into(),
+        revision: 1,
+        attempt: 1,
+        session_id: "session".into(),
+        worktree: "/unused".into(),
+        before: String::new(),
+        workspace_lineage: Vec::new(),
+        after: None,
+        input: None,
+        result: None,
+        status: "running".into(),
+        output: String::new(),
+        output_bytes: 0,
+        pid: None,
+        started_at: 1,
+        completed_at: None,
+        metrics: None,
+    };
+    runtime
+        .state
+        .nodes
+        .insert("worker".into(), crate::model::NodeState::default());
+    runtime
+        .emit(EventKind::Started {
+            execution,
+            message_sequences: Some(vec![]),
+            fresh_restart: true,
+        })
+        .unwrap();
+
+    let before = serde_json::to_string(&serde_json::json!({
+        "piNReceivedAt": 1000,
+        "type": "message_end",
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Before giant record" }] }
+    }))
+    .unwrap();
+    let giant = format!(
+        r#"{{"piNReceivedAt":2000,"messages":[{{"data":"{}","type":"image"}}],"type":"agent_end","willRetry":false}}"#,
+        "QAUAFAB".repeat(700_000)
+    );
+    assert!(giant.len() > 4 * 1024 * 1024);
+    let after = "── Final response ──\nAfter giant record\n";
+    let full = format!("{before}\n{giant}\n{after}");
+    runtime
+        .emit(EventKind::Output {
+            execution_id: exec_id.into(),
+            text: full.clone(),
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Finished {
+            execution_id: exec_id.into(),
+            head: "".into(),
+            output: "".into(),
+            output_bytes: full.len(),
+            metrics: None,
+        })
+        .unwrap();
+
+    let service = Arc::new(Service {
+        runtime: Mutex::new(runtime),
+        driving: AtomicBool::new(false),
+        drive_signal: (Mutex::new(0), Condvar::new()),
+        planning: AtomicBool::new(false),
+        extension: PathBuf::new(),
+    });
+
+    // Tail read (CardShell) must never leak any prefix of the >4 MiB line.
+    let tail_page = get_execution_output(
+        &serde_json::json!({
+            "runId": run_id,
+            "executionId": exec_id,
+            "tail": true,
+            "limit": 256 * 1024,
+            "projection": "cards"
+        }),
+        &service,
+    )
+    .unwrap();
+    let tail_content = tail_page["content"].as_str().unwrap();
+    assert!(tail_content.contains("Before giant record"));
+    assert!(tail_content.contains("After giant record"));
+    assert!(!tail_content.contains("QAUAFAB"));
+
+    // Forward pagination must advance past the >4 MiB line to its newline
+    // boundary and never emit its trailing base64 suffix on the next page.
+    let mut offset = 0usize;
+    let mut combined_forward = String::new();
+    for _ in 0..8 {
+        let page = get_execution_output(
+            &serde_json::json!({
+                "runId": run_id,
+                "executionId": exec_id,
+                "offset": offset,
+                "tail": false,
+                "projection": "cards"
+            }),
+            &service,
+        )
+        .unwrap();
+        combined_forward.push_str(page["content"].as_str().unwrap());
+        let next = page["nextOffset"].as_u64().unwrap() as usize;
+        assert!(next > offset || page["complete"].as_bool() == Some(true));
+        offset = next;
+        if page["complete"].as_bool() == Some(true) {
+            break;
+        }
+    }
+    assert!(combined_forward.contains("Before giant record"));
+    assert!(combined_forward.contains("After giant record"));
+    assert!(!combined_forward.contains("QAUAFAB"));
 }

@@ -53,14 +53,14 @@ for (const [language, reducedMotion] of [["en", "no-preference"], ["zh-CN", "red
     let browser;
     try {
       await server.listen();
-      browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: language, reducedMotion });
       await context.addInitScript(({ repository, config, language }) => {
-        localStorage.setItem("grapher_language_v1", language);
-        localStorage.setItem("grapher_execution_overview_v1", "1");
-        localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
-        localStorage.setItem("grapher_config", JSON.stringify(config));
-        localStorage.setItem("grapher_workbench_split_ratio", "0.15");
+        localStorage.setItem("pi_n_language_v1", language);
+        localStorage.setItem("pi_n_execution_overview_v1", "1");
+        localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
+        localStorage.setItem("pi_n_config", JSON.stringify(config));
+        localStorage.setItem("pi_n_workbench_split_ratio", "0.15");
       }, { repository, config, language });
       await context.route("**/api/*", async route => {
         const command = new URL(route.request().url()).pathname.slice(5);

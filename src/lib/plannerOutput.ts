@@ -132,7 +132,7 @@ export function activePlannerOutput(output: string, edits: Array<{ old_instructi
     });
     if (start < 0) continue;
     const resume = edit.nextPlanningId ? lines.findIndex((line, index) => index > start &&
-      line.includes(`"type":"grapher_planning_source"`) && line.includes(`"planningId":"${edit.nextPlanningId}"`)) : -1;
+      line.includes(`"type":"pi_n_planning_source"`) && line.includes(`"planningId":"${edit.nextPlanningId}"`)) : -1;
     active = [...lines.slice(0, start), ...(resume >= 0 ? lines.slice(resume) : [])].join("\n");
   }
   return active;

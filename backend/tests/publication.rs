@@ -1,5 +1,5 @@
-use grapher::graph_merge::{merge_graph_with_workspace, publication_workspace};
-use grapher::{graph_merge, workspace};
+use pi_n::graph_merge::{merge_graph_with_workspace, publication_workspace};
+use pi_n::{graph_merge, workspace};
 use std::{fs, path::Path};
 use tempfile::TempDir;
 
@@ -9,7 +9,7 @@ fn test_data() {
     static ROOT: std::sync::OnceLock<TempDir> = std::sync::OnceLock::new();
     ROOT.get_or_init(|| {
         let dir = TempDir::new().unwrap();
-        std::env::set_var("GRAPHER_DATA_DIR", dir.path());
+        std::env::set_var("PI_N_DATA_DIR", dir.path());
         dir
     });
 }
@@ -203,7 +203,7 @@ fn plain_folder_publication_changes_deletions_conflict_retry_and_no_git_pollutio
     // This Merger fixture requires /bin/sh.
     #[cfg(all(feature = "fixture", unix))]
     {
-        use grapher::model::{Config, EventKind};
+        use pi_n::model::{Config, EventKind};
         let base = workspace::repository_git(&source, &["rev-parse", "HEAD"]).unwrap();
         let f = branch(
             &source,
@@ -294,7 +294,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
 #[test]
 fn publication_merger_conversation_continues_a_pending_merge() {
     test_data();
-    use grapher::model::{now, Config, EventKind, Execution};
+    use pi_n::model::{now, Config, EventKind, Execution};
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("publication repo");
     fs::create_dir(&source).unwrap();

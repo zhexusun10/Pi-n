@@ -1,15 +1,15 @@
 # Harbor evaluation adapter
 
-Grapher provides a Harbor **custom installed agent** at `benchmark.harbor_agent:GrapherAgent`. Harbor and its datasets are installed separately; this repository does not bundle a benchmark host or claim an aggregate score.
+Pi^n provides a Harbor **custom installed agent** at `benchmark.harbor_agent:PiNAgent`. Harbor and its datasets are installed separately; this repository does not bundle a benchmark host or claim an aggregate score.
 
 The integration baseline is Harbor **0.23.0**, with the adapter interface verified against commit `31668af15560fb50a9d0584816d12726036656cf`. Other Harbor versions need interface verification.
 
 ## Linux task environment
 
-Prepare Grapher **inside each task environment**, not only on the Harbor host. The default installation is `/installed-agent/grapher` and must include:
+Prepare Pi^n **inside each task environment**, not only on the Harbor host. The default installation is `/installed-agent/pi-n` and must include:
 
-- Executable `backend/target/release/grapher` built from the same clean, pinned checkout.
-- Grapher `engine/` and `scripts/`, the pinned `pi/` submodule, and installed/built Pi dependencies.
+- Executable `backend/target/release/pi-n` built from the same clean, pinned checkout.
+- Pi^n `engine/` and `scripts/`, the pinned `pi/` submodule, and installed/built Pi dependencies.
 - Node.js 22.19+, Git, Python 3, and bubblewrap at `/usr/bin/bwrap`.
 - A task working directory equal to the project root and network access for the chosen provider.
 
@@ -23,24 +23,24 @@ From the repository root:
 
 ```sh
 docker build -f benchmark/Dockerfile \
-  --build-arg GRAPHER_COMMIT=<full-pinned-grapher-sha> \
-  -t grapher-harbor:<sha> benchmark
+  --build-arg PI_N_COMMIT=<full-pinned-pi-n-sha> \
+  -t pi-n-harbor:<sha> benchmark
 ```
 
 [The Dockerfile](../../benchmark/Dockerfile) fetches a fixed commit rather than copying local `.env`, credentials, or uncommitted files. It supplies a base installation, **not a replacement for a task's dependencies/files**. Build task images from it without losing the original task environment; comparisons must offer each agent equivalent tools and permissions.
 
 Alternatively, build a pinned recursive checkout during task-image preparation, run `npm run pi:setup`, and build the production Rust binary. Git must support `--path-format=absolute`; a compiler toolchain is needed for building, not necessarily for every timed trial.
 
-Installation verifies bwrap, the Pi entrypoint/tsx runtime files, the [pinned Pi baseline](../development/pi-integration.md#upgrade-procedure), checkout cleanliness, and binary `--build-identity` matching `git rev-parse HEAD`. It records that commit as the agent version. `pi:verify` validates Pi inputs and root dependency pins, not the Grapher binary's build identity; both checks are required. Do not download/compile Grapher during the timed trial. A non-root task user needs suitable read/access permissions and a trusted Git checkout.
+Installation verifies bwrap, the Pi entrypoint/tsx runtime files, the [pinned Pi baseline](../development/pi-integration.md#upgrade-procedure), checkout cleanliness, and binary `--build-identity` matching `git rev-parse HEAD`. It records that commit as the agent version. `pi:verify` validates Pi inputs and root dependency pins, not the Pi^n binary's build identity; both checks are required. Do not download/compile Pi^n during the timed trial. A non-root task user needs suitable read/access permissions and a trusted Git checkout.
 
 ## Run through Harbor
 
-Ensure the Harbor host can import the adapter using `PYTHONPATH`. From the Grapher repository root, with Harbor installed separately:
+Ensure the Harbor host can import the adapter using `PYTHONPATH`. From the Pi^n repository root, with Harbor installed separately:
 
 ```sh
 PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" harbor run \
   -p /path/to/harbor/tasks \
-  -a benchmark.harbor_agent:GrapherAgent \
+  -a benchmark.harbor_agent:PiNAgent \
   -m anthropic/claude-sonnet-4-5 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   --ak thinking=medium --ak max_parallel=4 --ak timeout_sec=28800
@@ -54,10 +54,10 @@ Custom provider endpoints/auth must be explicitly passed through Harbor's enviro
 
 | `--ak` option | Default / meaning |
 | --- | --- |
-| `grapher_root` | `/installed-agent/grapher`; absolute path inside the task environment |
+| `pi_n_root` | `/installed-agent/pi-n`; absolute path inside the task environment |
 | `thinking` | `medium`; role thinking level |
 | `max_parallel` | `4`; per-Graph-Run limit, 1–8 |
-| `timeout_sec` | `28800`; end-to-end Grapher trial budget in seconds |
+| `timeout_sec` | `28800`; end-to-end Pi^n trial budget in seconds |
 | `bootstrap_debian_tools` | `false`; opt-in setup-time installation of missing Git/Python/bwrap, requiring root and apt-get |
 
 Agent version is derived from the verified binary, not a user-supplied `version` option.
@@ -90,7 +90,7 @@ Provider token usage maps to Harbor's AgentContext, including cache accounting; 
 
 Record and align:
 
-- Grapher/Pi/Harbor commits and adapter/tool hashes.
+- Pi^n/Pi/Harbor commits and adapter/tool hashes.
 - Dataset version and the **actual task digests in the Harbor job lock**.
 - Image architecture, task dependencies/tools, namespace policy, and mount permissions.
 - Provider/model **and endpoint**, thinking, credential permissions, budget, concurrency, attempts, and retry policy.

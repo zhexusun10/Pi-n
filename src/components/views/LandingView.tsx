@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion, useIsPresent, useReducedMotion } from "motion/react";
 import { PromptBox, type PromptBoxSubmitOptions } from "../ui/chatgpt-prompt-input";
 import { DotPattern } from "../ui/dot-pattern";
+import { PiBrandMark } from "../ui/PiBrandMark";
 import type { ComposerDrafts } from "../../services/composerDrafts";
 import type { LandingBackground } from "../../services/displayPreferences";
 import type { PlanMode } from "../../types";
@@ -22,6 +23,8 @@ interface LandingViewProps {
 }
 
 const TITLE_EXIT_DURATION = 0.2;
+const TITLE_ENTER_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const TITLE_ENTER_DURATION = 0.42;
 
 export const LandingView: React.FC<LandingViewProps> = React.memo(({
   goal,
@@ -40,6 +43,8 @@ export const LandingView: React.FC<LandingViewProps> = React.memo(({
   const reduceMotion = useReducedMotion();
   const isPresent = useIsPresent();
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
+  const lineInitial = reduceMotion ? false : { opacity: 0, y: 10 };
+  const lineAnimate = { opacity: 1, y: 0 };
   return (
     <div
       className="landing-screen"
@@ -49,10 +54,16 @@ export const LandingView: React.FC<LandingViewProps> = React.memo(({
         <div className="landing-title-space">
           <div className="landing-title-container">
             {background === "dots" && (
-              <div className="landing-title-dot-pattern" aria-hidden="true">
+              <motion.div
+                className="landing-title-dot-pattern"
+                aria-hidden="true"
+                initial={reduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: reduceMotion ? 0 : TITLE_ENTER_DURATION, ease: TITLE_ENTER_EASE }}
+              >
                 {/* Wide spacing keeps the dots as a quiet texture rather than a grid. */}
                 <DotPattern width={24} height={24} cr={1} />
-              </div>
+              </motion.div>
             )}
             <motion.div
               className="landing-title-copy"
@@ -70,27 +81,31 @@ export const LandingView: React.FC<LandingViewProps> = React.memo(({
             >
               <motion.p
                 className="landing-title"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: reduceMotion ? 0 : 0.25 }}
+                initial={lineInitial}
+                animate={lineAnimate}
+                transition={{ duration: reduceMotion ? 0 : TITLE_ENTER_DURATION, delay: reduceMotion ? 0 : 0.06, ease: TITLE_ENTER_EASE }}
               >
                 Build Anything
               </motion.p>
               <motion.p
                 className="landing-title"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: reduceMotion ? 0 : 0.25, delay: reduceMotion ? 0 : 0.05 }}
+                aria-label="With Pi^n."
+                initial={lineInitial}
+                animate={lineAnimate}
+                transition={{ duration: reduceMotion ? 0 : TITLE_ENTER_DURATION, delay: reduceMotion ? 0 : 0.12, ease: TITLE_ENTER_EASE }}
               >
-                With Grapher.
+                With{" "}
+                <PiBrandMark monochrome className="landing-brand-mark" />
+                .
               </motion.p>
               <motion.p
                 className="landing-subtitle"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: reduceMotion ? 0 : 0.25, delay: reduceMotion ? 0 : 0.1 }}
+                initial={lineInitial}
+                animate={lineAnimate}
+                transition={{ duration: reduceMotion ? 0 : TITLE_ENTER_DURATION, delay: reduceMotion ? 0 : 0.18, ease: TITLE_ENTER_EASE }}
               >
-                Don't orchestrate agents. Compile work.
+                <span className="landing-subtitle-key">Direct</span> with one pi.{" "}
+                <span className="landing-subtitle-key">Compile</span> into many.
               </motion.p>
             </motion.div>
           </div>

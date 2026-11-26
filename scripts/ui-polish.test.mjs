@@ -55,13 +55,13 @@ for (const language of ["en", "zh-CN"]) {
     let browser;
     try {
       await server.listen();
-      browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: language,
         reducedMotion: language === "en" ? "no-preference" : "reduce" });
       await context.addInitScript(({ repository, language }) => {
-        localStorage.setItem("grapher_language_v1", language);
-        localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Interface project", lastOpened: 1 }]));
-        localStorage.setItem("grapher_hide_auto_mode_v1", "false");
+        localStorage.setItem("pi_n_language_v1", language);
+        localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Interface project", lastOpened: 1 }]));
+        localStorage.setItem("pi_n_hide_auto_mode_v1", "false");
       }, { repository, language });
       await context.route("**/api/*", async route => {
         const command = new URL(route.request().url()).pathname.slice(5);
@@ -89,9 +89,9 @@ for (const language of ["en", "zh-CN"]) {
             assert.ok(composerWidth < 680, `composer narrows instead of sidebar at ${width}px: ${composerWidth}`);
           }
         }
-        if (process.env.GRAPHER_UI_SCREENSHOTS) {
-          await mkdir(process.env.GRAPHER_UI_SCREENSHOTS, { recursive: true });
-          await page.screenshot({ path: join(process.env.GRAPHER_UI_SCREENSHOTS, `${language}-home-${width}.png`) });
+        if (process.env.PI_N_UI_SCREENSHOTS) {
+          await mkdir(process.env.PI_N_UI_SCREENSHOTS, { recursive: true });
+          await page.screenshot({ path: join(process.env.PI_N_UI_SCREENSHOTS, `${language}-home-${width}.png`) });
         }
         assert.equal(await input.inputValue(), draft, "resizing preserves the draft");
       }
@@ -131,8 +131,8 @@ for (const language of ["en", "zh-CN"]) {
         await page.waitForTimeout(450);
         const sections = page.locator(".settings-modal-content .settings-sections");
         await sections.evaluate(element => { element.scrollTop = 0; });
-        if (process.env.GRAPHER_UI_SCREENSHOTS) {
-          await page.screenshot({ path: join(process.env.GRAPHER_UI_SCREENSHOTS, `${language}-settings-${width}.png`) });
+        if (process.env.PI_N_UI_SCREENSHOTS) {
+          await page.screenshot({ path: join(process.env.PI_N_UI_SCREENSHOTS, `${language}-settings-${width}.png`) });
         }
         assert.equal(await sections.evaluate(element => element.scrollWidth <= element.clientWidth), true, `settings do not overflow horizontally at ${width}px`);
         const footer = await page.locator(".settings-modal-footer").boundingBox();

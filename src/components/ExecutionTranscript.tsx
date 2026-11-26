@@ -372,7 +372,12 @@ function ExecutionHistory({ runId, execution, endOffset, deferredReveal = false,
     if (!currentWin || normalizeTranscriptProjection(currentWin) !== "summary") return;
     const prefetchProj: TranscriptProjectionMode | undefined = settled && !cardsUnsupported ? "cards" : undefined;
     const prefetchKey = executionTranscriptKey(fullCacheKey, prefetchProj);
-    if (executionTranscriptCache.get(prefetchKey) || executionTranscriptCache.get(fullCacheKey)) return;
+    const cachedFull = transcriptFromCache(executionTranscriptCache.get(fullCacheKey));
+    if (!settled && cachedFull && cachedFull.end >= currentWin.end) {
+      publish(cachedFull);
+      return;
+    }
+    if (settled && (executionTranscriptCache.get(prefetchKey) || cachedFull)) return;
     const abort = new AbortController();
     const signal = combineAbortSignals(abort.signal, lifetime.current);
     const prefetchLimit = prefetchProj === "cards"
@@ -385,7 +390,7 @@ function ExecutionHistory({ runId, execution, endOffset, deferredReveal = false,
       signal,
       false,
       true,
-      currentWin.end,
+      settled ? currentWin.end : undefined,
       prefetchLimit,
       endOffset,
       prefetchProj ?? false,
@@ -395,10 +400,17 @@ function ExecutionHistory({ runId, execution, endOffset, deferredReveal = false,
       const win = windowFromPage(page, settled || page.status !== "running");
       const actualProj = normalizeTranscriptProjection(win);
       if (prefetchProj === "cards" && actualProj !== "cards") setCardsUnsupported(true);
-      executionTranscriptCache.set(executionTranscriptKey(fullCacheKey, actualProj), cacheTranscriptWindow(win));
+      if (!settled && actualProj === undefined) {
+        // Publish live full output immediately while expanding so auto-expanded
+        // running thinking cards grow smoothly to their real height during the
+        // 260ms animation instead of expanding an empty shimmer and snapping at idle.
+        publish(win);
+      } else {
+        executionTranscriptCache.set(executionTranscriptKey(fullCacheKey, actualProj), cacheTranscriptWindow(win));
+      }
     }).catch(() => { /* Best-effort transition prefetch; normal fetch runs on idle. */ });
     return () => abort.abort();
-  }, [cardsTransition, settled, cardsUnsupported, fullCacheKey, runId, execution.id, endOffset, lifetime]);
+  }, [cardsTransition, settled, cardsUnsupported, fullCacheKey, runId, execution.id, endOffset, lifetime, publish]);
 
   const initialReady = useAutoTranscriptHistory(wrapperRef, hasOlder, loadingOlder, error, window,
     preserveReading => { void loadOlder(preserveReading, false); }, ready, window ? window.end - window.start : 0, holdingOlder,

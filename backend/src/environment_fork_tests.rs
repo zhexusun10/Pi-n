@@ -79,7 +79,7 @@ fn fixture_with_config(
     let run = Uuid::new_v4().to_string();
     let env = Environments::new(&temp.path().join("data"), &run, &config).unwrap();
     let baseline = env.initialize(&source).unwrap();
-    let path = temp.path().join(".grapher-worktrees").join(run).join("A");
+    let path = temp.path().join(".pi-n-worktrees").join(run).join("A");
     workspace::prepare(&source, &path, &code, &[]).unwrap();
     let input = env
         .prepare(
@@ -156,7 +156,7 @@ fn advance(env: &Environments, parent: &CompositeResult, value: &str) -> Composi
 fn zero_configuration_home_source_and_parent_without_setup() {
     const CASE: &str =
         "environment::fork_tests::zero_configuration_home_source_and_parent_without_setup";
-    const FIXTURE: &str = "GRAPHER_ZERO_CONFIG_HOME_FIXTURE";
+    const FIXTURE: &str = "PI_N_ZERO_CONFIG_HOME_FIXTURE";
     if std::env::var_os(FIXTURE).is_none() {
         let temp = tempfile::tempdir().unwrap();
         let origin = temp.path().join("source-home");

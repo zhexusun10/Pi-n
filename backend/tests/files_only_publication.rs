@@ -1,4 +1,4 @@
-use grapher::{
+use pi_n::{
     graph_merge::{merge_graph_with_workspace as publish, publication_workspace},
     workspace,
 };
@@ -13,7 +13,7 @@ fn data() {
     static DATA: OnceLock<TempDir> = OnceLock::new();
     DATA.get_or_init(|| {
         let dir = TempDir::new().unwrap();
-        std::env::set_var("GRAPHER_DATA_DIR", dir.path());
+        std::env::set_var("PI_N_DATA_DIR", dir.path());
         dir
     });
 }
@@ -61,7 +61,7 @@ fn assert_delivery(source: &Path, base: &str, head: &str, internal: &[String]) {
     assert_eq!(
         git(
             source,
-            &["for-each-ref", "--format=%(refname)", "refs/grapher"]
+            &["for-each-ref", "--format=%(refname)", "refs/pi-n"]
         ),
         ""
     );
@@ -79,7 +79,7 @@ fn node_cwd_exposes_source_git_but_keeps_host_snapshots_independent() {
     let base = workspace::snapshot_repository(&source).unwrap();
     let slot = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(uuid::Uuid::new_v4().to_string())
         .join("node");
     let a = node(&source, &slot, &base, &[], "a.txt", "a");
@@ -101,7 +101,7 @@ fn explicit_node_commits_are_project_history_without_source_or_graph_bookkeeping
     let (temp, source, base) = source();
     let slot = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(uuid::Uuid::new_v4().to_string())
         .join("node");
     workspace::prepare(&source, &slot, &base, &[]).unwrap();
@@ -136,7 +136,7 @@ fn explicit_node_commits_are_project_history_without_source_or_graph_bookkeeping
     let result = workspace::snapshot_node(&slot, &source, "node").unwrap();
     assert!(slot.join(".git").is_dir());
     assert_eq!(raw_git(&["rev-parse", "HEAD"]), unexpected);
-    assert!(raw_git(&["for-each-ref", "--format=%(refname)", "refs/grapher"]).is_empty());
+    assert!(raw_git(&["for-each-ref", "--format=%(refname)", "refs/pi-n"]).is_empty());
     let output = std::process::Command::new("git")
         .args(["cat-file", "-e", &result])
         .current_dir(&slot)
@@ -173,7 +173,7 @@ fn fanout_host_readers_and_visible_git_remain_independent_during_reprepare() {
     let base = workspace::snapshot_repository(&source).unwrap();
     let slot = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(uuid::Uuid::new_v4().to_string())
         .join("node");
     workspace::prepare(&source, &slot, &base, &[]).unwrap();

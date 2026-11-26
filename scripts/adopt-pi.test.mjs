@@ -11,7 +11,7 @@ import { lock, restoreModelData, root, source } from './pi-baseline.mjs';
 import { corePackages } from './pi-dependencies.mjs';
 
 function stagedPackage(t, dataDir) {
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-pi-model-data-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-pi-model-data-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const providers = join(source, 'packages/ai/src/providers');
   const stagedProviders = join(directory, 'src/providers');
@@ -28,7 +28,7 @@ test('Pi adoption records the exact checked-out clean commit and hydrated data',
   // Adoption always records the pristine upstream hydration, never the local
   // overlay, so hash the committed baseline copy instead of the merged
   // submodule data directory.
-  const baseline = mkdtempSync(join(tmpdir(), 'grapher-pi-baseline-'));
+  const baseline = mkdtempSync(join(tmpdir(), 'pi-n-pi-baseline-'));
   t.after(() => rmSync(baseline, { recursive: true, force: true }));
   for (const name of readdirSync(join(root, 'engine/model-data'))) {
     copyFileSync(join(root, 'engine/model-data', name), join(baseline, name));
@@ -40,7 +40,7 @@ test('Pi adoption records the exact checked-out clean commit and hydrated data',
 });
 
 test('bundled Pi model data validates in a fresh checkout and matches the baseline hashes', t => {
-  const data = mkdtempSync(join(tmpdir(), 'grapher-pi-data-'));
+  const data = mkdtempSync(join(tmpdir(), 'pi-n-pi-data-'));
   t.after(() => rmSync(data, { recursive: true, force: true }));
   cpSync(join(root, 'engine/model-data'), data, { recursive: true });
   const directory = stagedPackage(t, data);
@@ -57,9 +57,9 @@ test('bundled Pi model data validates in a fresh checkout and matches the baseli
 test('local model-data overlay overrides the baseline and keeps upstream validation green', t => {
   // A clean checkout has no git-ignored overlay. Build one here so this test
   // never depends on the developer's personal engine/model-data-local state.
-  const overlay = mkdtempSync(join(tmpdir(), 'grapher-pi-overlay-src-'));
+  const overlay = mkdtempSync(join(tmpdir(), 'pi-n-pi-overlay-src-'));
   const name = Object.keys(lock.modelData).find(entry => entry.endsWith('.json') && entry !== '.manifest.json');
-  const data = mkdtempSync(join(tmpdir(), 'grapher-pi-overlay-'));
+  const data = mkdtempSync(join(tmpdir(), 'pi-n-pi-overlay-'));
   t.after(() => {
     rmSync(overlay, { recursive: true, force: true });
     rmSync(data, { recursive: true, force: true });
@@ -87,7 +87,7 @@ test('local model-data overlay overrides the baseline and keeps upstream validat
 test('Pi package builds follow workspace dependency order', t => {
   // Upstream's root build script builds chord before pi-telemetry even though
   // chord depends on it; a clean offline build must order packages itself.
-  const directory = mkdtempSync(join(tmpdir(), 'grapher-pi-build-order-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pi-n-pi-build-order-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const internal = (name) => `@earendil-works/${name}`;
   const dependencies = {

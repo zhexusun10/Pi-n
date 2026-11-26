@@ -222,8 +222,8 @@ pub(super) fn feedback_input_delivered(
     if header["type"] != "session"
         || header["id"] != boundary.session_id
         || header["version"] != 3
-        || header["grapherFormat"] != 1
-        || header["grapherRunId"] != runtime.state.run_id
+        || header["piNFormat"] != 1
+        || header["piNRunId"] != runtime.state.run_id
     {
         return Err("Feedback session belongs to another identity".into());
     }

@@ -14,7 +14,7 @@ import { root } from './pi-baseline.mjs';
 
 const delay = ms => new Promise(completed => setTimeout(completed, ms));
 function host(role, cwd, env) {
-  const child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--grapher-prewarm', role], {
+  const child = spawn(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--pi-n-prewarm', role], {
     cwd, env, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const events = [];
@@ -55,20 +55,20 @@ function host(role, cwd, env) {
 }
 
 test('runtime cache priming creates no session and a new private temp can consume read-only seeds', { timeout: 45000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-cache-seed-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-cache-seed-'));
   const source = join(directory, 'source');
   const cache = join(directory, 'runtime-cache');
   const agent = join(directory, 'agent');
   const temp = join(directory, 'private-temp');
   for (const path of [source, agent, temp]) await mkdir(path);
   const env = { ...process.env, HOME: directory, USERPROFILE: directory, PI_CODING_AGENT_DIR: agent,
-    GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1', GRAPHER_BASELINE_CONTEXT: `seed:${randomUUID()}`,
-    GRAPHER_RUNTIME_CACHE_DIR: cache };
-  delete env.GRAPHER_VERIFIED_BASELINE;
+    PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1', PI_N_BASELINE_CONTEXT: `seed:${randomUUID()}`,
+    PI_N_RUNTIME_CACHE_DIR: cache };
+  delete env.PI_N_VERIFIED_BASELINE;
   const entries = [];
   let value;
   try {
-    execFileSync(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--grapher-prepare-runtime-cache'], {
+    execFileSync(process.execPath, [join(root, 'engine/entrypoint.mjs'), '--pi-n-prepare-runtime-cache'], {
       cwd: source, env, timeout: 30000, stdio: 'pipe',
     });
     assert.deepEqual(await readdir(source), [], 'priming must not write to the project');
@@ -86,8 +86,8 @@ test('runtime cache priming creates no session and a new private temp can consum
     };
     if (process.platform !== 'win32') await protect(cache);
     value = host('partition', source, { ...env, TMPDIR: temp, TMP: temp, TEMP: temp,
-      GRAPHER_TRUSTED_GIT: join(directory, 'missing-git') });
-    assert.equal((await value.request({ type: 'grapher_prepare', role: 'partition' })).success, true);
+      PI_N_TRUSTED_GIT: join(directory, 'missing-git') });
+    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'partition' })).success, true);
     assert.deepEqual(await readdir(temp), [], 'read-only seeds must avoid per-session baseline/compile caches');
   } finally {
     await value?.stop();
@@ -97,7 +97,7 @@ test('runtime cache priming creates no session and a new private temp can consum
 });
 
 test('prepared host loads the latest Pi overlay from the task binding', { timeout: 45000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-prepared-overlay-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-prepared-overlay-'));
   const source = join(directory, 'source');
   const agent = join(directory, 'agent');
   const upstream = join(directory, 'upstream-models.json');
@@ -106,25 +106,25 @@ test('prepared host loads the latest Pi overlay from the task binding', { timeou
   await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: {} }));
   const cache = join(directory, 'runtime-cache');
   const env = { ...process.env, HOME: directory, USERPROFILE: directory, PI_CODING_AGENT_DIR: agent,
-    GRAPHER_RUNTIME_CACHE_DIR: cache,
-    GRAPHER_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' };
-  delete env.GRAPHER_UPSTREAM_PI_MODELS;
+    PI_N_RUNTIME_CACHE_DIR: cache,
+    PI_N_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' };
+  delete env.PI_N_UPSTREAM_PI_MODELS;
   const value = host('partition', source, env);
   try {
-    assert.equal((await value.request({ type: 'grapher_prepare', role: 'partition' })).success, true);
+    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'partition' })).success, true);
     const compiled = await readdir(join(cache, 'compile'), { recursive: true });
     assert.ok(compiled.some(name => /(?:^|[/\\])[0-9a-f]{8,}$/i.test(name)), 'ready must publish compiled code while the prepared host is still alive');
     // This file and its binding only appear after the process is prepared.
     await writeFile(upstream, JSON.stringify({ providers: { 'prepared-overlay': {
       baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'fixture', models: [{ id: 'latest' }],
     } } }));
-    const reply = await value.request({ type: 'grapher_bind', role: 'partition', cwd: source,
+    const reply = await value.request({ type: 'pi_n_bind', role: 'partition', cwd: source,
       args: ['--mode', 'rpc', '--no-tools', '--no-extensions', '--no-skills', '--no-approve',
         '--model', 'prepared-overlay/latest', '--session-dir', sessions],
-      environment: { GRAPHER_MODE: 'partition', GRAPHER_EXECUTION_KIND: 'source', GRAPHER_SOURCE_ALIAS: source,
-        GRAPHER_WORKSPACE_ROOT: source, GRAPHER_ORIGINAL_ROOT: source, PI_CODING_AGENT_DIR: agent,
-        GRAPHER_BASELINE_CONTEXT: 'prepared-test-context', GRAPHER_VERIFIED_BASELINE: null,
-        GRAPHER_UPSTREAM_PI_MODELS: upstream } });
+      environment: { PI_N_MODE: 'partition', PI_N_EXECUTION_KIND: 'source', PI_N_SOURCE_ALIAS: source,
+        PI_N_WORKSPACE_ROOT: source, PI_N_ORIGINAL_ROOT: source, PI_CODING_AGENT_DIR: agent,
+        PI_N_BASELINE_CONTEXT: 'prepared-test-context', PI_N_VERIFIED_BASELINE: null,
+        PI_N_UPSTREAM_PI_MODELS: upstream } });
     assert.equal(reply.success, true, reply.error);
     const state = await value.request({ type: 'get_state' });
     assert.equal(state.success, true, value.diagnostics);
@@ -150,14 +150,14 @@ test('prepared host loads the latest Pi overlay from the task binding', { timeou
 });
 
 test('prepared queue identities survive async input rewriting without recalling read turns', { timeout: 60000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-queue-identity-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-queue-identity-'));
   const source = join(directory, 'source');
   const agent = join(directory, 'agent');
   const sessions = join(directory, 'sessions');
   const extension = join(directory, 'rewrite.ts');
   const settleGate = join(directory, 'release-settle');
   const inputGate = join(directory, 'release-input');
-  const extensionInput = `extension injected\n\n<grapher-node-steer-id>${randomUUID()}</grapher-node-steer-id>`;
+  const extensionInput = `extension injected\n\n<pi-n-node-steer-id>${randomUUID()}</pi-n-node-steer-id>`;
   let release, releaseNext;
   const hold = new Promise(resolve => { release = resolve; });
   const nextHold = new Promise(resolve => { releaseNext = resolve; });
@@ -207,18 +207,18 @@ test('prepared queue identities survive async input rewriting without recalling 
       });
     }`);
     const env = { ...process.env, HOME: directory, USERPROFILE: directory, PI_CODING_AGENT_DIR: agent,
-      GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' };
+      PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1' };
     value = host('node', source, env);
-    assert.equal((await value.request({ type: 'grapher_prepare', role: 'node' })).success, true);
-    const bound = await value.request({ type: 'grapher_bind', role: 'node', cwd: source,
+    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'node' })).success, true);
+    const bound = await value.request({ type: 'pi_n_bind', role: 'node', cwd: source,
       args: ['--mode', 'rpc', '--no-tools', '--no-extensions', '--no-skills', '--no-approve', '--extension', extension,
         '--model', 'queue-test/test', '--session-dir', sessions],
-      environment: { GRAPHER_MODE: 'node', GRAPHER_AGENT_KIND: 'serial', GRAPHER_EXECUTION_KIND: 'source', GRAPHER_SOURCE_ALIAS: source,
-        GRAPHER_WORKSPACE_ROOT: source, GRAPHER_ORIGINAL_ROOT: source, PI_CODING_AGENT_DIR: agent,
-        GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS: 'python3=/usr/bin/python3' } });
+      environment: { PI_N_MODE: 'node', PI_N_AGENT_KIND: 'serial', PI_N_EXECUTION_KIND: 'source', PI_N_SOURCE_ALIAS: source,
+        PI_N_WORKSPACE_ROOT: source, PI_N_ORIGINAL_ROOT: source, PI_CODING_AGENT_DIR: agent,
+        PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS: 'python3=/usr/bin/python3' } });
     assert.equal(bound.success, true, bound.error);
     const ids = [randomUUID(), randomUUID(), randomUUID()];
-    const marked = (text, id) => `${text}\n\n<grapher-node-steer-id>${id}</grapher-node-steer-id>`;
+    const marked = (text, id) => `${text}\n\n<pi-n-node-steer-id>${id}</pi-n-node-steer-id>`;
     assert.equal((await value.request({ type: 'prompt', message: marked('read first', ids[0]) })).success, true);
     await value.wait(() => requestBody, 'model began reading the first turn');
     const replies = await Promise.all([1, 2].map(index => value.request({ type: 'prompt',
@@ -233,7 +233,7 @@ test('prepared queue identities survive async input rewriting without recalling 
       'identity follows the async submission, not text equality or completion order');
     assert.deepEqual(cleared.data.messages.filter(message => !message.requestId), [{ text: extensionInput, images: [] }],
       'nested extension input must not inherit an ID or interpret literal marker-shaped content');
-    assert.ok(!JSON.stringify(requestBody).includes('grapher-node-steer-id'), 'private identity never enters model context');
+    assert.ok(!JSON.stringify(requestBody).includes('pi-n-node-steer-id'), 'private identity never enters model context');
     assert.deepEqual((await value.request({ type: 'clear_queue' })).data.messages, []);
     release();
     await value.wait(() => value.events.find(event => event.type === 'extension_ui_request' && event.message === 'settlement held'));
@@ -268,7 +268,7 @@ test('prepared queue identities survive async input rewriting without recalling 
 });
 
 test('three prepared roles bind real isolated sessions; Planner paths, extensions, tools and RPC bytes are task-scoped', { timeout: 180000 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'grapher-prepared-host-'));
+  const directory = await mkdtemp(join(tmpdir(), 'pi-n-prepared-host-'));
   const children = [];
   const requests = [];
   const errors = [];
@@ -308,7 +308,7 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
     const bashSources = join(directory, 'bash-sources.jsonl');
     for (const path of [source, other, agent, join(global, 'extensions')]) await mkdir(path, { recursive: true });
     const probePath = join(global, 'extensions/probe.ts');
-    await writeFile(probePath, `import { appendFileSync } from 'node:fs';\nexport default function(pi) { appendFileSync(${JSON.stringify(marker)}, JSON.stringify({ role: process.env.GRAPHER_MODE, agentKind: process.env.GRAPHER_AGENT_KIND, run: process.env.GRAPHER_ACTIVE_RUN_ID, execution: process.env.GRAPHER_NODE_EXECUTION_ID, nodeName: process.env.GRAPHER_NODE_NAME, graph: process.env.GRAPHER_GRAPH_PATH, continuation: process.env.GRAPHER_CONTINUE_INTERRUPTED, feedback: process.env.GRAPHER_FEEDBACK_SOURCE, unremovableNodes: process.env.GRAPHER_UNREMOVABLE_NODES }) + '\\n'); pi.on('session_start', () => appendFileSync(${JSON.stringify(bashSources)}, JSON.stringify({ role: process.env.GRAPHER_MODE, agentKind: process.env.GRAPHER_AGENT_KIND, bash: pi.getAllTools().find(tool => tool.name === 'bash')?.sourceInfo }) + '\\n')); }`);
+    await writeFile(probePath, `import { appendFileSync } from 'node:fs';\nexport default function(pi) { appendFileSync(${JSON.stringify(marker)}, JSON.stringify({ role: process.env.PI_N_MODE, agentKind: process.env.PI_N_AGENT_KIND, run: process.env.PI_N_ACTIVE_RUN_ID, execution: process.env.PI_N_NODE_EXECUTION_ID, nodeName: process.env.PI_N_NODE_NAME, graph: process.env.PI_N_GRAPH_PATH, continuation: process.env.PI_N_CONTINUE_INTERRUPTED, feedback: process.env.PI_N_FEEDBACK_SOURCE, unremovableNodes: process.env.PI_N_UNREMOVABLE_NODES }) + '\\n'); pi.on('session_start', () => appendFileSync(${JSON.stringify(bashSources)}, JSON.stringify({ role: process.env.PI_N_MODE, agentKind: process.env.PI_N_AGENT_KIND, bash: pi.getAllTools().find(tool => tool.name === 'bash')?.sourceInfo }) + '\\n')); }`);
     const { pathKey } = await import('../engine/path-identity.mjs');
     await writeFile(join(agent, 'extensions.json'), JSON.stringify({ overrides: { [pathKey(probePath)]: true } }));
     await new Promise(completed => server.listen(0, '127.0.0.1', completed));
@@ -318,17 +318,17 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
       baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: 'openai-completions', apiKey: 'loopback-only',
       models: ['partition', 'planner', 'node'].map(model),
     } } }));
-    const env = { ...process.env, PI_CODING_AGENT_DIR: agent, GRAPHER_GLOBAL_PI_AGENT_DIR: global,
-      GRAPHER_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1', GRAPHER_ACTIVE_RUN_ID: 'outer-must-not-leak',
-      GRAPHER_AGENT_KIND: 'outer-agent-kind-must-not-leak',
-      GRAPHER_GRAPH_PATH: join(other, 'outer-graph.json'), GRAPHER_NODE_NAME: 'outer-node-must-not-leak',
-      GRAPHER_CONTINUE_INTERRUPTED: 'outer-continuation-must-not-leak', GRAPHER_FEEDBACK_SOURCE: 'outer-feedback-must-not-leak',
-      GRAPHER_FEEDBACK_ENABLED: 'true',
-      GRAPHER_UNREMOVABLE_NODES: JSON.stringify(['outer-node-must-not-leak']) };
+    const env = { ...process.env, PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: global,
+      PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1', PI_N_ACTIVE_RUN_ID: 'outer-must-not-leak',
+      PI_N_AGENT_KIND: 'outer-agent-kind-must-not-leak',
+      PI_N_GRAPH_PATH: join(other, 'outer-graph.json'), PI_N_NODE_NAME: 'outer-node-must-not-leak',
+      PI_N_CONTINUE_INTERRUPTED: 'outer-continuation-must-not-leak', PI_N_FEEDBACK_SOURCE: 'outer-feedback-must-not-leak',
+      PI_N_FEEDBACK_ENABLED: 'true',
+      PI_N_UNREMOVABLE_NODES: JSON.stringify(['outer-node-must-not-leak']) };
     const roles = ['partition', 'planner', 'node'];
     const started = performance.now();
     const prepared = roles.map(role => { const value = host(role, source, env); children.push(value); return value; });
-    await Promise.all(prepared.map((value, index) => value.request({ type: 'grapher_prepare', role: roles[index] })
+    await Promise.all(prepared.map((value, index) => value.request({ type: 'pi_n_prepare', role: roles[index] })
       .then(response => assert.equal(response.success, true))));
     t.diagnostic(`three-role concurrent process preparation: ${(performance.now() - started).toFixed(0)}ms`);
     assert.deepEqual(requests, []);
@@ -356,17 +356,17 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
         '--system-prompt', join(root, 'backend/resources/prompts/planner.md'),
         '--extension', join(root, 'backend/resources/planner.ts'));
       else args.push('--approve');
-      const binding = { type: 'grapher_bind', role, cwd: source, args, environment: {
-        GRAPHER_MODE: role, GRAPHER_EXECUTION_KIND: 'source', GRAPHER_SOURCE_ALIAS: source,
-        ...(role === 'node' ? { GRAPHER_AGENT_KIND: 'serial' } : { GRAPHER_AGENT_KIND: null }),
-        GRAPHER_WORKSPACE_ROOT: source, GRAPHER_ORIGINAL_ROOT: source, GRAPHER_GRAPH_PATH: graph,
-        GRAPHER_ACTIVE_RUN_ID: `run-${role}`, GRAPHER_NODE_EXECUTION_ID: `execution-${role}`,
-        ...(role === 'planner' ? { GRAPHER_UNREMOVABLE_NODES: JSON.stringify(['published']), GRAPHER_PLANNER_WRITE_TOOLS: 'true' } : {}),
-        GRAPHER_FEEDBACK_SOURCE: role === 'node' ? 'true' : null,
-        GRAPHER_FEEDBACK_ENABLED: role === 'planner' ? 'false' : null,
-        ...(role === 'node' ? { GRAPHER_NODE_NAME: null, GRAPHER_CONTINUE_INTERRUPTED: 'false' } : {}),
-        GRAPHER_COMPILER_PATH: join(target, `debug/grapher${process.platform === 'win32' ? '.exe' : ''}`),
-        GRAPHER_TRUSTED_GIT: process.env.GRAPHER_TRUSTED_GIT ?? 'git',
+      const binding = { type: 'pi_n_bind', role, cwd: source, args, environment: {
+        PI_N_MODE: role, PI_N_EXECUTION_KIND: 'source', PI_N_SOURCE_ALIAS: source,
+        ...(role === 'node' ? { PI_N_AGENT_KIND: 'serial' } : { PI_N_AGENT_KIND: null }),
+        PI_N_WORKSPACE_ROOT: source, PI_N_ORIGINAL_ROOT: source, PI_N_GRAPH_PATH: graph,
+        PI_N_ACTIVE_RUN_ID: `run-${role}`, PI_N_NODE_EXECUTION_ID: `execution-${role}`,
+        ...(role === 'planner' ? { PI_N_UNREMOVABLE_NODES: JSON.stringify(['published']), PI_N_PLANNER_WRITE_TOOLS: 'true' } : {}),
+        PI_N_FEEDBACK_SOURCE: role === 'node' ? 'true' : null,
+        PI_N_FEEDBACK_ENABLED: role === 'planner' ? 'false' : null,
+        ...(role === 'node' ? { PI_N_NODE_NAME: null, PI_N_CONTINUE_INTERRUPTED: 'false' } : {}),
+        PI_N_COMPILER_PATH: join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`),
+        PI_N_TRUSTED_GIT: process.env.PI_N_TRUSTED_GIT ?? 'git',
         PI_MODEL: null, PI_SESSION_ID: null, GIT_CEILING_DIRECTORIES: null, GIT_CONFIG_PARAMETERS: null,
       } };
       if (role === 'planner') plannerBinding = binding;
@@ -405,7 +405,7 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
       const tools = body.tools?.map(tool => tool.function.name) ?? [];
       if (role === 'partition') assert.deepEqual(tools, []);
       else if (role === 'planner') {
-        assert.match(system, /You are (?:a|the) planner operating inside (?:Grapher, )?a (?:graph-based )?coding agent harness/);
+        assert.match(system, /You are (?:a|the) planner operating inside (?:Pi\^n, )?a (?:graph-based )?coding agent harness/);
         assert.ok(['edit_graph', 'read_graph', 'read', 'bash', 'write', 'edit'].every(tool => tools.includes(tool)));
         assert.ok(['node', 'edge'].every(tool => !tools.includes(tool)), 'retired mutation tools are not advertised');
         assert.ok(['ls', 'find', 'grep'].every(tool => !tools.includes(tool)));
@@ -482,18 +482,18 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
     const bashToolSources = (await readFile(bashSources, 'utf8')).trim().split(/\r?\n/).map(JSON.parse);
     assert.deepEqual(bashToolSources.map(value => value.role).sort(), ['node', 'planner']);
     const serialBashPath = bashToolSources.find(value => value.role === 'node' && value.agentKind === 'serial').bash.path;
-    assert.ok(!serialBashPath.includes('grapher-workspace-policy'),
-      `a bound Serial Agent must not use the Grapher workspace Bash adapter (got ${serialBashPath})`);
+    assert.ok(!serialBashPath.includes('pi-n-workspace-policy'),
+      `a bound Serial Agent must not use the Pi^n workspace Bash adapter (got ${serialBashPath})`);
     assert.match(serialBashPath, /pi-simple-timeout/,
       'a bound Serial Agent uses bundled pi-simple-timeout directly when enabled');
-    assert.match(bashToolSources.find(value => value.role === 'planner').bash.path, /grapher-workspace-policy/,
-      'Planner keeps the Grapher Bash adapter');
+    assert.match(bashToolSources.find(value => value.role === 'planner').bash.path, /pi-n-workspace-policy/,
+      'Planner keeps the Pi^n Bash adapter');
 
     // A source-direct Graph Node Agent has the same Pi model role and cwd as
-    // Serial, but its explicit agent identity must still select Grapher Bash.
+    // Serial, but its explicit agent identity must still select Pi^n Bash.
     const sourceNode = host('node', source, env);
     children.push(sourceNode);
-    assert.equal((await sourceNode.request({ type: 'grapher_prepare', role: 'node' })).success, true);
+    assert.equal((await sourceNode.request({ type: 'pi_n_prepare', role: 'node' })).success, true);
     const sourceNodeSession = join(directory, 'sessions-source-node');
     await mkdir(sourceNodeSession);
     const sourceNodeId = randomUUID();
@@ -502,9 +502,9 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
     sourceNodeArgs[sourceNodeArgs.indexOf('--session-dir') + 1] = sourceNodeSession;
     const sourceNodeBinding = { ...nodeBinding, args: sourceNodeArgs, environment: {
       ...nodeBinding.environment,
-      GRAPHER_AGENT_KIND: 'node',
-      GRAPHER_NODE_EXECUTION_ID: 'source-direct-graph-node',
-      GRAPHER_FEEDBACK_SOURCE: null,
+      PI_N_AGENT_KIND: 'node',
+      PI_N_NODE_EXECUTION_ID: 'source-direct-graph-node',
+      PI_N_FEEDBACK_SOURCE: null,
     } };
     const sourceNodeReply = await sourceNode.request(sourceNodeBinding);
     assert.equal(sourceNodeReply.success, true, sourceNodeReply.error);
@@ -514,14 +514,14 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
     await sourceNode.wait(() => sourceNode.events.find(event => event.type === 'agent_settled'));
     const boundSources = (await readFile(bashSources, 'utf8')).trim().split(/\r?\n/).map(JSON.parse);
     const sourceNodeTool = boundSources.find(value => value.role === 'node' && value.agentKind === 'node')?.bash;
-    assert.ok(sourceNodeTool?.path.includes('grapher-workspace-policy'), 'source-direct Graph Node Agent uses Grapher Bash');
+    assert.ok(sourceNodeTool?.path.includes('pi-n-workspace-policy'), 'source-direct Graph Node Agent uses Pi^n Bash');
     assert.deepEqual(await readdir(other), [], 'outer Run graph path must never be touched');
 
     // A failed bind must not initialize resources, create a session or invoke a model.
     for (const change of [{ role: 'node' }, { cwd: other }, { environment: { NODE_OPTIONS: '--eval bad' } }]) {
       const value = host('planner', source, env);
       children.push(value);
-      assert.equal((await value.request({ type: 'grapher_prepare', role: 'planner' })).success, true);
+      assert.equal((await value.request({ type: 'pi_n_prepare', role: 'planner' })).success, true);
       const before = requests.length;
       const reply = await value.request({ ...plannerBinding, ...change });
       assert.equal(reply.success, false);
@@ -531,14 +531,14 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
     // anyway and would not prove that an injected node name is forbidden.
     const namedNode = host('node', source, env);
     children.push(namedNode);
-    assert.equal((await namedNode.request({ type: 'grapher_prepare', role: 'node' })).success, true);
+    assert.equal((await namedNode.request({ type: 'pi_n_prepare', role: 'node' })).success, true);
     const before = requests.length;
     const rejectedName = await namedNode.request({
       ...nodeBinding,
-      environment: { ...nodeBinding.environment, GRAPHER_NODE_NAME: 'forbidden' },
+      environment: { ...nodeBinding.environment, PI_N_NODE_NAME: 'forbidden' },
     });
     assert.equal(rejectedName.success, false);
-    assert.match(rejectedName.error, /Unsupported task environment: GRAPHER_NODE_NAME/);
+    assert.match(rejectedName.error, /Unsupported task environment: PI_N_NODE_NAME/);
     assert.equal(requests.length, before);
   } finally {
     await Promise.all(children.map(value => value.stop()));

@@ -1,4 +1,4 @@
-//! Native execution resources. Device locks coordinate Grapher instances for
+//! Native execution resources. Device locks coordinate Pi^n instances for
 //! this host user; they are not isolation from unrelated host applications.
 use crate::{
     environment::EnvironmentConfig, native_runtime_storage, path_safety::real_child_path, workspace,
@@ -155,7 +155,7 @@ pub(crate) struct DeviceLease {
 
 fn lease_parent() -> Result<PathBuf, String> {
     // Shared across data roots, not a per-Run/data-root pseudo-lease.
-    let parent = workspace::host_cache_root().join("grapher-device-leases");
+    let parent = workspace::host_cache_root().join("pi-n-device-leases");
     fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
     real_child_path(
         parent.parent().ok_or("Missing device lease parent")?,
@@ -198,7 +198,7 @@ fn acquire_ids(parent: &Path, ids: &[String]) -> Result<DeviceLease, String> {
 pub(crate) fn bind(command: &mut Command, config: &EnvironmentConfig) -> Result<(), String> {
     if let Some(device) = config.resources.as_ref().and_then(|r| r.device.as_ref()) {
         command.env(
-            "GRAPHER_ACCELERATOR_BINDING",
+            "PI_N_ACCELERATOR_BINDING",
             serde_json::to_string(device).map_err(|e| e.to_string())?,
         );
     }
@@ -275,11 +275,11 @@ mod tests {
     }
     #[test]
     fn lease_subprocess() {
-        let Some(root) = std::env::var_os("GRAPHER_TEST_DEVICE_LEASE_ROOT") else {
+        let Some(root) = std::env::var_os("PI_N_TEST_DEVICE_LEASE_ROOT") else {
             return;
         };
         let root = PathBuf::from(root);
-        let id = std::env::var("GRAPHER_TEST_DEVICE_LEASE_ID").unwrap();
+        let id = std::env::var("PI_N_TEST_DEVICE_LEASE_ID").unwrap();
         let _lease = acquire_ids(&root, &[id]).unwrap();
         fs::write(root.join("ready"), "leased").unwrap();
         std::thread::sleep(std::time::Duration::from_secs(30));
@@ -295,8 +295,8 @@ mod tests {
                 "environment_resources::tests::lease_subprocess",
                 "--nocapture",
             ])
-            .env("GRAPHER_TEST_DEVICE_LEASE_ROOT", root.path())
-            .env("GRAPHER_TEST_DEVICE_LEASE_ID", &id)
+            .env("PI_N_TEST_DEVICE_LEASE_ROOT", root.path())
+            .env("PI_N_TEST_DEVICE_LEASE_ID", &id)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::inherit())
             .spawn()

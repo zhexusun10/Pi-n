@@ -53,7 +53,7 @@ interface WorkspaceChangesPaneProps {
 }
 
 /** Right-side Changes panel reusing the topology pane area, modeled after
- * `pi-gpui`'s expandable inline diff view in Grapher's light design system. */
+ * `pi-gpui`'s expandable inline diff view in Pi^n's light design system. */
 export const WorkspaceChangesPane = React.memo(function WorkspaceChangesPane({
   id,
   runId,

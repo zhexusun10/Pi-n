@@ -152,7 +152,7 @@
 }
 
 /* =============================================================================
-   Expandable Changed File Rows (pi-gpui density + Grapher light palette)
+   Expandable Changed File Rows (pi-gpui density + Pi^n light palette)
    ============================================================================= */
 
 .changed-file-item {
@@ -483,7 +483,7 @@
   font-style: italic;
 }
 
-/* Light-theme syntax token colors harmonizing with Grapher's palette */
+/* Light-theme syntax token colors harmonizing with Pi^n's palette */
 .diff-tok-keyword {
   color: #7C3AED;
 }

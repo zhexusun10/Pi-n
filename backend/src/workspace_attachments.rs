@@ -1,5 +1,5 @@
 //! External attachment upload/deletion endpoints.
-//! Attachments are persisted immutably under Grapher's data directory
+//! Attachments are persisted immutably under Pi^n's data directory
 //! (`<data_root>/attachment-inputs/`) and exposed read-only to sandboxed
 //! executions — they are never written into the user's project directory or
 //! any private Run worktree.

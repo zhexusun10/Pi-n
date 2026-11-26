@@ -566,11 +566,11 @@ fn resolved_rejects_missing_or_rewritten_preparation_evidence() {
         let path = Path::new(&target.worktree);
         match damage {
             "missing" => {
-                workspace::git(path, &["update-ref", "-d", "refs/grapher/base"]).unwrap();
+                workspace::git(path, &["update-ref", "-d", "refs/pi-n/base"]).unwrap();
             }
             "non-commit" => {
                 let tree = workspace::git(path, &["rev-parse", "HEAD^{tree}"]).unwrap();
-                workspace::git(path, &["update-ref", "refs/grapher/base", &tree]).unwrap();
+                workspace::git(path, &["update-ref", "refs/pi-n/base", &tree]).unwrap();
             }
             _ => {
                 let tree = workspace::git(path, &["rev-parse", "HEAD^{tree}"]).unwrap();
@@ -580,7 +580,7 @@ fn resolved_rejects_missing_or_rewritten_preparation_evidence() {
                 if damage == "recorded" {
                     // A valid but different local ref must not override the
                     // stronger head already persisted by Prepared.
-                    workspace::git(path, &["update-ref", "refs/grapher/base", &head]).unwrap();
+                    workspace::git(path, &["update-ref", "refs/pi-n/base", &head]).unwrap();
                 }
             }
         }

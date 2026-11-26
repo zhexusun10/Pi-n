@@ -1,4 +1,4 @@
-use grapher::{
+use pi_n::{
     compiler::{compile, downstream, node_id, unremovable_node_diagnostics},
     engine::feedback,
     model::*,
@@ -316,11 +316,11 @@ fn compiler_reports_each_transitive_dependency() {
     );
     // Older diagnostic payloads remain readable and do not acquire null fields.
     let old = serde_json::json!({ "code": "E209", "message": "Legacy diagnostic" });
-    let decoded: grapher::compiler::Diagnostic = serde_json::from_value(old.clone()).unwrap();
+    let decoded: pi_n::compiler::Diagnostic = serde_json::from_value(old.clone()).unwrap();
     assert!(decoded.dependency_path.is_none());
     assert_eq!(serde_json::to_value(decoded).unwrap(), old);
     let mut historical = Snapshot::default();
-    grapher::model::apply(
+    pi_n::model::apply(
         &mut historical,
         &Event {
             sequence: 1,
@@ -391,7 +391,7 @@ fn compiler_warns_about_identical_tasks_without_rejecting_the_graph() {
 
 #[test]
 fn compiler_changed_advisories_compare_candidate_facts_without_history() {
-    use grapher::compiler::changed_advisories;
+    use pi_n::compiler::changed_advisories;
     let before = Graph {
         original_goal: "Advisory projection".into(),
         nodes: [("a", "Same"), ("b", "Same"), ("review", "Use <FEEDBACK>")]
@@ -407,7 +407,7 @@ fn compiler_changed_advisories_compare_candidate_facts_without_history() {
             feedback: false,
         }],
     };
-    let codes = |warnings: Vec<grapher::compiler::Diagnostic>| {
+    let codes = |warnings: Vec<pi_n::compiler::Diagnostic>| {
         warnings
             .into_iter()
             .map(|warning| warning.code)
@@ -1361,7 +1361,7 @@ fn actual_shared_source_parallel_and_feedback_fixture_complete() {
 #[test]
 fn conflicting_worktrees_block_without_modifying_source_repository() {
     let temp = TempDir::new().unwrap();
-    let repository = grapher::fixture::repository(temp.path()).unwrap();
+    let repository = pi_n::fixture::repository(temp.path()).unwrap();
     let base = workspace::verify(&repository).unwrap();
     let first = temp.path().join("first");
     let second = temp.path().join("second");
@@ -1401,7 +1401,7 @@ fn conflicting_worktrees_block_without_modifying_source_repository() {
 #[test]
 fn dirty_source_is_preserved_until_approval() {
     let temp = TempDir::new().unwrap();
-    let repository = grapher::fixture::repository(temp.path()).unwrap();
+    let repository = pi_n::fixture::repository(temp.path()).unwrap();
     let head = workspace::git(&repository, &["rev-parse", "HEAD"]).unwrap();
     fs::write(repository.join("untracked.txt"), "keep my work").unwrap();
     assert_eq!(workspace::verify(&repository).unwrap(), head);
@@ -1423,19 +1423,19 @@ fn second_runtime_cannot_execute_the_same_event_store() {
 #[test]
 fn node_ref_namespace_and_no_write_fetch_head_transport_contract() {
     let temp = TempDir::new().unwrap();
-    let repository = grapher::fixture::repository(temp.path()).unwrap();
+    let repository = pi_n::fixture::repository(temp.path()).unwrap();
     let base = workspace::verify(&repository).unwrap();
     let run = uuid::Uuid::new_v4().to_string();
-    let scope = format!("refs/grapher/runs/{run}/nodes");
+    let scope = format!("refs/pi-n/runs/{run}/nodes");
     let node_a = temp.path().join(&run).join("node_a");
     let node_b = temp.path().join(&run).join("node_b");
 
     workspace::prepare(&repository, &node_a, &base, &[]).unwrap();
-    assert!(!node_a.join(".git/grapher-repository").exists());
-    assert!(!node_a.join(".git/grapher-node-id").exists());
+    assert!(!node_a.join(".git/pi-n-repository").exists());
+    assert!(!node_a.join(".git/pi-n-node-id").exists());
     assert_eq!(
         workspace::git(&node_a, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(),
-        "grapher-node"
+        "pi-n-node"
     );
     fs::write(node_a.join("a.txt"), "hello from node A\n").unwrap();
     // Encode arbitrary labels before using them in refs.
@@ -1464,7 +1464,7 @@ fn node_ref_namespace_and_no_write_fetch_head_transport_contract() {
         "Child did not receive parent's files"
     );
     let child_parent_ref =
-        workspace::git(&node_b, &["rev-parse", "refs/grapher/parents/nodeA"]).unwrap();
+        workspace::git(&node_b, &["rev-parse", "refs/pi-n/parents/nodeA"]).unwrap();
     assert_eq!(child_parent_ref, head_a);
 
     fs::write(node_b.join("b.txt"), "hello from node B\n").unwrap();
@@ -1479,7 +1479,7 @@ fn node_ref_namespace_and_no_write_fetch_head_transport_contract() {
 #[test]
 fn graph_result_cannot_discard_its_prepared_commit() {
     let temp = TempDir::new().unwrap();
-    let repository = grapher::fixture::repository(temp.path()).unwrap();
+    let repository = pi_n::fixture::repository(temp.path()).unwrap();
     let base = workspace::verify(&repository).unwrap();
     let child = temp.path().join("child");
     let prepared = workspace::prepare(&repository, &child, &base, &[]).unwrap();
@@ -1495,7 +1495,7 @@ fn graph_result_cannot_discard_its_prepared_commit() {
 #[test]
 fn serial_snapshot_does_not_commit_stage_or_move_graph_refs() {
     let temp = TempDir::new().unwrap();
-    let repository = grapher::fixture::repository(temp.path()).unwrap();
+    let repository = pi_n::fixture::repository(temp.path()).unwrap();
     let before = workspace::git(&repository, &["rev-parse", "HEAD"]).unwrap();
     fs::write(repository.join("README.md"), "staged user change\n").unwrap();
     workspace::git(&repository, &["add", "README.md"]).unwrap();
@@ -1517,12 +1517,12 @@ fn serial_snapshot_does_not_commit_stage_or_move_graph_refs() {
     );
     assert!(workspace::git(
         &repository,
-        &["rev-parse", "--verify", "refs/heads/grapher-node"]
+        &["rev-parse", "--verify", "refs/heads/pi-n-node"]
     )
     .is_err());
     assert!(workspace::git(
         &repository,
-        &["rev-parse", "--verify", "refs/grapher/nodes/task"]
+        &["rev-parse", "--verify", "refs/pi-n/nodes/task"]
     )
     .is_err());
     assert!(workspace::snapshot_node(&repository, &repository, "task").is_err());
@@ -1555,7 +1555,7 @@ fn human_resolved_workspace_is_imported_before_fresh_execution() {
         .unwrap();
     runtime.approve().unwrap();
     let job = runtime.jobs().unwrap().remove(0);
-    let repository = grapher::fixture::repository(&root).unwrap();
+    let repository = pi_n::fixture::repository(&root).unwrap();
     let result = perform(
         &job,
         &root,
@@ -1597,7 +1597,7 @@ fn human_resolved_workspace_is_imported_before_fresh_execution() {
             &repository,
             &[
                 "rev-parse",
-                &format!("refs/grapher/runs/{}/nodes/worker", runtime.state.run_id)
+                &format!("refs/pi-n/runs/{}/nodes/worker", runtime.state.run_id)
             ]
         )
         .unwrap(),

@@ -1,8 +1,8 @@
 /** Private correlation stays in Pi's session/event stream, not model context.
  * Only the reserved trailing UUID envelope is removed; source user text and
  * image blocks remain unchanged. An extension that removes the envelope early
- * simply prevents Grapher from claiming consumption. */
-const marker = /\n\n<grapher-steer-id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}<\/grapher-steer-id>$/;
+ * simply prevents Pi^n from claiming consumption. */
+const marker = /\n\n<pi-n-steer-id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}<\/pi-n-steer-id>$/;
 
 export function stripPlannerSteerMarker(text: string): string {
   return text.replace(marker, "");

@@ -16,18 +16,18 @@ before(async () => {
   server = await createServer({ cacheDir: "node_modules/.vite-sidebar-copy", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
 async function openApp(handler, language = "en", reducedMotion = "reduce") {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: language === "en" ? "en-US" : "zh-CN", reducedMotion });
   await context.addInitScript(({ repository, config, language }) => {
-    localStorage.setItem("grapher_language_v1", language);
-    localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Sidebar", lastOpened: 1 }]));
-    localStorage.setItem("grapher_workspace_runs", JSON.stringify({ [repository]: ["a", "b"] }));
-    localStorage.setItem("grapher_run_labels", JSON.stringify({ a: "Old cached A", b: "Old cached B" }));
-    localStorage.setItem("grapher_config", JSON.stringify(config));
+    localStorage.setItem("pi_n_language_v1", language);
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Sidebar", lastOpened: 1 }]));
+    localStorage.setItem("pi_n_workspace_runs", JSON.stringify({ [repository]: ["a", "b"] }));
+    localStorage.setItem("pi_n_run_labels", JSON.stringify({ a: "Old cached A", b: "Old cached B" }));
+    localStorage.setItem("pi_n_config", JSON.stringify(config));
     window.copiedTexts = [];
     window.clipboardWriteCalls = 0;
     window.rejectClipboard = false;
@@ -96,7 +96,7 @@ test("the sidebar always opens expanded, even with a stale collapsed preference"
     assert.equal(await sidebar.evaluate(element => element.classList.contains("is-collapsed")), true);
     assert.equal(await sidebar.locator("[title], [role='tooltip']").count(), 0, "the collapsed rail deliberately has no hover labels");
 
-    await page.evaluate(() => localStorage.setItem("grapher_sidebar_collapsed_v1", "true"));
+    await page.evaluate(() => localStorage.setItem("pi_n_sidebar_collapsed_v1", "true"));
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator('.run-item[data-run-id="a"]').waitFor();
     assert.equal(await sidebar.evaluate(element => element.classList.contains("is-collapsed")), false,
@@ -301,7 +301,7 @@ for (const reducedMotion of ["no-preference"]) {
       for (const id of ["a", "b"]) {
         await deleteHistory(page, id);
         await page.waitForFunction(id => {
-          const index = JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_workspace_runs"));
+          const index = JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"));
           return !Object.values(index).flat().includes(id);
         }, id);
         await page.locator(`.run-item[data-run-id="${id}"]`).waitFor({ state: "detached" });
@@ -327,15 +327,15 @@ test("deleting an already missing conversation prunes its card, but genuine fail
       await deleteHistory(page, "a");
       await page.getByRole("alert").getByText(message, { exact: true }).waitFor();
       assert.equal(await page.locator('.run-item[data-run-id="a"]').count(), 1);
-      assert.deepEqual(await page.evaluate(repository => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_workspace_runs"))[repository], repository), ["a", "b"]);
+      assert.deepEqual(await page.evaluate(repository => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"))[repository], repository), ["a", "b"]);
     }
     failure = "Run not found";
     await deleteHistory(page, "a");
     await page.locator('.run-item[data-run-id="a"]').waitFor({ state: "detached" });
     assert.equal(await page.locator('.run-item[data-run-id="b"]').count(), 1);
-    assert.deepEqual(await page.evaluate(repository => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_workspace_runs"))[repository], repository), ["b"]);
-    for (const key of ["grapher_run_labels", "grapher_run_modes"]) {
-      assert.equal(await page.evaluate(key => Object.hasOwn(JSON.parse(localStorage.getItem(`grapher-format-1:/mock:${key}`)), "a"), key), false);
+    assert.deepEqual(await page.evaluate(repository => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"))[repository], repository), ["b"]);
+    for (const key of ["pi_n_run_labels", "pi_n_run_modes"]) {
+      assert.equal(await page.evaluate(key => Object.hasOwn(JSON.parse(localStorage.getItem(`pi-n-format-1:/mock:${key}`)), "a"), key), false);
     }
     assert.equal(calls.filter(call => call.command === "delete_run").length, 3);
     await page.getByRole("alert").waitFor({ state: "detached" });
@@ -391,7 +391,7 @@ test("opening a confirmed missing conversation repairs the sidebar without hidin
     failure = "Run not found";
     await page.locator('.run-item[data-run-id="a"]').click();
     await page.locator('.run-item[data-run-id="a"]').waitFor({ state: "detached" });
-    assert.deepEqual(await page.evaluate(repository => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_workspace_runs"))[repository], repository), ["b"]);
+    assert.deepEqual(await page.evaluate(repository => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"))[repository], repository), ["b"]);
     assert.equal(await page.locator('.run-item[data-run-id="b"]').count(), 1);
     assert.equal(calls.some(call => call.command === "delete_run"), false, "repairing a missing card never deletes another Run");
     await page.getByRole("alert").waitFor({ state: "detached" });
@@ -701,9 +701,9 @@ test("adding workspace and conversation cards opens space smoothly without opaci
   const planningGate = new Promise(resolve => { releasePlanning = resolve; });
   try {
     await context.addInitScript(({ config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([]));
-      localStorage.setItem("grapher_config", JSON.stringify({ ...config, repository: "" }));
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([]));
+      localStorage.setItem("pi_n_config", JSON.stringify({ ...config, repository: "" }));
     }, { config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -846,12 +846,12 @@ for (const reducedMotion of ["no-preference"]) {
       await context.addInitScript(({ ws1, ws2, wsConfig }) => {
         if (localStorage.getItem("__archive_test_seeded")) return;
         localStorage.setItem("__archive_test_seeded", "1");
-        localStorage.setItem("grapher_language_v1", "en");
-        localStorage.setItem("grapher_projects", JSON.stringify([
+        localStorage.setItem("pi_n_language_v1", "en");
+        localStorage.setItem("pi_n_projects", JSON.stringify([
           { id: ws1, path: ws1, name: "Alpha", branch: "main", clean: true, lastOpened: 200 },
           { id: ws2, path: ws2, name: "Beta", branch: "main", clean: true, lastOpened: 100 },
         ]));
-        localStorage.setItem("grapher_config", JSON.stringify(wsConfig));
+        localStorage.setItem("pi_n_config", JSON.stringify(wsConfig));
       }, { ws1, ws2, wsConfig });
       await context.route("**/api/*", async route => {
         const command = new URL(route.request().url()).pathname.slice(5);
@@ -1053,9 +1053,9 @@ test("continuing an older conversation moves its card to the first position with
   ];
   try {
     await context.addInitScript(({ repository, config }) => {
-      localStorage.setItem("grapher_language_v1", "en");
-      localStorage.setItem("grapher_projects", JSON.stringify([{ id: repository, path: repository, name: "Repo", branch: "main", clean: true, lastOpened: 1 }]));
-      localStorage.setItem("grapher_config", JSON.stringify(config));
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Repo", branch: "main", clean: true, lastOpened: 1 }]));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repository, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
@@ -1143,7 +1143,7 @@ test("continuing an older conversation moves its card to the first position with
     assert.ok(reorderSamples.every(frame => !frame.scrollable), `reordering cards must not flash overflow: ${JSON.stringify(reorderSamples)}`);
     assert.deepEqual(await cardOrder(), ["conv-1", "conv-3", "conv-2"]);
     assert.deepEqual(
-      await page.evaluate((repoKey) => JSON.parse(localStorage.getItem("grapher-format-1:/mock:grapher_workspace_runs"))[repoKey], repository),
+      await page.evaluate((repoKey) => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"))[repoKey], repository),
       ["conv-1", "conv-3", "conv-2"],
     );
 

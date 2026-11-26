@@ -281,7 +281,7 @@ fn native_runtime_evidence_does_not_label_sibling_slot_files_as_external_host_to
     let temp = tempfile::tempdir().unwrap();
     let run = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(uuid::Uuid::new_v4().to_string());
     let work = run.join("a");
     let other = run.join("b/env/native");
@@ -312,7 +312,7 @@ fn native_runtime_evidence_does_not_label_sibling_slot_files_as_external_host_to
     // files into host toolchain inputs merely by changing the root spelling.
     for alias in [
         temp.path().join("current-workspace-alias"),
-        temp.path().join("decoy/.grapher-worktrees/run/a-alias"),
+        temp.path().join("decoy/.pi-n-worktrees/run/a-alias"),
     ] {
         fs::create_dir_all(alias.parent().unwrap()).unwrap();
         crate::path_safety::directory_link(&work, &alias);
@@ -328,7 +328,7 @@ fn native_runtime_evidence_does_not_label_sibling_slot_files_as_external_host_to
         );
     }
     // Conversely the managed bucket itself may be a trusted root alias. Its
-    // physical target need not repeat the allocator's .grapher-worktrees name.
+    // physical target need not repeat the allocator's .pi-n-worktrees name.
     let logical_bucket = run.parent().unwrap();
     let physical_bucket = temp.path().join("physical-slots");
     fs::rename(logical_bucket, &physical_bucket).unwrap();
@@ -362,7 +362,7 @@ fn native_runtime_startup_requires_file_evidence_and_rejects_sibling_inputs() {
     let temp = tempfile::tempdir().unwrap();
     let run = temp
         .path()
-        .join(".grapher-worktrees")
+        .join(".pi-n-worktrees")
         .join(uuid::Uuid::new_v4().to_string());
     let work = run.join("a");
     let sibling = run.join("b/native");

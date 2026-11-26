@@ -7,7 +7,7 @@ import { CONFIG_DIR_NAME, loadMcpConfig, mcpNamespace, validateMcpServerConfig,
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export function loadGrapherMcpConfig(options: {
+export function loadPiNMcpConfig(options: {
   globalDir: string; agentDir: string; cwd: string; projectTrusted: boolean;
 }): LoadedMcpConfig {
   const servers = new Map<string, McpServerEntry>();

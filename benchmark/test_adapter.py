@@ -180,7 +180,7 @@ class Handler(BaseHTTPRequestHandler):
   data = json.dumps({'result':result}).encode()
   self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
  def log_message(self, *args): pass
-HTTPServer(('127.0.0.1',int(os.environ['GRAPHER_PORT'])),Handler).serve_forever()
+HTTPServer(('127.0.0.1',int(os.environ['PI_N_PORT'])),Handler).serve_forever()
 '''
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -227,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
   data = json.dumps({'result':{'runId':'','phase':'draft'}}).encode()
   self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
  def log_message(self, *args): pass
-HTTPServer(('127.0.0.1',int(os.environ['GRAPHER_PORT'])),Handler).serve_forever()
+HTTPServer(('127.0.0.1',int(os.environ['PI_N_PORT'])),Handler).serve_forever()
 '''
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -253,7 +253,7 @@ HTTPServer(('127.0.0.1',int(os.environ['GRAPHER_PORT'])),Handler).serve_forever(
                 process.send_signal(signal.SIGTERM)
                 _, stderr = process.communicate(timeout=10)
                 self.assertNotEqual(process.returncode, 0)
-                self.assertIn('Harbor cancelled Grapher', stderr)
+                self.assertIn('Harbor cancelled Pi^n', stderr)
                 self.assertIn('cancelled', (root / 'logs/result.json').read_text())
                 with self.assertRaises(ProcessLookupError):
                     os.kill(backend_pid, 0)
@@ -306,7 +306,7 @@ time.sleep(60)
                         pass
 
     def test_local_backend_lifecycle_and_fixed_role_models(self):
-        # Stand-in for the Grapher binary to exercise actual loopback HTTP,
+        # Stand-in for the Pi^n binary to exercise actual loopback HTTP,
         # backend process startup/cleanup, per-trial request and log artifacts.
         backend = '''#!/usr/bin/env python3
 import json, os
@@ -326,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
   data = json.dumps({'result':result}).encode()
   self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
  def log_message(self, *args): pass
-HTTPServer(('127.0.0.1',int(os.environ['GRAPHER_PORT'])),Handler).serve_forever()
+HTTPServer(('127.0.0.1',int(os.environ['PI_N_PORT'])),Handler).serve_forever()
 '''
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

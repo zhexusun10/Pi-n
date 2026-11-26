@@ -9,7 +9,7 @@ import { applyDisabledProviders, reuseManagedTools } from '../engine/agent-dir.m
 import { prepareModelOverlay, overlayRuntimeOptions } from '../engine/model-config-overlay.mjs';
 
 test('configuring the agent directory creates an empty models.json without copying or linking a host model catalog', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-model-isolation-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-model-isolation-'));
   try {
     mkdirSync(join(root, '.pi/agent'), { recursive: true });
     writeFileSync(join(root, '.pi/agent/models.json'), '{"models":[]}');
@@ -19,7 +19,7 @@ test('configuring the agent directory creates an empty models.json without copyi
         "import {configureAgentDir} from './engine/agent-dir.mjs'; configureAgentDir();"], {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, HOME: root, PI_CODING_AGENT_DIR: target,
-          GRAPHER_ISOLATED_PI_MODELS: isolated },
+          PI_N_ISOLATED_PI_MODELS: isolated },
         encoding: 'utf8',
       });
       assert.equal(child.status, 0, child.stderr);
@@ -35,7 +35,7 @@ test('configuring the agent directory creates an empty models.json without copyi
         "import {configureAgentDir} from './engine/agent-dir.mjs'; configureAgentDir();"], {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, HOME: root, PI_CODING_AGENT_DIR: target,
-          GRAPHER_ISOLATED_PI_MODELS: isolated },
+          PI_N_ISOLATED_PI_MODELS: isolated },
         encoding: 'utf8',
       });
       assert.equal(rerun.status, 0, rerun.stderr);
@@ -45,9 +45,9 @@ test('configuring the agent directory creates an empty models.json without copyi
 });
 
 test('model overlay refreshes Pi models, preserves dedicated entries and backs up the original', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-model-overlay-'));
-  const saved = process.env.GRAPHER_ISOLATED_PI_MODELS;
-  delete process.env.GRAPHER_ISOLATED_PI_MODELS;
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-model-overlay-'));
+  const saved = process.env.PI_N_ISOLATED_PI_MODELS;
+  delete process.env.PI_N_ISOLATED_PI_MODELS;
   try {
     const source = join(root, 'pi-models.json');
     const agent = join(root, 'agent');
@@ -68,7 +68,7 @@ test('model overlay refreshes Pi models, preserves dedicated entries and backs u
     assert.deepEqual(first.providers.shared.models, [{ id: 'dedicated' }, { id: 'same', name: 'new' }, { id: 'added' }]);
     assert.deepEqual(first.providers.private, dedicated.providers.private);
     assert.deepEqual(JSON.parse(readFileSync(target, 'utf8')), dedicated);
-    assert.deepEqual(JSON.parse(readFileSync(join(agent, 'models.json.grapher-backup'), 'utf8')), dedicated);
+    assert.deepEqual(JSON.parse(readFileSync(join(agent, 'models.json.pi-n-backup'), 'utf8')), dedicated);
     assert.equal(await prepareModelOverlay(agent, JSON.parse, { source: target }), undefined, 'same file must not overlay itself');
     assert.equal(await prepareModelOverlay(agent, JSON.parse, { source: join(root, 'missing') }), undefined);
     assert.equal(await prepareModelOverlay(agent, JSON.parse, { source, validate: async path => path !== target }), target,
@@ -78,29 +78,29 @@ test('model overlay refreshes Pi models, preserves dedicated entries and backs u
     assert.equal(await prepareModelOverlay(empty, JSON.parse, { source }), source, 'source alone is loaded directly');
     writeFileSync(join(empty, 'models.json'), '{\n  "providers": {}\n}\n');
     assert.equal(await prepareModelOverlay(empty, JSON.parse, { source }), source, 'default empty target does not trigger merge or backup');
-    assert.equal(existsSync(join(empty, 'models.json.grapher-backup')), false);
+    assert.equal(existsSync(join(empty, 'models.json.pi-n-backup')), false);
     assert.deepEqual(await overlayRuntimeOptions({ modelsPath: join(root, 'explicit.json') }, agent, JSON.parse),
       { modelsPath: join(root, 'explicit.json') }, 'explicit model paths must not be replaced');
     upstream.providers.shared.models[0].name = 'refreshed';
     writeFileSync(source, JSON.stringify(upstream));
     const refreshed = JSON.parse(readFileSync(await prepareModelOverlay(agent, JSON.parse, { source }), 'utf8'));
     assert.equal(refreshed.providers.shared.models.find(m => m.id === 'same').name, 'refreshed');
-    process.env.GRAPHER_ISOLATED_PI_MODELS = '1';
+    process.env.PI_N_ISOLATED_PI_MODELS = '1';
     assert.equal(await prepareModelOverlay(agent, JSON.parse, { source }), undefined);
     assert.deepEqual(await overlayRuntimeOptions({ modelsPath: null }, agent, JSON.parse), { modelsPath: null });
-    delete process.env.GRAPHER_ISOLATED_PI_MODELS;
+    delete process.env.PI_N_ISOLATED_PI_MODELS;
     writeFileSync(source, '{bad');
     assert.equal(await prepareModelOverlay(agent, JSON.parse, { source }), source, 'Pi receives the malformed file and reports its own warning');
     assert.deepEqual(JSON.parse(readFileSync(target, 'utf8')), dedicated);
   } finally {
-    if (saved === undefined) delete process.env.GRAPHER_ISOLATED_PI_MODELS;
-    else process.env.GRAPHER_ISOLATED_PI_MODELS = saved;
+    if (saved === undefined) delete process.env.PI_N_ISOLATED_PI_MODELS;
+    else process.env.PI_N_ISOLATED_PI_MODELS = saved;
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test('reuses executable managed tools without replacing local tools or importing other files', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-managed-tools-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-managed-tools-'));
   try {
     const upstream = join(root, 'upstream');
     const target = join(root, 'target');
@@ -130,7 +130,7 @@ test('reuses executable managed tools without replacing local tools or importing
 });
 
 test('applyDisabledProviders ignores inherited prototype property names without throwing', () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-disabled-proto-'));
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-disabled-proto-'));
   try {
     writeFileSync(join(root, 'disabled-providers.json'), JSON.stringify(['toString', 'constructor', 'openai']));
     const env = { PI_CODING_AGENT_DIR: root, OPENAI_API_KEY: 'secret', ANTHROPIC_API_KEY: 'keep' };
@@ -142,9 +142,9 @@ test('applyDisabledProviders ignores inherited prototype property names without 
 });
 
 test('model overlay merges inherited prototype property names safely', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'grapher-overlay-proto-'));
-  const saved = process.env.GRAPHER_ISOLATED_PI_MODELS;
-  delete process.env.GRAPHER_ISOLATED_PI_MODELS;
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-overlay-proto-'));
+  const saved = process.env.PI_N_ISOLATED_PI_MODELS;
+  delete process.env.PI_N_ISOLATED_PI_MODELS;
   try {
     const source = join(root, 'pi-models.json');
     const agent = join(root, 'agent');
@@ -164,8 +164,8 @@ test('model overlay merges inherited prototype property names safely', async () 
     assert.deepEqual(merged.providers.constructor, { models: [{ id: 'upstream-constructor' }] });
     assert.deepEqual(merged.providers.custom, { models: [{ id: 'local' }] });
   } finally {
-    if (saved === undefined) delete process.env.GRAPHER_ISOLATED_PI_MODELS;
-    else process.env.GRAPHER_ISOLATED_PI_MODELS = saved;
+    if (saved === undefined) delete process.env.PI_N_ISOLATED_PI_MODELS;
+    else process.env.PI_N_ISOLATED_PI_MODELS = saved;
     rmSync(root, { recursive: true, force: true });
   }
 });

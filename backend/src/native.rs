@@ -28,7 +28,7 @@ pub(crate) fn shutdown_runtime() {
     begin_shutdown();
     if let Some(cache) = RUNTIME.get() {
         if let Err(error) = crate::native_runtime_storage::release(cache) {
-            eprintln!("[Grapher] Native runtime cleanup deferred: {error}");
+            eprintln!("[Pi^n] Native runtime cleanup deferred: {error}");
         }
     }
 }
@@ -66,7 +66,7 @@ fn schedule_runtime_prewarm(
     Some(thread::spawn(move || {
         if let Err(error) = prepare() {
             started.store(false, Ordering::SeqCst);
-            eprintln!("[Grapher] Graph runtime prewarm unavailable: {error}");
+            eprintln!("[Pi^n] Graph runtime prewarm unavailable: {error}");
         }
     }))
 }
@@ -108,8 +108,8 @@ impl RuntimeKeySession {
                 &installation.join("scripts/prepare-native-runtime.mjs"),
             ))
             .arg("--cache-key-session")
-            .env("GRAPHER_NATIVE_RUNTIME_PARENT", host_path(parent))
-            .env_remove("GRAPHER_NATIVE_RUNTIME_DIR")
+            .env("PI_N_NATIVE_RUNTIME_PARENT", host_path(parent))
+            .env_remove("PI_N_NATIVE_RUNTIME_DIR")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -235,7 +235,7 @@ pub(crate) fn prepared_runtime() -> Result<PathBuf, String> {
     }
     let installation = installation_root()
         .canonicalize()
-        .map_err(|error| format!("Cannot resolve Grapher installation root: {error}"))?;
+        .map_err(|error| format!("Cannot resolve Pi^n installation root: {error}"))?;
     let runtime_parent = crate::workspace::native_runtime_parent();
     let session = RuntimeKeySession::start(&installation, &runtime_parent)?;
     let key = session.root_key.clone();
@@ -257,7 +257,7 @@ pub(crate) fn prepared_runtime() -> Result<PathBuf, String> {
         |directory| match session.borrow_mut().verify(directory) {
             Ok(actual) => Ok(actual.trim() == key.trim()),
             Err(error) => {
-                eprintln!("[Grapher] Native runtime verification failed: {error}");
+                eprintln!("[Pi^n] Native runtime verification failed: {error}");
                 Ok(false)
             }
         },
@@ -268,10 +268,10 @@ pub(crate) fn prepared_runtime() -> Result<PathBuf, String> {
     // through the existing read-only engine mount/profile without sharing
     // writable temp directories or trusting a session's verification stamp.
     if let Err(error) = prime_runtime_cache(&root) {
-        eprintln!("[Grapher] Native runtime cache preparation unavailable: {error}");
+        eprintln!("[Pi^n] Native runtime cache preparation unavailable: {error}");
     }
     eprintln!(
-        "[Grapher] Shared Graph runtime ready: {}",
+        "[Pi^n] Shared Graph runtime ready: {}",
         host_path(&root).display()
     );
     *cached = Some(runtime);
@@ -282,7 +282,7 @@ fn prime_runtime_cache(engine: &Path) -> Result<(), String> {
     let mut command = Command::new(trusted_node()?);
     command
         .arg(host_path(&engine.join("engine/entrypoint.mjs")))
-        .arg("--grapher-prepare-runtime-cache")
+        .arg("--pi-n-prepare-runtime-cache")
         .current_dir(host_path(engine))
         .env("PI_CODING_AGENT_DIR", host_path(&agent_dir()?))
         .stdin(Stdio::null())
@@ -312,8 +312,8 @@ fn prime_runtime_cache(engine: &Path) -> Result<(), String> {
 
 fn bind_runtime_cache(command: &mut Command, engine: &Path) {
     command.env(
-        "GRAPHER_RUNTIME_CACHE_DIR",
-        host_path(&engine.join(".grapher-runtime-cache")),
+        "PI_N_RUNTIME_CACHE_DIR",
+        host_path(&engine.join(".pi-n-runtime-cache")),
     );
 }
 
@@ -327,8 +327,8 @@ fn run_runtime_preparation(
         .arg(host_path(
             &installation.join("scripts/prepare-native-runtime.mjs"),
         ))
-        .env("GRAPHER_NATIVE_RUNTIME_PARENT", host_path(parent))
-        .env("GRAPHER_NATIVE_RUNTIME_DIR", host_path(destination))
+        .env("PI_N_NATIVE_RUNTIME_PARENT", host_path(parent))
+        .env("PI_N_NATIVE_RUNTIME_DIR", host_path(destination))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -385,7 +385,7 @@ fn installation_root_for(
 }
 
 pub fn installation_root() -> PathBuf {
-    let override_root = non_empty_env_path("GRAPHER_INSTALLATION_ROOT");
+    let override_root = non_empty_env_path("PI_N_INSTALLATION_ROOT");
     installation_root_for(
         override_root.as_deref(),
         std::env::current_exe().ok().as_deref(),
@@ -524,16 +524,16 @@ pub(crate) fn bind_workspace_state(command: &mut Command, workspace: &Path) -> R
     let home = state.join(".agent-home");
     if let Some(user_home) = home_dir() {
         command.env(
-            "GRAPHER_UPSTREAM_PI_MODELS",
+            "PI_N_UPSTREAM_PI_MODELS",
             host_path(&user_home.join(".pi/agent/models.json")),
         );
     }
     crate::path_safety::real_child_path(&state, &home, false)?;
     fs::create_dir_all(&home).map_err(|e| e.to_string())?;
-    if let Some(directory) = environment_path("GRAPHER_GLOBAL_PI_AGENT_DIR")
+    if let Some(directory) = environment_path("PI_N_GLOBAL_PI_AGENT_DIR")
         .or_else(|| home_dir().map(|home| home.join(".pi/agent")))
     {
-        command.env("GRAPHER_GLOBAL_PI_AGENT_DIR", host_path(&directory));
+        command.env("PI_N_GLOBAL_PI_AGENT_DIR", host_path(&directory));
     }
     for (key, value) in workspace_environment(workspace)? {
         command.env(key, value);
@@ -645,9 +645,9 @@ fn is_managed_worktrees_or_workspaces_bucket(path: &Path) -> bool {
                     || (cfg!(target_os = "macos")
                         && crate::path_identity::case_insensitive_volume(path))
                 {
-                    name.eq_ignore_ascii_case(".grapher-workspaces")
+                    name.eq_ignore_ascii_case(".pi-n-workspaces")
                 } else {
-                    name == ".grapher-workspaces"
+                    name == ".pi-n-workspaces"
                 }
             })
 }
@@ -668,7 +668,7 @@ pub fn validate_workspace(role: PiRole, repository: &Path, cwd: &Path) -> Result
     crate::path_identity::ensure_windows_path(&cwd, "Execution workspace")?;
     let data = crate::workspace::data_root();
     if data.exists() && crate::workspace::scope_contains(&data, &repository) {
-        return Err("Runtime data is inside the source project; configure an external GRAPHER_DATA_DIR before launching an agent (existing data is not migrated or deleted)".into());
+        return Err("Runtime data is inside the source project; configure an external PI_N_DATA_DIR before launching an agent (existing data is not migrated or deleted)".into());
     }
     #[cfg(unix)]
     if repository.to_str().is_none() || cwd.to_str().is_none() {
@@ -770,15 +770,15 @@ fn resolve_trusted_node(override_path: Option<&Path>) -> Result<PathBuf, String>
         .output()
         .map_err(|error| {
             format!(
-                "Node.js 22.19+ is required by Grapher but could not be started: {error}. \
-                 Install Node.js from https://nodejs.org/ or set GRAPHER_TRUSTED_NODE."
+                "Node.js 22.19+ is required by Pi^n but could not be started: {error}. \
+                 Install Node.js from https://nodejs.org/ or set PI_N_TRUSTED_NODE."
             )
         })?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr);
         let detail = detail.trim();
         return Err(if detail.is_empty() {
-            "Cannot resolve trusted native Node executable; ensure Node.js 22.19+ is installed or set GRAPHER_TRUSTED_NODE".into()
+            "Cannot resolve trusted native Node executable; ensure Node.js 22.19+ is installed or set PI_N_TRUSTED_NODE".into()
         } else {
             format!("Cannot resolve trusted native Node executable: {detail}")
         });
@@ -801,8 +801,8 @@ pub(crate) fn trusted_node() -> Result<PathBuf, String> {
     if let Some(path) = NODE.get() {
         return Ok(path.clone());
     }
-    let override_path = non_empty_env_path("GRAPHER_TRUSTED_NODE")
-        .or_else(|| non_empty_env_path("GRAPHER_NODE_PATH"));
+    let override_path = non_empty_env_path("PI_N_TRUSTED_NODE")
+        .or_else(|| non_empty_env_path("PI_N_NODE_PATH"));
     let resolved = resolve_trusted_node(override_path.as_deref())?;
     let _ = NODE.set(resolved.clone());
     Ok(resolved)
@@ -834,24 +834,24 @@ fn git_install_guidance() -> &'static str {
     #[cfg(target_os = "macos")]
     {
         "Install Xcode Command Line Tools (`xcode-select --install`) or Git \
-         (https://git-scm.com/download/mac), or set GRAPHER_TRUSTED_GIT to a valid git executable."
+         (https://git-scm.com/download/mac), or set PI_N_TRUSTED_GIT to a valid git executable."
     }
     #[cfg(windows)]
     {
         "Install Git for Windows (https://git-scm.com/download/win), \
-         or set GRAPHER_TRUSTED_GIT to a valid git.exe path."
+         or set PI_N_TRUSTED_GIT to a valid git.exe path."
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         "Install git using your system package manager (https://git-scm.com/downloads), \
-         or set GRAPHER_TRUSTED_GIT to a valid git executable."
+         or set PI_N_TRUSTED_GIT to a valid git executable."
     }
 }
 
 fn git_unavailable_error() -> String {
     let binary = if cfg!(windows) { "git.exe" } else { "git" };
     format!(
-        "Git is required by Grapher, but no working {binary} executable was found. {}",
+        "Git is required by Pi^n, but no working {binary} executable was found. {}",
         git_install_guidance()
     )
 }
@@ -948,7 +948,7 @@ fn standard_git_candidates() -> Vec<PathBuf> {
             candidates.push(PathBuf::from(path));
         }
     }
-    if let Some(managed) = non_empty_env_path("GRAPHER_MANAGED_GIT_PATH") {
+    if let Some(managed) = non_empty_env_path("PI_N_MANAGED_GIT_PATH") {
         if !candidates.contains(&managed) {
             candidates.push(managed);
         }
@@ -998,7 +998,7 @@ fn resolve_trusted_git(
     }
     if let Some(shim_error) = clt_shim_error {
         return Err(format!(
-            "Git is required by Grapher, but {shim_error}. Or set GRAPHER_TRUSTED_GIT to a valid git executable."
+            "Git is required by Pi^n, but {shim_error}. Or set PI_N_TRUSTED_GIT to a valid git executable."
         ));
     }
     Err(git_unavailable_error())
@@ -1026,7 +1026,7 @@ pub fn host_preflight() -> HostPreflight {
     }
 }
 
-/// Resolve the bootstrap Git before applying business PATH. The Grapher-owned
+/// Resolve the bootstrap Git before applying business PATH. The Pi^n-owned
 /// entrypoint verifies the pinned Pi baseline with the host's Git; a business
 /// environment may keep a deliberately minimal PATH and must not choose it.
 pub(crate) fn trusted_git() -> Result<PathBuf, String> {
@@ -1034,7 +1034,7 @@ pub(crate) fn trusted_git() -> Result<PathBuf, String> {
     if let Some(path) = GIT.get() {
         return Ok(path.clone());
     }
-    let override_path = non_empty_env_path("GRAPHER_TRUSTED_GIT");
+    let override_path = non_empty_env_path("PI_N_TRUSTED_GIT");
     let path_var = std::env::var_os("PATH");
     let standard = standard_git_candidates();
     let resolved = resolve_trusted_git(override_path.as_deref(), path_var.as_deref(), &standard)?;
@@ -1055,9 +1055,9 @@ pub fn command(role: PiRole, repository: &Path, cwd: &Path) -> Result<Command, S
     ));
     command.current_dir(host_path(&cwd));
     command.env("PI_CODING_AGENT_DIR", host_path(&agent_dir()?));
-    command.env_remove("GRAPHER_EXECUTION_KIND");
-    command.env_remove("GRAPHER_AGENT_KIND");
-    command.env_remove("GRAPHER_RUNTIME_CACHE_DIR");
+    command.env_remove("PI_N_EXECUTION_KIND");
+    command.env_remove("PI_N_AGENT_KIND");
+    command.env_remove("PI_N_RUNTIME_CACHE_DIR");
     clear_git_environment(&mut command);
     bind_trusted_git(&mut command)?;
     bind_baseline_context(&mut command);
@@ -1075,12 +1075,12 @@ pub(crate) fn baseline_verification_context() -> &'static str {
 }
 
 pub(crate) fn bind_baseline_context(command: &mut Command) {
-    command.env("GRAPHER_BASELINE_CONTEXT", baseline_verification_context());
+    command.env("PI_N_BASELINE_CONTEXT", baseline_verification_context());
 }
 
 pub(crate) fn bind_source_case(command: &mut Command, source: &Path) {
     command.env(
-        "GRAPHER_SOURCE_CASE_INSENSITIVE",
+        "PI_N_SOURCE_CASE_INSENSITIVE",
         if crate::path_identity::case_insensitive_volume(source) {
             "1"
         } else {
@@ -1091,9 +1091,9 @@ pub(crate) fn bind_source_case(command: &mut Command, source: &Path) {
 
 /// The business launch binding replaces PATH before Pi/extension factories.
 /// The bootstrap needs host Git even when that PATH omits it; the protected
-/// GRAPHER_ namespace keeps business variables from forging the value.
+/// PI_N_ namespace keeps business variables from forging the value.
 pub(crate) fn bind_trusted_git(command: &mut Command) -> Result<(), String> {
-    command.env("GRAPHER_TRUSTED_GIT", host_path(&trusted_git()?));
+    command.env("PI_N_TRUSTED_GIT", host_path(&trusted_git()?));
     Ok(())
 }
 
@@ -1236,7 +1236,7 @@ pub(crate) fn execution_command_scoped(
         .parent()
         .and_then(Path::parent)
         .filter(|root| is_managed_worktrees_or_workspaces_bucket(root))
-        .ok_or("Graph workspace must be .grapher-worktrees/<run>/<instance>")?;
+        .ok_or("Graph workspace must be .pi-n-worktrees/<run>/<instance>")?;
     #[cfg(windows)]
     let _ = worktree_root; // Keep the same workspace layout validation on Windows.
     let engine = prepared_runtime()?;
@@ -1291,7 +1291,7 @@ pub(crate) fn execution_command_scoped(
         command
             .current_dir(&current)
             .env("PI_CODING_AGENT_DIR", agent_dir()?)
-            .env("GRAPHER_DENIED_PATHS", &denied_paths);
+            .env("PI_N_DENIED_PATHS", &denied_paths);
         clear_git_environment(&mut command);
         bind_trusted_git(&mut command)?;
         bind_baseline_context(&mut command);
@@ -1327,7 +1327,7 @@ pub(crate) fn execution_command_scoped(
             &merger_git,
             read_only_data,
         )?;
-        command.env("GRAPHER_DENIED_PATHS", &denied_paths);
+        command.env("PI_N_DENIED_PATHS", &denied_paths);
         clear_git_environment(&mut command);
         bind_trusted_git(&mut command)?;
         bind_baseline_context(&mut command);
@@ -1409,7 +1409,7 @@ pub fn agent_dir() -> Result<PathBuf, String> {
     let path = if let Some(path) = environment_path("PI_CODING_AGENT_DIR") {
         expand_home_path(path)
     } else {
-        home.join(".grapher/pi-agent")
+        home.join(".pi-n/pi-agent")
     };
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     ensure_default_models_file(&path)?;
@@ -1425,7 +1425,7 @@ pub fn check_retired_leases(data: &Path) -> Result<(), String> {
     }
     for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
-        if entry.file_name().to_string_lossy().starts_with("grapher-") {
+        if entry.file_name().to_string_lossy().starts_with("pi-n-") {
             return Err(format!("发现旧执行器的未清理 lease：{}。请先使用旧版本停止对应执行并确认没有后台写入；新原生后端不会删除记录或接管旧执行。", entry.path().display()));
         }
     }
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn trusted_node_probe_never_loads_ambient_business_preloads() {
-        const CHILD: &str = "GRAPHER_TEST_NODE_DISCOVERY_CHILD";
+        const CHILD: &str = "PI_N_TEST_NODE_DISCOVERY_CHILD";
         if std::env::var_os(CHILD).is_some() {
             assert!(trusted_node().unwrap().is_absolute());
             println!("TRUSTED_NODE_PROBE_OK");
@@ -1524,7 +1524,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(uuid::Uuid::new_v4().to_string())
             .join("source");
         fs::create_dir_all(&source).unwrap();
@@ -1620,7 +1620,7 @@ mod tests {
         bind_trusted_git(&mut command).unwrap();
         let value = command
             .get_envs()
-            .find(|(name, _)| *name == std::ffi::OsStr::new("GRAPHER_TRUSTED_GIT"))
+            .find(|(name, _)| *name == std::ffi::OsStr::new("PI_N_TRUSTED_GIT"))
             .and_then(|(_, value)| value)
             .expect("bootstrap Git binding is required");
         assert_eq!(Path::new(value), git);
@@ -1642,9 +1642,9 @@ mod tests {
 
     #[test]
     fn environment_paths_expand_home_without_rewriting_absolute_paths() {
-        let expanded = expand_home_path(PathBuf::from("~/grapher-agent"));
+        let expanded = expand_home_path(PathBuf::from("~/pi-n-agent"));
         assert!(expanded.is_absolute(), "{}", expanded.display());
-        assert!(expanded.ends_with("grapher-agent"));
+        assert!(expanded.ends_with("pi-n-agent"));
         let absolute = PathBuf::from("/tmp/absolute-agent");
         assert_eq!(expand_home_path(absolute.clone()), absolute);
     }
@@ -1653,9 +1653,9 @@ mod tests {
     fn installation_root_prefers_override_then_relocated_package_and_retains_dev_fallback() {
         let temp = tempfile::tempdir().unwrap();
         let bundled = temp.path().join("Tauri Resources");
-        let packaged = temp.path().join("Grapher 安装 # %");
+        let packaged = temp.path().join("Pi^n 安装 # %");
         let source = temp.path().join("source");
-        let executable = packaged.join("grapher");
+        let executable = packaged.join("pi-n");
         assert_eq!(
             installation_root_for(None, Some(&executable), &source),
             source
@@ -1713,7 +1713,7 @@ mod tests {
 
         let missing = temp.path().join("missing-git");
         let err = resolve_trusted_git(Some(&missing), None, &[]).unwrap_err();
-        assert!(err.contains("GRAPHER_TRUSTED_GIT"), "{err}");
+        assert!(err.contains("PI_N_TRUSTED_GIT"), "{err}");
 
         let broken_dir = temp.path().join("broken-bin");
         fs::create_dir_all(&broken_dir).unwrap();
@@ -1729,7 +1729,7 @@ mod tests {
             fs::write(&broken_git, b"not-a-valid-pe").unwrap();
         }
         let err = resolve_trusted_git(Some(&broken_git), None, &[]).unwrap_err();
-        assert!(err.contains("GRAPHER_TRUSTED_GIT"), "{err}");
+        assert!(err.contains("PI_N_TRUSTED_GIT"), "{err}");
 
         // Broken candidate on PATH is skipped in favor of standard fallback.
         let path_with_broken = std::env::join_paths([&broken_dir]).unwrap();
@@ -1740,15 +1740,15 @@ mod tests {
         // When no working Git exists on PATH or standard locations, produce an actionable error.
         let unavailable = resolve_trusted_git(None, Some(&path_with_broken), &[]).unwrap_err();
         assert!(
-            unavailable.contains("Git is required by Grapher")
-                && unavailable.contains("GRAPHER_TRUSTED_GIT"),
+            unavailable.contains("Git is required by Pi^n")
+                && unavailable.contains("PI_N_TRUSTED_GIT"),
             "{unavailable}"
         );
     }
 
     #[test]
     fn desktop_env_overrides_control_installation_root_and_trusted_executables() {
-        const CHILD: &str = "GRAPHER_TEST_DESKTOP_OVERRIDES_CHILD";
+        const CHILD: &str = "PI_N_TEST_DESKTOP_OVERRIDES_CHILD";
         if std::env::var_os(CHILD).is_some() {
             println!(
                 "{}",
@@ -1780,9 +1780,9 @@ mod tests {
                 "--nocapture",
             ])
             .env(CHILD, "1")
-            .env("GRAPHER_INSTALLATION_ROOT", &resources)
-            .env("GRAPHER_TRUSTED_NODE", &fake_node)
-            .env("GRAPHER_TRUSTED_GIT", &real_git)
+            .env("PI_N_INSTALLATION_ROOT", &resources)
+            .env("PI_N_TRUSTED_NODE", &fake_node)
+            .env("PI_N_TRUSTED_GIT", &real_git)
             .output()
             .unwrap();
         assert!(
@@ -1845,7 +1845,7 @@ mod tests {
         let base = crate::workspace::snapshot_repository(&source).unwrap();
         let slot = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(uuid::Uuid::new_v4().to_string())
             .join("node");
         crate::workspace::prepare(&source, &slot, &base, &[]).unwrap();
@@ -1864,7 +1864,7 @@ mod tests {
             .unwrap_err()
             .contains("private Git"));
         assert!(validate_workspace(PiRole::Planner, &source, &node).is_err());
-        let private = temp.path().join(".grapher-workspaces/run/planner");
+        let private = temp.path().join(".pi-n-workspaces/run/planner");
         fs::create_dir_all(&private).unwrap();
         crate::workspace::git(&private, &["init", "-q"]).unwrap();
         crate::workspace::git(&private, &["commit", "--allow-empty", "-qm", "base"]).unwrap();
@@ -1872,7 +1872,7 @@ mod tests {
         assert!(error.contains("private Git"), "{error}");
         let private = temp
             .path()
-            .join(".grapher-worktrees")
+            .join(".pi-n-worktrees")
             .join(uuid::Uuid::new_v4().to_string())
             .join("planner");
         let input = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
@@ -1901,7 +1901,7 @@ mod tests {
         assert!(validate_workspace(PiRole::Merger, &source, &source).is_ok());
         let run = uuid::Uuid::new_v4().to_string();
         for name in ["node", "planner"] {
-            let private = temp.path().join(".grapher-worktrees").join(&run).join(name);
+            let private = temp.path().join(".pi-n-worktrees").join(&run).join(name);
             fs::create_dir_all(&private).unwrap();
             assert!(validate_workspace(PiRole::Merger, &source, &private)
                 .unwrap_err()
@@ -1947,7 +1947,7 @@ mod tests {
             &probe,
             r#"import * as fs from 'node:fs';
 export default function () {
-  fs.writeFileSync(process.env.GRAPHER_GRAPH_PATH!, 'graph');
+  fs.writeFileSync(process.env.PI_N_GRAPH_PATH!, 'graph');
   fs.writeFileSync('planner-output', 'source content');
 }
 "#,
@@ -1982,8 +1982,8 @@ export default function () {
             .arg(&probe)
             .arg("--session-dir")
             .arg(&session)
-            .env("GRAPHER_MODE", "planner")
-            .env("GRAPHER_GRAPH_PATH", &graph_path)
+            .env("PI_N_MODE", "planner")
+            .env("PI_N_GRAPH_PATH", &graph_path)
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap();
@@ -2021,8 +2021,8 @@ export default function () {
                     command.get_args().next(),
                     Some(host_path(&installation_root().join("engine/entrypoint.mjs")).as_os_str())
                 );
-                assert!(!temp.path().join(".grapher-workspaces").exists());
-                assert!(!temp.path().join(".grapher-worktrees").exists());
+                assert!(!temp.path().join(".pi-n-workspaces").exists());
+                assert!(!temp.path().join(".pi-n-worktrees").exists());
             }
         }
     }
@@ -2062,7 +2062,7 @@ import { pathToFileURL } from 'node:url';
 export default async function () {
   try {
     assert.equal(realpathSync(process.cwd()), realpathSync(process.env.EXPECTED_CWD));
-    const { default: policy } = await import(pathToFileURL(join(process.env.GRAPHER_TEST_RUNTIME, 'engine/prompt-extension.ts')).href);
+    const { default: policy } = await import(pathToFileURL(join(process.env.PI_N_TEST_RUNTIME, 'engine/prompt-extension.ts')).href);
     const tools = new Map(), hooks = new Map();
     policy({ registerTool(tool) { tools.set(tool.name, tool); }, on(name, hook) { hooks.set(name, hook); } });
     assert.deepEqual([...tools.keys()].sort(), ['bash', 'edit', 'read', 'write']);
@@ -2071,8 +2071,8 @@ export default async function () {
     await bash.execute('planner-cwd', { command: 'printf frontier > planner-probe.txt' });
     assert.equal(readFileSync('planner-probe.txt', 'utf8'), 'frontier');
     assert.equal(text(await bash.execute('pwd', { command: 'pwd -P' })), '.');
-    assert.equal(text(await tools.get('read').execute('read', { path: join(process.env.GRAPHER_ORIGINAL_ROOT, 'planner-probe.txt') })), 'frontier');
-    const modelPath = join(process.env.GRAPHER_ORIGINAL_ROOT, 'planner-plan.md');
+    assert.equal(text(await tools.get('read').execute('read', { path: join(process.env.PI_N_ORIGINAL_ROOT, 'planner-probe.txt') })), 'frontier');
+    const modelPath = join(process.env.PI_N_ORIGINAL_ROOT, 'planner-plan.md');
     await tools.get('write').execute('write', { path: modelPath, content: 'planned: first\n' });
     assert.equal(readFileSync('planner-plan.md', 'utf8'), 'planned: first\n');
     await tools.get('edit').execute('edit', { path: modelPath, edits: [{ oldText: 'first', newText: 'second' }] });
@@ -2086,7 +2086,7 @@ export default async function () {
 }
 "#).unwrap();
         for label in ["first", "next"] {
-            let cwd = base.join(".grapher-worktrees/run").join(label);
+            let cwd = base.join(".pi-n-worktrees/run").join(label);
             let session = data.join("planner-session");
             fs::create_dir_all(&session).unwrap();
             let input = crate::workspace::snapshot_repository(&source).unwrap();
@@ -2106,13 +2106,13 @@ export default async function () {
                 .arg(&probe)
                 .arg("--session-dir")
                 .arg(&session)
-                .env("GRAPHER_MODE", "planner")
-                .env("GRAPHER_EXECUTION_KIND", "graph")
-                .env("GRAPHER_PLANNER_WRITE_TOOLS", "true")
-                .env("GRAPHER_TEST_RUNTIME", &engine)
+                .env("PI_N_MODE", "planner")
+                .env("PI_N_EXECUTION_KIND", "graph")
+                .env("PI_N_PLANNER_WRITE_TOOLS", "true")
+                .env("PI_N_TEST_RUNTIME", &engine)
                 .env("EXPECTED_CWD", &cwd)
-                .env("GRAPHER_ORIGINAL_ROOT", &source)
-                .env("GRAPHER_SOURCE_ALIAS", &source)
+                .env("PI_N_ORIGINAL_ROOT", &source)
+                .env("PI_N_SOURCE_ALIAS", &source)
                 .env("PI_CODING_AGENT_DIR", base.join("agent"))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
@@ -2155,7 +2155,7 @@ export default async function () {
         let input = crate::workspace::snapshot_repository(&source).unwrap();
         let mut slots = Vec::new();
         for label in ["initial", "target", "denied"] {
-            let path = base.join(".grapher-worktrees/run").join(label);
+            let path = base.join(".pi-n-worktrees/run").join(label);
             crate::workspace::prepare(&source, &path, &input, &[]).unwrap();
             fs::write(path.join("business.txt"), label).unwrap();
             slots.push(path);
@@ -2200,16 +2200,16 @@ export default async function () {
             .arg(&probe)
             .arg("--session-dir")
             .arg(&session)
-            .env("GRAPHER_MODE", "planner")
-            .env("GRAPHER_EXECUTION_KIND", "graph")
-            .env("GRAPHER_ORIGINAL_ROOT", &source)
-            .env("GRAPHER_SOURCE_ALIAS", &source)
-            .env("GRAPHER_PLANNER_FOLLOWUP", "true")
-            .env("GRAPHER_PLANNER_WRITE_TOOLS", "true")
-            .env("GRAPHER_PLANNER_WORKSPACES", targets.to_string())
-            .env("GRAPHER_TEST_RUNTIME", runtime)
-            .env("GRAPHER_TEST_DENIED", &slots[2]);
-        command.env_remove("GRAPHER_PLANNER_WORKSPACES_FILE");
+            .env("PI_N_MODE", "planner")
+            .env("PI_N_EXECUTION_KIND", "graph")
+            .env("PI_N_ORIGINAL_ROOT", &source)
+            .env("PI_N_SOURCE_ALIAS", &source)
+            .env("PI_N_PLANNER_FOLLOWUP", "true")
+            .env("PI_N_PLANNER_WRITE_TOOLS", "true")
+            .env("PI_N_PLANNER_WORKSPACES", targets.to_string())
+            .env("PI_N_TEST_RUNTIME", runtime)
+            .env("PI_N_TEST_DENIED", &slots[2]);
+        command.env_remove("PI_N_PLANNER_WORKSPACES_FILE");
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -2255,7 +2255,7 @@ export default async function () {
         let base = host_path(&temp.path().canonicalize().unwrap());
         let source = base.join("source");
         let data = base.join("data"); // runtime state never belongs in the project
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let a = root.join("run/a");
         let b = root.join("run/b");
         for path in [&source, &data, &a, &b] {
@@ -2301,7 +2301,7 @@ export default async function () {
             let session = data.join(format!("sessions/{label}"));
             fs::create_dir_all(&session).unwrap();
             let mut command = execution_command(role, &source, cwd, &data, &session).unwrap();
-            // The production profile already makes the Grapher installation
+            // The production profile already makes the Pi^n installation
             // read-only (write-denied) on every platform boundary.
             command
                 .args([
@@ -2317,21 +2317,21 @@ export default async function () {
                 .arg("--session-dir")
                 .arg(&session)
                 .env(
-                    "GRAPHER_MODE",
+                    "PI_N_MODE",
                     if role == PiRole::Merger {
                         "merger"
                     } else {
                         "node"
                     },
                 )
-                .env("GRAPHER_EXECUTION_KIND", "graph")
-                .env("GRAPHER_ORIGINAL_ROOT", &source)
-                .env("GRAPHER_SOURCE_ALIAS", &source)
-                .env("GRAPHER_TEST_RUNTIME", &engine)
-                .env("GRAPHER_TEST_LABEL", label)
-                .env("GRAPHER_TEST_EXTERNAL", &external)
-                .env("GRAPHER_TEST_SIBLING", sibling.join("private"))
-                .env("GRAPHER_TEST_OTHER_SESSION", &other_session)
+                .env("PI_N_EXECUTION_KIND", "graph")
+                .env("PI_N_ORIGINAL_ROOT", &source)
+                .env("PI_N_SOURCE_ALIAS", &source)
+                .env("PI_N_TEST_RUNTIME", &engine)
+                .env("PI_N_TEST_LABEL", label)
+                .env("PI_N_TEST_EXTERNAL", &external)
+                .env("PI_N_TEST_SIBLING", sibling.join("private"))
+                .env("PI_N_TEST_OTHER_SESSION", &other_session)
                 .env("PI_CODING_AGENT_DIR", base.join(format!("agent-{label}")))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
@@ -2376,7 +2376,7 @@ export default async function () {
         check_retired_leases(temp.path()).unwrap();
         let directory = temp.path().join("containers");
         fs::create_dir(&directory).unwrap();
-        let record = directory.join("grapher-old-execution");
+        let record = directory.join("pi-n-old-execution");
         fs::write(&record, "1").unwrap();
         assert!(check_retired_leases(temp.path()).is_err());
         assert_eq!(fs::read_to_string(record).unwrap(), "1");

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Reproducibly generates the Tauri desktop app icons under `src-tauri/icons/`
-// from the web mark source (`assets/icon-dots.svg`), placing the gray mark
+// from the web mark source (`assets/icon-dots.svg`), placing the Pi^n mark
 // on a clean white macOS/desktop rounded-square canvas.
 import { spawnSync } from 'node:child_process';
 import {
@@ -30,10 +30,10 @@ export const REQUIRED_DESKTOP_ICONS = Object.freeze([
 ]);
 
 /**
- * Extract the vector shapes and light-theme color from `assets/icon-dots.svg`
+ * Extract the vector shapes and light-theme fallback color from `assets/icon-dots.svg`
  * and compose a 1024x1024 desktop app icon SVG with a white rounded-square canvas
  * and balanced padding (matching Apple HIG icon grid proportions without any dark
- * outer tile). Supports both stroke-based graph marks and fill-based dot marks
+ * outer tile). Preserves explicit per-shape fills (e.g. Pi's three-color blocks)
  * while resolving `@media (prefers-color-scheme: light)` explicitly for resvg.
  */
 export function buildDesktopIconSvg(webSvgSource) {
@@ -67,7 +67,7 @@ export function buildDesktopIconSvg(webSvgSource) {
 
   // 1024x1024 canvas:
   // - White rounded-square tile: 824x824 outer bounds (x=100..924, y=100..924),
-  //   rendered as an 820x820 rect with a subtle 4px #E2E8F0 stroke (Grapher's
+  //   rendered as an 820x820 rect with a subtle 4px #E2E8F0 stroke (Pi^n's
   //   --border-default) so the white tile stays crisp on light Finder/Dock surfaces.
   // - 512x512 web mark scaled by 1.21875 (624x624 box centered at 512,512),
   //   leaving clean, balanced white padding on every side.
@@ -76,7 +76,7 @@ export function buildDesktopIconSvg(webSvgSource) {
     .join('\n');
   return [
     '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">',
-    '  <title>Grapher</title>',
+    '  <title>Pi^n</title>',
     '  <rect x="102" y="102" width="820" height="820" rx="185" ry="185" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="4"/>',
     `  <g transform="translate(200 200) scale(1.21875)" ${groupAttrs}>`,
     indentedShapes,
@@ -110,10 +110,10 @@ export function generateDesktopIcons({
 } = {}) {
   const webSvgSource = readFileSync(sourceSvgPath, 'utf8');
   const desktopSvg = buildDesktopIconSvg(webSvgSource);
-  const stagingDir = mkdtempSync(join(tmpdir(), 'grapher-desktop-icons-'));
+  const stagingDir = mkdtempSync(join(tmpdir(), 'pi-n-desktop-icons-'));
 
   try {
-    const svgPath = join(stagingDir, 'grapher-desktop-icon.svg');
+    const svgPath = join(stagingDir, 'pi-n-desktop-icon.svg');
     const generatedDir = join(stagingDir, 'generated');
     mkdirSync(generatedDir, { recursive: true });
     writeFileSync(svgPath, desktopSvg, 'utf8');

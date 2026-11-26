@@ -290,7 +290,7 @@ pub(crate) fn safe_relative(value: &str) -> Result<(), String> {
                 let device = name.split('.').next().unwrap_or("");
                 matches!(
                     name.as_str(),
-                    ".git" | ".grapher" | ".grapher-worktrees" | ".grapher-workspaces"
+                    ".git" | ".pi-n" | ".pi-n-worktrees" | ".pi-n-workspaces"
                 ) || cfg!(windows)
                     && (name.ends_with(['.', ' '])
                         || matches!(device, "con" | "prn" | "aux" | "nul" | "conin$" | "conout$")
@@ -318,7 +318,7 @@ fn variable_name(key: &str) -> bool {
 
 fn reserved(key: &str) -> bool {
     let key = key.to_ascii_uppercase();
-    key.starts_with("GRAPHER_")
+    key.starts_with("PI_N_")
         || key.starts_with("PI_")
         || key.starts_with("GIT_")
         || matches!(
@@ -1743,16 +1743,16 @@ impl Environments {
             data,
             &session,
         )?;
-        command.arg("--grapher-run-result").args([
+        command.arg("--pi-n-run-result").args([
             "-I",
             "-c",
             crate::environment_resources::CUDA_PROOF,
         ]);
         command
-            .env("GRAPHER_MODE", "result")
-            .env("GRAPHER_EXECUTION_KIND", "graph")
-            .env("GRAPHER_WORKSPACE_ROOT", native::host_path(path))
-            .env("GRAPHER_ORIGINAL_ROOT", native::host_path(repository));
+            .env("PI_N_MODE", "result")
+            .env("PI_N_EXECUTION_KIND", "graph")
+            .env("PI_N_WORKSPACE_ROOT", native::host_path(path))
+            .env("PI_N_ORIGINAL_ROOT", native::host_path(repository));
         bind_command(&mut command, data, run, &self.config, input, path, &session)?;
         let output = controlled_output(command)?;
         let proof: serde_json::Value = serde_json::from_slice(&output)
@@ -1908,7 +1908,7 @@ fn clean_command_with_environment(
                 .flatten()
         })
     };
-    let project_roots = root("GRAPHER_ORIGINAL_ROOT").zip(root("GRAPHER_WORKSPACE_ROOT"));
+    let project_roots = root("PI_N_ORIGINAL_ROOT").zip(root("PI_N_WORKSPACE_ROOT"));
     command.env_clear();
     let mut inherited = BTreeMap::new();
     if launch.inherit_ambient {
@@ -1926,7 +1926,7 @@ fn clean_command_with_environment(
             }
             // Keep business configuration and credentials, not an outer Agent's
             // identity or code injected into the trusted engine's Node startup.
-            if !upper.starts_with("GRAPHER_") && !upper.starts_with("PI_")
+            if !upper.starts_with("PI_N_") && !upper.starts_with("PI_")
                 && !matches!(upper.as_str(), "PATH" | "NODE_OPTIONS" | "NODE_PATH")
                 // Like native activation, a verified Python prefix must not be
                 // redirected to a different installation by ambient PYTHONHOME.
@@ -2105,18 +2105,18 @@ fn clean_command_with_environment(
     // by name stay transient; the inner CLI applies them before factories.
     if binding.is_some() {
         command.env(
-            "GRAPHER_BUSINESS_LOADER_ENV",
+            "PI_N_BUSINESS_LOADER_ENV",
             serde_json::to_string(&loaders).map_err(|e| e.to_string())?,
         );
         // Apply only to business children, never the trusted Node, its build
         // bootstrap, activation capture, extension/MCP factories or probes.
         command.env(
-            "GRAPHER_BUSINESS_NODE_ENV",
+            "PI_N_BUSINESS_NODE_ENV",
             serde_json::to_string(&business_node).map_err(|e| e.to_string())?,
         );
     }
     if let Some(path) = binding {
-        command.env("GRAPHER_LAUNCH_BINDING", native::host_path(path));
+        command.env("PI_N_LAUNCH_BINDING", native::host_path(path));
     }
     command.env("PYTHONDONTWRITEBYTECODE", "1");
     Ok(())
@@ -2280,10 +2280,10 @@ pub(crate) fn bind_command(
             }
         }
     }
-    let global_agent = crate::native::environment_path("GRAPHER_GLOBAL_PI_AGENT_DIR")
+    let global_agent = crate::native::environment_path("PI_N_GLOBAL_PI_AGENT_DIR")
         .or_else(|| crate::native::home_dir().map(|home| home.join(".pi/agent")));
     if let Some(directory) = global_agent {
-        command.env("GRAPHER_GLOBAL_PI_AGENT_DIR", native::host_path(&directory));
+        command.env("PI_N_GLOBAL_PI_AGENT_DIR", native::host_path(&directory));
     }
     let binding = session.join(format!("launch-{}.json", input.generation));
     fs::create_dir_all(session).map_err(|e| e.to_string())?;
@@ -2293,7 +2293,7 @@ pub(crate) fn bind_command(
     )?;
     clean_command(command, &launch, Some(&binding))?;
     if let Some(hints) = previous_agent_environment_hints(&launch) {
-        command.env("GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS", hints);
+        command.env("PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS", hints);
     }
     if config.discovery {
         // Read only the launcher's explicit source binding, never a model
@@ -2301,7 +2301,7 @@ pub(crate) fn bind_command(
         let source = command
             .get_envs()
             .find_map(|(key, value)| {
-                (key == "GRAPHER_ORIGINAL_ROOT")
+                (key == "PI_N_ORIGINAL_ROOT")
                     .then(|| value.map(PathBuf::from))
                     .flatten()
             })
@@ -2316,9 +2316,9 @@ pub(crate) fn bind_command(
             config.best_effort,
         )?;
         command
-            .env("GRAPHER_ENVIRONMENT_DISCOVERY", native::host_path(&context))
+            .env("PI_N_ENVIRONMENT_DISCOVERY", native::host_path(&context))
             .env(
-                "GRAPHER_ENVIRONMENT_HELPER",
+                "PI_N_ENVIRONMENT_HELPER",
                 native::host_path(&std::env::current_exe().map_err(|e| e.to_string())?),
             );
     }

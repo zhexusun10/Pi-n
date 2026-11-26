@@ -1,18 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <title>Grapher</title>
+  <title>Pi^n</title>
   <style>
-    /* Transparent canvas: keep the same mid grey fallback for browsers that do
-       not evaluate the colour scheme, and adapt for the tab strip otherwise. */
-    .edge { fill: none; stroke: #7d7d7d; stroke-width: 22; stroke-linecap: round; stroke-linejoin: round; }
-    @media (prefers-color-scheme: light) { .edge { stroke: #4a4a4a; } }
-    @media (prefers-color-scheme: dark) { .edge { stroke: #c9c9c9; } }
+    /* Transparent canvas: keep Pi's three Bauhaus blocks fixed while adapting
+       the superscript exponent `n` for light and dark browser tab strips. */
+    .exp { fill: #262B34; }
+    @media (prefers-color-scheme: light) { .exp { fill: #262B34; } }
+    @media (prefers-color-scheme: dark) { .exp { fill: #E6EBF2; } }
   </style>
-  <path class="edge" d="M 256 134 C 256 180, 128 174, 128 220"/>
-  <path class="edge" d="M 256 134 C 256 180, 384 174, 384 220"/>
-  <path class="edge" d="M 128 292 C 128 338, 256 332, 256 378"/>
-  <path class="edge" d="M 384 292 C 384 338, 256 332, 256 378"/>
-  <rect class="edge" x="220" y="62"  width="72" height="72" rx="17"/>
-  <rect class="edge" x="92"  y="220" width="72" height="72" rx="17"/>
-  <rect class="edge" x="348" y="220" width="72" height="72" rx="17"/>
-  <rect class="edge" x="220" y="378" width="72" height="72" rx="17"/>
+  <path fill="#F09082" d="M42 80H306V256H218V168H42Z"/>
+  <path fill="#4D9ABF" d="M42 168H130V256H218V344H130V432H42Z"/>
+  <path fill="#F1BE58" d="M306 256H394V432H306Z"/>
+  <path class="exp" d="M350 80H430V120H390V200H350Z"/>
+  <path class="exp" d="M430 120H470V200H430Z"/>
 </svg>

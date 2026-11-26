@@ -42,22 +42,22 @@ const createProbe = [
   'marker=uuid.uuid4().hex',
   "site=pathlib.Path(sysconfig.get_paths()['purelib'])",
   'site.mkdir(parents=True,exist_ok=True)',
-  "module=site/'grapher_probe.py'",
+  "module=site/'pi_n_probe.py'",
   "module.write_text('MARKER='+repr(marker)+'\\n',encoding='utf-8')",
   "record={'marker':marker,'python':sys.executable,'prefix':str(pathlib.Path(sys.prefix).resolve()),'module':str(module.resolve())}",
   "pathlib.Path('environment-probe.json').write_text(json.dumps(record,sort_keys=True),encoding='utf-8')",
   "print('PROBE_CREATED '+json.dumps(record,sort_keys=True))",
 ].join('\n');
 const verifyProbe = [
-  'import json,pathlib,sys,grapher_probe',
+  'import json,pathlib,sys,pi_n_probe',
   "record=json.loads(pathlib.Path('environment-probe.json').read_text(encoding='utf-8'))",
-  "assert grapher_probe.MARKER==record['marker'], 'probe marker mismatch'",
+  "assert pi_n_probe.MARKER==record['marker'], 'probe marker mismatch'",
   "root=pathlib.Path('.venv').resolve()",
   'prefix=pathlib.Path(sys.prefix).resolve()',
   'assert prefix==root, (str(prefix),str(root))',
-  'module=pathlib.Path(grapher_probe.__file__).resolve()',
+  'module=pathlib.Path(pi_n_probe.__file__).resolve()',
   'assert root in module.parents, str(module)',
-  "result={'marker':grapher_probe.MARKER,'prefix':str(prefix),'module':str(module),'python':sys.executable}",
+  "result={'marker':pi_n_probe.MARKER,'prefix':str(prefix),'module':str(module),'python':sys.executable}",
   "pathlib.Path('reports').mkdir(exist_ok=True)",
   "pathlib.Path('reports/verify.json').write_text(json.dumps(result,sort_keys=True),encoding='utf-8')",
   "print('PROBE_VERIFIED '+json.dumps(result,sort_keys=True))",
@@ -98,7 +98,7 @@ test('native environment discovery binds one private venv across a parallel Grap
         if (prompt.includes('PREP_BRANCH')) {
           const branch = prompt.includes('PREP_BRANCH left') ? 'left' : prompt.includes('PREP_BRANCH right') ? 'right' : undefined;
           if (!branch) throw new Error('Missing explicit branch task');
-          command = `node -e ${quote(`const fs=require('node:fs');if(Object.keys(process.env).some(key=>/^GRAPHER_/i.test(key)))throw Error('Grapher identity leaked into node Bash');fs.mkdirSync('reports',{recursive:true});fs.writeFileSync('reports/${branch}.txt','${branch}\\n')`)}`;
+          command = `node -e ${quote(`const fs=require('node:fs');if(Object.keys(process.env).some(key=>/^PI_N_/i.test(key)))throw Error('Pi^n identity leaked into node Bash');fs.mkdirSync('reports',{recursive:true});fs.writeFileSync('reports/${branch}.txt','${branch}\\n')`)}`;
         } else if (prompt.includes('CREATE_PROBE')) {
           command = `${venvCreationCommand(python)} --without-pip && ${activate}python -c ${quote(createProbe)}`;
         } else if (prompt.includes('VERIFY_PROBE')) {
@@ -131,7 +131,7 @@ test('native environment discovery binds one private venv across a parallel Grap
     const git = (...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=' + (process.platform === 'win32' ? 'NUL' : '/dev/null'), '-c', 'commit.gpgsign=false', '-c', 'user.name=Test', '-c', 'user.email=test@localhost', ...args], { cwd: source, encoding: 'utf8' }).trim();
     git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'baseline');
     // Host Python must not see the probe before the Run creates it.
-    assert.throws(() => execFileSync(python, ['-I', '-c', 'import grapher_probe'], { cwd: source, stdio: 'pipe' }), 'host Python must not import the private probe before the Run');
+    assert.throws(() => execFileSync(python, ['-I', '-c', 'import pi_n_probe'], { cwd: source, stdio: 'pipe' }), 'host Python must not import the private probe before the Run');
     await new Promise<void>(completed => modelServer.listen(0, '127.0.0.1', completed));
     await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { 'environment-chain': {
       baseUrl: `http://127.0.0.1:${(modelServer.address() as AddressInfo).port}/v1`, api: 'openai-completions', apiKey: 'local-only',
@@ -140,15 +140,15 @@ test('native environment discovery binds one private venv across a parallel Grap
     const listener = createServer(); await new Promise<void>(completed => listener.listen(0, '127.0.0.1', completed));
     const port = (listener.address() as AddressInfo).port; await new Promise<void>(completed => listener.close(() => completed()));
     const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
-    const built = join(target, 'debug', process.platform === 'win32' ? 'grapher.exe' : 'grapher');
-    const executable = join(directory, process.platform === 'win32' ? 'grapher.exe' : 'grapher');
+    const built = join(target, 'debug', process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
+    const executable = join(directory, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
     await copyFile(built, executable);
     if (process.platform !== 'win32') await chmod(executable, (await stat(built)).mode & 0o777);
-    const env = { ...process.env, GRAPHER_DATA_DIR: data, GRAPHER_PORT: String(port), PI_CODING_AGENT_DIR: agent,
-      GRAPHER_ISOLATED_PI_MODELS: '1', GRAPHER_NATIVE_RUNTIME_PARENT: join(directory, 'engine-cache'), GRAPHER_WORKSPACE_PARENT: join(directory, 'workspaces'),
-      GRAPHER_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), NODE_AGENT_MODEL: 'environment-chain/chain', NODE_AGENT_THINKING: 'off',
+    const env = { ...process.env, PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
+      PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'engine-cache'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
+      PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), NODE_AGENT_MODEL: 'environment-chain/chain', NODE_AGENT_THINKING: 'off',
       VIRTUAL_ENV: 'outer-poison', CONDA_PREFIX: 'outer-poison', PYTHONPATH: 'outer-poison', PYTHONHOME: 'outer-poison', BASH_ENV: 'outer-poison',
-      GRAPHER_NODE_NAME: 'outer-node-must-not-leak',
+      PI_N_NODE_NAME: 'outer-node-must-not-leak',
       LOCALAPPDATA: join(directory, 'local-app-data'), USERPROFILE: join(directory, 'profile') };
     backend = spawn(executable, [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
     backend.stderr!.on('data', chunk => { diagnostics += chunk.toString(); });
@@ -261,10 +261,10 @@ test('native environment discovery binds one private venv across a parallel Grap
     assert.deepEqual(manifest.entries, {}, 'root-qualified evidence does not duplicate legacy entries');
     assert.ok(manifest.rooted.roots.workspace.layout.scopes.includes('.venv'));
     const projectProbePaths = Object.keys(manifest.rooted.roots.workspace.entries)
-      .filter(name => name.endsWith('grapher_probe.py'));
+      .filter(name => name.endsWith('pi_n_probe.py'));
     assert.ok(projectProbePaths.length > 0 && projectProbePaths.every(name => name.startsWith('.venv/')),
       'W snapshot contains the private probe only inside its owned .venv');
-    assert.ok(!Object.keys(manifest.rooted.roots.state.entries).some(name => name.endsWith('grapher_probe.py')),
+    assert.ok(!Object.keys(manifest.rooted.roots.state.entries).some(name => name.endsWith('pi_n_probe.py')),
       'an equally named S scope must not stand in for the W environment');
     assert.ok(manifest.parents.includes(byNode.create.input.environmentRef), 'E snapshot links the unbound input');
     for (const name of ['create', 'verify', 'report']) {
@@ -276,7 +276,7 @@ test('native environment discovery binds one private venv across a parallel Grap
       assert.equal(before.environmentRef, execution.input.environmentRef);
     }
     // Host Python still cannot provide the private probe.
-    assert.throws(() => execFileSync(python, ['-I', '-c', 'import grapher_probe'], { cwd: source, stdio: 'pipe' }), 'host Python never provides the private probe');
+    assert.throws(() => execFileSync(python, ['-I', '-c', 'import pi_n_probe'], { cwd: source, stdio: 'pipe' }), 'host Python never provides the private probe');
     // A new Run starts unbound and never references the previous Run's E.
     const isolated = await privateGraph(api, data, { graph: { originalGoal: 'New Run isolation', nodes: [{ id: 'plain', task: 'NOOP_ISOLATED_RUN' }], edges: [] }, config });
     await api('control', { runId: isolated.runId, action: 'approve' });

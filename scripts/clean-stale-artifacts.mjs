@@ -10,7 +10,7 @@ const projectRoot = resolve(__dirname, '..');
 export async function parseActiveArtifacts({
   installationRoot = projectRoot,
   manifestPath = 'backend/Cargo.toml',
-  bin = 'grapher',
+  bin = 'pi-n',
   release = false,
   extraCargoArgs = [],
   env = process.env,
@@ -105,10 +105,13 @@ export async function parseActiveArtifacts({
       const targetDir = join(targetBase, profile);
       const artifactTracked = activeFiles.size > 0 && code === 0;
       const escapedBin = bin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const depBin = bin.replace(/-/g, '_');
+      const escapedDepBin = depBin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const exts = ['.exe', '.pdb', '.d', '.lib', '.exp', '.dSYM', ''];
       for (const ext of exts) {
         activeFiles.add(resolve(targetDir, `${bin}${ext}`));
         activeFiles.add(resolve(targetDir, 'deps', `${bin}${ext}`));
+        activeFiles.add(resolve(targetDir, 'deps', `${depBin}${ext}`));
       }
       // Cargo emits only `target/<profile>/<bin>` in compiler-artifact filenames
       // for the binary target, while storing the linked binary and dep-info at
@@ -135,7 +138,7 @@ export async function parseActiveArtifacts({
         if (newestHash) activeBinHashes.add(newestHash);
       }
       const depsDir = join(targetDir, 'deps');
-      const binExecPattern = new RegExp(`^${escapedBin}-([0-9a-f]{16})(?:\\.exe)?$`);
+      const binExecPattern = new RegExp(`^${escapedDepBin}-([0-9a-f]{16})(?:\\.exe)?$`);
       if (existsSync(depsDir)) {
         let binIno = null;
         try {
@@ -191,7 +194,7 @@ function calculateDirSize(dirPath) {
 export async function cleanStaleArtifacts({
   installationRoot = projectRoot,
   manifestPath = 'backend/Cargo.toml',
-  bin = 'grapher',
+  bin = 'pi-n',
   dryRun = false,
   release = false,
   silent = false,

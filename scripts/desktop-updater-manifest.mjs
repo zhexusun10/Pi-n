@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const DEFAULT_GITHUB_REPOSITORY = 'zhexusun10/grapher';
+export const DEFAULT_GITHUB_REPOSITORY = 'zhexusun10/pi-n';
 
 const SEMVER_RE =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -161,12 +161,12 @@ export function validateMinisignPublicKey(pubkeyText, label = 'updater public ke
 
 /**
  * Resolve the effective updater public key using the same precedence as
- * `src-tauri/src/lib.rs`: `GRAPHER_UPDATER_PUBKEY` -> `TAURI_UPDATER_PUBKEY`
+ * `src-tauri/src/lib.rs`: `PI_N_UPDATER_PUBKEY` -> `TAURI_UPDATER_PUBKEY`
  * -> `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
  */
 export function resolveConfiguredUpdaterPubkey({ tauriConfPath = null, env = process.env } = {}) {
   const envPrimary =
-    typeof env?.GRAPHER_UPDATER_PUBKEY === 'string' ? env.GRAPHER_UPDATER_PUBKEY.trim() : '';
+    typeof env?.PI_N_UPDATER_PUBKEY === 'string' ? env.PI_N_UPDATER_PUBKEY.trim() : '';
   if (envPrimary) return envPrimary;
   const envFallback =
     typeof env?.TAURI_UPDATER_PUBKEY === 'string' ? env.TAURI_UPDATER_PUBKEY.trim() : '';
@@ -359,7 +359,7 @@ export function resolveReleaseNotes({
     const fileText = readFileSync(notesFile, 'utf8').trim();
     if (fileText) return fileText;
   }
-  return `Grapher v${normalizedVersion}. See GitHub Releases and CHANGELOG.md for details.`;
+  return `Pi^n v${normalizedVersion}. See GitHub Releases and CHANGELOG.md for details.`;
 }
 
 export function discoverSignedUpdaterAssets(assetsDir, { version, repo, tag, pubkey = null }) {
@@ -589,7 +589,7 @@ export function generateUpdaterManifest({
 
   if (discovered.length > 0 && requirePubkey && !effectivePubkey) {
     throw new Error(
-      `Refusing to generate latest.json: signed updater artifacts were found (${discovered.map(item => item.targetId).join(', ')}), but no matching updater public key is configured (set plugins.updater.pubkey in src-tauri/tauri.conf.json or GRAPHER_UPDATER_PUBKEY).`,
+      `Refusing to generate latest.json: signed updater artifacts were found (${discovered.map(item => item.targetId).join(', ')}), but no matching updater public key is configured (set plugins.updater.pubkey in src-tauri/tauri.conf.json or PI_N_UPDATER_PUBKEY).`,
     );
   }
 

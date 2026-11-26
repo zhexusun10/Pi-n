@@ -449,7 +449,7 @@ fn environment_dependency_sealing_benchmark() {
     let report = serde_json::json!({"schema":1,"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"samples":samples,
         "referenceStrategy":"per-file single-path-check; no checked-set lookup/insertion; write-then-compare",
         "limits":"warm filesystem cache; test profile; logical bytes, not allocated blocks; synthetic retained dependency distributions; no whole-process-tree CPU/RSS or sandbox acceptance claim"});
-    if let Some(path) = std::env::var_os("GRAPHER_ENV_SEAL_PROBE_REPORT") {
+    if let Some(path) = std::env::var_os("PI_N_ENV_SEAL_PROBE_REPORT") {
         use std::io::Write;
         let mut file = fs::OpenOptions::new()
             .create_new(true)
@@ -459,5 +459,5 @@ fn environment_dependency_sealing_benchmark() {
         file.write_all(serde_json::to_string_pretty(&report).unwrap().as_bytes())
             .unwrap();
     }
-    println!("GRAPHER_DEPENDENCY_SEALING_PROBE {report}");
+    println!("PI_N_DEPENDENCY_SEALING_PROBE {report}");
 }

@@ -147,8 +147,8 @@ export function isCaseInsensitive(directory) {
 
 export function resolveSourceCaseInsensitive(workspaceCaseInsensitive, explicit) {
   if (typeof explicit === 'boolean') return explicit;
-  if (process.env.GRAPHER_SOURCE_CASE_INSENSITIVE === '1') return true;
-  if (process.env.GRAPHER_SOURCE_CASE_INSENSITIVE === '0') return false;
+  if (process.env.PI_N_SOURCE_CASE_INSENSITIVE === '1') return true;
+  if (process.env.PI_N_SOURCE_CASE_INSENSITIVE === '0') return false;
   return workspaceCaseInsensitive;
 }
 

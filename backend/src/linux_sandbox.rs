@@ -67,7 +67,7 @@ fn mount_boundaries(
             .then_with(|| a.cmp(b))
     });
     masks.dedup();
-    let staging = engine.join(format!(".grapher-masks-{}", uuid::Uuid::new_v4()));
+    let staging = engine.join(format!(".pi-n-masks-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     // The copied engine is read-only below, but dependency symlinks may
     // resolve into the original installation. Do not let one node modify
@@ -143,9 +143,9 @@ pub fn require_supported() -> Result<(), String> {
 }
 
 fn probe() -> Result<(), String> {
-    let base = std::env::temp_dir().join(format!("grapher-bwrap-probe-{}", uuid::Uuid::new_v4()));
+    let base = std::env::temp_dir().join(format!("pi-n-bwrap-probe-{}", uuid::Uuid::new_v4()));
     let source = base.join("source");
-    let root = base.join(".grapher-worktrees");
+    let root = base.join(".pi-n-worktrees");
     let current = root.join("run/node");
     let data = base.join("data");
     let session = data.join("sessions/current");
@@ -252,7 +252,7 @@ pub(crate) fn execution_command_scoped(
     let mut extra = Vec::new();
     for path in extra_binds {
         let target = canonical(path)?;
-        // Only a Grapher-owned repository beside the Run root may be bound;
+        // Only a Pi^n-owned repository beside the Run root may be bound;
         // never the root itself, the source, or an arbitrary path.
         if target == root || !target.starts_with(&root) {
             return Err("Merger Git metadata leaves the current Run".into());
@@ -442,7 +442,7 @@ mod tests {
         let metadata = current
             .parent()
             .unwrap()
-            .join(".grapher-git")
+            .join(".pi-n-git")
             .join(format!("{}.git", &id.to_string()[..16]));
         fs::create_dir_all(&metadata).unwrap();
         fs::write(
@@ -480,7 +480,7 @@ mod tests {
         let temp = sandbox_tempdir();
         let base = temp.path().canonicalize().unwrap();
         let source = base.join("source");
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let current = root.join("run/node");
         let data = base.join("runtime");
         let session = data.join("sessions/node");
@@ -489,7 +489,7 @@ mod tests {
         for path in [&session, &engine, &pi_dir] {
             fs::create_dir_all(path).unwrap();
         }
-        let cache = engine.join(".grapher-runtime-cache/baseline");
+        let cache = engine.join(".pi-n-runtime-cache/baseline");
         fs::create_dir_all(&cache).unwrap();
         fs::write(cache.join("seed.json"), "verified").unwrap();
         fs::create_dir_all(&source).unwrap();
@@ -526,7 +526,7 @@ mod tests {
         let temp = sandbox_tempdir();
         let base = temp.path().canonicalize().unwrap();
         let source = base.join("source");
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let current = root.join("run/node");
         let data = base.join("data");
         let session = data.join("sessions/node");
@@ -546,7 +546,7 @@ mod tests {
         let output = Command::new(BWRAP)
             .args(&args[..args.len() - 2])
             .args(["/bin/sh", "-c",
-                "set -e; test -d .git; test -z \"$(git for-each-ref '--format=%(refname)' refs/grapher/)\"; test ! -e \"$1/file\"; ! (echo bad > \"$2/forbidden\") 2>/dev/null; echo isolated > local.txt; test -f local.txt",
+                "set -e; test -d .git; test -z \"$(git for-each-ref '--format=%(refname)' refs/pi-n/)\"; test ! -e \"$1/file\"; ! (echo bad > \"$2/forbidden\") 2>/dev/null; echo isolated > local.txt; test -f local.txt",
                 "probe"])
             .args([&source, &objects])
             .current_dir(&current)
@@ -569,7 +569,7 @@ mod tests {
         let temp = sandbox_tempdir();
         let base = temp.path().canonicalize().unwrap();
         let source = base.join("source");
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let current = root.join("run/node");
         let data = base.join("data");
         let common = data.join("git-common");
@@ -593,7 +593,7 @@ mod tests {
         let output = Command::new(BWRAP)
             .args(&args[..args.len() - 2])
             .args(["/bin/sh", "-c",
-                "set -e; test -e .git; test -z \"$(git for-each-ref '--format=%(refname)' refs/grapher/)\"; test ! -e \"$1/file\"; test ! -e \"$2/HEAD\"; ! (echo bad > \"$2/objects/forbidden\") 2>/dev/null; echo isolated > local.txt; test -f local.txt",
+                "set -e; test -e .git; test -z \"$(git for-each-ref '--format=%(refname)' refs/pi-n/)\"; test ! -e \"$1/file\"; test ! -e \"$2/HEAD\"; ! (echo bad > \"$2/objects/forbidden\") 2>/dev/null; echo isolated > local.txt; test -f local.txt",
                 "probe"])
             .args([&source, &common])
             .current_dir(&current).output().unwrap();
@@ -611,7 +611,7 @@ mod tests {
         let temp = sandbox_tempdir();
         let base = temp.path().canonicalize().unwrap();
         let source = base.join("source");
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let current = root.join("run/node");
         let data = base.join("data");
         let session = data.join("sessions/node");
@@ -658,7 +658,7 @@ mod tests {
         assert!(source.join("package.json").is_file());
         let temp = sandbox_tempdir();
         let base = temp.path().canonicalize().unwrap();
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let current = root.join("run/node");
         let data = base.join("data");
         let session = data.join("sessions/current");
@@ -701,7 +701,7 @@ mod tests {
         let temp = sandbox_tempdir();
         let base = temp.path().canonicalize().unwrap();
         let source = base.join("source");
-        let root = base.join(".grapher-worktrees");
+        let root = base.join(".pi-n-worktrees");
         let current = root.join("run/current");
         let sibling = root.join("run/sibling");
         let data = base.join("runtime");

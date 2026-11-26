@@ -16,7 +16,7 @@ before(async () => {
     } }] });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.GRAPHER_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 
@@ -52,7 +52,7 @@ function withdrawSnapshot(events) {
 for (const mode of ["serial", "graph"]) {
   test(`${mode}: Alt+Q restores only queued messages and Alt+S sends an interruption`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     let withdrawals = 0;
     let fail = false;
     let events = [];
@@ -153,7 +153,7 @@ for (const mode of ["serial", "graph"]) {
 
   test(`${mode}: in-flight recall survives view changes and image-only resend`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", name: "image.png" };
     let pending;
     let requests = 0;
@@ -198,7 +198,7 @@ for (const mode of ["serial", "graph"]) {
 
   test(`${mode}: an unread steer follows output while its final page arrives after settlement`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
     const page = await fixturePage(context);
     const errors = [];
@@ -240,7 +240,7 @@ for (const mode of ["serial", "graph"]) {
 
   test(`${mode}: a consumed steer renders once after a settled reload`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
     const page = await fixturePage(context);
     const errors = [];
@@ -277,7 +277,7 @@ for (const mode of ["serial", "graph"]) {
 
   test(`${mode}: two identical queued steers hand off one at a time`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
     const page = await fixturePage(context);
     try {
@@ -307,7 +307,7 @@ for (const mode of ["serial", "graph"]) {
     const prefix = assistant("OLDER HISTORY");
     let data = Buffer.from(prefix + user("REPEAT") + assistant("OUTPUT BEFORE STEER"));
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.split("/").at(-1);
       if (command !== "get_execution_output") return route.fulfill({ json: { result: {} } });
@@ -345,7 +345,7 @@ for (const mode of ["serial", "graph"]) {
 
   test(`${mode}: an image steer retains its preview, avoids disk upload and duplicate attachment cards, stays ordered on re-entry, and opens preview modal`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     let uploadedToDisk = 0;
     await context.route("**/api/*", route => {
       const command = new URL(route.request().url()).pathname.split("/").at(-1);
@@ -412,7 +412,7 @@ for (const mode of ["serial", "graph"]) {
 
   test(`${mode}: an attachment stays with its steer through transcript handoff`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
-    await context.addInitScript(() => localStorage.setItem("grapher_language_v1", "en"));
+    await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     const externalPath = "/data/attachment-inputs/12345678-1234-1234-1234-123456789abc/evidence.txt";
     await context.route("**/api/*", route => {
       const command = new URL(route.request().url()).pathname.split("/").at(-1);

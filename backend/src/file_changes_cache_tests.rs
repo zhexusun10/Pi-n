@@ -330,7 +330,7 @@ fn stale_running_snapshot_cannot_replace_a_newer_terminal_empty_result() {
     let pending = WRITE.lines().next().unwrap().to_string() + "\n";
     let stale = execution(pending.len(), true);
     let token = snapshot_token(&run, &stale);
-    let closed = format!("{pending}{{\"type\":\"tool_execution_end\",\"toolCallId\":\"write\",\"toolName\":\"write\",\"isError\":true}}\n{{\"type\":\"grapher_process_exited\"}}\n");
+    let closed = format!("{pending}{{\"type\":\"tool_execution_end\",\"toolCallId\":\"write\",\"toolName\":\"write\",\"isError\":true}}\n{{\"type\":\"pi_n_process_exited\"}}\n");
     let mut terminal = stale.clone();
     terminal.status = "failed".into();
     terminal.output_bytes = closed.len();

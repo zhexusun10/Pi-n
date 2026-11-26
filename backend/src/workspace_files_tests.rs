@@ -428,17 +428,17 @@ fn materialize_replaces_file_with_case_aliased_directory_and_rejects_tracked_sym
 }
 
 #[test]
-fn managed_environment_skips_nested_git_and_grapher_metadata() {
+fn managed_environment_skips_nested_git_and_pi_n_metadata() {
     let temp = tempfile::tempdir().unwrap();
     let store = temp.path().join("store");
     let source = temp.path().join("source");
     let target = temp.path().join("target");
-    fs::create_dir_all(source.join(".agent-home/.grapher/pi-agent")).unwrap();
+    fs::create_dir_all(source.join(".agent-home/.pi-n/pi-agent")).unwrap();
     fs::create_dir_all(source.join(".agent-home/tool/.git")).unwrap();
     fs::create_dir_all(&target).unwrap();
     fs::write(source.join(".agent-home/config"), "keep").unwrap();
     fs::write(
-        source.join(".agent-home/.grapher/pi-agent/models.json"),
+        source.join(".agent-home/.pi-n/pi-agent/models.json"),
         "{\"providers\":{}}\n",
     )
     .unwrap();
@@ -452,7 +452,7 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
     files.capture(&source, &version, "", &[]).unwrap();
     files.verify(&source, &version, "").unwrap();
 
-    // Inherited target receives ordinary files but never `.grapher` or `.git`.
+    // Inherited target receives ordinary files but never `.pi-n` or `.git`.
     files
         .materialize(&target, std::slice::from_ref(&version), None, false)
         .unwrap();
@@ -464,10 +464,10 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
         fs::read_to_string(target.join(".agent-home/tool/bin.sh")).unwrap(),
         "echo ok\n"
     );
-    assert!(!target.join(".agent-home/.grapher").exists());
+    assert!(!target.join(".agent-home/.pi-n").exists());
     assert!(!target.join(".agent-home/tool/.git").exists());
 
-    // Materializing back onto a live root with nested `.grapher`/`.git` preserves them untouched.
+    // Materializing back onto a live root with nested `.pi-n`/`.git` preserves them untouched.
     fs::write(source.join(".agent-home/config"), "mutated").unwrap();
     files
         .materialize(&source, std::slice::from_ref(&version), None, false)
@@ -476,14 +476,14 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
         fs::read_to_string(source.join(".agent-home/config")).unwrap(),
         "keep"
     );
-    assert!(source.join(".agent-home/.grapher/pi-agent/models.json").is_file());
+    assert!(source.join(".agent-home/.pi-n/pi-agent/models.json").is_file());
     assert!(source.join(".agent-home/tool/.git/HEAD").is_file());
 
     // Top-level and multi-segment metadata scopes are still rejected if ever passed as a scope.
     let bad_root = temp.path().join("bad-scope");
-    fs::create_dir_all(bad_root.join(".grapher")).unwrap();
-    fs::create_dir_all(bad_root.join("sub/.grapher")).unwrap();
-    for bad_scope in [".grapher", "sub/.grapher"] {
+    fs::create_dir_all(bad_root.join(".pi-n")).unwrap();
+    fs::create_dir_all(bad_root.join("sub/.pi-n")).unwrap();
+    for bad_scope in [".pi-n", "sub/.pi-n"] {
         let bad_files =
             Files::environment(&temp.path().join("store-bad"), &[bad_scope.into()], &[])
                 .unwrap()
@@ -497,7 +497,7 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
         );
     }
 
-    // Symlinked nested `.grapher`/`.git` inside a managed scope are skipped untouched
+    // Symlinked nested `.pi-n`/`.git` inside a managed scope are skipped untouched
     // without following or inheriting the symlink target.
     let external = temp.path().join("external-metadata");
     fs::create_dir_all(&external).unwrap();
@@ -507,7 +507,7 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
     fs::create_dir_all(link_source.join(".agent-home")).unwrap();
     fs::create_dir_all(&link_target).unwrap();
     fs::write(link_source.join(".agent-home/keep.txt"), "ok").unwrap();
-    crate::path_safety::directory_link(&external, &link_source.join(".agent-home/.grapher"));
+    crate::path_safety::directory_link(&external, &link_source.join(".agent-home/.pi-n"));
     let link_files = Files::environment(
         &temp.path().join("store-link"),
         &[".agent-home".into()],
@@ -526,10 +526,10 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
         fs::read_to_string(link_target.join(".agent-home/keep.txt")).unwrap(),
         "ok"
     );
-    assert!(!link_target.join(".agent-home/.grapher").exists());
-    assert!(link_source.join(".agent-home/.grapher").exists());
+    assert!(!link_target.join(".agent-home/.pi-n").exists());
+    assert!(link_source.join(".agent-home/.pi-n").exists());
 
-    // Rooted snapshots (the production workspace+state path) also skip nested `.grapher`/`.git`.
+    // Rooted snapshots (the production workspace+state path) also skip nested `.pi-n`/`.git`.
     let rooted_store = temp.path().join("rooted-store");
     let rooted_files = Files::environment(&rooted_store, &[], &[])
         .unwrap()
@@ -555,6 +555,6 @@ fn managed_environment_skips_nested_git_and_grapher_metadata() {
         fs::read_to_string(target_roots["state"].join(".agent-home/config")).unwrap(),
         "keep"
     );
-    assert!(!target_roots["state"].join(".agent-home/.grapher").exists());
+    assert!(!target_roots["state"].join(".agent-home/.pi-n").exists());
     assert!(!target_roots["state"].join(".agent-home/tool/.git").exists());
 }

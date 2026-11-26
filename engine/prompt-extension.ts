@@ -15,18 +15,18 @@ import {
   type ExtensionAPI,
 } from './pi-compat.ts';
 
-const INTERRUPTED_CONTINUATION = '__grapher_continue_interrupted__';
+const INTERRUPTED_CONTINUATION = '__pi_n_continue_interrupted__';
 const FEEDBACK_RULE = 'End your response with exactly one standalone final line:\n<ACCEPT>\nor\n<FEEDBACK>\nIf sending <FEEDBACK>, clearly describe the additional instruction for the target before the marker.';
 
 export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
   return function workspacePolicy(pi: ExtensionAPI) {
-  const continuation = process.env.GRAPHER_CONTINUE_INTERRUPTED === 'true';
+  const continuation = process.env.PI_N_CONTINUE_INTERRUPTED === 'true';
   const cwd = process.cwd();
-  // This is Grapher's workspace policy: a Grapher role always carries GRAPHER_MODE
-  // (node/planner/partition/merger/result) and/or GRAPHER_EXECUTION_KIND. Capture
+  // This is Pi^n's workspace policy: a Pi^n role always carries PI_N_MODE
+  // (node/planner/partition/merger/result) and/or PI_N_EXECUTION_KIND. Capture
   // that once at factory time so the shell scrub still applies after any tool-time
   // env restoration, while the unmanaged compatibility process stays a no-op.
-  const managedShell = !!process.env.GRAPHER_MODE || !!process.env.GRAPHER_EXECUTION_KIND;
+  const managedShell = !!process.env.PI_N_MODE || !!process.env.PI_N_EXECUTION_KIND;
   if (continuation) {
     // The host sends a private RPC marker. Intercept it before Pi appends a
     // user message, then start an empty custom turn. The context hook below
@@ -36,22 +36,22 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
     pi.on('input', event => {
       if (event.text !== INTERRUPTED_CONTINUATION) return { action: 'continue' };
       pi.sendMessage({
-        customType: 'grapher-interrupted-continuation',
+        customType: 'pi-n-interrupted-continuation',
         content: [],
         display: false,
-        details: { reason: process.env.GRAPHER_MODE === 'planner' ? 'grapher-interrupted-planner' : 'grapher-interrupted-node' },
+        details: { reason: process.env.PI_N_MODE === 'planner' ? 'pi-n-interrupted-planner' : 'pi-n-interrupted-node' },
       }, { triggerTurn: true });
       return { action: 'handled' };
     });
   }
-  if (continuation || process.env.GRAPHER_MODE === 'node' || process.env.GRAPHER_MODE === 'planner') {
+  if (continuation || process.env.PI_N_MODE === 'node' || process.env.PI_N_MODE === 'planner') {
     pi.on('context', event => {
       // Match Pi's interrupted-response retry: omit a failed assistant and
       // its associated tool results from this request, not from saved history.
       // Leave ordinary tool-use turns, including missing results, untouched so
       // Pi's provider adapter performs its own native normalization.
       const messages = feedbackInputContext(event.messages).filter(message =>
-        !(message.role === 'custom' && message.customType === 'grapher-interrupted-continuation'));
+        !(message.role === 'custom' && message.customType === 'pi-n-interrupted-continuation'));
       const lastAssistant = messages.findLastIndex(message => message.role === 'assistant');
       const lastUser = messages.findLastIndex(message => message.role === 'user');
       const projected: typeof messages = [];
@@ -77,33 +77,33 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
     });
   }
 
-  const planner = process.env.GRAPHER_MODE === 'planner';
+  const planner = process.env.PI_N_MODE === 'planner';
   // Correlation is retained in Pi's stored user turn for replay and recovery,
   // but must not change the prompt sent to the model on this or later turns.
   if (planner) pi.on('context', event => ({ messages: plannerSteerContext(event.messages) }));
-  const plannerWriteTools = process.env.GRAPHER_PLANNER_WRITE_TOOLS === 'true';
-  const partition = process.env.GRAPHER_MODE === 'partition';
-  const graph = process.env.GRAPHER_EXECUTION_KIND === 'graph';
-  const project = process.env.GRAPHER_ORIGINAL_ROOT || (planner && !graph ? cwd : undefined);
-  const plannerTargets = planner && process.env.GRAPHER_PLANNER_FOLLOWUP === 'true'
-    ? JSON.parse(process.env.GRAPHER_PLANNER_WORKSPACES || '{}') as Record<string, unknown>
+  const plannerWriteTools = process.env.PI_N_PLANNER_WRITE_TOOLS === 'true';
+  const partition = process.env.PI_N_MODE === 'partition';
+  const graph = process.env.PI_N_EXECUTION_KIND === 'graph';
+  const project = process.env.PI_N_ORIGINAL_ROOT || (planner && !graph ? cwd : undefined);
+  const plannerTargets = planner && process.env.PI_N_PLANNER_FOLLOWUP === 'true'
+    ? JSON.parse(process.env.PI_N_PLANNER_WORKSPACES || '{}') as Record<string, unknown>
     : {};
-  const hasPlannerWorkspaces = Boolean(planner && project && process.env.GRAPHER_PLANNER_FOLLOWUP === 'true' && Object.keys(plannerTargets).length > 0);
+  const hasPlannerWorkspaces = Boolean(planner && project && process.env.PI_N_PLANNER_FOLLOWUP === 'true' && Object.keys(plannerTargets).length > 0);
   // Planner uses the same model-facing namespace before, during and after
   // private execution. Its physical cwd is backend/UI metadata, not a prompt.
   let activePaths: ReturnType<typeof createWorkspacePaths> | undefined;
   if (hasPlannerWorkspaces && project) {
-    configurePlannerWorkspace(cwd, project, process.env.GRAPHER_SOURCE_ALIAS || project);
+    configurePlannerWorkspace(cwd, project, process.env.PI_N_SOURCE_ALIAS || project);
     activePaths = plannerWorkspaceState().paths;
     onPlannerWorkspaceChanged(next => { activePaths = next.paths; });
   } else if (!partition && (graph || planner) && project) {
-    activePaths = createWorkspacePaths(cwd, project, process.env.GRAPHER_SOURCE_ALIAS || project);
+    activePaths = createWorkspacePaths(cwd, project, process.env.PI_N_SOURCE_ALIAS || project);
   }
   const view = (value: any): any => activePaths ? activePaths.view(value) : value;
   // Private mapped roles receive path guidance directly; Planner need not repeat it in handoffs.
   const pathGuideline = 'Use project-root-relative paths in Bash commands and project files.';
-  const graphNode = process.env.GRAPHER_MODE === 'node' &&
-    (graph || process.env.GRAPHER_AGENT_KIND === 'node');
+  const graphNode = process.env.PI_N_MODE === 'node' &&
+    (graph || process.env.PI_N_AGENT_KIND === 'node');
   if (graphNode) {
     // Pi owns the default rules and unconditionally adds its final path rule.
     // Replace only that top-level rule in request projections, including
@@ -154,8 +154,8 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
       if (planner) return;
       // Serial is the ordinary source-project Pi session. It has no path
       // adapter, so its prompt stays exactly as Pi and the project defined it.
-      if (!graphNode && process.env.GRAPHER_MODE !== 'merger') return;
-      if (process.env.GRAPHER_MODE === 'node' && process.env.GRAPHER_FEEDBACK_SOURCE === 'true') {
+      if (!graphNode && process.env.PI_N_MODE !== 'merger') return;
+      if (process.env.PI_N_MODE === 'node' && process.env.PI_N_FEEDBACK_SOURCE === 'true') {
         // A custom rules section replaces Pi's generated rules, even when the
         // preamble is the default. Inject there rather than into guidelines
         // that Pi would discard. Forced prompts are opaque and need a block.
@@ -182,7 +182,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
         }
         options.sections.rules = rules;
       }
-      const rawHints = process.env.GRAPHER_PREVIOUS_AGENT_ENVIRONMENT_HINTS?.trim();
+      const rawHints = process.env.PI_N_PREVIOUS_AGENT_ENVIRONMENT_HINTS?.trim();
       const hints = rawHints && activePaths ? activePaths.visible(rawHints) : rawHints;
       // Custom/forced prompts have no Pi rules section to replace. Preserve
       // their existing guidance behavior; default graph nodes need only hints.
@@ -206,7 +206,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
   if (partition) return;
   if (graph && !project) throw new Error('Graph execution is missing its host-owned project binding');
   if (activePaths && project) {
-    registerWorkspaceTools(pi, activePaths?.root || cwd, project, process.env.GRAPHER_SOURCE_ALIAS || project, view,
+    registerWorkspaceTools(pi, activePaths?.root || cwd, project, process.env.PI_N_SOURCE_ALIAS || project, view,
       planner ? (plannerWriteTools ? ['read', 'write', 'edit'] : ['read']) : undefined, () => activePaths?.root || cwd);
 
     // Normalize model-facing paths only; never change stored files, tool input
@@ -221,7 +221,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
 
   // Serial and Node Agent are distinct execution agents. Rust binds this identity
   // before factories run, including when a prepared host is claimed.
-  const serialAgent = process.env.GRAPHER_AGENT_KIND === 'serial';
+  const serialAgent = process.env.PI_N_AGENT_KIND === 'serial';
   const launch = managedLaunch();
   if (!serialAgent && (launch || graph)) {
     const localOps = createLocalBashOperations(launch ? { shellPath: launch.shell } : undefined);

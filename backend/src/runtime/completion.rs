@@ -29,7 +29,7 @@ impl<'a, F: FnMut(String)> NodeCompletion<'a, F> {
         (self.output)(format!(
             "{}\n",
             serde_json::json!({
-                "type": "grapher_completion_phase", "phase": phase,
+                "type": "pi_n_completion_phase", "phase": phase,
                 "status": "running", "timestamp": crate::model::now(),
             })
         ));
@@ -38,7 +38,7 @@ impl<'a, F: FnMut(String)> NodeCompletion<'a, F> {
         (self.output)(format!(
             "{}\n",
             serde_json::json!({
-                "type": "grapher_completion_phase", "phase": phase,
+                "type": "pi_n_completion_phase", "phase": phase,
                 "status": if result.is_ok() { "completed" } else { "failed" },
                 "elapsedMs": started.elapsed().as_millis(), "timestamp": crate::model::now(),
             })

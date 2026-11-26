@@ -1,4 +1,4 @@
-"""Harbor import-path agent: benchmark.harbor_agent:GrapherAgent.
+"""Harbor import-path agent: benchmark.harbor_agent:PiNAgent.
 
 The Harbor installation is separate from this repository. See README.md.
 """
@@ -18,41 +18,41 @@ from pydantic import Field
 from benchmark.run import harbor_usage
 
 
-class GrapherOptions(InstalledAgentOptions):
-    version: None = Field(default=None, description="Derived from Grapher's build identity")
-    grapher_root: str = Field(default="/installed-agent/grapher", description="Prepared Grapher checkout in the task environment")
+class PiNOptions(InstalledAgentOptions):
+    version: None = Field(default=None, description="Derived from Pi^n's build identity")
+    pi_n_root: str = Field(default="/installed-agent/pi-n", description="Prepared Pi^n checkout in the task environment")
     thinking: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"] = "medium"
     max_parallel: int = Field(default=4, ge=1, le=8)
-    timeout_sec: int = Field(default=28800, ge=1, description="End-to-end Grapher trial timeout in seconds (TB4 task limit: 28800)")
+    timeout_sec: int = Field(default=28800, ge=1, description="End-to-end Pi^n trial timeout in seconds (TB4 task limit: 28800)")
     bootstrap_debian_tools: bool = Field(default=False, description="Install missing git/python3/bubblewrap before timing on Debian-based task images; requires root and apt-get")
 
 
-class GrapherAgent(BaseInstalledAgent):
-    """Use Grapher's Partitioner/Planner/runtime, not Harbor's Pi agent."""
+class PiNAgent(BaseInstalledAgent):
+    """Use Pi^n's Partitioner/Planner/runtime, not Harbor's Pi agent."""
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
-    options_model = GrapherOptions
-    options: GrapherOptions
+    options_model = PiNOptions
+    options: PiNOptions
 
     def __init__(self, *args, version: str | None = None, **kwargs):
         if version is not None:
-            raise ValueError("Grapher version comes from the verified binary, not --ak version")
+            raise ValueError("Pi^n version comes from the verified binary, not --ak version")
         super().__init__(*args, version=None, **kwargs)
 
     @staticmethod
     def name() -> str:
-        return "grapher"
+        return "pi-n"
 
     def get_version_command(self) -> str | None:
-        binary = f"{self.options.grapher_root}/backend/target/release/grapher"
+        binary = f"{self.options.pi_n_root}/backend/target/release/pi-n"
         return f"{shlex.quote(binary)} --build-identity"
 
     async def install(self, environment: BaseEnvironment) -> None:
-        root = self.options.grapher_root
+        root = self.options.pi_n_root
         if not root.startswith("/"):
-            raise ValueError("grapher_root must be an absolute path in the task environment")
+            raise ValueError("pi_n_root must be an absolute path in the task environment")
         qroot = shlex.quote(root)
-        binary = shlex.quote(f"{root}/backend/target/release/grapher")
+        binary = shlex.quote(f"{root}/backend/target/release/pi-n")
         if self.options.bootstrap_debian_tools:
             # Only opt in for task images lacking the benchmark toolchain.
             # Do not install/compile inside a timed agent run. Fail on images
@@ -86,28 +86,28 @@ class GrapherAgent(BaseInstalledAgent):
             f'test "$({binary} --build-identity)" = "$(git -C {qroot} rev-parse HEAD)"',
         ]
         # Never build a global/unpinned Pi or accept a dirty/stale backend.
-        await self.exec_as_agent(environment, command="PATH=/installed-agent/grapher-tools/bin:$PATH; " + " && ".join(checks))
+        await self.exec_as_agent(environment, command="PATH=/installed-agent/pi-n-tools/bin:$PATH; " + " && ".join(checks))
         await environment.upload_file(Path(__file__).with_name("run.py"),
-                                      "/installed-agent/grapher-harbor-run.py")
+                                      "/installed-agent/pi-n-harbor-run.py")
 
     @with_prompt_template
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         if not self.model_name or "/" not in self.model_name:
-            raise ValueError("Pass --model provider/model; Grapher requires a fixed model")
+            raise ValueError("Pass --model provider/model; Pi^n requires a fixed model")
         workdir = (await self.exec_as_agent(environment, command="pwd -P")).stdout
         repository = (workdir or "").strip()
         if not repository.startswith("/"):
             raise RuntimeError("The Harbor task must have an absolute working directory")
         await self._upload_config_text(
-            environment, content=instruction, remote_path="/installed-agent/grapher-instruction.txt",
+            environment, content=instruction, remote_path="/installed-agent/pi-n-instruction.txt",
             filename="instruction.txt",
         )
-        root = self.options.grapher_root
+        root = self.options.pi_n_root
         parts = [
-            "python3", "/installed-agent/grapher-harbor-run.py",
-            "--binary", f"{root}/backend/target/release/grapher",
+            "python3", "/installed-agent/pi-n-harbor-run.py",
+            "--binary", f"{root}/backend/target/release/pi-n",
             "--repository", repository,
-            "--instruction-file", "/installed-agent/grapher-instruction.txt",
+            "--instruction-file", "/installed-agent/pi-n-instruction.txt",
             "--model", self.model_name,
             "--thinking", self.options.thinking,
             "--max-parallel", str(self.options.max_parallel),
@@ -117,7 +117,7 @@ class GrapherAgent(BaseInstalledAgent):
         # Harbor passes --agent-env into exec; model_connection also forwards
         # provider credentials without putting them on the command line.
         await self.exec_as_agent(
-            environment, command="PATH=/installed-agent/grapher-tools/bin:$PATH; " + " ".join(map(shlex.quote, parts)),
+            environment, command="PATH=/installed-agent/pi-n-tools/bin:$PATH; " + " ".join(map(shlex.quote, parts)),
             env=self.model_connection.env,
             timeout_sec=self.options.timeout_sec + 60,
         )
@@ -136,6 +136,6 @@ class GrapherAgent(BaseInstalledAgent):
                 n_output_tokens=usage["output"],
             )}
             context.metadata = {**(context.metadata or {}),
-                                "grapher_run_id": result.get("runId"), "route": result.get("route")}
+                                "pi_n_run_id": result.get("runId"), "route": result.get("route")}
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            self.logger.debug("Cannot read Grapher usage from Harbor logs: %s", exc)
+            self.logger.debug("Cannot read Pi^n usage from Harbor logs: %s", exc)

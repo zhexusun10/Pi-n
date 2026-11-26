@@ -414,15 +414,48 @@ pub(super) fn read_execution_output(
             let raw_page =
                 store.execution_log_page(&read.run_id, &read.execution_id, offset, raw_limit)?;
             let reached_eof = raw_page.next_offset == end;
-            let (content, consumed) =
-                crate::compact_transcript::compact_forward_chunk_with_options(
-                    &raw_page.content,
-                    raw_page.start_offset,
-                    reached_eof,
-                    proj,
-                    settled,
-                );
-            let next_offset = raw_page.start_offset + consumed;
+            let (content, next_offset) = if !reached_eof
+                && !raw_page.content.contains('\n')
+                && raw_page.content.trim_start().starts_with('{')
+            {
+                // A single JSONL line exceeded the 4 MiB forward ceiling.
+                // Advance to its terminating newline so the next poll does not
+                // start mid-line and emit the trailing base64/JSON tail as text.
+                let mut skip_cursor = raw_page.next_offset;
+                let mut scanned = raw_page.content.len();
+                while skip_cursor < end
+                    && scanned < crate::compact_transcript::MAX_COMPACT_RAW_SCAN_BYTES
+                {
+                    let step = crate::compact_transcript::COMPACT_RAW_CHUNK_BYTES
+                        .min(end - skip_cursor);
+                    let extra = store.execution_log_page(
+                        &read.run_id,
+                        &read.execution_id,
+                        skip_cursor,
+                        step,
+                    )?;
+                    if extra.content.is_empty() {
+                        break;
+                    }
+                    scanned = scanned.saturating_add(extra.content.len());
+                    if let Some(nl) = extra.content.find('\n') {
+                        skip_cursor = extra.start_offset + nl + 1;
+                        break;
+                    }
+                    skip_cursor = extra.next_offset;
+                }
+                (String::new(), skip_cursor)
+            } else {
+                let (content, consumed) =
+                    crate::compact_transcript::compact_forward_chunk_with_options(
+                        &raw_page.content,
+                        raw_page.start_offset,
+                        reached_eof,
+                        proj,
+                        settled,
+                    );
+                (content, raw_page.start_offset + consumed)
+            };
             crate::store::LogPage {
                 content,
                 start_offset: raw_page.start_offset,
