@@ -3292,7 +3292,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
         )
         .unwrap();
         stdin.flush().unwrap();
-        let mut stdout = BufReader::new(worker.child.stdout.take().unwrap());
+        let mut stdout = worker.stdout;
         let response = (&mut stdout)
             .lines()
             .map(|line| serde_json::from_str::<Value>(&line.unwrap()).unwrap())
@@ -3302,14 +3302,11 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
         drop(stdin);
         stdout.read_to_string(&mut String::new()).unwrap();
         let status = worker.child.wait().unwrap();
-        let mut stderr = String::new();
-        worker
-            .child
+        let stderr = worker
             .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut stderr)
-            .unwrap();
+            .as_mut()
+            .map(prewarm::StderrForwarder::diagnostics_after_exit)
+            .unwrap_or_default();
         assert!(status.success(), "{status}: {stderr}");
 
         warm_node(

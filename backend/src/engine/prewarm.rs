@@ -380,7 +380,7 @@ impl StderrForwarder {
         }
     }
 
-    fn diagnostics_after_exit(&mut self) -> String {
+    pub(super) fn diagnostics_after_exit(&mut self) -> String {
         if let Some(handle) = self.reader_thread.take() {
             let _ = handle.join();
         }
