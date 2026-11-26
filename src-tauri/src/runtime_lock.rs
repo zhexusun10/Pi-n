@@ -8,13 +8,12 @@ use std::os::fd::AsRawFd;
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     hash::{Hash, Hasher},
+    os::windows::io::AsRawHandle,
     sync::{Mutex, OnceLock},
 };
 
 pub struct RuntimeLock {
     _marker: fs::File,
-    #[cfg(windows)]
-    mutex: usize,
     #[cfg(windows)]
     key: String,
 }
@@ -23,8 +22,7 @@ pub struct RuntimeLock {
 static PROCESS_LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 /// Acquire the exact exclusive runtime lock used by the Pi^n backend
-/// (`<root>/runtime.lock` via `flock` on Unix and `Local\PiNRuntime-<hash>`
-/// named mutex on Windows).
+/// (`<root>/runtime.lock` via `flock` on Unix and `LockFileEx` on Windows).
 pub fn acquire_runtime(root: &Path) -> Result<RuntimeLock, String> {
     let lock_path = root.join("runtime.lock");
     reject_symlink_lock_file(&lock_path)?;
@@ -112,6 +110,8 @@ fn acquire_lock_file(
 
     #[cfg(windows)]
     {
+        // Use handle-bound `LockFileEx` matching `backend/src/runtime_lock.rs`
+        // so desktop migration locks interoperate with the backend on Windows.
         let canonical = scope_dir
             .canonicalize()
             .unwrap_or_else(|_| scope_dir.to_path_buf());
@@ -125,21 +125,23 @@ fn acquire_lock_file(
                 return Err(busy_message.into());
             }
         }
-        let wide: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
-        let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
-        if mutex.is_null() {
-            let _ = locks.lock().map(|mut owned| owned.remove(&key));
-            return Err(windows_error("CreateMutex"));
-        }
-        let waited = unsafe { WaitForSingleObject(mutex, 0) };
-        if waited != WAIT_OBJECT_0 && waited != WAIT_ABANDONED {
-            unsafe { CloseHandle(mutex) };
+        let mut overlapped: Overlapped = unsafe { std::mem::zeroed() };
+        let locked = unsafe {
+            LockFileEx(
+                marker.as_raw_handle(),
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                1,
+                0,
+                &mut overlapped,
+            )
+        };
+        if locked == 0 {
             let _ = locks.lock().map(|mut owned| owned.remove(&key));
             return Err(busy_message.into());
         }
         Ok(RuntimeLock {
             _marker: marker,
-            mutex: mutex as usize,
             key,
         })
     }
@@ -159,10 +161,11 @@ impl Drop for RuntimeLock {
         }
 
         #[cfg(windows)]
-        unsafe {
-            let mutex = self.mutex as RawHandle;
-            let _ = ReleaseMutex(mutex);
-            let _ = CloseHandle(mutex);
+        {
+            let mut overlapped: Overlapped = unsafe { std::mem::zeroed() };
+            unsafe {
+                let _ = UnlockFileEx(self._marker.as_raw_handle(), 0, 1, 0, &mut overlapped);
+            }
             if let Some(locks) = PROCESS_LOCKS.get() {
                 let _ = locks.lock().map(|mut owned| owned.remove(&self.key));
             }
@@ -174,29 +177,38 @@ impl Drop for RuntimeLock {
 type RawHandle = *mut std::ffi::c_void;
 
 #[cfg(windows)]
-const WAIT_OBJECT_0: u32 = 0;
+const LOCKFILE_FAIL_IMMEDIATELY: u32 = 0x0000_0001;
 #[cfg(windows)]
-const WAIT_ABANDONED: u32 = 0x0000_0080;
+const LOCKFILE_EXCLUSIVE_LOCK: u32 = 0x0000_0002;
+
+#[cfg(windows)]
+#[repr(C)]
+struct Overlapped {
+    internal: usize,
+    internal_high: usize,
+    offset: u32,
+    offset_high: u32,
+    event: RawHandle,
+}
 
 #[cfg(windows)]
 #[link(name = "kernel32")]
 extern "system" {
-    fn CloseHandle(handle: RawHandle) -> i32;
-    fn CreateMutexW(
-        attributes: *const std::ffi::c_void,
-        initial_owner: i32,
-        name: *const u16,
-    ) -> RawHandle;
-    fn GetLastError() -> u32;
-    fn ReleaseMutex(mutex: RawHandle) -> i32;
-    fn WaitForSingleObject(handle: RawHandle, milliseconds: u32) -> u32;
-}
-
-#[cfg(windows)]
-fn windows_error(operation: &str) -> String {
-    format!("{operation} failed with Windows error {}", unsafe {
-        GetLastError()
-    })
+    fn LockFileEx(
+        file: RawHandle,
+        flags: u32,
+        reserved: u32,
+        bytes_low: u32,
+        bytes_high: u32,
+        overlapped: *mut Overlapped,
+    ) -> i32;
+    fn UnlockFileEx(
+        file: RawHandle,
+        reserved: u32,
+        bytes_low: u32,
+        bytes_high: u32,
+        overlapped: *mut Overlapped,
+    ) -> i32;
 }
 
 #[cfg(test)]
