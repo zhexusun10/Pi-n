@@ -469,6 +469,7 @@ mod tests {
                             mime_type: "image/png".into(),
                             data: index.to_string(),
                             name: None,
+                            original_path: None,
                         }]),
                     })
                     .unwrap();
@@ -533,6 +534,7 @@ mod tests {
                         mime_type: "image/png".into(),
                         data: "image-data".into(),
                         name: None,
+                        original_path: None,
                     }]),
                 })
                 .unwrap();

@@ -61,8 +61,13 @@ export function useDialogFocus<T extends HTMLElement>({
 
     const onFocusIn = (event: FocusEvent) => {
       if (topScope() !== scope) return;
-      if (event.target instanceof HTMLElement && dialog.contains(event.target)) lastFocused = event.target;
-      else focus();
+      if (event.target instanceof HTMLElement && dialog.contains(event.target)) {
+        lastFocused = event.target;
+      } else if (event.target instanceof HTMLElement && event.target.closest('[role="menu"]')) {
+        return;
+      } else {
+        focus();
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (topScope() !== scope || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;

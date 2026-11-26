@@ -1,12 +1,35 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Background, ControlButton, Controls, ReactFlow, useNodes, useReactFlow, useStore, useStoreApi, type ReactFlowInstance, type Node, type Edge, type NodeChange, type NodeTypes, type EdgeTypes } from "@xyflow/react";
 import { Maximize } from "lucide-react";
-import { graphFitOptions, runningViewportForGraph } from "../../lib/graphFit";
+import { graphFitOptions, runningViewportForGraph, taskNodeStrokeMetrics } from "../../lib/graphFit";
 
 /** Synchronize the viewport with the committed React Flow positions before paint. */
 function RenderedLayout({ onLayout }: { onLayout: () => void }) {
   const nodes = useNodes();
   useLayoutEffect(onLayout, [nodes, onLayout]);
+  return null;
+}
+
+/** Sync zoom-compensated stroke variables on the React Flow container without re-rendering nodes. */
+function ViewportStrokeScale() {
+  const store = useStoreApi();
+  useLayoutEffect(() => {
+    let lastDomNode: HTMLDivElement | null = null;
+    let lastZoom = Number.NaN;
+    const sync = (domNode: HTMLDivElement | null, zoom: number) => {
+      if (!domNode || (domNode === lastDomNode && zoom === lastZoom)) return;
+      lastDomNode = domNode;
+      lastZoom = zoom;
+      const { borderWidth, selectedRingWidth } = taskNodeStrokeMetrics(zoom);
+      domNode.style.setProperty("--task-node-border-width", borderWidth);
+      domNode.style.setProperty("--task-node-ring-width", selectedRingWidth);
+    };
+    const initial = store.getState();
+    sync(initial.domNode, initial.transform[2]);
+    return store.subscribe(state => {
+      sync(state.domNode, state.transform[2]);
+    });
+  }, [store]);
   return null;
 }
 
@@ -87,6 +110,7 @@ export const GraphCanvas = memo(function GraphCanvas({ runKey, ready, nodes, edg
       onNodeClick={select} onPaneClick={clear} onPaneContextMenu={onPaneContextMenu} minZoom={graphFitOptions.minZoom} maxZoom={graphFitOptions.maxZoom}
       nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
       <RenderedLayout onLayout={onLayout} />
+      <ViewportStrokeScale />
       <Background color={tokens.graphGridDot} gap={20} size={1} />
       <Controls showInteractive={false} showFitView={false}>
         <FitGraphButton onFitStart={onFitStart} />

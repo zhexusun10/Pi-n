@@ -75,6 +75,22 @@ test("Chinese copy and existing English stay unchanged; interpolation preserves 
   assert.equal(translate("en", "图片 {0}", value), `Image ${value}`);
   assert.equal(translate("zh-CN", "{0}分{1}秒", 2, 5), "2分5秒");
   assert.equal(translate("en", "{0}分{1}秒", 2, 5), "2m 5s");
+  assert.equal(
+    translate("zh-CN", "{0} + Q 撤回排队消息 · {0} + S 打断工具并发送", "Option"),
+    "Option + Q 撤回排队消息 · Option + S 打断工具并发送",
+  );
+  assert.equal(
+    translate("en", "{0} + Q 撤回排队消息 · {0} + S 打断工具并发送", "Option"),
+    "Option + Q to restore queued messages · Option + S to interrupt tools and send",
+  );
+  assert.equal(
+    translate("zh-CN", "{0} + Q 撤回排队消息 · {0} + S 打断工具并发送", "Alt"),
+    "Alt + Q 撤回排队消息 · Alt + S 打断工具并发送",
+  );
+  assert.equal(
+    translate("en", "{0} + Q 撤回排队消息 · {0} + S 打断工具并发送", "Alt"),
+    "Alt + Q to restore queued messages · Alt + S to interrupt tools and send",
+  );
 });
 
 test("all English translations contain no Chinese and preserve placeholders", () => {
@@ -199,6 +215,13 @@ test("execution graph plan warnings are localized without diagnostic code prefix
     assert.equal(localizeError(warning, "zh-CN"), w303Zh);
     assert.equal(localizeError(warning, "en"), w303En);
   }
+
+  const sizeLimitError = "工作区体积超过 15GB 限制。请将大型文件（例如数据集、模型权重或构建缓存）移至目录外，或进入更里层的子文件夹建立工作区。\n也可以在设置中关闭「并行节点独立工作区」以解决此问题。";
+  assert.equal(
+    localizeError(sizeLimitError, "en"),
+    "The workspace size exceeds the 15GB limit. Move large files (such as datasets, model weights, or build caches) outside the directory, or select a deeper subfolder as the workspace.\nYou can also disable \"Isolate parallel node workspaces\" in Settings to resolve this."
+  );
+  assert.equal(localizeError(sizeLimitError, "zh-CN"), sizeLimitError);
 });
 
 for (const [systemLanguage, preference] of [["zh-CN", "en"], ["fr-FR", "auto"]]) {

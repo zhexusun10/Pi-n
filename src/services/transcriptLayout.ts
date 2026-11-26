@@ -217,17 +217,20 @@ export function stabilizeActivitySummaryIds(
 export function visibleTranscriptRows(
   rows: TranscriptItem[],
   starts = new Map<string, number>(),
-  options?: { collapseCards?: boolean; live?: boolean; canPrepend?: boolean },
+  options?: { collapseCards?: boolean; live?: boolean; canPrepend?: boolean; showNotices?: boolean },
 ) {
-  const blank = (item: TranscriptItem) => item.type === "text" && item.role === "assistant" &&
-    !item.content?.trim() && !item.images?.length && !item.files?.length;
-  const first = rows.findIndex(blank);
-  const visible = first < 0 ? rows : rows.filter(item => !blank(item));
+  const showNotices = options?.showNotices ?? !options?.collapseCards;
+  const hidden = (item: TranscriptItem) =>
+    (item.type === "notice" && !showNotices) ||
+    (item.type === "text" && item.role === "assistant" &&
+      !item.content?.trim() && !item.images?.length && !item.files?.length);
+  const first = rows.findIndex(hidden);
+  const visible = first < 0 ? rows : rows.filter(item => !hidden(item));
   let visibleStarts = starts;
   if (first >= 0) {
     const indices = Array.from({ length: first + 1 }, (_, index) => index);
     for (let index = first; index < rows.length; index++) {
-      if (!blank(rows[index])) indices.push(indices[indices.length - 1] + 1);
+      if (!hidden(rows[index])) indices.push(indices[indices.length - 1] + 1);
       else indices.push(indices[indices.length - 1]);
     }
     visibleStarts = new Map([...starts].map(([source, index]) => [source, indices[index]]));
@@ -270,6 +273,7 @@ export function estimateTranscriptRowHeight(id: string): number {
   if (id.startsWith("summary_")) return 28;
   if (id.startsWith("think_")) return 44;
   if (id.startsWith("compact_") || id.startsWith("planner_compact_")) return 38;
+  if (id.startsWith("notice_") || id.startsWith("planner_notice_")) return 36;
   if (id.startsWith("divider_")) return 25;
   if (id.startsWith("tool") || id.startsWith("call_")) return 48;
   if (id.startsWith("err_") || id.startsWith("system_")) return 32;

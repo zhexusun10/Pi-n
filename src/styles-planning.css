@@ -38,13 +38,13 @@
   width: 100%;
   overscroll-behavior-y: contain;
   overflow-anchor: none;
-  padding: 24px 20px calc(var(--composer-height, 100px) + 16px);
+  padding: 20px 18px calc(var(--composer-height, 100px) + 16px);
 }
 
-.conversation-pane.full-width .chat-messages-stream,
-.conversation-pane.full-width .initial-query-scroll>div:not(.chat-messages-stream),
-.conversation-pane.full-width .plan-summary-card {
-  max-width: 860px;
+.conversation-pane .chat-messages-stream,
+.conversation-pane .initial-query-scroll>div:not(.chat-messages-stream),
+.conversation-pane .plan-summary-card {
+  max-width: var(--conversation-content-max-width, 860px);
   margin-left: auto;
   margin-right: auto;
   width: 100%;
@@ -52,8 +52,8 @@
 }
 
 .conversation-pane.full-width .pane-bottom-chat {
-  padding-left: 20px;
-  padding-right: 20px;
+  padding-left: 18px;
+  padding-right: 18px;
 }
 
 .pane-bottom-chat .prompt-box-container {
@@ -86,6 +86,7 @@
 .workbench.historical-settled:not(.was-live-planning) .plan-summary-card,
 .workbench.historical-settled:not(.was-live-planning) .thinking-card,
 .workbench.historical-settled:not(.was-live-planning) .compacted-card,
+.workbench.historical-settled:not(.was-live-planning) .transcript-notice-card,
 .workbench.historical-settled:not(.was-live-planning) .initial-query-scroll>div:not(.chat-messages-stream) {
   opacity: 1 !important;
   transform: none !important;
@@ -95,7 +96,8 @@
 .workbench.historical-settled:not(.was-live-planning):not(.graph-collapsed):not(.right-pane-closing) .graph-pane,
 .workbench.historical-settled:not(.was-live-planning) .workbench-resizer,
 .workbench.historical-settled:not(.was-live-planning) .thinking-card,
-.workbench.historical-settled:not(.was-live-planning) .compacted-card {
+.workbench.historical-settled:not(.was-live-planning) .compacted-card,
+.workbench.historical-settled:not(.was-live-planning) .transcript-notice-card {
   animation: none !important;
   transform: none !important;
 }
@@ -103,6 +105,7 @@
 .initial-query-scroll.conversation-preparing .thinking-card,
 .initial-query-scroll.conversation-preparing .tool-call-card,
 .initial-query-scroll.conversation-preparing .compacted-card,
+.initial-query-scroll.conversation-preparing .transcript-notice-card,
 .initial-query-scroll.conversation-preparing .card-reveal.entering {
   grid-template-rows: 1fr;
   animation: none !important;
@@ -111,7 +114,8 @@
 
 .card-reveal:not(.entering)>.tool-call-card.appear-active,
 .card-reveal:not(.entering)>.thinking-card.appear-active,
-.card-reveal:not(.entering)>.compacted-card.appear-active {
+.card-reveal:not(.entering)>.compacted-card.appear-active,
+.card-reveal:not(.entering)>.transcript-notice-card.appear-active {
   animation: none;
 }
 
@@ -169,7 +173,8 @@
 
 .tool-call-card.appear-active,
 .thinking-card.appear-active,
-.compacted-card.appear-active {
+.compacted-card.appear-active,
+.transcript-notice-card.appear-active {
   animation: transcript-card-appear 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -203,7 +208,8 @@
 
 .card-reveal>.tool-call-card,
 .card-reveal>.thinking-card,
-.card-reveal>.compacted-card {
+.card-reveal>.compacted-card,
+.card-reveal>.transcript-notice-card {
   min-height: 0;
 }
 
@@ -221,7 +227,8 @@
 
   .tool-call-card.appear-active,
   .thinking-card.appear-active,
-  .compacted-card.appear-active {
+  .compacted-card.appear-active,
+  .transcript-notice-card.appear-active {
     animation: none;
   }
 
@@ -242,6 +249,7 @@
   border-radius: 10px;
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
   /* Same row rhythm as the tool card: the list gap owns the vertical space. */
   margin: 0 2px;
@@ -559,6 +567,7 @@
   border-radius: 10px;
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
   margin: 0 2px;
   transition: border-color 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease;
@@ -659,6 +668,14 @@
 .compacted-reason {
   font-size: 11.5px;
   color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.compacted-billing {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -786,6 +803,213 @@
 }
 
 /* ==========================================================================
+   Transcript Notice Card (Cache Miss / Reasoning Omitted / Cache Warming)
+   Distinct from TranscriptErrorCard: subtle amber or pure-white card,
+   never red error chrome.
+   ========================================================================== */
+
+.transcript-notice-card {
+  position: relative;
+  width: calc(100% - 4px);
+  max-width: calc(100% - 4px);
+  box-sizing: border-box;
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  margin: 0 2px;
+  overflow: hidden;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.transcript-notice-card.tone-warning {
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  background: rgba(255, 251, 235, 0.72);
+}
+
+.transcript-notice-card.tone-warning:hover {
+  border-color: rgba(245, 158, 11, 0.52);
+}
+
+.transcript-notice-card.tone-neutral {
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+}
+
+.transcript-notice-card.tone-neutral:hover {
+  border-color: var(--border-hover);
+}
+
+.transcript-notice-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.transcript-notice-header:focus-visible {
+  outline: 2px solid var(--brand-default);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+
+.transcript-notice-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.transcript-notice-expand-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+}
+
+.transcript-notice-chevron {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.transcript-notice-chevron.open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-notice-chevron {
+    transition: none;
+  }
+}
+
+.transcript-notice-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+}
+
+.transcript-notice-card.tone-warning .transcript-notice-icon {
+  color: #d97706;
+}
+
+.transcript-notice-card.tone-neutral .transcript-notice-icon {
+  color: var(--text-secondary);
+}
+
+.transcript-notice-title {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.transcript-notice-card.tone-warning .transcript-notice-title {
+  color: var(--status-warning-text);
+}
+
+.transcript-notice-card.tone-neutral .transcript-notice-title {
+  color: var(--text-primary);
+}
+
+.transcript-notice-summary {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.transcript-notice-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.transcript-notice-status.status-warning {
+  color: #d97706;
+}
+
+.transcript-notice-status.status-success {
+  color: #10b981;
+}
+
+.transcript-notice-body {
+  padding: 8px 14px 10px 33px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.transcript-notice-card.tone-warning .transcript-notice-body {
+  border-top: 1px solid rgba(245, 158, 11, 0.18);
+}
+
+.transcript-notice-card.tone-neutral .transcript-notice-body {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.transcript-notice-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+}
+
+.transcript-notice-meta-row {
+  display: contents;
+}
+
+.transcript-notice-meta dt {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.transcript-notice-meta dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transcript-notice-meta dd.is-mono {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+
+.transcript-notice-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 17px;
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
    Tool Call Card Component
    ========================================================================== */
 
@@ -797,6 +1021,7 @@
   border-radius: 10px;
   border: 1px solid var(--border-default);
   background: var(--bg-canvas);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
   /* Vertical rhythm belongs to the transcript list's own gap. A vertical
      margin here added to that gap, so two adjacent cards sat 16px apart while
@@ -1298,17 +1523,24 @@ button.transcript-error-toggle {
 
 .markdown-content img {
   display: block;
-  max-width: 100%;
-  max-height: 560px;
+  max-width: min(100%, 664px);
+  max-height: 415px;
+  width: auto;
   height: auto;
   object-fit: contain;
   border-radius: 10px;
   margin: 8px 0;
 }
 
-.markdown-content img[data-workspace-path]:not([src]) {
+.markdown-content img[src]:not([aria-busy="true"]) {
+  cursor: zoom-in;
+}
+
+.markdown-content img[data-workspace-path]:not([src]),
+.markdown-content img[data-workspace-path][aria-busy="true"] {
   min-height: 80px;
   background: var(--bg-surface, #F9F9FA);
+  color: transparent;
 }
 
 .markdown-image-error {
@@ -1388,9 +1620,12 @@ button.transcript-error-toggle {
   pointer-events: none;
 }
 
-.markdown-content .markdown-image-stack-frame img[data-workspace-path]:not([src]) {
+.markdown-content .markdown-image-stack-frame img[data-workspace-path]:not([src]),
+.markdown-content .markdown-image-stack-frame img[data-workspace-path][aria-busy="true"] {
   min-height: 0;
   background: var(--bg-surface, #F9F9FA);
+  color: transparent;
+  opacity: 0;
 }
 
 .markdown-image-stack-error {
@@ -2765,7 +3000,7 @@ button.transcript-error-toggle {
 }
 
 .confirm-close-btn:hover {
-  background: var(--bg-surface-hover, #f1f5f9);
+  background: var(--bg-surface-hover, #f0f0f2);
   color: var(--text-primary, #0f172a);
 }
 

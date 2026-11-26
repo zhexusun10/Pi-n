@@ -106,6 +106,9 @@ impl View {
     /// Host-managed metadata never becomes portable project ownership.
     fn strip_system_managed(&mut self) {
         self.root_extra.strip_system_managed();
+        if let Some(entries) = self.git_entries.as_mut() {
+            entries.retain(|path, _| !workspace::is_host_metadata_path(Path::new(path)));
+        }
         for entry in self.entries.values_mut().chain(
             self.git_entries
                 .iter_mut()
@@ -175,6 +178,113 @@ fn git_lock(path: &Path) -> bool {
     ) || value.starts_with("refs/") && value.ends_with(".lock")
 }
 
+/// Volatile lock files and macOS Finder/AppleDouble host metadata inside `.git`
+/// are never part of the portable repository view.
+fn git_ignored_entry(path: &Path) -> bool {
+    git_lock(path) || workspace::is_host_metadata_path(path)
+}
+
+/// Ephemeral per-file stat signature used only during the two-pass source
+/// verification inside a single snapshot capture. Never persisted to `view.json`.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStatKey {
+    dev: u64,
+    ino: u64,
+    size: u64,
+    mode: u32,
+    nlink: u64,
+    uid: u32,
+    gid: u32,
+    mtime: i64,
+    mtime_nsec: i64,
+    ctime: i64,
+    ctime_nsec: i64,
+    #[cfg(target_os = "macos")]
+    flags: u32,
+}
+
+#[cfg(unix)]
+impl FileStatKey {
+    /// Files modified/changed within this window before the initial scan start
+    /// are never cached (racy-clean guard), so rapid edits in the same
+    /// filesystem timestamp tick always re-hash and re-capture metadata.
+    const SAFE_STAT_AGE: std::time::Duration = std::time::Duration::from_secs(2);
+
+    fn safe_cutoff(scan_started: std::time::SystemTime) -> Option<(i64, i64)> {
+        let cutoff = scan_started.checked_sub(Self::SAFE_STAT_AGE)?;
+        let elapsed = cutoff.duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some((
+            i64::try_from(elapsed.as_secs()).ok()?,
+            i64::from(elapsed.subsec_nanos()),
+        ))
+    }
+
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            size: metadata.size(),
+            mode: metadata.mode(),
+            nlink: metadata.nlink(),
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+            #[cfg(target_os = "macos")]
+            flags: {
+                use std::os::macos::fs::MetadataExt as MacMetadataExt;
+                metadata.st_flags()
+            },
+        }
+    }
+
+    fn cacheable(metadata: &fs::Metadata, cutoff: (i64, i64)) -> Option<Self> {
+        let key = Self::from_metadata(metadata);
+        if (key.mtime, key.mtime_nsec) < cutoff && (key.ctime, key.ctime_nsec) < cutoff {
+            Some(key)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStatKey;
+
+#[cfg(not(unix))]
+impl FileStatKey {
+    fn safe_cutoff(_scan_started: std::time::SystemTime) -> Option<(i64, i64)> {
+        None
+    }
+
+    fn from_metadata(_metadata: &fs::Metadata) -> Self {
+        Self
+    }
+
+    fn cacheable(_metadata: &fs::Metadata, _cutoff: (i64, i64)) -> Option<Self> {
+        None
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct SourceStatSnapshot {
+    entries: BTreeMap<String, FileStatKey>,
+    git_entries: BTreeMap<String, FileStatKey>,
+    repositories: BTreeMap<String, SourceStatSnapshot>,
+}
+
+/// Source view paired with ephemeral stat signatures from its initial scan so
+/// post-copy verification can skip re-hashing unchanged old files.
+pub(crate) struct SourceInspection {
+    pub(crate) view: View,
+    stats: SourceStatSnapshot,
+}
+
 /// Content identity of a project file. Small files are read once and hashed in
 /// memory: libgit2's file stream re-opens the path and hashes small files about
 /// six times slower, and every scan touches the whole project. Large files keep
@@ -224,14 +334,38 @@ fn scan(
     entries: &mut BTreeMap<String, Entry>,
     git: bool,
 ) -> Result<(), String> {
-    // Git metadata is scanned verbatim (apart from volatile lock files), not
-    // through project collection rules. Its walk never consults tracked paths.
+    scan_with_stats(root, relative, entries, git, None, None, None)
+}
+
+fn scan_with_stats(
+    root: &Path,
+    relative: &Path,
+    entries: &mut BTreeMap<String, Entry>,
+    git: bool,
+    reuse: Option<(&BTreeMap<String, Entry>, &BTreeMap<String, FileStatKey>)>,
+    record_cutoff: Option<(i64, i64)>,
+    out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
+) -> Result<(), String> {
+    // Git metadata is scanned verbatim (apart from volatile lock files and
+    // macOS host metadata), not through project collection rules. Its walk
+    // never consults tracked paths.
     let tracked = if git {
         Default::default()
     } else {
         workspace::project_tracked_paths(root)
     };
-    scan_scoped(root, relative, entries, git, root, &[], &tracked)
+    scan_scoped_with_stats(
+        root,
+        relative,
+        entries,
+        git,
+        root,
+        &[],
+        &tracked,
+        reuse,
+        record_cutoff,
+        out_stats,
+    )
 }
 /// A regular file observed by the directory walk whose content identity is
 /// computed afterwards. Hashing and supplemental metadata dominate a project
@@ -252,6 +386,24 @@ fn scan_scoped(
     exclusions: &[String],
     tracked: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
+    scan_scoped_with_stats(
+        root, relative, entries, git, owner, exclusions, tracked, None, None, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_scoped_with_stats(
+    root: &Path,
+    relative: &Path,
+    entries: &mut BTreeMap<String, Entry>,
+    git: bool,
+    owner: &Path,
+    exclusions: &[String],
+    tracked: &std::collections::BTreeSet<String>,
+    reuse: Option<(&BTreeMap<String, Entry>, &BTreeMap<String, FileStatKey>)>,
+    record_cutoff: Option<(i64, i64)>,
+    out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
+) -> Result<(), String> {
     let mut files = Vec::new();
     let tracked_index = workspace::TrackedPathIndex::new(root, tracked);
     walk_scoped_with_nested(
@@ -266,6 +418,31 @@ fn scan_scoped(
         None,
         false,
     )?;
+    if let (Some(cutoff), Some(stats)) = (record_cutoff, out_stats) {
+        for file in &files {
+            if let Some(key) = FileStatKey::cacheable(&file.metadata, cutoff) {
+                stats.insert(file.name.clone(), key);
+            }
+        }
+    }
+    let files = if let Some((prior_entries, prior_stats)) = reuse {
+        let mut to_hash = Vec::new();
+        for file in files {
+            if prior_stats
+                .get(&file.name)
+                .is_some_and(|saved| *saved == FileStatKey::from_metadata(&file.metadata))
+            {
+                if let Some(cached @ Entry::File { .. }) = prior_entries.get(&file.name) {
+                    entries.insert(file.name, cached.clone());
+                    continue;
+                }
+            }
+            to_hash.push(file);
+        }
+        to_hash
+    } else {
+        files
+    };
     fill_file_entries(entries, files)
 }
 
@@ -303,6 +480,25 @@ fn scan_scoped_with_links(
     tracked: &std::collections::BTreeSet<String>,
     nested_git: Option<&mut std::collections::BTreeSet<String>>,
 ) -> Result<crate::workspace_links::Topology, String> {
+    scan_scoped_with_links_and_stats(
+        root, relative, entries, git, owner, exclusions, tracked, nested_git, None, None, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_scoped_with_links_and_stats(
+    root: &Path,
+    relative: &Path,
+    entries: &mut BTreeMap<String, Entry>,
+    git: bool,
+    owner: &Path,
+    exclusions: &[String],
+    tracked: &std::collections::BTreeSet<String>,
+    nested_git: Option<&mut std::collections::BTreeSet<String>>,
+    reuse: Option<(&BTreeMap<String, Entry>, &BTreeMap<String, FileStatKey>)>,
+    record_cutoff: Option<(i64, i64)>,
+    out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
+) -> Result<crate::workspace_links::Topology, String> {
     let mut files = Vec::new();
     let tracked_index = workspace::TrackedPathIndex::new(root, tracked);
     walk_scoped_with_nested(
@@ -317,7 +513,41 @@ fn scan_scoped_with_links(
         nested_git,
         false,
     )?;
-    fill_file_entries_with_links(entries, files)
+    if let (Some(cutoff), Some(stats)) = (record_cutoff, out_stats) {
+        for file in &files {
+            if let Some(key) = FileStatKey::cacheable(&file.metadata, cutoff) {
+                stats.insert(file.name.clone(), key);
+            }
+        }
+    }
+    let mut identities = BTreeMap::new();
+    let files = if let Some((prior_entries, prior_stats)) = reuse {
+        let mut to_hash = Vec::new();
+        for file in files {
+            if prior_stats
+                .get(&file.name)
+                .is_some_and(|saved| *saved == FileStatKey::from_metadata(&file.metadata))
+            {
+                if let Some(cached @ Entry::File { .. }) = prior_entries.get(&file.name) {
+                    let identity =
+                        crate::workspace_metadata::file_identity(&file.absolute, &file.metadata)?;
+                    entries.insert(file.name.clone(), cached.clone());
+                    identities.insert(file.name, identity);
+                    continue;
+                }
+            }
+            to_hash.push(file);
+        }
+        to_hash
+    } else {
+        files
+    };
+    fill_file_entries_with_links_into(entries, &mut identities, files)?;
+    crate::workspace_links::capture_from_identities(
+        identities
+            .into_iter()
+            .filter(|(name, _)| matches!(entries.get(name), Some(Entry::File { .. }))),
+    )
 }
 
 /// Identity of one regular file: bytes and the supplemental metadata a project
@@ -402,30 +632,26 @@ fn fill_file_entries_tree_only(
     file_scan::fill_tree_only(entries, files, threads)
 }
 
-fn fill_file_entries_with_links(
+fn fill_file_entries_with_links_into(
     entries: &mut BTreeMap<String, Entry>,
+    identities: &mut BTreeMap<String, (u128, u64)>,
     files: Vec<PendingFile>,
-) -> Result<crate::workspace_links::Topology, String> {
+) -> Result<(), String> {
     const PARALLEL_THRESHOLD: usize = 256;
     let threads = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)
         .min(4);
     if threads <= 1 || files.len() < PARALLEL_THRESHOLD {
-        let mut identities = BTreeMap::new();
         for file in files {
             let (entry, identity) =
                 file_entry_with_identity(&file.name, &file.absolute, &file.metadata)?;
             entries.insert(file.name.clone(), entry);
             identities.insert(file.name, identity);
         }
-        return crate::workspace_links::capture_from_identities(
-            identities
-                .into_iter()
-                .filter(|(name, _)| matches!(entries.get(name), Some(Entry::File { .. }))),
-        );
+        return Ok(());
     }
-    file_scan::fill_with_links(entries, files, threads)
+    file_scan::fill_with_identities(entries, identities, files, threads)
 }
 
 #[cfg(test)]
@@ -496,10 +722,11 @@ fn walk_scoped_with_nested(
         if !git && workspace::collection_excluded_with_index(root, &path, tracked, exclusions) {
             continue;
         }
-        // Lock files are volatile Git storage, not the source's repository
-        // view. Captured HEAD/refs/index/config must still match after copying.
+        // Lock files and macOS host metadata are volatile storage, not the
+        // source's repository view. Captured HEAD/refs/index/config must still
+        // match after copying.
         if git
-            && (git_lock(&path)
+            && (git_ignored_entry(&path)
                 || relative.as_os_str().is_empty()
                     && matches!(
                         item.file_name().to_str(),
@@ -777,6 +1004,16 @@ fn inspect(source: &Path) -> Result<View, String> {
 }
 
 fn inspect_scoped(source: &Path, owner: &Path, exclusions: &[String]) -> Result<View, String> {
+    Ok(inspect_scoped_with_stats(source, owner, exclusions, None, None)?.0)
+}
+
+fn inspect_scoped_with_stats(
+    source: &Path,
+    owner: &Path,
+    exclusions: &[String],
+    reuse: Option<(&View, &SourceStatSnapshot)>,
+    record_cutoff: Option<(i64, i64)>,
+) -> Result<(View, SourceStatSnapshot), String> {
     let source = host_canonical(source)?;
     let data = workspace::data_root();
     if data.exists() && workspace::scope_contains(&data, &source) {
@@ -785,7 +1022,8 @@ fn inspect_scoped(source: &Path, owner: &Path, exclusions: &[String]) -> Result<
     let mut entries = BTreeMap::new();
     let mut nested_git = std::collections::BTreeSet::new();
     let tracked = workspace::project_tracked_paths(&source);
-    let hardlinks = scan_scoped_with_links(
+    let mut stats = SourceStatSnapshot::default();
+    let hardlinks = scan_scoped_with_links_and_stats(
         &source,
         Path::new(""),
         &mut entries,
@@ -794,6 +1032,9 @@ fn inspect_scoped(source: &Path, owner: &Path, exclusions: &[String]) -> Result<
         exclusions,
         &tracked,
         Some(&mut nested_git),
+        reuse.map(|(view, saved)| (&view.entries, &saved.entries)),
+        record_cutoff,
+        record_cutoff.is_some().then_some(&mut stats.entries),
     )?;
     let mut repositories = BTreeMap::new();
     for relative in nested_git {
@@ -806,13 +1047,35 @@ fn inspect_scoped(source: &Path, owner: &Path, exclusions: &[String]) -> Result<
         {
             continue;
         }
-        repositories.insert(
-            relative.clone(),
-            inspect_scoped(&source.join(relative), owner, exclusions)?,
-        );
+        let child_reuse = reuse.and_then(|(view, saved)| {
+            view.repositories
+                .get(&relative)
+                .zip(saved.repositories.get(&relative))
+        });
+        let (child_view, child_stats) = inspect_scoped_with_stats(
+            &source.join(&relative),
+            owner,
+            exclusions,
+            child_reuse,
+            record_cutoff,
+        )?;
+        repositories.insert(relative.clone(), child_view);
+        if record_cutoff.is_some() {
+            stats.repositories.insert(relative, child_stats);
+        }
     }
+    let git_reuse = reuse.and_then(|(view, saved)| {
+        view.git_entries
+            .as_ref()
+            .map(|git_entries| (git_entries, &saved.git_entries))
+    });
     let (git_entries, git_file, git_link, git_config, git_files, git_global) =
-        inspect_git(&source)?;
+        inspect_git_with_stats(
+            &source,
+            git_reuse,
+            record_cutoff,
+            record_cutoff.is_some().then_some(&mut stats.git_entries),
+        )?;
     let root = fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
     let git_file_metadata = if git_file {
         let file = source.join(".git");
@@ -834,23 +1097,26 @@ fn inspect_scoped(source: &Path, owner: &Path, exclusions: &[String]) -> Result<
     } else {
         None
     };
-    Ok(View {
-        schema: VIEW_SCHEMA,
-        source: crate::path_identity::path_key(&source),
-        root_mode: mode(&root),
-        root_extra: crate::workspace_metadata::capture(&source, &root)?,
-        entries,
-        hardlinks,
-        repositories,
-        git_entries,
-        git_file,
-        git_file_metadata,
-        git_link,
-        git_link_metadata,
-        git_config,
-        git_files,
-        git_global,
-    })
+    Ok((
+        View {
+            schema: VIEW_SCHEMA,
+            source: crate::path_identity::path_key(&source),
+            root_mode: mode(&root),
+            root_extra: crate::workspace_metadata::capture(&source, &root)?,
+            entries,
+            hardlinks,
+            repositories,
+            git_entries,
+            git_file,
+            git_file_metadata,
+            git_link,
+            git_link_metadata,
+            git_config,
+            git_files,
+            git_global,
+        },
+        stats,
+    ))
 }
 /// Resolve a path to its host canonical spelling so macOS case/Unicode variants
 /// do not make equal directory references fail exact path comparisons.
@@ -923,11 +1189,31 @@ type InspectedGit = (
 );
 
 fn inspect_git(project: &Path) -> Result<InspectedGit, String> {
+    inspect_git_with_stats(project, None, None, None)
+}
+
+fn inspect_git_with_stats(
+    project: &Path,
+    reuse: Option<(&BTreeMap<String, Entry>, &BTreeMap<String, FileStatKey>)>,
+    record_cutoff: Option<(i64, i64)>,
+    out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
+) -> Result<InspectedGit, String> {
     let Some((common, current, git_file, git_link)) = git_roots(project)? else {
         return Ok((None, false, false, vec![], BTreeMap::new(), vec![]));
     };
     let mut entries = BTreeMap::new();
-    scan(&common, Path::new(""), &mut entries, true)?;
+    // Only reuse/record `.git` stat signatures for standard single-dir `.git`
+    // layouts; linked worktrees overlay `current` onto `common` and are re-scanned directly.
+    let single_git_dir = common == current;
+    scan_with_stats(
+        &common,
+        Path::new(""),
+        &mut entries,
+        true,
+        if single_git_dir { reuse } else { None },
+        if single_git_dir { record_cutoff } else { None },
+        if single_git_dir { out_stats } else { None },
+    )?;
     let root = fs::symlink_metadata(&current).map_err(|e| e.to_string())?;
     entries.insert(
         String::new(),
@@ -936,7 +1222,7 @@ fn inspect_git(project: &Path) -> Result<InspectedGit, String> {
             extra: crate::workspace_metadata::capture(&current, &root)?,
         },
     );
-    if common != current {
+    if !single_git_dir {
         let mut local = BTreeMap::new();
         scan(&current, Path::new(""), &mut local, true)?;
         entries.extend(local);
@@ -1156,7 +1442,7 @@ fn copy_project_git(
     let (common, current, _, _) = git_roots(project)?.ok_or("Missing project Git")?;
     fs::create_dir(target).map_err(|e| e.to_string())?;
     native_copy::copy_tree(&common, target, |relative| {
-        git_lock(relative)
+        git_ignored_entry(relative)
             || relative
                 .components()
                 .next()
@@ -1168,7 +1454,9 @@ fn copy_project_git(
         for item in fs::read_dir(&current).map_err(|e| e.to_string())? {
             let item = item.map_err(|e| e.to_string())?;
             let name = item.file_name();
-            if matches!(name.to_str(), Some("gitdir" | "commondir")) || git_lock(Path::new(&name)) {
+            if matches!(name.to_str(), Some("gitdir" | "commondir"))
+                || git_ignored_entry(Path::new(&name))
+            {
                 continue;
             }
             let destination = target.join(&name);
@@ -1181,8 +1469,11 @@ fn copy_project_git(
                     }
                 }
                 fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
-                clear_git_overlays(&item.path(), &destination)?;
-                native_copy::copy_tree(&item.path(), &destination, |_| false)?;
+                let prefix = PathBuf::from(&name);
+                clear_git_overlays(&item.path(), &destination, &prefix)?;
+                native_copy::copy_tree(&item.path(), &destination, |relative| {
+                    git_ignored_entry(&prefix.join(relative))
+                })?;
             } else {
                 if let Ok(meta) = fs::symlink_metadata(&destination) {
                     if meta.is_dir() && !crate::workspace_symlinks::is_link(&meta) {
@@ -1240,9 +1531,13 @@ fn copy_project_git(
 }
 // Both trees are newly allocated private evidence, never source/user data.
 // Remove only leaves that the worktree-specific copy will actually replace.
-fn clear_git_overlays(source: &Path, target: &Path) -> Result<(), String> {
+fn clear_git_overlays(source: &Path, target: &Path, relative_prefix: &Path) -> Result<(), String> {
     for item in fs::read_dir(source).map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
+        let item_relative = relative_prefix.join(item.file_name());
+        if git_ignored_entry(&item_relative) {
+            continue;
+        }
         let destination = target.join(item.file_name());
         let existing = match fs::symlink_metadata(&destination) {
             Ok(metadata) => metadata,
@@ -1253,7 +1548,7 @@ fn clear_git_overlays(source: &Path, target: &Path) -> Result<(), String> {
             && existing.is_dir()
             && !crate::workspace_symlinks::is_link(&existing)
         {
-            clear_git_overlays(&item.path(), &destination)?;
+            clear_git_overlays(&item.path(), &destination, &item_relative)?;
         } else if existing.is_dir() && !crate::workspace_symlinks::is_link(&existing) {
             crate::workspace_cleanup::remove_tree(&destination).map_err(|e| e.to_string())?;
         } else {
@@ -1488,7 +1783,9 @@ fn load(path: &Path) -> Result<View, String> {
 }
 fn restore_git_metadata(target: &Path, entries: &BTreeMap<String, Entry>) -> Result<(), String> {
     for (name, entry) in entries.iter().rev() {
-        if name == "objects/info/alternates" && !target.join(name).exists() {
+        if (name == "objects/info/alternates" || workspace::is_host_metadata_path(Path::new(name)))
+            && !target.join(name).exists()
+        {
             continue;
         }
         restore_entry(&target.join(name), entry)?;
@@ -1501,7 +1798,7 @@ fn copy_git(
     recorded: Option<&BTreeMap<String, Entry>>,
 ) -> Result<(), String> {
     fs::create_dir(target).map_err(|e| e.to_string())?;
-    native_copy::copy_tree(source, target, git_lock)?;
+    native_copy::copy_tree(source, target, git_ignored_entry)?;
     if let Some(entries) =
         recorded.filter(|entries| !entries.contains_key("objects/info/alternates"))
     {
@@ -2004,8 +2301,21 @@ pub(crate) fn has_record(source: &Path, head: &str) -> bool {
 
 /// Inspect the project exactly as a full source snapshot would, so a caller can
 /// derive the identity and the recorded view from one scan.
+#[cfg(test)]
 pub(crate) fn inspect_source_scoped(source: &Path, exclusions: &[String]) -> Result<View, String> {
     inspect_scoped(source, source, exclusions)
+}
+
+/// Inspect the project and retain ephemeral stat signatures from the initial
+/// scan so post-copy consistency verification can skip re-hashing unchanged old
+/// files.
+pub(crate) fn inspect_source_scoped_with_stats(
+    source: &Path,
+    exclusions: &[String],
+) -> Result<SourceInspection, String> {
+    let cutoff = FileStatKey::safe_cutoff(std::time::SystemTime::now());
+    let (view, stats) = inspect_scoped_with_stats(source, source, exclusions, None, cutoff)?;
+    Ok(SourceInspection { view, stats })
 }
 /// A Git tree can stay unchanged while project metadata or empty directories
 /// change. Never reuse an existing code reference for a different source view.
@@ -2061,6 +2371,7 @@ pub(crate) fn capture_source(source: &Path, head: &str, identity: &str) -> Resul
 }
 /// Capture evidence from a view the caller already inspected for this snapshot,
 /// so recording a snapshot does not rescan the whole source tree.
+#[cfg(test)]
 pub(crate) fn capture_source_with_view(
     source: &Path,
     head: &str,
@@ -2068,7 +2379,27 @@ pub(crate) fn capture_source_with_view(
     exclusions: &[String],
     view: View,
 ) -> Result<(), String> {
-    capture_source_view(source, head, identity, exclusions, Some(view))
+    capture_source_view(
+        source,
+        head,
+        identity,
+        exclusions,
+        Some(SourceInspection {
+            view,
+            stats: SourceStatSnapshot::default(),
+        }),
+    )
+}
+/// Capture evidence from a previously inspected source view and its stat
+/// signatures, avoiding full-project re-hashing during post-copy verification.
+pub(crate) fn capture_source_with_inspection(
+    source: &Path,
+    head: &str,
+    identity: &str,
+    exclusions: &[String],
+    inspected: SourceInspection,
+) -> Result<(), String> {
+    capture_source_view(source, head, identity, exclusions, Some(inspected))
 }
 /// Capture a source view that omits managed environment/cache scopes, so a
 /// scoped snapshot (files-only publication) still has reconstructable evidence
@@ -2102,11 +2433,11 @@ fn capture_source_view(
     head: &str,
     identity: &str,
     exclusions: &[String],
-    inspected: Option<View>,
+    inspected: Option<SourceInspection>,
 ) -> Result<(), String> {
-    let view = match inspected {
-        Some(view) => view,
-        None => inspect_scoped(source, source, exclusions)?,
+    let SourceInspection { view, stats } = match inspected {
+        Some(inspected) => inspected,
+        None => inspect_source_scoped_with_stats(source, exclusions)?,
     };
     // Source snapshot identity uses raw bytes, not the normalized checksum of
     // a saved view. Keep those contracts separate (including legacy records).
@@ -2126,7 +2457,13 @@ fn capture_source_view(
     fs::create_dir(&pending).map_err(|e| e.to_string())?;
     let mut pending_guard = PendingDirGuard::new(pending.clone());
     copy_project_repositories(source, &pending, &view)?;
-    let after = inspect_scoped(source, source, exclusions)?;
+    let (after, _) = inspect_scoped_with_stats(
+        source,
+        source,
+        exclusions,
+        Some((&view, &stats)),
+        None,
+    )?;
     if after != view {
         return Err(match equality::first_diff_detail(&view, &after) {
             Some(detail) => format!(

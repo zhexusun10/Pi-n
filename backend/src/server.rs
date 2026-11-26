@@ -215,13 +215,186 @@ fn merger_continuation_before(worktree: &std::path::Path) -> Result<String, Stri
     }
 }
 
+enum BatchMaterializeState {
+    Idle,
+    Running,
+    Ready(Result<String, String>),
+}
+
+/// Coordinates a single shared source-snapshot collection across sibling
+/// workers dispatched in the same batch so one leader materializes once and
+/// siblings either adopt its head immediately or receive the same failure
+/// without repeating full-repository snapshot retries sequentially.
+struct BatchSourceMaterializer {
+    state: Mutex<BatchMaterializeState>,
+    ready: Condvar,
+}
+
+impl BatchSourceMaterializer {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(BatchMaterializeState::Idle),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn run(
+        &self,
+        collect: impl FnOnce() -> Result<String, String>,
+    ) -> Result<(String, bool), String> {
+        let mut guard = self.state.lock().map_err(|error| error.to_string())?;
+        loop {
+            match &*guard {
+                BatchMaterializeState::Ready(result) => {
+                    crate::process_control::check_current_owner_stop()?;
+                    return result.clone().map(|head| (head, false));
+                }
+                BatchMaterializeState::Running => {
+                    let (next, _) = self
+                        .ready
+                        .wait_timeout(guard, std::time::Duration::from_millis(50))
+                        .map_err(|error| error.to_string())?;
+                    guard = next;
+                    if let Err(stop) = crate::process_control::check_current_owner_stop() {
+                        return Err(stop);
+                    }
+                }
+                BatchMaterializeState::Idle => {
+                    *guard = BatchMaterializeState::Running;
+                    drop(guard);
+                    break;
+                }
+            }
+        }
+        struct LeaderGuard<'a> {
+            materializer: &'a BatchSourceMaterializer,
+            armed: bool,
+        }
+        impl Drop for LeaderGuard<'_> {
+            fn drop(&mut self) {
+                if self.armed {
+                    if let Ok(mut guard) = self.materializer.state.lock() {
+                        *guard = BatchMaterializeState::Ready(Err(
+                            "Source materialization worker panicked".into(),
+                        ));
+                    }
+                    self.materializer.ready.notify_all();
+                }
+            }
+        }
+        let mut leader = LeaderGuard {
+            materializer: self,
+            armed: true,
+        };
+        let outcome = collect();
+        let leader_stop = if outcome.is_err() {
+            crate::process_control::check_current_owner_stop().err()
+        } else {
+            None
+        };
+        let mut guard = self.state.lock().map_err(|error| error.to_string())?;
+        if let Some(stop_error) = leader_stop {
+            *guard = BatchMaterializeState::Idle;
+            leader.armed = false;
+            drop(guard);
+            self.ready.notify_all();
+            return Err(stop_error);
+        }
+        *guard = BatchMaterializeState::Ready(outcome.clone());
+        leader.armed = false;
+        drop(guard);
+        self.ready.notify_all();
+        outcome.map(|head| (head, true))
+    }
+}
+
+fn active_direct_runs_for_repository(
+    repository: &std::path::Path,
+    exclude_run_id: &str,
+) -> Vec<String> {
+    let services: Vec<(String, Arc<Service>)> = RUN_SERVICES
+        .get()
+        .and_then(|registry| registry.try_lock().ok())
+        .map(|registry| {
+            registry
+                .values()
+                .flat_map(|runs| runs.iter())
+                .filter_map(|(id, weak)| {
+                    if id == exclude_run_id {
+                        return None;
+                    }
+                    weak.upgrade().map(|service| (id.clone(), service))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut active = BTreeSet::new();
+    for (id, service) in services {
+        let Ok(runtime) = service.runtime.try_lock() else {
+            continue;
+        };
+        if !runtime.active() {
+            continue;
+        }
+        let same_repo = runtime
+            .source_repository()
+            .ok()
+            .flatten()
+            .is_some_and(|other| crate::path_identity::same_path(&other, repository));
+        if !same_repo {
+            continue;
+        }
+        let writes_source_directly = runtime.is_serial()
+            || runtime.state.executions.iter().any(|execution| {
+                execution.status == "running"
+                    && crate::path_identity::same_path(
+                        std::path::Path::new(&execution.worktree),
+                        repository,
+                    )
+            });
+        if writes_source_directly {
+            active.insert(id);
+        }
+    }
+    active.into_iter().collect()
+}
+
+fn annotate_concurrent_source_writer_error(
+    repository: &std::path::Path,
+    run_id: &str,
+    error: String,
+) -> String {
+    if !crate::runtime::is_transient_source_change_error(&error) {
+        return error;
+    }
+    let active = active_direct_runs_for_repository(repository, run_id);
+    if active.is_empty() {
+        error
+    } else {
+        format!(
+            "{error}; active direct session(s) currently writing to this source workspace: {}",
+            active.join(", ")
+        )
+    }
+}
+
 /// Lazily materialize the external shadow repository for the first dispatched
 /// job of a plain-directory graph run. Git collection runs without the runtime
 /// lock; the source lock serializes it with planning and other workers.
+#[cfg(test)]
 fn materialize_job_source(
     service: &Arc<Service>,
     root: &std::path::Path,
     job: &mut crate::runtime::Job,
+) -> Result<(), String> {
+    materialize_job_source_in_batch(service, root, job, None)
+}
+
+fn materialize_job_source_in_batch(
+    service: &Arc<Service>,
+    root: &std::path::Path,
+    job: &mut crate::runtime::Job,
+    batch_materializer: Option<&BatchSourceMaterializer>,
 ) -> Result<(), String> {
     let repository = crate::runtime::resolve_repository(root, &job.config)?;
     let activity_key = format!("materialize-{}", job.execution.id);
@@ -231,28 +404,57 @@ fn materialize_job_source(
         "source_materialize",
         &job.execution.node,
     );
-    // Hold the source lock across the freshness check, the Git collection and
-    // the ownership/event record. Sibling workers of the same first batch are
-    // serialized here, so the first one materializes and the rest reuse its
-    // commit instead of committing again and duplicating SourceSnapshotted.
-    let lock = source_lock(&repository)?;
-    let _source_guard = lock.lock().map_err(|error| error.to_string())?;
-    // Short lock: read the managed-environment exclusions and this Run's
-    // snapshot freshness, then release before any Git work.
-    let (exclusions, fresh) = {
-        let runtime = service.runtime.lock().map_err(|error| error.to_string())?;
-        (
-            runtime.exclusions()?,
-            runtime.job_source_is_fresh(&repository)?,
-        )
+    let mut collect_and_record = || -> Result<String, String> {
+        // Hold the source lock across the freshness check, the Git collection and
+        // the ownership/event record. Sibling workers of the same first batch are
+        // serialized here, so the first one materializes and the rest reuse its
+        // commit instead of committing again and duplicating SourceSnapshotted.
+        let lock = source_lock(&repository)?;
+        let _source_guard = lock.lock().map_err(|error| error.to_string())?;
+        // Short lock: read the managed-environment exclusions and this Run's
+        // snapshot freshness, then release before any Git work.
+        let (exclusions, fresh) = {
+            let runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+            (
+                runtime.exclusions()?,
+                runtime.job_source_is_fresh(&repository)?,
+            )
+        };
+        let head = match crate::runtime::collect_source_snapshot(&repository, &exclusions, fresh) {
+            Ok(head) => head,
+            Err(error) => {
+                return Err(annotate_concurrent_source_writer_error(
+                    &repository,
+                    &job.run_id,
+                    error,
+                ));
+            }
+        };
+        // Short lock: durable ownership and the one-time source snapshot event.
+        service
+            .runtime
+            .lock()
+            .map_err(|error| error.to_string())?
+            .record_job_source(job, &repository, &head)?;
+        Ok(head)
     };
-    let head = crate::runtime::collect_source_snapshot(&repository, &exclusions, fresh)?;
-    // Short lock: durable ownership and the one-time source snapshot event.
-    service
-        .runtime
-        .lock()
-        .map_err(|error| error.to_string())?
-        .record_job_source(job, &repository, &head)
+    match batch_materializer {
+        Some(materializer) => {
+            let (head, recorded_by_leader) = materializer.run(collect_and_record)?;
+            if !recorded_by_leader {
+                service
+                    .runtime
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .record_job_source(job, &repository, &head)?;
+            }
+            Ok(())
+        }
+        None => {
+            collect_and_record()?;
+            Ok(())
+        }
+    }
 }
 
 const SERVICE_LOOKUP_BUSY: &str = "Run lookup is busy; retry after the current workspace operation";
@@ -956,17 +1158,72 @@ fn compile_graph(graph: Graph) -> Result<Plan, Vec<compiler::Diagnostic>> {
     compiler::compile(&graph, true)
 }
 
+fn requires_workspace_size_check(config: &Config, route_plan_type: Option<&str>) -> bool {
+    route_plan_type == Some("graph") && config.isolate_parallel_nodes
+}
+
+fn validate_run_admission_with_size_check(
+    repository: &std::path::Path,
+    config: &Config,
+    mode: Option<&str>,
+    check_size: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    if requires_workspace_size_check(config, mode) {
+        crate::workspace::validate_admission_with_size_check(repository, check_size)
+    } else {
+        crate::workspace::validate_binding(repository)
+    }
+}
+
 fn save_graph(
     graph: Graph,
     config: Config,
     run_id: Option<String>,
     service: &Arc<Service>,
 ) -> Result<Snapshot, String> {
+    save_graph_with_size_check(
+        graph,
+        config,
+        run_id,
+        service,
+        crate::workspace::cached_check_workspace_size,
+    )
+}
+
+fn save_graph_with_size_check(
+    graph: Graph,
+    config: Config,
+    run_id: Option<String>,
+    service: &Arc<Service>,
+    check_size: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<Snapshot, String> {
     if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
         return Err("Wait for the current operation to finish".into());
     }
-    if run_id.is_none() {
-        crate::workspace::validate_admission(std::path::Path::new(&config.repository))?;
+    let enabling_isolation = if let Some(expected) = run_id.as_deref() {
+        let runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+        if runtime.state.run_id != expected {
+            return Err("Run changed while editing the graph".into());
+        }
+        config.isolate_parallel_nodes
+            && runtime
+                .state
+                .config
+                .as_ref()
+                .is_some_and(|previous| !previous.isolate_parallel_nodes)
+    } else {
+        false
+    };
+    if run_id.is_none() || enabling_isolation {
+        validate_run_admission_with_size_check(
+            std::path::Path::new(&config.repository),
+            &config,
+            Some("graph"),
+            check_size,
+        )?;
+    }
+    if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
+        return Err("Wait for the current operation to finish".into());
     }
     let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
     if let Some(expected) = run_id {
@@ -2341,7 +2598,13 @@ fn plan_goal_internal_with_options(
                 let repository = PathBuf::from(&config.repository);
                 let repo_str = repository.to_string_lossy().to_string();
                 if revision_run_id.is_none() {
-                    crate::workspace::validate_admission(&repository).map_err(|e| (e, None))?;
+                    validate_run_admission_with_size_check(
+                        &repository,
+                        &config,
+                        mode,
+                        crate::workspace::cached_check_workspace_size,
+                    )
+                    .map_err(|e| (e, None))?;
                 } else {
                     crate::workspace::validate_binding(&repository).map_err(|e| (e, None))?;
                 }
@@ -2466,6 +2729,15 @@ fn plan_goal_internal_with_options(
                         &[goal.as_str()],
                     )
                     .map_err(|error| (error, None))?;
+                    if let Some(imgs) = images.as_deref() {
+                        crate::attachment_inputs::adopt_images_for_run(
+                            &root,
+                            &runtime.store,
+                            &owner,
+                            imgs,
+                        )
+                        .map_err(|error| (error, None))?;
+                    }
                 }
                 fs::create_dir_all(&directory).map_err(|error| (error.to_string(), None))?;
                 // Make the retry's draft available before publishing its identity;
@@ -2692,6 +2964,12 @@ fn plan_goal_internal_with_options(
                             edges: Vec::new(),
                         },
                         "graph" => {
+                            if revision_run_id.is_none()
+                                && mode != Some("graph")
+                                && config.isolate_parallel_nodes
+                            {
+                                crate::workspace::cached_check_workspace_size(&repository)?;
+                            }
                             // The planning gate prevents new dispatch/publication.
                             let (selected, planner_context_required, continuation_workspace) =
                                 if revision_run_id.is_some() && !background_review {
@@ -4045,6 +4323,9 @@ fn drive(service: Arc<Service>) {
                     }
                     break;
                 }
+                let batch_materializer = (jobs.iter().filter(|job| job.materialize_source).count()
+                    > 1)
+                .then(|| Arc::new(BatchSourceMaterializer::new()));
                 for (job, parents) in jobs.into_iter().zip(parents) {
                     let execution = job.execution.clone();
                     let spawn_service = service.clone();
@@ -4052,6 +4333,7 @@ fn drive(service: Arc<Service>) {
                     let root = root.clone();
                     let completed_tx = completed_tx.clone();
                     let output_tx = output_tx.clone();
+                    let batch_materializer = batch_materializer.clone();
                     eprintln!(
                         "[Pi^n] [Execution] Started node '{}' (id: {}, attempt: {})",
                         job.execution.node, job.execution.id, job.execution.attempt
@@ -4069,7 +4351,13 @@ fn drive(service: Arc<Service>) {
                             crate::process_control::with_owner(&node_owner, || {
                                 crate::process_control::check_current_owner_stop()?;
                                 if job.materialize_source {
-                                    materialize_job_source(&service, &root, &mut job)?;
+                                    materialize_job_source_in_batch(
+                                        &service,
+                                        &root,
+                                        &mut job,
+                                        batch_materializer.as_deref(),
+                                    )?;
+                                    crate::process_control::check_current_owner_stop()?;
                                 }
                                 let activity_key =
                                     format!("prepare-{}", job.execution.id);
@@ -5443,20 +5731,11 @@ fn edit_node(
 
 fn detect_repository(
     path: Option<String>,
-    service: &Arc<Service>,
 ) -> Result<Option<crate::workspace::WorkspaceDirectory>, String> {
     // Keep the existing command name for clients; this only inspects a folder.
-    crate::workspace::inspect_directory_with_size_check(
-        path.as_deref().map(std::path::Path::new),
-        |path| match idle_workspace_size_error(
-            service,
-            path,
-            crate::workspace::cached_check_workspace_size,
-        )? {
-            Some(error) => Err(error),
-            None => Ok(()),
-        },
-    )
+    // Workspace size is checked only when starting a Compile conversation with
+    // `isolate_parallel_nodes` enabled.
+    crate::workspace::inspect_directory(path.as_deref().map(std::path::Path::new))
 }
 
 fn reset_workspace(service: &Arc<Service>) -> Result<Snapshot, String> {
@@ -5613,7 +5892,52 @@ fn delete_workspace(repository: String, service: &Arc<Service>) -> Result<Vec<St
     Ok(ids)
 }
 
+fn service_is_active_graph_or_planning(service: &Service) -> bool {
+    if service.planning.load(Ordering::SeqCst) {
+        return true;
+    }
+    if !service.driving.load(Ordering::SeqCst) {
+        return false;
+    }
+    match service.runtime.try_lock() {
+        Ok(runtime) => !runtime.is_serial(),
+        // Conservative when lock is contended: defer background shadow GC.
+        Err(_) => true,
+    }
+}
+
+fn any_active_graph_or_planning_service(primary: &Arc<Service>) -> bool {
+    if service_is_active_graph_or_planning(primary) {
+        return true;
+    }
+    let Some(registry) = RUN_SERVICES.get() else {
+        return false;
+    };
+    let Ok(registry) = registry.try_lock() else {
+        // Conservative when registry lock is contended (e.g. a new Run is
+        // being registered): defer background shadow GC to the next sweep.
+        return true;
+    };
+    let services: Vec<Arc<Service>> = registry
+        .values()
+        .flat_map(|runs| runs.values())
+        .filter_map(Weak::upgrade)
+        .collect();
+    drop(registry);
+    services
+        .into_iter()
+        .any(|service| service_is_active_graph_or_planning(&service))
+}
+
+#[cfg(test)]
 fn retry_cleanup_tasks(service: &Arc<Service>) -> Result<(), String> {
+    retry_cleanup_tasks_with_gc(service, true)
+}
+
+fn retry_cleanup_tasks_with_gc(
+    service: &Arc<Service>,
+    run_periodic_orphan_gc: bool,
+) -> Result<(), String> {
     let (root, tasks) = {
         let runtime = service.runtime.lock().map_err(|error| error.to_string())?;
         (runtime.root.clone(), runtime.store.pending_cleanups()?)
@@ -5649,12 +5973,30 @@ fn retry_cleanup_tasks(service: &Arc<Service>) -> Result<(), String> {
             eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
         }
     }
-    if let Err(error) = crate::attachment_inputs::prune_orphaned_unscoped(
-        &root,
-        &store,
-        std::time::Duration::from_secs(24 * 60 * 60),
-    ) {
-        eprintln!("[Pi^n] Orphaned attachment cleanup: {error}");
+    if run_periodic_orphan_gc {
+        if let Err(error) = crate::attachment_inputs::prune_orphaned_unscoped(
+            &root,
+            &store,
+            std::time::Duration::from_secs(24 * 60 * 60),
+        ) {
+            eprintln!("[Pi^n] Orphaned attachment cleanup: {error}");
+        }
+        if !any_active_graph_or_planning_service(service) {
+            if let Err(error) = crate::cleanup::prune_orphaned_shadow_repos(
+                &root,
+                &store,
+                std::time::Duration::from_secs(10 * 60),
+            ) {
+                eprintln!("[Pi^n] Orphaned shadow repository cleanup: {error}");
+            }
+        }
+        if let Err(error) = crate::cleanup::prune_orphaned_publication_dirs(
+            &root,
+            &store,
+            std::time::Duration::from_secs(60 * 60),
+        ) {
+            eprintln!("[Pi^n] Orphaned publication cache cleanup: {error}");
+        }
     }
     crate::cleanup::detached::drain(&root, &store)
 }
@@ -5691,7 +6033,7 @@ fn enqueue_recovered_cleanup_tasks(service: &Arc<Service>) -> Result<(), String>
 #[cfg(test)]
 fn recover_cleanup_tasks(service: &Arc<Service>) -> Result<(), String> {
     enqueue_recovered_cleanup_tasks(service)?;
-    retry_cleanup_tasks(service)
+    retry_cleanup_tasks_with_gc(service, true)
 }
 
 fn is_valid_planning_id(id: &str) -> bool {
@@ -6689,12 +7031,8 @@ pub fn dispatch(
                 .transpose()?,
             service,
         )?),
-        "repository_status" => Ok(repository_status(
-            service,
-            argument(&body, "repository")?,
-            crate::workspace::cached_check_workspace_size,
-        )?),
-        "detect_repository" => to_value(detect_repository(argument(&body, "path")?, service)?),
+        "repository_status" => Ok(repository_status(argument(&body, "repository")?)?),
+        "detect_repository" => to_value(detect_repository(argument(&body, "path")?)?),
         "pick_repository" => to_value(crate::workspace::pick_repository()?),
         "list_files" => to_value(list_files(service, argument(&body, "repository").ok())?),
         // Versioned command names deliberately have no legacy fallback: older
@@ -6751,88 +7089,20 @@ pub fn dispatch(
     Ok(value)
 }
 
-/// Include background conversations and the entire driver (preparation through
-/// publication), not just whichever Run the browser currently displays.
-fn workspace_has_active_run(primary: &Arc<Service>, repository: &str) -> Result<bool, String> {
-    let root = match primary.runtime.try_lock() {
-        Ok(runtime) => runtime.root.clone(),
-        Err(std::sync::TryLockError::WouldBlock) => return Ok(true),
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut services: Vec<_> = RUN_SERVICES
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|e| e.to_string())?
-        .get(&root)
-        .into_iter()
-        .flat_map(|runs| runs.values())
-        .filter_map(Weak::upgrade)
-        .collect();
-    services.push(primary.clone());
-    // Never retain the registry lock while inspecting a Run. A busy projection
-    // conservatively defers this advisory check until the next status poll.
-    for service in services {
-        let runtime = match service.runtime.try_lock() {
-            Ok(runtime) => runtime,
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(true),
-            Err(error) => return Err(error.to_string()),
-        };
-        if runtime
-            .state
-            .config
-            .as_ref()
-            .is_some_and(|config| same_repository_binding(&config.repository, repository))
-            && (service.driving.load(Ordering::SeqCst)
-                || service.planning.load(Ordering::SeqCst)
-                || runtime.active()
-                || runtime.state.phase == "planning")
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Re-check activity after a slow scan: a Run could start while it was in flight.
-fn idle_workspace_size_error(
-    service: &Arc<Service>,
-    path: &std::path::Path,
-    check_size: impl FnOnce(&std::path::Path) -> Result<(), String>,
-) -> Result<Option<String>, String> {
-    let repository = path.to_string_lossy();
-    if workspace_has_active_run(service, &repository)? {
-        return Ok(None);
-    }
-    let error = check_size(path).err();
-    if error.is_some() && workspace_has_active_run(service, &repository)? {
-        return Ok(None);
-    }
-    Ok(error)
-}
-
-fn repository_status(
-    service: &Arc<Service>,
-    repository: String,
-    check_size: impl FnOnce(&std::path::Path) -> Result<(), String>,
-) -> Result<serde_json::Value, String> {
+fn repository_status(repository: String) -> Result<serde_json::Value, String> {
     let path = std::path::Path::new(&repository);
-    let mut error = crate::workspace::validate_binding(path).err();
+    let error = crate::workspace::validate_binding(path).err();
     let valid = error.is_none();
-    let mut size_limit_exceeded = false;
-    if valid {
-        error = idle_workspace_size_error(service, path, check_size)?;
-        size_limit_exceeded = error.is_some();
-    }
-    // Size warnings must not disable controls for an admitted Run. New Runs
-    // and bindings enforce admission separately; only binding failures are
-    // invalid here. Only missing directories may be forgotten automatically.
+    // Only binding failures are invalid here. Workspace size is deferred to
+    // Compile admission when `isolate_parallel_nodes` is enabled.
+    // Only missing directories may be forgotten automatically.
     let missing = path.is_absolute()
         && path
             .metadata()
             .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
     Ok(serde_json::json!({
         "repository": repository, "valid": valid, "missing": missing,
-        "error": error, "sizeLimitExceeded": size_limit_exceeded,
+        "error": error, "sizeLimitExceeded": false,
     }))
 }
 
@@ -6929,6 +7199,7 @@ fn api_service(
         | "get_file_diff"
         | "open_workspace_file"
         | "get_workspace_image"
+        | "get_attachment_image"
         | "get_merger_prompt"
         | "write_workspace_attachment"
         | "delete_workspace_attachment"
@@ -6941,7 +7212,10 @@ fn api_service(
                 if run_id.is_empty()
                     && matches!(
                         command,
-                        "get_file_changes" | "get_file_diff" | "open_workspace_file"
+                        "get_file_changes"
+                            | "get_file_diff"
+                            | "open_workspace_file"
+                            | "get_attachment_image"
                     )
                 {
                     Ok(primary.clone())
@@ -7249,7 +7523,9 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
     let cleanup_stop = cleanup_stopped.clone();
     let cleanup_service = Arc::downgrade(&service);
     thread::spawn(move || {
+        const ORPHAN_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
         let mut first_pass = true;
+        let mut last_orphan_sweep: Option<std::time::Instant> = None;
         while !cleanup_stop.load(Ordering::SeqCst) {
             let wait_ticks = if first_pass { 5 } else { 300 };
             first_pass = false;
@@ -7263,7 +7539,12 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
                 thread::sleep(std::time::Duration::from_millis(100));
             }
             if let Some(service) = cleanup_service.upgrade() {
-                if let Err(error) = retry_cleanup_tasks(&service) {
+                let run_orphan_sweep = last_orphan_sweep
+                    .is_none_or(|prev| prev.elapsed() >= ORPHAN_SWEEP_INTERVAL);
+                if run_orphan_sweep {
+                    last_orphan_sweep = Some(std::time::Instant::now());
+                }
+                if let Err(error) = retry_cleanup_tasks_with_gc(&service, run_orphan_sweep) {
                     eprintln!("[Pi^n] Cleanup retry failed: {error}");
                 }
             } else {
@@ -7878,10 +8159,14 @@ fn handle_http_request_with_options(
         });
         // Raster previews keep the JSON-only POST/Host/Origin boundary. A model
         // <img src="/api/..."> cannot trigger a filesystem read via a GET.
-        if command == "get_workspace_image" {
+        if command == "get_workspace_image" || command == "get_attachment_image" {
             let result = parsed.and_then(|body| {
                 let scoped = api_service(service, command, &body)?;
-                workspace_images::get_workspace_image(&scoped, &body)
+                if command == "get_attachment_image" {
+                    workspace_images::get_attachment_image(&scoped, &body)
+                } else {
+                    workspace_images::get_workspace_image(&scoped, &body)
+                }
             });
             let (bytes, mime, status) = match result {
                 Ok((bytes, mime)) => (bytes, mime, 200),
@@ -7981,5 +8266,72 @@ fn handle_http_request_with_options(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod batch_source_materializer_tests {
+    use super::BatchSourceMaterializer;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier,
+    };
+    use std::thread;
+
+    #[test]
+    fn shares_single_collection_across_sibling_workers_on_success() {
+        let materializer = Arc::new(BatchSourceMaterializer::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let materializer = materializer.clone();
+            let calls = calls.clone();
+            let barrier = barrier.clone();
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                materializer.run(|| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    thread::sleep(std::time::Duration::from_millis(20));
+                    Ok("abc123".to_string())
+                })
+            }));
+        }
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap().unwrap())
+            .collect();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(outcomes.iter().all(|(head, _)| head == "abc123"));
+        assert_eq!(outcomes.iter().filter(|(_, leader)| *leader).count(), 1);
+    }
+
+    #[test]
+    fn propagates_failure_to_all_siblings_without_retrying_per_worker() {
+        let materializer = Arc::new(BatchSourceMaterializer::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let materializer = materializer.clone();
+            let calls = calls.clone();
+            let barrier = barrier.clone();
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                materializer.run(|| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    thread::sleep(std::time::Duration::from_millis(20));
+                    Err("Source changed while copying project Git (a.txt modified)".into())
+                })
+            }));
+        }
+        let errors: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap().unwrap_err())
+            .collect();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(errors
+            .iter()
+            .all(|e| e.contains("Source changed while copying project Git (a.txt modified)")));
     }
 }

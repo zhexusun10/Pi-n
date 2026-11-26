@@ -2579,4 +2579,234 @@ test("planner global collapse and expand keep expanded thinking cards matched wi
   } finally { await context.close(); }
 });
 
+test("expanding a very large card group caps animated height to the viewport for calm global and single-strip transitions", { timeout: 30_000 }, async () => {
+  const fullLog = [
+    ...Array.from({ length: 48 }, (_, i) => [
+      JSON.stringify({
+        type: "tool_execution_start",
+        toolCallId: `burst-${i}`,
+        toolName: i % 2 === 0 ? "read" : "bash",
+        args: i % 2 === 0 ? { path: `src/module_${i}.ts` } : { command: `echo burst_${i}` },
+      }),
+      JSON.stringify({
+        type: "tool_execution_end",
+        toolCallId: `burst-${i}`,
+        toolName: i % 2 === 0 ? "read" : "bash",
+        isError: false,
+        result: { content: [{ type: "text", text: `output ${i}` }], details: { exitCode: 0 } },
+      }),
+    ]).flat(),
+    JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "Finished inspecting all 48 modules." }] },
+    }),
+  ].join("\n") + "\n";
+  const logBytes = Buffer.from(fullLog);
+
+  const context = await browser.newContext({ viewport: { width: 1280, height: 700 }, locale: "en-US", reducedMotion: "no-preference" });
+  await context.addInitScript(() => {
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "1");
+  });
+  const errors = [];
+  let page;
+  await context.route("**/api/*", async route => {
+    const command = new URL(route.request().url()).pathname.slice(5);
+    if (command === "get_execution_output") {
+      const body = route.request().postDataJSON();
+      await route.fulfill({ json: { result: {
+        runId: body.runId, executionId: body.executionId,
+        content: fullLog, startOffset: 0, nextOffset: logBytes.length, totalBytes: logBytes.length,
+        complete: true, status: "completed",
+      } } });
+      return;
+    }
+    await route.fulfill({ json: { result: {} } });
+  });
+  page = await context.newPage();
+  page.on("pageerror", error => errors.push(String(error)));
+  try {
+    await page.goto(`${origin}/__changes?mode=serial&settled=1&bytes=${logBytes.length}`, { waitUntil: "domcontentloaded" });
+    await page.locator(".initial-query-scroll.conversation-ready").waitFor();
+    await expect(page.getByTestId("activity-summary-row")).toHaveCount(1);
+
+    const scrollerHeight = await page.evaluate(() => document.querySelector(".initial-query-scroll").clientHeight);
+
+    // 1. Individual summary strip expand: cap animated wrapper to viewport instead of blasting 0 -> 2400px in 2 frames.
+    await page.evaluate(() => {
+      window.__singleExpandSamples = [];
+      const start = performance.now();
+      function tick(now) {
+        const cards = document.querySelector('[data-testid="activity-summary-cards"]');
+        const wrapper = cards?.parentElement?.parentElement;
+        if (wrapper) {
+          window.__singleExpandSamples.push({
+            h: Math.round(wrapper.getBoundingClientRect().height),
+            overflow: wrapper.style.overflow,
+          });
+        }
+        if (now - start < 480) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+    await page.getByTestId("activity-summary-trigger").first().click();
+    await page.waitForTimeout(520);
+    const singleSamples = await page.evaluate(() => window.__singleExpandSamples);
+    const animatingSingle = singleSamples.filter(s => s.overflow === "hidden").map(s => s.h);
+    const settledSingleHeight = singleSamples.at(-1)?.h ?? 0;
+    assert.ok(settledSingleHeight > 1800, `expected 48 expanded cards to exceed 1800px, got ${settledSingleHeight}`);
+    assert.ok(animatingSingle.length >= 6, `expected smooth multi-frame expansion, got ${JSON.stringify(animatingSingle)}`);
+    assert.ok(
+      Math.max(...animatingSingle) <= scrollerHeight + 60,
+      `individual expand must cap animated travel to viewport (${scrollerHeight}px), got ${Math.max(...animatingSingle)}px: ${JSON.stringify(animatingSingle)}`,
+    );
+
+    // Collapse the individual strip cleanly before testing global expand.
+    await page.getByTestId("activity-summary-trigger").first().click();
+    await page.waitForTimeout(450);
+
+    // 2. Global "Expand cards" transition: cap animated track height to viewport and keep bottom-most card stable across handoff.
+    await page.evaluate(() => {
+      window.__globalBurstSamples = [];
+      const start = performance.now();
+      function tick(now) {
+        const track = document.querySelector(".activity-summary-body-track");
+        const cards = [...document.querySelectorAll('[data-testid="tool-call-card"]')];
+        const lastCard = cards.at(-1);
+        window.__globalBurstSamples.push({
+          inTransition: !!track,
+          trackH: track ? Math.round(track.getBoundingClientRect().height) : null,
+          lastCardBottom: lastCard ? Math.round(lastCard.getBoundingClientRect().bottom) : null,
+        });
+        if (now - start < 520) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+    await page.getByTestId("collapse-cards-trigger").click();
+    await page.waitForTimeout(560);
+    await expect(page.getByTestId("activity-summary-row")).toHaveCount(0);
+
+    const burstSamples = await page.evaluate(() => window.__globalBurstSamples);
+    const trackHeights = burstSamples.filter(s => s.inTransition && s.trackH !== null).map(s => s.trackH);
+    assert.ok(trackHeights.length >= 6, `expected multi-frame global expand, got ${JSON.stringify(trackHeights)}`);
+    assert.ok(
+      Math.max(...trackHeights) <= scrollerHeight + 60,
+      `global expand must cap track height to viewport (${scrollerHeight}px), got ${Math.max(...trackHeights)}px: ${JSON.stringify(trackHeights)}`,
+    );
+    const trackSpan = Math.max(...trackHeights) - Math.min(...trackHeights);
+    const maxStep = Math.max(...trackHeights.slice(1).map((h, i) => h - trackHeights[i]));
+    assert.ok(
+      maxStep < trackSpan * 0.35,
+      `global expand jumped too aggressively (${maxStep}px of ${trackSpan}px): ${JSON.stringify(trackHeights)}`,
+    );
+    // The bottom-most card should stay anchored with zero handoff snap from transition to idle.
+    const lastTransitionCardBottom = burstSamples.filter(s => s.inTransition && s.lastCardBottom !== null).at(-1)?.lastCardBottom;
+    const settledCardBottom = burstSamples.filter(s => !s.inTransition && s.lastCardBottom !== null).at(-1)?.lastCardBottom;
+    assert.ok(
+      lastTransitionCardBottom != null && settledCardBottom != null && Math.abs(settledCardBottom - lastTransitionCardBottom) <= 3,
+      `global expand snapped at handoff: transition=${lastTransitionCardBottom} settled=${settledCardBottom}`,
+    );
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("opening the File changes pane locks conversation prose width to its split target without per-frame reflow", { timeout: 30_000 }, async () => {
+  const longProse = Array.from({ length: 14 }, (_, i) =>
+    `Paragraph ${i + 1}: Opening the right-hand workspace changes pane should keep conversation text calm and readable rather than snapping wider on frame zero and re-wrapping every line across twenty-seven frames.`
+  ).join("\n\n");
+  const fullLog = JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text: longProse }] },
+  }) + "\n";
+  const logBytes = Buffer.from(fullLog);
+
+  const context = await browser.newContext({ viewport: { width: 1200, height: 760 }, locale: "en-US", reducedMotion: "no-preference" });
+  await context.addInitScript(() => {
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_collapse_cards_v1", "0");
+  });
+  const errors = [];
+  let page;
+  await context.route("**/api/*", async route => {
+    const command = new URL(route.request().url()).pathname.slice(5);
+    const body = route.request().postDataJSON() ?? {};
+    if (command === "get_execution_output") {
+      await route.fulfill({ json: { result: {
+        runId: body.runId, executionId: body.executionId,
+        content: fullLog, startOffset: 0, nextOffset: logBytes.length, totalBytes: logBytes.length,
+        complete: true, status: "completed",
+      } } });
+      return;
+    }
+    if (command === "get_file_changes") {
+      const summary = await page.evaluate(() => window.changesAudit.summary);
+      await route.fulfill({ json: { result: { runId: body.runId, executionId: null, executionIds: body.executionIds ?? null, summary } } });
+      return;
+    }
+    await route.fulfill({ json: { result: {} } });
+  });
+  page = await context.newPage();
+  page.on("pageerror", error => errors.push(String(error)));
+  try {
+    await page.goto(`${origin}/__changes?mode=serial&settled=1&bytes=${logBytes.length}`, { waitUntil: "domcontentloaded" });
+    await page.locator(".initial-query-scroll.conversation-ready").waitFor();
+
+    const before = await page.evaluate(() => ({
+      paneW: Math.round(document.querySelector(".conversation-pane").getBoundingClientRect().width),
+      streamW: Math.round(document.querySelector(".chat-messages-stream").getBoundingClientRect().width),
+    }));
+
+    await page.evaluate(() => {
+      window.__paneOpenSamples = [];
+      const start = performance.now();
+      function tick(now) {
+        const pane = document.querySelector(".conversation-pane");
+        const stream = document.querySelector(".chat-messages-stream");
+        const para = stream?.querySelector("p");
+        if (pane && stream && para) {
+          window.__paneOpenSamples.push({
+            paneW: Math.round(pane.getBoundingClientRect().width),
+            streamW: Math.round(stream.getBoundingClientRect().width),
+            paraH: Math.round(para.getBoundingClientRect().height),
+            split: pane.classList.contains("split"),
+          });
+        }
+        if (now - start < 620) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+    await page.getByTestId("workspace-changes-trigger").click();
+    await page.waitForTimeout(660);
+    await expect(page.getByTestId("workspace-changes-pane")).toBeVisible();
+
+    const samples = (await page.evaluate(() => window.__paneOpenSamples)).filter(s => s.split);
+    const settled = samples.at(-1);
+    const paneWidths = samples.map(s => s.paneW);
+    const streamWidths = samples.map(s => s.streamW);
+    const paraHeights = samples.map(s => s.paraH);
+
+    // Pane itself still slides smoothly through intermediate widths.
+    assert.ok(
+      paneWidths.some(w => w < before.paneW - 20 && w > settled.paneW + 20),
+      `expected progressive pane width transition between ${before.paneW} and ${settled.paneW}: ${JSON.stringify(paneWidths)}`,
+    );
+    // Text column must never explode wider than its pre-open width on frame 0.
+    assert.ok(
+      Math.max(...streamWidths) <= before.streamW,
+      `stream widened above ${before.streamW}px during open: ${JSON.stringify(streamWidths)}`,
+    );
+    // Text column stays locked to its final split width across the entire open transition (zero per-frame reflow).
+    assert.ok(
+      Math.max(...streamWidths) - Math.min(...streamWidths) <= 2,
+      `expected stable stream width across open animation, got ${JSON.stringify(streamWidths)}`,
+    );
+    assert.ok(
+      Math.max(...paraHeights) - Math.min(...paraHeights) <= 1,
+      `expected zero per-frame paragraph reflow during open animation, got heights ${JSON.stringify(paraHeights)}`,
+    );
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+
 

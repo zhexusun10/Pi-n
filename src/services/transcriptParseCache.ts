@@ -52,13 +52,14 @@ export function writeTranscriptParse(owner: string, source: string, value: Cache
   const bytes = utf8Bytes(value.text) * 4 + overhead;
   if (bytes > transcriptParseCache.maxBytes) return;
   const { source: endSource, byteOffset, leadingFragment, inTagThinking, inFinalResponse, finalResponseSuppressed,
-    seenFirstUser, pendingUserStart, assistantStartIndex, userMessageStarts, compacting } = value.state;
+    seenFirstUser, pendingUserStart, assistantStartIndex, userMessageStarts, compacting, noticeTracker } = value.state;
   try {
     // Neither cached rows nor parser Sets may be mutated by a mounted reader.
     // Appearance/expansion are view state and must be recomputed on a cold mount.
     const copy = structuredClone({
       state: { source: endSource, byteOffset, leadingFragment, inTagThinking, inFinalResponse, finalResponseSuppressed,
-        seenFirstUser, pendingUserStart, assistantStartIndex, userMessageStarts, compacting },
+        seenFirstUser, pendingUserStart, assistantStartIndex, userMessageStarts, compacting,
+        ...(noticeTracker ? { noticeTracker } : {}) },
       items: value.items.map(({ animateAppear: _animate, defaultExpanded: _expanded, ...item }) => item),
     });
     transcriptParseCache.set(keyFor(owner, source), { ...value, ...copy, owner, options: optionsFor(options), bytes });

@@ -28,24 +28,20 @@ pub(super) fn fill_tree_only(
     })
 }
 
-pub(super) fn fill_with_links(
+pub(super) fn fill_with_identities(
     entries: &mut BTreeMap<String, Entry>,
+    identities: &mut BTreeMap<String, (u128, u64)>,
     files: Vec<PendingFile>,
     threads: usize,
-) -> Result<crate::workspace_links::Topology, String> {
+) -> Result<(), String> {
     let resolved = resolve_files(files, threads, |file| {
         file_entry_with_identity(&file.name, &file.absolute, &file.metadata)
     })?;
-    let mut identities = BTreeMap::new();
     for (name, (entry, identity)) in resolved {
         entries.insert(name.clone(), entry);
         identities.insert(name, identity);
     }
-    crate::workspace_links::capture_from_identities(
-        identities
-            .into_iter()
-            .filter(|(name, _)| matches!(entries.get(name), Some(Entry::File { .. }))),
-    )
+    Ok(())
 }
 
 fn fill_with(

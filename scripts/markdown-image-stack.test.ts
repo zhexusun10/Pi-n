@@ -167,7 +167,7 @@ test("buildStackPreviewState excludes failed cards and refuses to open failed or
     index: 1,
     items: [
       { src: "https://example.com/ok-1.png", alt: "OK 1", name: "OK 1" },
-      { src: "blob:ok-2", alt: "OK 2", name: "OK 2" },
+      { src: "blob:ok-2", workspacePath: "ok-2.png", alt: "OK 2", name: "OK 2" },
     ],
   });
 });

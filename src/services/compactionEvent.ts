@@ -1,4 +1,5 @@
 import type { CompactionItemInfo, TranscriptItem } from "../types";
+import { extractCompactionUsage } from "./transcriptNotices";
 
 function normalizeReason(value: unknown): CompactionItemInfo["reason"] {
   return value === "manual" || value === "threshold" || value === "overflow" ? value : undefined;
@@ -40,10 +41,12 @@ export function extractCompactionInfo(event: any): CompactionItemInfo | null {
     const details = result.details && typeof result.details === "object" ? result.details : undefined;
     const readFiles = normalizeFileList(details?.readFiles);
     const modifiedFiles = normalizeFileList(details?.modifiedFiles);
+    const billing = extractCompactionUsage(result.usage);
     return {
       reason: normalizeReason(event.reason),
       tokensBefore,
       tokensAfter,
+      ...billing,
       summary,
       ...(typeof result.firstKeptEntryId === "string" && result.firstKeptEntryId
         ? { firstKeptEntryId: result.firstKeptEntryId } : {}),
@@ -60,10 +63,12 @@ export function extractCompactionInfo(event: any): CompactionItemInfo | null {
     const details = event.details && typeof event.details === "object" ? event.details : undefined;
     const readFiles = normalizeFileList(details?.readFiles);
     const modifiedFiles = normalizeFileList(details?.modifiedFiles);
+    const billing = extractCompactionUsage(event.usage);
     return {
       reason: normalizeReason(event.reason),
       tokensBefore,
       tokensAfter,
+      ...billing,
       summary,
       ...(typeof event.firstKeptEntryId === "string" && event.firstKeptEntryId
         ? { firstKeptEntryId: event.firstKeptEntryId } : {}),

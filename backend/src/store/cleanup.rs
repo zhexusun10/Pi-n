@@ -335,22 +335,6 @@ impl Store {
                     params![excluded, kind, id], |row| row.get(0)).map_err(|error| error.to_string());
             }
         }
-        if let Target::Shadow { root, name, .. } = target {
-            let expected = root.join("shadow_repos").join(name);
-            for id in self.runs()?.into_iter().filter(|id| id != excluded) {
-                let state = self.load(&id)?;
-                let Some(config) = state.config else {
-                    continue;
-                };
-                let source = Path::new(&config.repository);
-                if !source.is_dir() {
-                    return Ok(true);
-                } // Cannot disprove a legacy shared binding.
-                if crate::workspace::shadow_repo_dir(source)? == expected {
-                    return Ok(true);
-                }
-            }
-        }
         Ok(false)
     }
 
@@ -368,8 +352,56 @@ impl Store {
 
     /// Offline variant of the same source-database lifetime predicate, used by
     /// `--cleanup-workspaces` GC without a current Run.
+    #[cfg(test)]
     pub(crate) fn shadow_repo_in_use(&self, shadow: &Path) -> Result<bool, String> {
         self.shadow_repo_referenced_by("", shadow)
+    }
+
+    /// Single-pass set of canonical path keys for all shadow repositories
+    /// currently referenced by any live/incomplete/standard-git Graph or
+    /// unrouted Run, avoiding O(N_shadows * N_runs) full replays during GC.
+    pub(crate) fn referenced_shadow_repos(
+        &self,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        let deleted: std::collections::BTreeSet<String> =
+            self.deleted_runs()?.into_iter().collect();
+        let mut referenced = std::collections::BTreeSet::new();
+        for id in self.runs()? {
+            if deleted.contains(&id) {
+                continue;
+            }
+            let state = self.load(&id)?;
+            if state.events.is_empty() || state.plan_type.as_deref() == Some("serial") {
+                continue;
+            }
+            let Some(config) = state.config else {
+                continue;
+            };
+            let source = Path::new(&config.repository);
+            let Some(resolved) = crate::workspace::shadow_repo_dir(source).ok() else {
+                // Missing/moved source cannot disprove recorded shadow ownership.
+                for target in self.owned_cleanup_targets(&id)? {
+                    if let Target::Shadow { root, name, .. } = target {
+                        referenced.insert(crate::path_identity::path_key(
+                            &root.join("shadow_repos").join(name),
+                        ));
+                    }
+                }
+                continue;
+            };
+            let undelivered_result = state.published_head.is_none()
+                && state.nodes.values().any(|node| {
+                    node.status == "completed"
+                        && node.head.as_deref().is_some_and(|head| !head.is_empty())
+                });
+            if state.phase != "completed"
+                || crate::workspace::is_standard_git(source)
+                || undelivered_result
+            {
+                referenced.insert(crate::path_identity::path_key(&resolved));
+            }
+        }
+        Ok(referenced)
     }
 
     fn shadow_repo_referenced_by(&self, excluded: &str, expected: &Path) -> Result<bool, String> {

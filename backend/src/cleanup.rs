@@ -217,6 +217,7 @@ pub(crate) fn configuration_targets(
     root: &Path,
     run_id: &str,
     config: &Config,
+    include_shadow: bool,
 ) -> Result<BTreeSet<Target>, String> {
     let mut targets = BTreeSet::new();
     if config.environment.is_some() && Uuid::parse_str(run_id).is_ok() {
@@ -243,17 +244,19 @@ pub(crate) fn configuration_targets(
             .map_err(|error| error.to_string())?;
         targets.insert(Target::workspace(&parent, run_id, ".pi-n-worktrees"));
     }
-    let shadow = crate::workspace::shadow_repo_dir(&source)?;
-    if fs::symlink_metadata(&shadow).is_ok() {
-        targets.insert(Target::Shadow {
-            root: crate::workspace::data_root(),
-            name: shadow
-                .file_name()
-                .ok_or("Invalid shadow directory")?
-                .to_string_lossy()
-                .into_owned(),
-            source: Some(source.clone()),
-        });
+    if include_shadow {
+        let shadow = crate::workspace::shadow_repo_dir(&source)?;
+        if fs::symlink_metadata(&shadow).is_ok() {
+            targets.insert(Target::Shadow {
+                root: crate::workspace::data_root(),
+                name: shadow
+                    .file_name()
+                    .ok_or("Invalid shadow directory")?
+                    .to_string_lossy()
+                    .into_owned(),
+                source: Some(source.clone()),
+            });
+        }
     }
     Ok(targets)
 }
@@ -263,6 +266,16 @@ pub(crate) fn remember_event(
     store: &Store,
     state: &Snapshot,
     kind: &EventKind,
+) -> Result<(), String> {
+    remember_event_with_plan_type(root, store, state, kind, state.plan_type.as_deref())
+}
+
+pub(crate) fn remember_event_with_plan_type(
+    root: &Path,
+    store: &Store,
+    state: &Snapshot,
+    kind: &EventKind,
+    plan_type: Option<&str>,
 ) -> Result<(), String> {
     let mut targets = BTreeSet::new();
     let config = match kind {
@@ -278,7 +291,14 @@ pub(crate) fn remember_event(
     };
     if let Some(config) = config {
         store.remember_cleanup_source(Path::new(&config.repository))?;
-        targets.extend(configuration_targets(root, &state.run_id, config)?);
+        let include_shadow = plan_type != Some("serial")
+            && !matches!(kind, EventKind::PlanningStarted { .. });
+        targets.extend(configuration_targets(
+            root,
+            &state.run_id,
+            config,
+            include_shadow,
+        )?);
     }
     match kind {
         EventKind::EnvironmentPolicyResolved {
@@ -292,6 +312,36 @@ pub(crate) fn remember_event(
         }
         EventKind::MergerStarted { execution } => {
             targets.insert(Target::data("mergers", &execution.id));
+        }
+        EventKind::Routed {
+            images: Some(images),
+            ..
+        }
+        | EventKind::PlannerSteerSubmitted {
+            images: Some(images),
+            ..
+        }
+        | EventKind::NodeInputBound {
+            images: Some(images),
+            ..
+        }
+        | EventKind::Steered {
+            images: Some(images),
+            ..
+        }
+        | EventKind::NodeMessaged {
+            images: Some(images),
+            ..
+        }
+        | EventKind::Invalidated {
+            images: Some(images),
+            ..
+        }
+        | EventKind::ConversationEdited {
+            images: Some(images),
+            ..
+        } => {
+            crate::attachment_inputs::adopt_images_for_run(root, store, &state.run_id, images)?;
         }
         _ => {}
     }
@@ -309,7 +359,8 @@ pub(crate) fn manifest(
 ) -> Result<Manifest, String> {
     let mut targets = store.owned_cleanup_targets(&state.run_id)?;
     if let Some(config) = &state.config {
-        match configuration_targets(root, &state.run_id, config) {
+        let include_shadow = state.plan_type.as_deref() != Some("serial");
+        match configuration_targets(root, &state.run_id, config, include_shadow) {
             Ok(current) => targets.extend(current),
             Err(_)
                 if targets
@@ -608,7 +659,7 @@ fn execute_inner(root: &Path, store: &Store, task: &Task, detach: bool) -> Resul
                 serde_json::json!({"repository":repository,"model":"cleanup","maxParallel":1}),
             )
             .map_err(|error| error.to_string())?;
-            configuration_targets(root, &task.run_id, &config)?
+            configuration_targets(root, &task.run_id, &config, true)?
         } else {
             BTreeSet::new()
         };
@@ -705,4 +756,233 @@ pub(crate) fn attempt(root: &Path, store: &Store, task: &Task) -> Result<(), Str
             Err(error)
         }
     }
+}
+
+fn path_older_than(path: &Path, min_age: std::time::Duration) -> bool {
+    if min_age.is_zero() {
+        return true;
+    }
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return false;
+    };
+    std::time::SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= min_age)
+}
+
+/// True when a `.publication` journal directory has no unsettled attempt
+/// (no attempt with `prepared.json`, `input.json`, or `applying` lacking `installed`).
+pub(crate) fn publication_journal_settled(journal_root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(journal_root) else {
+        return true;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Ok(kind) = entry.file_type() else {
+            return false;
+        };
+        if !kind.is_dir() {
+            continue;
+        }
+        let attempt = entry.path();
+        let has_state = attempt.join("prepared.json").is_file()
+            || attempt.join("input.json").is_file()
+            || attempt.join("applying").is_file();
+        if has_state && !attempt.join("installed").is_file() {
+            return false;
+        }
+    }
+    true
+}
+
+/// True when `.pi-n-worktrees/<uuid>` contains ONLY standalone publication
+/// artifacts (`publication-files-*`, `publication-view-*`, optional
+/// `.pi-n-state` / `.pi-n-git`), every publication journal inside it is
+/// settled, and it has been idle for at least `min_age`.
+pub(crate) fn is_settled_orphan_publication_dir(path: &Path, min_age: std::time::Duration) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.is_dir() || crate::workspace_symlinks::is_link(&meta) {
+        return false;
+    }
+    if !path_older_than(path, min_age) {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    let mut saw_publication_entry = false;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let child = entry.path();
+        let Ok(child_meta) = fs::symlink_metadata(&child) else {
+            return false;
+        };
+        if crate::workspace_symlinks::is_link(&child_meta) || !path_older_than(&child, min_age) {
+            return false;
+        }
+        if is_publication_workspace_checkout(&name) {
+            saw_publication_entry = true;
+            if name.ends_with(".publication") {
+                if !child_meta.is_dir() || !publication_journal_settled(&child) {
+                    return false;
+                }
+                if !min_age.is_zero() {
+                    let Ok(attempts) = fs::read_dir(&child) else {
+                        return false;
+                    };
+                    for attempt in attempts {
+                        let Ok(attempt) = attempt else {
+                            return false;
+                        };
+                        if !path_older_than(&attempt.path(), min_age) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        } else if matches!(name.as_str(), ".pi-n-state" | ".pi-n-git") {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    saw_publication_entry
+}
+
+fn shadow_repo_idle(path: &Path, min_age: std::time::Duration) -> bool {
+    if !path_older_than(path, min_age) {
+        return false;
+    }
+    ![
+        "HEAD",
+        "index",
+        "logs",
+        "logs/HEAD",
+        "refs",
+        "refs/heads",
+        "refs/pi-n/heads",
+        "refs/pi-n/inputs",
+        "agent-views",
+        "objects",
+        "objects/pack",
+    ]
+    .into_iter()
+    .map(|leaf| path.join(leaf))
+    .any(|probe| fs::symlink_metadata(&probe).is_ok() && !path_older_than(&probe, min_age))
+}
+
+/// Reclaim shadow repositories under `<root>/shadow_repos` that have no
+/// referencing Run in `store` and have been idle for at least `min_age`.
+pub(crate) fn prune_orphaned_shadow_repos(
+    root: &Path,
+    store: &Store,
+    min_age: std::time::Duration,
+) -> Result<usize, String> {
+    let Some(shadow_root) = real_child_path(root, &root.join("shadow_repos"), false)? else {
+        return Ok(0);
+    };
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(&shadow_root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let target = Target::Shadow {
+            root: root.to_path_buf(),
+            name,
+            source: None,
+        };
+        let Ok(Some(path)) = target.resolve(root, "background-gc") else {
+            continue;
+        };
+        if shadow_repo_idle(&path, min_age) {
+            candidates.push(path);
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    let referenced = store.referenced_shadow_repos()?;
+    let mut removed = 0usize;
+    for path in candidates {
+        if referenced.contains(&crate::path_identity::path_key(&path)) {
+            continue;
+        }
+        // Re-verify idle state immediately before deletion to narrow any race
+        // with a concurrent snapshot initialization.
+        if !shadow_repo_idle(&path, min_age) {
+            continue;
+        }
+        crate::workspace_cleanup::remove_tree(&path).map_err(|error| error.to_string())?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+/// Reclaim settled orphan publication cache roots under
+/// `<workspaces_parent>/.pi-n-worktrees/<uuid>` that belong to no live or
+/// recorded Run and have been idle for at least `min_age`.
+pub(crate) fn prune_orphaned_publication_dirs(
+    root: &Path,
+    store: &Store,
+    min_age: std::time::Duration,
+) -> Result<usize, String> {
+    let parent = crate::workspace::workspaces_parent(root);
+    let Some(bucket) = real_child_path(&parent, &parent.join(".pi-n-worktrees"), false)? else {
+        return Ok(0);
+    };
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(&bucket).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if Uuid::parse_str(&id).is_err() {
+            continue;
+        }
+        let Some(path) = real_child_path(&parent, &bucket.join(&id), false)? else {
+            continue;
+        };
+        if is_settled_orphan_publication_dir(&path, min_age) {
+            candidates.push((id, path));
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    let known_runs: BTreeSet<String> = store
+        .runs()?
+        .into_iter()
+        .chain(
+            store
+                .pending_cleanups()?
+                .into_iter()
+                .map(|task| task.run_id),
+        )
+        .collect();
+    let protected_sources = store.cleanup_sources()?;
+    let mut removed = 0usize;
+    for (id, path) in candidates {
+        if known_runs.contains(&id) {
+            continue;
+        }
+        if protected_sources
+            .iter()
+            .any(|source| crate::workspace::scope_contains(source, &path))
+        {
+            continue;
+        }
+        if !is_settled_orphan_publication_dir(&path, min_age) {
+            continue;
+        }
+        crate::workspace_cleanup::remove_tree(&path).map_err(|error| error.to_string())?;
+        removed += 1;
+    }
+    Ok(removed)
 }

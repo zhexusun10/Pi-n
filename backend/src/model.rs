@@ -3688,6 +3688,27 @@ pub struct ImageAttachment {
     pub data: String,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(rename = "originalPath", default, skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
+}
+
+impl ImageAttachment {
+    /// Serialize only the fields expected by Pi RPC / upstream vision providers,
+    /// stripping internal preview references such as `originalPath`.
+    pub fn rpc_value(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        map.insert("type".into(), serde_json::json!(self.r#type));
+        map.insert("mimeType".into(), serde_json::json!(self.mime_type));
+        map.insert("data".into(), serde_json::json!(self.data));
+        if let Some(name) = &self.name {
+            map.insert("name".into(), serde_json::json!(name));
+        }
+        serde_json::Value::Object(map)
+    }
+
+    pub fn rpc_payload(images: &[Self]) -> serde_json::Value {
+        serde_json::Value::Array(images.iter().map(Self::rpc_value).collect())
+    }
 }
 
 fn default_image_type() -> String {

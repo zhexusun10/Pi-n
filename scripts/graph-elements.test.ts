@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Node, ReactFlowInstance } from "@xyflow/react";
 import { computeExecutionLayers, graphEdgeId, graphFeedbackEnabled, indexFeedbackExhaustion, indexGraphInputs, orderGraphLayers, useGraphElements } from "../src/hooks/useGraphElements.ts";
-import { runningGraphFitViewport, runningViewportForGraph } from "../src/lib/graphFit.ts";
+import { runningGraphFitViewport, runningViewportForGraph, taskNodeStrokeMetrics } from "../src/lib/graphFit.ts";
 import { defaultConfig, emptySnapshot, type Execution, type Graph, type Plan, type RuntimeActivity, type Snapshot } from "../src/types.ts";
 import { t } from "../src/i18n/index.ts";
 import { graphCardIds, selectedMergerNode } from "../src/lib/graphNodeIdentity.ts";
@@ -753,4 +753,13 @@ test("a node displays waiting while its node-composition merger is running", () 
   const duringRetry = projectGraph(retryingBlocked, "");
   assert.equal(duringRetry.nodes.find(node => node.id === "merger:join")!.data.status, "running");
   assert.equal(duringRetry.nodes.find(node => node.id === "join")!.data.status, "blocked");
+});
+
+test("taskNodeStrokeMetrics keeps node strokes crisp below 1x zoom and unchanged at or above 1x", () => {
+  assert.deepEqual(taskNodeStrokeMetrics(1.6), { borderWidth: "1px", selectedRingWidth: "3px" });
+  assert.deepEqual(taskNodeStrokeMetrics(1), { borderWidth: "1px", selectedRingWidth: "3px" });
+  assert.deepEqual(taskNodeStrokeMetrics(0.5), { borderWidth: "2px", selectedRingWidth: "4px" });
+  assert.deepEqual(taskNodeStrokeMetrics(0.3), { borderWidth: "3.333px", selectedRingWidth: "6.667px" });
+  assert.deepEqual(taskNodeStrokeMetrics(0), { borderWidth: "1px", selectedRingWidth: "3px" });
+  assert.deepEqual(taskNodeStrokeMetrics(Number.NaN), { borderWidth: "1px", selectedRingWidth: "3px" });
 });

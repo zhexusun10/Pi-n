@@ -1229,6 +1229,7 @@ fn messaging_completed_node_preserves_its_result_and_running_downstream() {
         mime_type: "image/png".into(),
         data: "abc".into(),
         name: None,
+        original_path: None,
     }]);
     runtime
         .message_completed_node("parent", "  new instruction  ", images.clone())
@@ -1328,6 +1329,7 @@ fn serial_followup_resumes_completed_pi_session_with_images_after_settlement() {
         mime_type: "image/png".into(),
         data: "aGVsbG8=".into(),
         name: None,
+        original_path: None,
     }];
     runtime
         .intervene_with_images("task", "next turn", Some(images.clone()))
@@ -1384,6 +1386,7 @@ fn messaging_a_failed_node_resumes_its_session_without_a_successful_result() {
                 mime_type: "image/png".into(),
                 data: "aGVsbG8=".into(),
                 name: None,
+                original_path: None,
             }]);
             runtime
                 .intervene_with_images("task", "  retry with this image  ", images.clone())

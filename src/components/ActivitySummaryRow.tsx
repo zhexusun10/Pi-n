@@ -36,14 +36,31 @@ interface ActivitySummaryRowProps {
 }
 
 export const CARDS_TRANSITION_DURATION_MS = 260;
+export const CARDS_TRANSITION_MAX_DURATION_MS = 320;
+const VIEWPORT_BUDGET_MARGIN_PX = 28;
 
-// Smooth ease-out cubic (matches AnimatedDisclosure and CollapsibleCardBody):
-// responsive start without a harsh frame-1 jump and without a long 1px tail.
-function easeCardsTransition(t: number): number {
+function resolveCardsTransitionDuration(totalAnimatedPx: number): number {
+  if (totalAnimatedPx <= 260) return CARDS_TRANSITION_DURATION_MS;
+  const ratio = Math.min(1, (totalAnimatedPx - 260) / 500);
+  return Math.round(
+    CARDS_TRANSITION_DURATION_MS +
+    (CARDS_TRANSITION_MAX_DURATION_MS - CARDS_TRANSITION_DURATION_MS) * ratio,
+  );
+}
+
+// Blend from crisp ease-out cubic (for compact reveals) toward a softer
+// curve (for viewport-scale multi-card reveals) so expanding many cards never
+// kicks a full screen of cards at 3x average velocity on frame 1.
+function easeCardsTransition(t: number, softness = 0): number {
   if (t <= 0) return 0;
   if (t >= 1) return 1;
   const inv = 1 - t;
-  return 1 - inv * inv * inv;
+  const cubicOut = 1 - inv * inv * inv;
+  if (softness <= 0) return cubicOut;
+  const quadOut = 1 - inv * inv;
+  const sineInOut = 0.5 * (1 - Math.cos(Math.PI * t));
+  const gentle = 0.45 * sineInOut + 0.55 * quadOut;
+  return cubicOut + (gentle - cubicOut) * Math.min(1, softness);
 }
 
 type PendingTransitionRow = {
@@ -63,6 +80,10 @@ type ActiveTransitionRow = {
   bodyInner: HTMLDivElement;
   headerHeight: number;
   bodyHeight: number;
+  maxBodyHeight: number;
+  bottomAlign: boolean;
+  skipHeaderCollapse: boolean;
+  snapCollapsed: boolean;
   collapsing: boolean;
   keepBodyOpen: boolean;
   lastHeaderHeight: number;
@@ -75,6 +96,8 @@ let pendingFlushScheduled = false;
 let transitionRafId: number | null = null;
 let transitionCompleteRafId: number | null = null;
 let transitionStartedAt = 0;
+let transitionDurationMs = CARDS_TRANSITION_DURATION_MS;
+let transitionSoftness = 0;
 let awaitingFirstPaint = false;
 let lastAppliedEased = 0;
 let transitionGeneration = 0;
@@ -91,6 +114,24 @@ let activeTransitionAnchor: CardsTransitionAnchor | null = null;
 
 function applyRowAt(row: ActiveTransitionRow, eased: number): boolean {
   let heightChanged = false;
+  if (row.skipHeaderCollapse || row.snapCollapsed) {
+    if (row.headerHeight !== row.lastHeaderHeight) {
+      row.headerTrack.style.height = `${row.headerHeight}px`;
+      row.lastHeaderHeight = row.headerHeight;
+      heightChanged = true;
+    }
+    row.headerTrack.style.opacity = "1";
+    if (!row.keepBodyOpen) {
+      if (row.lastBodyHeight !== 0) {
+        row.bodyTrack.style.height = "0px";
+        row.lastBodyHeight = 0;
+        heightChanged = true;
+      }
+      row.bodyTrack.style.opacity = "0";
+    }
+    return heightChanged;
+  }
+
   const headerRatio = row.collapsing ? eased : 1 - eased;
   const nextHeaderH = Math.round(row.headerHeight * headerRatio);
   if (nextHeaderH !== row.lastHeaderHeight) {
@@ -139,37 +180,183 @@ function flushPendingTransitionRows(syncAnchor = true) {
   const batch = [...pendingTransitionRows];
   pendingTransitionRows.clear();
 
-  // Pass 1 (READ ONLY): measure all intrinsic track heights in a single layout pass
-  // instead of alternating read/write/scrollTop per row (eliminates 2N forced reflows).
-  const measured: Array<{ entry: PendingTransitionRow; headerHeight: number; bodyHeight: number }> = [];
+  const anchor = activeTransitionAnchor;
+  const scroller = anchor?.scroller?.isConnected ? anchor.scroller : null;
+  const scrollerRect = scroller ? scroller.getBoundingClientRect() : null;
+  const viewTop = scroller && scrollerRect ? scrollerRect.top + scroller.clientTop : 0;
+  const viewHeight = scroller ? (scroller.clientHeight || 600) : 0;
+  const viewBottom = viewTop + viewHeight;
+  const scrollContentBottom = scroller ? viewTop - scroller.scrollTop + scroller.scrollHeight : 0;
+  const anchorY = anchor && scroller
+    ? (anchor.pinToBottom
+      ? viewBottom
+      : (anchor.trigger?.isConnected
+        ? Math.min(viewBottom, Math.max(viewTop, anchor.trigger.getBoundingClientRect().top))
+        : viewBottom))
+    : 0;
+
+  // Pass 1 (READ ONLY): measure all intrinsic track heights and positions in a
+  // single layout pass instead of alternating read/write/scrollTop per row.
+  type MeasuredRow = {
+    entry: PendingTransitionRow;
+    headerHeight: number;
+    fullBodyHeight: number;
+    rowTop: number;
+    rowBottom: number;
+    maxBodyHeight: number;
+    bottomAlign: boolean;
+    skipHeaderCollapse: boolean;
+    snapCollapsed: boolean;
+  };
+  const measured: MeasuredRow[] = [];
   for (const entry of batch) {
     const headerHeight = Math.round(entry.headerInner.offsetHeight || entry.headerInner.getBoundingClientRect().height);
-    const bodyHeight = Math.round(entry.bodyInner.offsetHeight || entry.bodyInner.getBoundingClientRect().height);
-    measured.push({ entry, headerHeight, bodyHeight });
+    const fullBodyHeight = Math.round(entry.bodyInner.offsetHeight || entry.bodyInner.getBoundingClientRect().height);
+    const headerRect = entry.headerTrack.getBoundingClientRect();
+    const bodyRect = entry.bodyTrack.getBoundingClientRect();
+    measured.push({
+      entry,
+      headerHeight,
+      fullBodyHeight,
+      rowTop: headerRect.top,
+      rowBottom: bodyRect.bottom,
+      maxBodyHeight: Infinity,
+      bottomAlign: false,
+      skipHeaderCollapse: false,
+      snapCollapsed: false,
+    });
+  }
+  measured.sort((a, b) => a.rowTop - b.rowTop);
+
+  // Allocate a viewport-bounded animation height budget outward from the scroll
+  // anchor so expanding/collapsing dozens of cards animates only the portion
+  // that can actually enter or leave the viewport, bottom-aligned above a
+  // bottom anchor so final visible cards unfurl in place with zero handoff snap.
+  if (scroller && anchor && viewHeight > 0) {
+    const aboveAnchor: MeasuredRow[] = [];
+    const belowAnchor: MeasuredRow[] = [];
+    for (const item of measured) {
+      if (anchor.pinToBottom || item.rowBottom <= anchorY + 2) {
+        aboveAnchor.push(item);
+      } else {
+        belowAnchor.push(item);
+      }
+    }
+
+    if (aboveAnchor.length > 0) {
+      const last = aboveAnchor[aboveAnchor.length - 1];
+      const fixedBelowLast = anchor.pinToBottom
+        ? Math.max(0, scrollContentBottom - last.rowBottom)
+        : Math.max(0, anchorY - last.rowBottom);
+      const availableAbove = anchor.pinToBottom ? viewHeight : Math.max(0, anchorY - viewTop);
+      let budget = Math.max(0, availableAbove - fixedBelowLast) + VIEWPORT_BUDGET_MARGIN_PX;
+
+      for (let i = aboveAnchor.length - 1; i >= 0; i--) {
+        if (i < aboveAnchor.length - 1) {
+          const fixedBetween = Math.max(0, aboveAnchor[i + 1].rowTop - aboveAnchor[i].rowBottom);
+          budget = Math.max(0, budget - fixedBetween);
+        }
+        const item = aboveAnchor[i];
+        if (item.entry.keepBodyOpen) {
+          budget = Math.max(0, budget - item.fullBodyHeight);
+        } else if (budget <= 0) {
+          item.maxBodyHeight = 0;
+          if (!item.entry.collapsing) {
+            item.skipHeaderCollapse = true;
+          } else {
+            item.snapCollapsed = true;
+          }
+        } else {
+          const capped = Math.min(item.fullBodyHeight, Math.ceil(budget));
+          if (capped < item.fullBodyHeight) {
+            item.maxBodyHeight = capped;
+            item.bottomAlign = true;
+          }
+          budget = Math.max(0, budget - capped);
+        }
+      }
+    }
+
+    if (belowAnchor.length > 0) {
+      const first = belowAnchor[0];
+      const fixedAboveFirst = Math.max(0, first.rowTop - anchorY);
+      let budget = Math.max(0, (viewBottom - anchorY) - fixedAboveFirst) + VIEWPORT_BUDGET_MARGIN_PX;
+
+      for (let i = 0; i < belowAnchor.length; i++) {
+        if (i > 0) {
+          const fixedBetween = Math.max(0, belowAnchor[i].rowTop - belowAnchor[i - 1].rowBottom);
+          budget = Math.max(0, budget - fixedBetween);
+        }
+        const item = belowAnchor[i];
+        if (item.entry.keepBodyOpen) {
+          budget = Math.max(0, budget - item.fullBodyHeight);
+        } else if (budget <= 0) {
+          item.maxBodyHeight = 0;
+          if (!item.entry.collapsing) {
+            item.skipHeaderCollapse = true;
+          } else {
+            item.snapCollapsed = true;
+          }
+        } else {
+          const capped = Math.min(item.fullBodyHeight, Math.ceil(budget));
+          if (capped < item.fullBodyHeight) {
+            item.maxBodyHeight = capped;
+          }
+          budget = Math.max(0, budget - capped);
+        }
+      }
+    }
   }
 
   // Pass 2 (WRITE ONLY): apply initial frame heights/opacities for every row together.
   const initialEased = lastAppliedEased;
-  for (const { entry, headerHeight, bodyHeight } of measured) {
+  for (const item of measured) {
+    const bodyHeight = item.maxBodyHeight === Infinity
+      ? item.fullBodyHeight
+      : Math.min(item.fullBodyHeight, item.maxBodyHeight);
     const active: ActiveTransitionRow = {
-      headerTrack: entry.headerTrack,
-      headerInner: entry.headerInner,
-      bodyTrack: entry.bodyTrack,
-      bodyInner: entry.bodyInner,
-      headerHeight,
+      headerTrack: item.entry.headerTrack,
+      headerInner: item.entry.headerInner,
+      bodyTrack: item.entry.bodyTrack,
+      bodyInner: item.entry.bodyInner,
+      headerHeight: item.headerHeight,
       bodyHeight,
-      collapsing: entry.collapsing,
-      keepBodyOpen: entry.keepBodyOpen,
+      maxBodyHeight: item.maxBodyHeight,
+      bottomAlign: item.bottomAlign,
+      skipHeaderCollapse: item.skipHeaderCollapse,
+      snapCollapsed: item.snapCollapsed,
+      collapsing: item.entry.collapsing,
+      keepBodyOpen: item.entry.keepBodyOpen,
       lastHeaderHeight: -1,
       lastBodyHeight: -1,
     };
+    if (active.bottomAlign && !active.keepBodyOpen) {
+      active.bodyTrack.style.display = "flex";
+      active.bodyTrack.style.flexDirection = "column";
+      active.bodyTrack.style.justifyContent = "flex-end";
+    } else {
+      active.bodyTrack.style.display = "";
+      active.bodyTrack.style.flexDirection = "";
+      active.bodyTrack.style.justifyContent = "";
+    }
     if (active.keepBodyOpen) {
       active.bodyTrack.style.height = "";
       active.bodyTrack.style.opacity = "1";
     }
     applyRowAt(active, initialEased);
-    entry.active = active;
+    item.entry.active = active;
     activeTransitionRows.add(active);
+  }
+
+  if (transitionStartedAt === 0) {
+    let totalAnimatedPx = 0;
+    for (const row of activeTransitionRows) {
+      if (!row.keepBodyOpen && !row.skipHeaderCollapse && !row.snapCollapsed) {
+        totalAnimatedPx += row.bodyHeight;
+      }
+    }
+    transitionDurationMs = resolveCardsTransitionDuration(totalAnimatedPx);
+    transitionSoftness = totalAnimatedPx <= 220 ? 0 : Math.min(1, (totalAnimatedPx - 220) / 380);
   }
 
   if (syncAnchor) {
@@ -202,6 +389,8 @@ export function cancelCardsTransitionAnchor() {
   transitionOnComplete = null;
   transitionGeneration += 1;
   transitionStartedAt = 0;
+  transitionDurationMs = CARDS_TRANSITION_DURATION_MS;
+  transitionSoftness = 0;
   awaitingFirstPaint = false;
   lastAppliedEased = 0;
   detachCardsTransitionAnchor();
@@ -310,17 +499,19 @@ function tickCardsTransition(now: number) {
     transitionStartedAt = now - 16;
   }
   const elapsed = Math.max(0, now - transitionStartedAt);
-  const progress = Math.min(1, elapsed / CARDS_TRANSITION_DURATION_MS);
-  const eased = easeCardsTransition(progress);
+  const progress = Math.min(1, elapsed / transitionDurationMs);
+  const eased = easeCardsTransition(progress, transitionSoftness);
   lastAppliedEased = eased;
 
   // Pass 1 (READ ONLY): refresh live target heights so a streaming thinking
   // card or newly arrived tool call mid-expand never snaps at idle handoff.
   // Keep collapsing body heights fixed so shrinking cards never bounce larger.
   for (const row of activeTransitionRows) {
+    if (row.skipHeaderCollapse || row.snapCollapsed) continue;
     if (!row.collapsing && !row.keepBodyOpen) {
       const liveBodyH = Math.round(row.bodyInner.offsetHeight || row.bodyInner.getBoundingClientRect().height);
-      if (liveBodyH > 0) row.bodyHeight = liveBodyH;
+      const boundedBodyH = row.maxBodyHeight === Infinity ? liveBodyH : Math.min(liveBodyH, row.maxBodyHeight);
+      if (boundedBodyH > 0) row.bodyHeight = boundedBodyH;
     } else if (row.collapsing) {
       const liveHeaderH = Math.round(row.headerInner.offsetHeight || row.headerInner.getBoundingClientRect().height);
       if (liveHeaderH > 0) row.headerHeight = liveHeaderH;
@@ -575,7 +766,7 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
             className="activity-summary-body-track"
             style={{ width: "100%", minWidth: 0, overflow: "hidden", contain: "layout style" }}
           >
-            <div ref={bodyInnerRef} style={{ width: "100%", minWidth: 0 }}>
+            <div ref={bodyInnerRef} style={{ width: "100%", minWidth: 0, flexShrink: 0 }}>
               {cardsList}
             </div>
           </div>
@@ -583,7 +774,7 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
       ) : (
         <>
           {headerButton}
-          <CollapsibleCardBody expanded={isExpanded} durationMs={CARDS_TRANSITION_DURATION_MS}>
+          <CollapsibleCardBody expanded={isExpanded} durationMs={CARDS_TRANSITION_DURATION_MS} clampToViewport={true}>
             {() => cardsList}
           </CollapsibleCardBody>
         </>

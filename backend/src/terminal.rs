@@ -540,17 +540,31 @@ pub fn clamped_pty_size(cols: Option<u16>, rows: Option<u16>) -> PtySize {
     }
 }
 
+fn resolve_user_home_dir() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    let candidates = [std::env::var_os("USERPROFILE"), std::env::var_os("HOME")];
+    #[cfg(not(windows))]
+    let candidates = [std::env::var_os("HOME"), std::env::var_os("USERPROFILE")];
+    for raw in candidates.into_iter().flatten() {
+        if raw.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(raw);
+        if path.is_dir() {
+            return Ok(path);
+        }
+    }
+    Err("User home directory is unavailable".to_string())
+}
+
 pub fn validate_workspace_dir(raw: &str) -> Result<PathBuf, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err("Workspace path is empty".to_string());
+        return resolve_user_home_dir();
     }
     let path = PathBuf::from(trimmed);
     if !path.exists() {
-        return Err(format!(
-            "Workspace directory does not exist: {}",
-            path.display()
-        ));
+        return resolve_user_home_dir();
     }
     if !path.is_dir() {
         return Err(format!(
@@ -761,13 +775,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_workspace_dir_rejects_empty_missing_and_files() {
+    fn validate_workspace_dir_falls_back_to_home_for_empty_or_missing_and_rejects_files() {
         let temp = tempfile::tempdir().unwrap();
         let file_path = temp.path().join("file.txt");
         std::fs::write(&file_path, "hi").unwrap();
+        let expected_home = resolve_user_home_dir().expect("user home dir");
 
-        assert!(validate_workspace_dir("   ").is_err());
-        assert!(validate_workspace_dir(&temp.path().join("nope").to_string_lossy()).is_err());
+        assert_eq!(validate_workspace_dir("   ").unwrap(), expected_home);
+        assert_eq!(
+            validate_workspace_dir(&temp.path().join("nope").to_string_lossy()).unwrap(),
+            expected_home
+        );
         assert!(validate_workspace_dir(&file_path.to_string_lossy()).is_err());
         assert_eq!(
             validate_workspace_dir(&temp.path().to_string_lossy()).unwrap(),

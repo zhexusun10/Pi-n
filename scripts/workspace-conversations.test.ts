@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { defaultConfig, emptySnapshot, type Snapshot } from "../src/types.ts";
-import { bindRunToWorkspace, mergeValidatedWorkspaceRuns, normalizeWorkspaceRuns, promoteRunInWorkspace, reconcileWorkspaceRuns, snapshotBelongsToWorkspace, workspaceKey, workspaceRunsFromSummaries } from "../src/services/workspaceConversations.ts";
+import {
+  bindRunToWorkspace,
+  mergeValidatedWorkspaceRuns,
+  normalizeWorkspaceRuns,
+  orderProjects,
+  pinRunInWorkspace,
+  promoteRunInWorkspace,
+  reconcileWorkspaceRuns,
+  reorderRunsInWorkspace,
+  reorderSubset,
+  snapshotBelongsToWorkspace,
+  unpinRunInWorkspace,
+  workspaceKey,
+  workspaceRunsFromSummaries,
+} from "../src/services/workspaceConversations.ts";
 
 const snapshot = (runId: string, repository: string): Snapshot => ({
   ...emptySnapshot, runId, config: { ...defaultConfig, repository },
@@ -129,4 +143,66 @@ test("promoting a conversation moves it to the first position and enforces exclu
   });
   assert.equal(promoteRunInWorkspace(promoted, "", "c:/projects/app"), promoted);
   assert.equal(promoteRunInWorkspace(promoted, "older", ""), promoted);
+});
+
+test("pinned conversations stay at the top and are never pushed down by new or promoted conversations", () => {
+  const initial = { "/a": ["c3", "c2", "c1"] };
+  const pinned1 = new Set(["c1"]);
+  const afterPin1 = pinRunInWorkspace(initial, "c1", "/a", pinned1);
+  assert.deepEqual(afterPin1, { "/a": ["c1", "c3", "c2"] });
+
+  const pinned2 = new Set(["c1", "c2"]);
+  const afterPin2 = pinRunInWorkspace(afterPin1, "c2", "/a", pinned2);
+  assert.deepEqual(afterPin2, { "/a": ["c2", "c1", "c3"] });
+
+  // New provisional conversation inserts below pinned cards, then adopts durable ID in place.
+  const withPending = bindRunToWorkspace(afterPin2, "pending-1", "/a", undefined, pinned2);
+  assert.deepEqual(withPending, { "/a": ["c2", "c1", "pending-1", "c3"] });
+  const withDurable = bindRunToWorkspace(withPending, "c4", "/a", "pending-1", pinned2);
+  assert.deepEqual(withDurable, { "/a": ["c2", "c1", "c4", "c3"] });
+
+  // Promoting an unpinned conversation moves it to the top of unpinned (below pinned).
+  const promotedUnpinned = promoteRunInWorkspace(withDurable, "c3", "/a", pinned2);
+  assert.deepEqual(promotedUnpinned, { "/a": ["c2", "c1", "c3", "c4"] });
+
+  // Promoting an already pinned conversation keeps pinned cards in their order.
+  assert.equal(promoteRunInWorkspace(promotedUnpinned, "c1", "/a", pinned2), promotedUnpinned);
+
+  // Unpinning c2 moves it below remaining pinned card c1.
+  const remainingPinned = new Set(["c1"]);
+  const afterUnpin = unpinRunInWorkspace(promotedUnpinned, "c2", "/a", remainingPinned);
+  assert.deepEqual(afterUnpin, { "/a": ["c1", "c2", "c3", "c4"] });
+});
+
+test("reordering and reload reconciliation preserve custom order and pinned conversations", () => {
+  const pinned = new Set(["c1"]);
+  const index = { "/a": ["c1", "arch", "c3", "c2"] };
+  // Reordering visible active runs leaves archived runs untouched and preserves pinned grouping.
+  const reordered = reorderRunsInWorkspace(index, "/a", ["c1", "c3", "c2"], 2, 1, pinned);
+  assert.deepEqual(reordered, { "/a": ["c1", "arch", "c2", "c3"] });
+
+  // On bootstrap reload, custom order and pinned runs survive while newly discovered runs insert after pinned.
+  const summaries = [
+    { runId: "fresh", repository: "/a", title: "Fresh" },
+    { runId: "c3", repository: "/a", title: "C3" },
+    { runId: "c2", repository: "/a", title: "C2" },
+    { runId: "c1", repository: "/a", title: "C1" },
+  ];
+  assert.deepEqual(
+    workspaceRunsFromSummaries(summaries, {}, [], pinned, { "/a": ["c1", "c2", "c3"] }),
+    { "/a": ["c1", "fresh", "c2", "c3"] },
+  );
+
+  // Workspace ordering falls back to lastOpened unless explicit drag order exists.
+  const projects = [
+    { id: "/p1", path: "/p1", name: "P1", branch: "", clean: true, lastOpened: 10 },
+    { id: "/p2", path: "/p2", name: "P2", branch: "", clean: true, lastOpened: 30 },
+    { id: "/p3", path: "/p3", name: "P3", branch: "", clean: true, lastOpened: 20, archived: true },
+  ];
+  assert.deepEqual(orderProjects(projects).map(p => p.path), ["/p2", "/p3", "/p1"]);
+  assert.deepEqual(orderProjects(projects, ["/p1", "/p2", "/p3"]).map(p => p.path), ["/p1", "/p2", "/p3"]);
+  assert.deepEqual(
+    reorderSubset(projects, ["/p1", "/p2"], 1, 0, p => p.path).map(p => p.path),
+    ["/p2", "/p1", "/p3"],
+  );
 });

@@ -94,6 +94,8 @@ test('Tauri v2 config enforces least privilege, synced versions, and .dmg / NSIS
   assert.ok(windowProps.backgroundColor);
   assert.notEqual(mainWindow.visible, false, 'macOS keeps its native startup visibility');
   assert.ok(conf.app.security.csp.includes('http://127.0.0.1:*'));
+  assert.match(conf.app.security.csp, /connect-src[^;]*\bdata:/);
+  assert.match(conf.app.security.csp, /connect-src[^;]*\bblob:/);
   assert.deepEqual(conf.bundle.targets, ['app', 'dmg', 'nsis']);
   assert.equal(conf.bundle.resources['resources/runtime'], 'runtime');
   assert.equal(conf.bundle.resources['resources/node'], 'node');
@@ -101,6 +103,8 @@ test('Tauri v2 config enforces least privilege, synced versions, and .dmg / NSIS
   assert.equal(conf.bundle.macOS.infoPlist, 'Info.plist');
   const macosInfoPlist = readFileSync(join(root, 'src-tauri', 'Info.plist'), 'utf8');
   assert.match(macosInfoPlist, /<key>UIDesignRequiresCompatibility<\/key>\s*<true\/>/);
+  assert.match(macosInfoPlist, /<key>CFBundleAllowMixedLocalizations<\/key>\s*<true\/>/);
+  assert.match(macosInfoPlist, /<key>CFBundleLocalizations<\/key>[\s\S]*<string>zh_CN<\/string>/);
   assert.equal(conf.bundle.macOS.entitlements, 'Entitlements.plist');
   assert.equal(conf.bundle.windows.nsis.installMode, 'currentUser');
   assert.equal(conf.bundle.windows.nsis.installerHooks, 'nsis/hooks.nsh');
@@ -132,6 +136,7 @@ test('Tauri v2 capability grants least-privilege backend_url, autostart, updater
     'allow-backend-url',
     'allow-git-bootstrap',
     'allow-open-external-url',
+    'allow-desktop-image',
     'allow-desktop-notification',
     'allow-desktop-terminal',
     'core:app:allow-version',
@@ -171,6 +176,16 @@ test('Tauri v2 capability grants least-privilege backend_url, autostart, updater
   assert.match(
     openExternalPermission,
     /commands\.allow\s*=\s*\["open_external_url"\]/,
+  );
+
+  const desktopImagePermission = readFileSync(
+    join(root, 'src-tauri', 'permissions', 'allow-desktop-image.toml'),
+    'utf8',
+  );
+  assert.match(desktopImagePermission, /identifier\s*=\s*"allow-desktop-image"/);
+  assert.match(
+    desktopImagePermission,
+    /commands\.allow\s*=\s*\["save_desktop_image",\s*"open_desktop_image"\]/,
   );
 
   const terminalPermission = readFileSync(

@@ -2,13 +2,14 @@ import { formatManagedAttachmentDisplayLabel } from "../../utils/attachmentPath"
 import { t } from "../../i18n";
 import React, { useState } from "react";
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
-import { Plus, Settings2, Trash2, Copy, PanelLeftClose, PanelLeftOpen, Loader2, Inbox, RotateCcw, Search } from "lucide-react";
-import type { ProjectItem } from "../../types";
+import { Plus, Settings2, Trash2, Copy, PanelLeftClose, PanelLeftOpen, Loader2, Inbox, RotateCcw, Search, Pin, PinOff, Check } from "lucide-react";
+import { DEFAULT_PIN_DOT_COLOR, PIN_DOT_COLORS, type PinDotColor, type ProjectItem } from "../../types";
 import type { RunIndicator } from "../../hooks/useRunIndicators";
+import { useSidebarCardDrag } from "../../hooks/useSidebarCardDrag";
 import { normalizeWorkspacePath, workspaceKey } from "../../services/workspaceConversations";
 import { copyTextToClipboard } from "../../services/externalLink";
 import { workspacePathDisplay } from "./workspacePathDisplay";
-import { ContextMenu, contextMenuAnchor, type ContextMenuAnchor } from "../ui/context-menu";
+import { ContextMenu, ContextMenuSubmenu, contextMenuAnchor, type ContextMenuAnchor } from "../ui/context-menu";
 import { PiBrandMark } from "../ui/PiBrandMark";
 
 export { normalizeWorkspacePath } from "../../services/workspaceConversations";
@@ -257,8 +258,19 @@ function useCardEntrance(
   }, [isPresent, ref]);
 }
 
+function pinColorLabel(color: PinDotColor): string {
+  switch (color) {
+    case "black": return t("黑色");
+    case "white": return t("白色");
+    case "coral": return t("珊瑚红");
+    case "blue": return t("蓝色");
+    case "yellow": return t("黄色");
+  }
+}
+
 const WorkspaceItem: React.FC<{
   project: ProjectItem;
+  workspaceId: string;
   index: number;
   reduceMotion: boolean;
   entranceMode: CardEntranceMode;
@@ -266,10 +278,12 @@ const WorkspaceItem: React.FC<{
   isActive: boolean;
   menuOpen: boolean;
   onClick: () => void;
+  onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onContextMenu: (event: React.MouseEvent<HTMLButtonElement> | React.KeyboardEvent<HTMLButtonElement>) => void;
   children: React.ReactNode;
 }> = ({
   project,
+  workspaceId,
   index,
   reduceMotion,
   entranceMode,
@@ -277,6 +291,7 @@ const WorkspaceItem: React.FC<{
   isActive,
   menuOpen,
   onClick,
+  onPointerDown,
   onContextMenu,
   children,
 }) => {
@@ -290,8 +305,10 @@ const WorkspaceItem: React.FC<{
       aria-current={isActive ? "true" : undefined}
       aria-haspopup="menu"
       aria-expanded={menuOpen}
+      data-workspace-key={workspaceId}
       className={`project-workspace-item ${isActive ? "active" : ""}`}
       onClick={onClick}
+      onPointerDown={onPointerDown}
       onContextMenu={onContextMenu}
       onKeyDown={onContextMenu}
       {...cardMotion(reduceMotion, PROJECT_LIST_GAP)}
@@ -311,14 +328,16 @@ const RunItem: React.FC<{
   index: number;
   reduceMotion: boolean;
   entranceMode: CardEntranceMode;
+  pinColor?: PinDotColor;
   className?: string;
   onClick: () => void;
+  onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onContextMenu: (event: React.MouseEvent<HTMLButtonElement> | React.KeyboardEvent<HTMLButtonElement>) => void;
   selected: boolean;
   busy: boolean;
   menuOpen: boolean;
   children: React.ReactNode;
-}> = ({ runId, index, reduceMotion, entranceMode, className = "", onClick, onContextMenu, selected, busy, menuOpen, children }) => {
+}> = ({ runId, index, reduceMotion, entranceMode, pinColor, className = "", onClick, onPointerDown, onContextMenu, selected, busy, menuOpen, children }) => {
   const ref = React.useRef<HTMLButtonElement | null>(null);
   useCardEntrance(ref, entranceMode, index, reduceMotion, 0);
   return (
@@ -330,8 +349,11 @@ const RunItem: React.FC<{
       aria-haspopup="menu"
       aria-expanded={menuOpen}
       data-run-id={runId}
+      data-pinned={pinColor ? "true" : undefined}
+      data-pin-color={pinColor}
       className={`run-item ${className}`.trim()}
       onClick={onClick}
+      onPointerDown={onPointerDown}
       onContextMenu={onContextMenu}
       onKeyDown={onContextMenu}
       {...cardMotion(reduceMotion)}
@@ -349,14 +371,19 @@ interface SidebarProps {
   onRemoveProject: (project: ProjectItem) => void;
   onArchiveProject: (project: ProjectItem) => void;
   onUnarchiveProject: (project: ProjectItem) => void;
+  onReorderProjects?: (visibleProjectPaths: string[], fromIndex: number, toIndex: number) => void;
   openedProjectSeq?: number;
   runs: string[];
   archivedRunIds?: ReadonlySet<string>;
+  pinnedRuns?: Readonly<Record<string, PinDotColor>>;
   currentRunId: string;
   runIndicators: Record<string, RunIndicator>;
   onLoadRun: (runId: string) => void;
   onCopyRunPrompt: (runId: string, provisionalPrompt?: string) => void;
   onCancelPendingPromptCopy: () => void;
+  onPinRun?: (runId: string, color: PinDotColor) => void;
+  onUnpinRun?: (runId: string) => void;
+  onReorderRuns?: (visibleRunIds: string[], fromIndex: number, toIndex: number) => void;
   onArchiveRun: (runId: string) => void;
   onUnarchiveRun: (runId: string) => void;
   onDeleteRun: (runId: string) => void;
@@ -380,14 +407,19 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
   onRemoveProject,
   onArchiveProject,
   onUnarchiveProject,
+  onReorderProjects,
   openedProjectSeq = 0,
   runs,
   archivedRunIds,
+  pinnedRuns = {},
   currentRunId,
   runIndicators,
   onLoadRun,
   onCopyRunPrompt,
   onCancelPendingPromptCopy,
+  onPinRun,
+  onUnpinRun,
+  onReorderRuns,
   onArchiveRun,
   onUnarchiveRun,
   onDeleteRun,
@@ -434,6 +466,46 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
     () => runs.filter((id) => Boolean(archivedRunIds?.has(id)) === showArchivedRuns),
     [runs, archivedRunIds, showArchivedRuns],
   );
+  const pinnedVisibleCount = React.useMemo(() => {
+    if (showArchivedRuns) return 0;
+    let count = 0;
+    for (const id of visibleRuns) {
+      if (pinnedRuns[id]) count += 1;
+      else break;
+    }
+    return count;
+  }, [pinnedRuns, showArchivedRuns, visibleRuns]);
+
+  const skipNextRunReorderAnimRef = React.useRef(false);
+
+  const projectDrag = useSidebarCardDrag({
+    listRef: projectsListRef,
+    viewSelector: ".projects-list-view",
+    cardSelector: ".project-workspace-item",
+    reduceMotion,
+    onDragStart: () => {
+      setProjectContextMenu(null);
+      setRunContextMenu(null);
+    },
+    onCommit: (fromIndex, toIndex) => {
+      onReorderProjects?.(visibleProjects.map(p => p.path), fromIndex, toIndex);
+    },
+  });
+
+  const runDrag = useSidebarCardDrag({
+    listRef: runsListRef,
+    viewSelector: ".runs-list-view",
+    cardSelector: ".run-item[data-run-id]",
+    reduceMotion,
+    onDragStart: () => {
+      setProjectContextMenu(null);
+      setRunContextMenu(null);
+    },
+    onCommit: (fromIndex, toIndex) => {
+      skipNextRunReorderAnimRef.current = true;
+      onReorderRuns?.(visibleRuns, fromIndex, toIndex);
+    },
+  });
 
   const previousProjectsStateRef = React.useRef({
     showArchived: showArchivedProjects,
@@ -528,7 +600,8 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
       showArchived: showArchivedProjects,
       keys: nextKeys,
     };
-  }, [visibleProjects, showArchivedProjects, reduceMotion, restoredProjectKeys]);
+    projectDrag.flushDropSettle();
+  }, [visibleProjects, showArchivedProjects, reduceMotion, restoredProjectKeys, projectDrag.flushDropSettle]);
 
   React.useLayoutEffect(() => {
     const nextOrder = isReady ? visibleRuns.map(id => runCardKeys[id] ?? id) : [];
@@ -570,7 +643,13 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
       nextOrder.length > prev.order.length &&
       prev.order.every((key) => nextKeys.has(key));
 
-    if (isPureReorder || isPureInsertion) {
+    if (skipNextRunReorderAnimRef.current) {
+      skipNextRunReorderAnimRef.current = false;
+      for (const anim of runReorderAnimationsRef.current) anim.cancel();
+      runReorderAnimationsRef.current = [];
+      previousRunTopsRef.current = isReady ? measureCardTops() : new Map();
+      runDrag.flushDropSettle();
+    } else if (isPureReorder || isPureInsertion) {
       for (const anim of runReorderAnimationsRef.current) anim.cancel();
       runReorderAnimationsRef.current = [];
       const list = runsListRef.current;
@@ -585,7 +664,23 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
       if (!reduceMotion && list) {
         const listHeight = list.clientHeight;
         const view = list.querySelector<HTMLElement>(".runs-list-view") ?? list;
-        const promotedKey = isPureReorder && firstChanged ? nextOrder[0] : null;
+        let promotedKey: string | null = null;
+        if (isPureReorder) {
+          if (firstChanged) {
+            promotedKey = nextOrder[0];
+          } else {
+            const prevIndexByKey = new Map(prev.order.map((key, idx) => [key, idx]));
+            let bestGain = 0;
+            for (let idx = 0; idx < nextOrder.length; idx++) {
+              const key = nextOrder[idx];
+              const gain = (prevIndexByKey.get(key) ?? idx) - idx;
+              if (gain > bestGain) {
+                bestGain = gain;
+                promotedKey = key;
+              }
+            }
+          }
+        }
         const scrolledToTopForInsert = isPureInsertion && prevScrollTop !== nextScrollTop;
         const animations: Animation[] = [];
         for (const card of view.querySelectorAll<HTMLButtonElement>(".run-item[data-run-id]")) {
@@ -635,7 +730,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
       keys: nextKeys,
       order: nextOrder,
     };
-  }, [activeRepoKey, showArchivedRuns, isReady, visibleRuns, runCardKeys, runIndicators, runLabels, restoredRunKeys, reduceMotion]);
+  }, [activeRepoKey, showArchivedRuns, isReady, visibleRuns, runCardKeys, runIndicators, runLabels, restoredRunKeys, reduceMotion, runDrag.flushDropSettle]);
 
   React.useEffect(() => () => {
     for (const anim of runReorderAnimationsRef.current) anim.cancel();
@@ -683,6 +778,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
       <WorkspaceItem
         key={key}
         project={proj}
+        workspaceId={key}
         index={index}
         reduceMotion={reduceMotion}
         entranceMode={entranceMode}
@@ -692,6 +788,10 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
         onClick={() => {
           if (key !== activeRepoKey) setShowArchivedRuns(false);
           onSelectProject(proj);
+        }}
+        onPointerDown={(event) => {
+          if (!onReorderProjects) return;
+          projectDrag.startDrag(event, index, { minIndex: 0, maxIndex: visibleProjects.length - 1 });
         }}
         onContextMenu={openMenu}
       >
@@ -724,6 +824,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
     }
     const indicator = runIndicators[id];
     const isThisRunActive = Boolean(indicator?.working);
+    const pinColor = !showArchivedRuns ? pinnedRuns[id] : undefined;
     const isChosen = (loadingRunId ?? currentRunId) === id;
     const isLoadingThisRun = loadingRunId === id && currentRunId !== id;
     let displayLabel = `Graph ${id.slice(0, 8)}`;
@@ -732,6 +833,11 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
     if (labelText) {
       displayLabel = formatManagedAttachmentDisplayLabel(labelText);
     }
+    const dragBounds = showArchivedRuns
+      ? { minIndex: 0, maxIndex: visibleRuns.length - 1 }
+      : (pinColor
+        ? { minIndex: 0, maxIndex: Math.max(0, pinnedVisibleCount - 1) }
+        : { minIndex: pinnedVisibleCount, maxIndex: visibleRuns.length - 1 });
     return (
       <RunItem
         // A provisional card keeps its key when the durable Run ID arrives so
@@ -741,8 +847,13 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
         index={index}
         reduceMotion={reduceMotion}
         entranceMode={entranceMode}
+        pinColor={pinColor}
         className={`${isChosen ? "chosen" : ""} ${isLoadingThisRun ? "is-loading" : ""}`}
         onClick={() => onLoadRun(id)}
+        onPointerDown={(event) => {
+          if (!onReorderRuns) return;
+          runDrag.startDrag(event, index, dragBounds);
+        }}
         selected={isChosen}
         busy={isLoadingThisRun}
         menuOpen={runContextMenu?.runId === id}
@@ -757,7 +868,33 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
           });
         }}
       >
-        {isThisRunActive ? (
+        <AnimatePresence initial={false}>
+          {pinColor ? (
+            <motion.span
+              key="pin-dot"
+              className="run-pin-dot-slot"
+              aria-hidden="true"
+              initial={reduceMotion ? false : { width: 0, marginRight: 0, opacity: 0 }}
+              animate={{ width: 12, marginRight: 8, opacity: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { width: 0, marginRight: 0, opacity: 0 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: CARD_EASE }}
+            >
+              <motion.span
+                className="run-pin-dot-scale"
+                initial={reduceMotion ? false : { scale: 0 }}
+                animate={{ scale: 1 }}
+                exit={reduceMotion ? { scale: 1 } : { scale: 0 }}
+                transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: CARD_EASE }}
+              >
+                <span
+                  className={`run-dot run-pin-dot is-color-${pinColor}${isThisRunActive ? " is-working" : ""}`}
+                  data-pin-color={pinColor}
+                />
+              </motion.span>
+            </motion.span>
+          ) : null}
+        </AnimatePresence>
+        {!pinColor && isThisRunActive ? (
           <span
             className="run-dot running-pulse"
           />
@@ -805,6 +942,8 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
 
   const isMenuProjectArchived = Boolean(projectContextMenu?.project.archived);
   const isMenuRunArchived = Boolean(runContextMenu && archivedRunIds?.has(runContextMenu.runId));
+  const isMenuRunPending = Boolean(runContextMenu?.runId.startsWith("pending-"));
+  const menuRunPinColor = runContextMenu && !isMenuRunArchived ? pinnedRuns[runContextMenu.runId] : undefined;
 
   return (
     <aside className={`sidebar${isCollapsed ? " is-collapsed" : ""}`} aria-label={t("侧边栏")}>
@@ -850,7 +989,12 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
         </div>
       </div>
 
-      <div ref={projectsListRef} className={`projects-list${projectExitActive ? " is-removing" : ""}`} inert={isCollapsed}>
+      <div
+        ref={projectsListRef}
+        className={`projects-list${projectExitActive ? " is-removing" : ""}`}
+        inert={isCollapsed}
+        onClickCapture={projectDrag.onListClickCapture}
+      >
         {reduceMotion ? (
           <div className="projects-list-view">{projectsListContent}</div>
         ) : (
@@ -907,7 +1051,12 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
         </div>
       </div>
 
-      <div ref={runsListRef} className="runs-list" inert={isCollapsed}>
+      <div
+        ref={runsListRef}
+        className="runs-list"
+        inert={isCollapsed}
+        onClickCapture={runDrag.onListClickCapture}
+      >
         {!isReady ? (
           <div className="sidebar-skeleton-wrap" aria-hidden="true">
             <div className="sidebar-skeleton-item">
@@ -1058,12 +1207,102 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
             <Copy size={14} />
             <span>{t("复制提示词")}</span>
           </button>
+          {!isMenuRunArchived && onPinRun && onUnpinRun && (
+            menuRunPinColor ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  className="context-menu-item"
+                  onClick={() => {
+                    const runId = runContextMenu.runId;
+                    setRunContextMenu(null);
+                    onUnpinRun(runId);
+                  }}
+                >
+                  <PinOff size={14} strokeWidth={1.85} />
+                  <span>{t("取消置顶")}</span>
+                </button>
+                <ContextMenuSubmenu
+                  label={t("置顶颜色")}
+                  triggerContent={
+                    <>
+                      <span
+                        className={`context-menu-pin-swatch is-color-${menuRunPinColor}`}
+                        aria-hidden="true"
+                      />
+                      <span>{t("置顶颜色")}</span>
+                    </>
+                  }
+                >
+                  {PIN_DOT_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      className="context-menu-item context-menu-color-item"
+                      aria-checked={menuRunPinColor === color}
+                      data-pin-color={color}
+                      onClick={() => {
+                        const runId = runContextMenu.runId;
+                        setRunContextMenu(null);
+                        onPinRun(runId, color);
+                      }}
+                    >
+                      <span className={`context-menu-pin-swatch is-color-${color}`} aria-hidden="true" />
+                      <span>{pinColorLabel(color)}</span>
+                      {menuRunPinColor === color && (
+                        <Check size={13} className="context-menu-check" aria-hidden="true" />
+                      )}
+                    </button>
+                  ))}
+                </ContextMenuSubmenu>
+              </>
+            ) : (
+              <ContextMenuSubmenu
+                label={t("置顶颜色")}
+                disabled={isMenuRunPending}
+                triggerContent={
+                  <>
+                    <Pin size={14} strokeWidth={1.85} />
+                    <span>{t("置顶对话")}</span>
+                  </>
+                }
+                onTriggerClick={() => {
+                  const runId = runContextMenu.runId;
+                  setRunContextMenu(null);
+                  onPinRun(runId, DEFAULT_PIN_DOT_COLOR);
+                }}
+              >
+                {PIN_DOT_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    className="context-menu-item context-menu-color-item"
+                    data-pin-color={color}
+                    onClick={() => {
+                      const runId = runContextMenu.runId;
+                      setRunContextMenu(null);
+                      onPinRun(runId, color);
+                    }}
+                  >
+                    <span className={`context-menu-pin-swatch is-color-${color}`} aria-hidden="true" />
+                    <span>{pinColorLabel(color)}</span>
+                  </button>
+                ))}
+              </ContextMenuSubmenu>
+            )
+          )}
           <button
             type="button"
             role="menuitem"
             tabIndex={-1}
             className="context-menu-item"
-            disabled={runContextMenu.runId.startsWith("pending-")}
+            disabled={isMenuRunPending}
             onClick={() => {
               const runId = runContextMenu.runId;
               setRunContextMenu(null);
@@ -1080,7 +1319,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
             role="menuitem"
             tabIndex={-1}
             className="context-menu-item danger"
-            disabled={runContextMenu.runId.startsWith("pending-")}
+            disabled={isMenuRunPending}
             onClick={() => {
               const runId = runContextMenu.runId;
               setRunContextMenu(null);

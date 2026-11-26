@@ -1,5 +1,6 @@
 import type { ImageAttachment } from "../types";
 import { createUuid } from "../lib/uuid";
+import { unregisterImageBlobUrl } from "./originalImagePreview";
 
 export interface RecalledMessage { text: string; images?: ImageAttachment[] }
 export interface ComposerDraftAttachment {
@@ -22,6 +23,7 @@ function revokePreview(attachment: ComposerDraftAttachment | null | undefined) {
     typeof URL !== "undefined" &&
     typeof URL.revokeObjectURL === "function"
   ) {
+    unregisterImageBlobUrl(attachment.imagePreview);
     URL.revokeObjectURL(attachment.imagePreview);
   }
 }

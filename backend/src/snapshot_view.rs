@@ -875,6 +875,7 @@ mod tests {
                     mime_type: "image/png".into(),
                     data: "a".repeat(8192),
                     name: None,
+                    original_path: None,
                 }]),
             },
         };

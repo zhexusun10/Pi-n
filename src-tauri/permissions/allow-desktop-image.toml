@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-desktop-image"
+description = "Allows the main window to save validated images to Downloads/user-selected locations or open them in the system image viewer."
+commands.allow = ["save_desktop_image", "open_desktop_image"]

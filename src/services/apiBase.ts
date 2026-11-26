@@ -79,11 +79,15 @@ export function isTauriDesktop(): boolean {
   );
 }
 
-export function isMacosTauriDesktop(): boolean {
-  if (!isTauriDesktop() || typeof navigator === "undefined") return false;
+export function isMacosPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
   const platform = nav.userAgentData?.platform || navigator.platform || navigator.userAgent || "";
   return /mac/i.test(platform) && !/iphone|ipad|ipod/i.test(platform);
+}
+
+export function isMacosTauriDesktop(): boolean {
+  return isTauriDesktop() && isMacosPlatform();
 }
 
 export function isWindowsTauriDesktop(): boolean {

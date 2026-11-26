@@ -155,11 +155,8 @@ fn workspace_deletion_fixture() -> (tempfile::TempDir, PathBuf, Arc<Service>, Ve
 }
 
 #[test]
-fn workspace_size_warning_waits_for_background_runs_without_stopping_them() {
+fn workspace_size_limit_applies_only_to_compile_with_isolated_parallel_nodes() {
     let (_temp, source, primary, ids) = workspace_deletion_fixture();
-    let active = service_for_run(&primary, &ids[1], false).unwrap();
-    let unrelated = service_for_run(&primary, &ids[2], false).unwrap();
-    unrelated.driving.store(true, Ordering::SeqCst);
     let repository = source
         .join("child")
         .join("..")
@@ -167,81 +164,104 @@ fn workspace_size_warning_waits_for_background_runs_without_stopping_them() {
         .into_owned();
     let oversized = |path: &std::path::Path| crate::workspace::check_workspace_size(path, 0);
 
-    // Use a tiny limit rather than allocating a 15GB fixture. A matching
-    // background Planner/driver must not scan, report an error or mutate it.
-    for planning in [false, true] {
-        active.planning.store(planning, Ordering::SeqCst);
-        active.driving.store(!planning, Ordering::SeqCst);
-        let before = serde_json::to_value(&active.runtime.lock().unwrap().state).unwrap();
-        let status = repository_status(&primary, repository.clone(), |_| {
-            panic!("size scanning must wait for the active Run");
-        })
-        .unwrap();
-        assert_eq!(status["valid"], true);
-        assert_eq!(status["sizeLimitExceeded"], false);
-        assert!(status["error"].is_null());
-        assert_eq!(active.planning.load(Ordering::SeqCst), planning);
-        assert_eq!(active.driving.load(Ordering::SeqCst), !planning);
-        assert_eq!(
-            serde_json::to_value(&active.runtime.lock().unwrap().state).unwrap(),
-            before
-        );
-    }
-    active.planning.store(false, Ordering::SeqCst);
-    active.driving.store(false, Ordering::SeqCst);
-    let phase = {
-        let mut runtime = active.runtime.lock().unwrap();
-        std::mem::replace(&mut runtime.state.phase, "publishing".into())
-    };
-    assert_eq!(
-        repository_status(&primary, repository.clone(), |_| {
-            panic!("publication must finish before size validation");
-        })
-        .unwrap()["valid"],
-        true
-    );
+    // Adding/opening a workspace and polling binding status must not enforce
+    // or warn on workspace size, because Direct mode does not isolate copies.
     assert!(
-        detect_repository(Some(repository.clone()), &primary)
+        detect_repository(Some(repository.clone()))
             .unwrap()
             .is_some(),
-        "directory inspection remains available for an active workspace"
+        "directory inspection accepts workspaces regardless of size"
     );
-    active.runtime.lock().unwrap().state.phase = phase;
-    // An unrelated busy workspace must not suppress this workspace's warning.
-    // Size is admission policy, not a binding failure that disables Continue
-    // or message controls for already-admitted paused/failed Runs.
-    let status = repository_status(&primary, repository.clone(), oversized).unwrap();
-    assert_eq!(status["valid"], true);
-    assert_eq!(status["sizeLimitExceeded"], true);
-    assert_eq!(status["missing"], false);
-    assert!(status["error"].as_str().unwrap().contains("15GB"));
-    assert!(crate::workspace::validate_binding(std::path::Path::new(&repository)).is_ok());
-    assert!(
-        crate::workspace::inspect_directory_with_size_check(
-            Some(std::path::Path::new(&repository)),
-            oversized
-        )
-        .is_err(),
-        "a new binding must still enforce the size limit"
-    );
-
-    // A Run starting during an in-flight scan also defers the warning.
-    let status = repository_status(&primary, repository.clone(), |path| {
-        active.driving.store(true, Ordering::SeqCst);
-        oversized(path)
-    })
-    .unwrap();
+    let status = repository_status(repository.clone()).unwrap();
     assert_eq!(status["valid"], true);
     assert_eq!(status["sizeLimitExceeded"], false);
+    assert_eq!(status["missing"], false);
+    assert!(status["error"].is_null());
 
-    // Only size is advisory: a missing binding still reports an explicit error.
+    // Direct mode never scans workspace size, even with isolation enabled.
+    let mut isolated_config: Config = serde_json::from_value(serde_json::json!({
+        "repository": repository, "model": "mock/model", "maxParallel": 1, "isolateParallelNodes": true
+    }))
+    .unwrap();
+    assert!(validate_run_admission_with_size_check(
+        std::path::Path::new(&repository),
+        &isolated_config,
+        Some("serial"),
+        |_| panic!("Direct mode must not scan workspace size"),
+    )
+    .is_ok());
+
+    // Pre-route Auto mode defers size checking until routing chooses graph.
+    assert!(validate_run_admission_with_size_check(
+        std::path::Path::new(&repository),
+        &isolated_config,
+        Some("auto"),
+        |_| panic!("Auto mode must not scan workspace size before routing"),
+    )
+    .is_ok());
+
+    // Compile mode WITH `isolateParallelNodes` enabled enforces the size limit
+    // and instructs the user that disabling isolation resolves it.
+    let err = validate_run_admission_with_size_check(
+        std::path::Path::new(&repository),
+        &isolated_config,
+        Some("graph"),
+        oversized,
+    )
+    .unwrap_err();
+    assert!(err.contains("15GB"));
+    assert!(err.contains("并行节点独立工作区"));
+
+    // Compile mode with `isolateParallelNodes` disabled skips size scanning.
+    isolated_config.isolate_parallel_nodes = false;
+    assert!(validate_run_admission_with_size_check(
+        std::path::Path::new(&repository),
+        &isolated_config,
+        Some("graph"),
+        |_| panic!("shared-source Compile mode must not scan workspace size"),
+    )
+    .is_ok());
+
+    // Manual Graph IR creation and draft edits obey the same isolation gate:
+    // creating with isolation off skips scanning, but flipping isolation on
+    // while editing that draft enforces the size limit before committing.
+    let draft_service = service_for_run(&primary, "draft-size-gate", true).unwrap();
+    let draft_graph = crate::model::Graph {
+        original_goal: "manual graph".into(),
+        nodes: vec![crate::model::Node {
+            id: "a".into(),
+            task: "work".into(),
+        }],
+        edges: vec![],
+    };
+    let created = save_graph_with_size_check(
+        draft_graph.clone(),
+        isolated_config.clone(),
+        None,
+        &draft_service,
+        |_| panic!("shared-source manual graph must not scan workspace size"),
+    )
+    .unwrap();
+    let mut enabled_config = isolated_config.clone();
+    enabled_config.isolate_parallel_nodes = true;
+    let draft_err = save_graph_with_size_check(
+        draft_graph,
+        enabled_config,
+        Some(created.run_id),
+        &draft_service,
+        oversized,
+    )
+    .unwrap_err();
+    assert!(draft_err.contains("15GB"));
+    assert!(draft_err.contains("并行节点独立工作区"));
+
+    // Missing bindings still report an explicit error.
     fs::remove_dir_all(&source).unwrap();
-    let status = repository_status(&primary, repository, |_| panic!("missing binding")).unwrap();
+    let status = repository_status(repository).unwrap();
     assert_eq!(status["valid"], false);
     assert_eq!(status["missing"], true);
     assert_eq!(status["sizeLimitExceeded"], false);
-    active.driving.store(false, Ordering::SeqCst);
-    unrelated.driving.store(false, Ordering::SeqCst);
+    let _ = ids;
     let root = primary.runtime.lock().unwrap().root.clone();
     invalidate_service_cache(&root, None);
 }

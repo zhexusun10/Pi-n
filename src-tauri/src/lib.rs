@@ -270,6 +270,443 @@ async fn open_external_url(url: String) -> Result<(), String> {
     .map_err(|error| format!("External URL launcher task failed: {error}"))?
 }
 
+const MAX_DESKTOP_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+const PREVIEW_IMAGE_DIR_NAME: &str = "pi-n-image-preview";
+
+fn decode_base64_image(input: &str) -> Result<Vec<u8>, String> {
+    let trimmed = input.trim();
+    let payload = if trimmed
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+    {
+        let (header, rest) = trimmed
+            .split_once(',')
+            .ok_or_else(|| "Invalid base64 image payload".to_string())?;
+        if !header
+            .rsplit_once(';')
+            .is_some_and(|(_, enc)| enc.eq_ignore_ascii_case("base64"))
+        {
+            return Err("Invalid base64 image payload".to_string());
+        }
+        rest
+    } else {
+        trimmed
+    };
+
+    let mut out = Vec::with_capacity((payload.len() / 4).saturating_mul(3).min(MAX_DESKTOP_IMAGE_BYTES));
+    let mut buf = [0u8; 4];
+    let mut count = 0usize;
+    let mut pad = 0usize;
+    let mut saw_padding = false;
+    for byte in payload.bytes() {
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        if saw_padding {
+            return Err("Invalid base64 padding in image payload".to_string());
+        }
+        let val = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => {
+                pad += 1;
+                0
+            }
+            _ => return Err("Invalid base64 character in image payload".to_string()),
+        };
+        if pad > 0 && byte != b'=' {
+            return Err("Invalid base64 padding in image payload".to_string());
+        }
+        buf[count] = val;
+        count += 1;
+        if count == 4 {
+            if pad > 2 {
+                return Err("Invalid base64 padding in image payload".to_string());
+            }
+            out.push((buf[0] << 2) | (buf[1] >> 4));
+            if pad < 2 {
+                out.push((buf[1] << 4) | (buf[2] >> 2));
+            }
+            if pad < 1 {
+                out.push((buf[2] << 6) | buf[3]);
+            }
+            if out.len() > MAX_DESKTOP_IMAGE_BYTES {
+                return Err("Image exceeds maximum supported size (32 MiB)".to_string());
+            }
+            if pad > 0 {
+                saw_padding = true;
+            }
+            count = 0;
+            pad = 0;
+        }
+    }
+    if count != 0 || out.is_empty() {
+        return Err("Invalid or empty base64 image payload".to_string());
+    }
+    Ok(out)
+}
+
+fn is_avif_bytes(bytes: &[u8]) -> bool {
+    if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
+        return false;
+    }
+    let major = &bytes[8..12];
+    if major == b"avif" || major == b"avis" {
+        return true;
+    }
+    let declared = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let end = if declared == 0 {
+        bytes.len()
+    } else {
+        declared.min(bytes.len())
+    };
+    end >= 20
+        && bytes[16..end]
+            .chunks_exact(4)
+            .any(|brand| brand == b"avif" || brand == b"avis")
+}
+
+fn is_ico_bytes(bytes: &[u8]) -> bool {
+    bytes.len() >= 6
+        && bytes[0..4] == [0x00, 0x00, 0x01, 0x00]
+        && u16::from_le_bytes([bytes[4], bytes[5]]) > 0
+}
+
+fn is_svg_bytes(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let mut rest = text.trim_start_matches('\u{feff}').trim_start();
+    loop {
+        if let Some(after) = rest.strip_prefix("<?") {
+            let Some(end) = after.find("?>") else {
+                return false;
+            };
+            rest = after[end + 2..].trim_start();
+        } else if let Some(after) = rest.strip_prefix("<!--") {
+            let Some(end) = after.find("-->") else {
+                return false;
+            };
+            rest = after[end + 3..].trim_start();
+        } else if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+            let Some(end) = rest.find('>') else {
+                return false;
+            };
+            rest = rest[end + 1..].trim_start();
+        } else {
+            break;
+        }
+    }
+    rest.len() >= 4
+        && rest[..4].eq_ignore_ascii_case("<svg")
+        && rest
+            .as_bytes()
+            .get(4)
+            .is_some_and(|b| b.is_ascii_whitespace() || *b == b'>' || *b == b'/')
+}
+
+pub fn detect_desktop_image_extension(bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Ok("png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Ok("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Ok("gif")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Ok("webp")
+    } else if bytes.starts_with(b"BM") {
+        Ok("bmp")
+    } else if is_avif_bytes(bytes) {
+        Ok("avif")
+    } else if is_ico_bytes(bytes) {
+        Ok("ico")
+    } else if is_svg_bytes(bytes) {
+        Ok("svg")
+    } else {
+        Err("Unsupported or invalid image payload".to_string())
+    }
+}
+
+pub fn sanitize_desktop_image_filename(raw: Option<&str>, ext: &str) -> String {
+    let base = raw
+        .unwrap_or_default()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    let cleaned = cleaned.trim().trim_matches('.');
+    let valid_exts: &[&str] = match ext {
+        "jpg" => &["jpg", "jpeg"],
+        "png" => &["png"],
+        "gif" => &["gif"],
+        "webp" => &["webp"],
+        "bmp" => &["bmp"],
+        "avif" => &["avif"],
+        "ico" => &["ico"],
+        "svg" => &["svg"],
+        _ => &[ext],
+    };
+    if cleaned.is_empty() || matches!(cleaned, "." | "..") {
+        return format!("image.{ext}");
+    }
+    if let Some((stem, existing_ext)) = cleaned.rsplit_once('.') {
+        let lower = existing_ext.to_ascii_lowercase();
+        if !stem.is_empty() && valid_exts.contains(&lower.as_str()) {
+            let truncated_stem: String = stem.chars().take(110).collect();
+            return format!("{truncated_stem}.{existing_ext}");
+        }
+        if !stem.is_empty()
+            && matches!(
+                lower.as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" | "ico" | "svg"
+            )
+        {
+            let truncated_stem: String = stem.chars().take(110).collect();
+            return format!("{truncated_stem}.{ext}");
+        }
+    }
+    let truncated: String = cleaned.chars().take(110).collect();
+    format!("{truncated}.{ext}")
+}
+
+pub fn unique_destination_path(dir: &Path, filename: &str) -> PathBuf {
+    let first = dir.join(filename);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match filename.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, Some(e)),
+        _ => (filename, None),
+    };
+    for index in 1..=10_000 {
+        let candidate_name = match ext {
+            Some(e) => format!("{stem} ({index}).{e}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = dir.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    let fallback_name = match ext {
+        Some(e) => format!("{stem}-{}.{e}", uuid::Uuid::new_v4()),
+        None => format!("{stem}-{}", uuid::Uuid::new_v4()),
+    };
+    dir.join(fallback_name)
+}
+
+fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Destination path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("Cannot create destination directory: {error}"))?;
+    let temp_path = parent.join(format!(".pi-n-img-{}.tmp", uuid::Uuid::new_v4()));
+    if let Err(error) = std::fs::write(&temp_path, bytes) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to write image file: {error}"));
+    }
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to finalize image file: {error}"));
+    }
+    Ok(())
+}
+
+fn prune_stale_preview_images(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let cutoff = std::time::Duration::from_secs(24 * 60 * 60);
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                if let Ok(modified) = meta.modified() {
+                    if now.duration_since(modified).is_ok_and(|age| age > cutoff) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn launch_local_file_with_system_app(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::{
+            System::Com::{
+                CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+            },
+            UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+        };
+        let operation: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+        let target: Vec<u16> = path
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let hr = unsafe {
+            CoInitializeEx(
+                std::ptr::null(),
+                (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+            )
+        };
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                target.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if hr == 0 || hr == 1 {
+            unsafe {
+                CoUninitialize();
+            }
+        }
+        if result as isize <= 32 {
+            return Err(format!(
+                "Failed to open image in system viewer (ShellExecuteW: {})",
+                result as isize
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let open_bin = if Path::new("/usr/bin/open").is_file() {
+            "/usr/bin/open"
+        } else {
+            "open"
+        };
+        let is_svg = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
+        if !is_svg {
+            if let Ok(output) = std::process::Command::new(open_bin)
+                .args(["-a", "Preview"])
+                .arg(path)
+                .stdin(std::process::Stdio::null())
+                .output()
+            {
+                if output.status.success() {
+                    return Ok(());
+                }
+            }
+        }
+        let output = std::process::Command::new(open_bin)
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|error| format!("Failed to open image in system viewer: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                format!(
+                    "Failed to open image in system viewer (exit {})",
+                    output.status
+                )
+            } else {
+                format!("Failed to open image in system viewer: {detail}")
+            });
+        }
+        Ok(())
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(path);
+        let mut child = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Failed to open image in system viewer: {error}"))?;
+        std::thread::Builder::new()
+            .name("pi-n-open-desktop-image".to_string())
+            .spawn(move || {
+                let _ = child.wait();
+            })
+            .map_err(|error| format!("Failed to monitor image viewer launch: {error}"))?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+async fn save_desktop_image(
+    app: tauri::AppHandle,
+    data_base64: String,
+    filename: Option<String>,
+    prompt: Option<bool>,
+) -> Result<Option<String>, String> {
+    let download_dir = app
+        .path()
+        .download_dir()
+        .ok()
+        .or_else(|| app.path().home_dir().ok().map(|home| home.join("Downloads")));
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = decode_base64_image(&data_base64)?;
+        let ext = detect_desktop_image_extension(&bytes)?;
+        let safe_name = sanitize_desktop_image_filename(filename.as_deref(), ext);
+
+        #[cfg(target_os = "macos")]
+        if prompt == Some(true) {
+            let Some(chosen) =
+                macos_window::choose_save_image_path(&safe_name, download_dir.as_deref())
+            else {
+                return Ok(None);
+            };
+            write_bytes_atomically(&chosen, &bytes)?;
+            return Ok(Some(chosen.to_string_lossy().into_owned()));
+        }
+
+        let _ = prompt;
+        let dir = download_dir.ok_or_else(|| "Downloads directory is unavailable".to_string())?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("Cannot create Downloads directory: {error}"))?;
+        let destination = unique_destination_path(&dir, &safe_name);
+        write_bytes_atomically(&destination, &bytes)?;
+        Ok(Some(destination.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|error| format!("Image save task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn open_desktop_image(
+    data_base64: String,
+    filename: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = decode_base64_image(&data_base64)?;
+        let ext = detect_desktop_image_extension(&bytes)?;
+        let safe_name = sanitize_desktop_image_filename(filename.as_deref(), ext);
+        let preview_dir = std::env::temp_dir().join(PREVIEW_IMAGE_DIR_NAME);
+        std::fs::create_dir_all(&preview_dir)
+            .map_err(|error| format!("Cannot create image preview directory: {error}"))?;
+        prune_stale_preview_images(&preview_dir);
+        let unique_prefix = &uuid::Uuid::new_v4().to_string()[..8];
+        let preview_path = preview_dir.join(format!("{unique_prefix}-{safe_name}"));
+        write_bytes_atomically(&preview_path, &bytes)?;
+        launch_local_file_with_system_app(&preview_path)
+    })
+    .await
+    .map_err(|error| format!("Image viewer task failed: {error}"))?
+}
+
 const MAX_NOTIFICATION_TITLE_CHARS: usize = 120;
 const MAX_NOTIFICATION_BODY_CHARS: usize = 500;
 
@@ -1129,9 +1566,210 @@ fn set_windows_corner_preference<R: tauri::Runtime>(window: &tauri::WebviewWindo
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacosMenuLabels {
+    pub about: &'static str,
+    pub services: &'static str,
+    pub hide: &'static str,
+    pub hide_others: &'static str,
+    pub show_all: &'static str,
+    pub quit: &'static str,
+    pub file: &'static str,
+    pub close_window: &'static str,
+    pub edit: &'static str,
+    pub undo: &'static str,
+    pub redo: &'static str,
+    pub cut: &'static str,
+    pub copy: &'static str,
+    pub paste: &'static str,
+    pub select_all: &'static str,
+    pub view: &'static str,
+    pub fullscreen: &'static str,
+    pub window: &'static str,
+    pub minimize: &'static str,
+    pub maximize: &'static str,
+}
+
+pub fn macos_menu_labels_for_language_tag(tag: &str) -> MacosMenuLabels {
+    let lower = tag.trim().to_ascii_lowercase();
+    if lower.starts_with("zh") {
+        if lower.contains("hant")
+            || lower.contains("-tw")
+            || lower.contains("_tw")
+            || lower.contains("-hk")
+            || lower.contains("_hk")
+            || lower.contains("-mo")
+            || lower.contains("_mo")
+        {
+            return MacosMenuLabels {
+                about: "關於 Pi^n",
+                services: "服務",
+                hide: "隱藏 Pi^n",
+                hide_others: "隱藏其他",
+                show_all: "顯示全部",
+                quit: "結束 Pi^n",
+                file: "檔案",
+                close_window: "關閉視窗",
+                edit: "編輯",
+                undo: "還原",
+                redo: "重做",
+                cut: "剪下",
+                copy: "拷貝",
+                paste: "貼上",
+                select_all: "全選",
+                view: "顯示方式",
+                fullscreen: "進入全螢幕",
+                window: "視窗",
+                minimize: "縮到最小",
+                maximize: "縮放",
+            };
+        }
+        return MacosMenuLabels {
+            about: "关于 Pi^n",
+            services: "服务",
+            hide: "隐藏 Pi^n",
+            hide_others: "隐藏其他",
+            show_all: "全部显示",
+            quit: "退出 Pi^n",
+            file: "文件",
+            close_window: "关闭窗口",
+            edit: "编辑",
+            undo: "撤销",
+            redo: "重做",
+            cut: "剪切",
+            copy: "拷贝",
+            paste: "粘贴",
+            select_all: "全选",
+            view: "显示",
+            fullscreen: "进入全屏幕",
+            window: "窗口",
+            minimize: "最小化",
+            maximize: "缩放",
+        };
+    }
+    MacosMenuLabels {
+        about: "About Pi^n",
+        services: "Services",
+        hide: "Hide Pi^n",
+        hide_others: "Hide Others",
+        show_all: "Show All",
+        quit: "Quit Pi^n",
+        file: "File",
+        close_window: "Close Window",
+        edit: "Edit",
+        undo: "Undo",
+        redo: "Redo",
+        cut: "Cut",
+        copy: "Copy",
+        paste: "Paste",
+        select_all: "Select All",
+        view: "View",
+        fullscreen: "Enter Full Screen",
+        window: "Window",
+        minimize: "Minimize",
+        maximize: "Zoom",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_app_menu<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
+
+    let labels = match macos_window::preferred_menu_language() {
+        macos_window::MacosMenuLanguage::SimplifiedChinese => {
+            macos_menu_labels_for_language_tag("zh-Hans")
+        }
+        macos_window::MacosMenuLanguage::TraditionalChinese => {
+            macos_menu_labels_for_language_tag("zh-Hant")
+        }
+        macos_window::MacosMenuLanguage::English => macos_menu_labels_for_language_tag("en"),
+    };
+
+    let pkg_info = app.package_info();
+    let app_name = pkg_info.name.clone();
+    let about_metadata = AboutMetadata {
+        name: Some(app_name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        ..Default::default()
+    };
+
+    let app_menu = Submenu::with_items(
+        app,
+        &app_name,
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some(labels.about), Some(about_metadata))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, Some(labels.services))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, Some(labels.hide))?,
+            &PredefinedMenuItem::hide_others(app, Some(labels.hide_others))?,
+            &PredefinedMenuItem::show_all(app, Some(labels.show_all))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some(labels.quit))?,
+        ],
+    )?;
+
+    let file_menu = Submenu::with_items(
+        app,
+        labels.file,
+        true,
+        &[&PredefinedMenuItem::close_window(
+            app,
+            Some(labels.close_window),
+        )?],
+    )?;
+
+    let edit_menu = Submenu::with_items(
+        app,
+        labels.edit,
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some(labels.undo))?,
+            &PredefinedMenuItem::redo(app, Some(labels.redo))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some(labels.cut))?,
+            &PredefinedMenuItem::copy(app, Some(labels.copy))?,
+            &PredefinedMenuItem::paste(app, Some(labels.paste))?,
+            &PredefinedMenuItem::select_all(app, Some(labels.select_all))?,
+        ],
+    )?;
+
+    let view_menu = Submenu::with_items(
+        app,
+        labels.view,
+        true,
+        &[&PredefinedMenuItem::fullscreen(
+            app,
+            Some(labels.fullscreen),
+        )?],
+    )?;
+
+    let window_menu = Submenu::with_items(
+        app,
+        labels.window,
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, Some(labels.minimize))?,
+            &PredefinedMenuItem::maximize(app, Some(labels.maximize))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some(labels.close_window))?,
+        ],
+    )?;
+
+    Menu::with_items(
+        app,
+        &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu],
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_macos_app_menu);
     // macOS natively enforces single-instance for `.app` bundles via `RunEvent::Reopen`
     // and uses `tauri-plugin-process::relaunch()` after in-app updates, so only Windows
     // registers `tauri-plugin-single-instance` (waking a tray-hidden instance on relaunch).
@@ -1299,6 +1937,8 @@ pub fn run() {
             git_bootstrap_status,
             retry_git_bootstrap,
             open_external_url,
+            save_desktop_image,
+            open_desktop_image,
             send_desktop_notification,
             desktop_notification_permission_status,
             request_desktop_notification_permission,
@@ -1616,5 +2256,59 @@ mod tests {
             tray_labels_for_windows_lang_id(0x0411),
             ("Show Pi^n", "Quit Pi^n")
         );
+    }
+
+    #[test]
+    fn macos_menu_labels_follow_preferred_language_tag() {
+        let zh_cn = macos_menu_labels_for_language_tag("zh-Hans-CN");
+        assert_eq!(zh_cn.file, "文件");
+        assert_eq!(zh_cn.edit, "编辑");
+        assert_eq!(zh_cn.copy, "拷贝");
+        assert_eq!(zh_cn.quit, "退出 Pi^n");
+
+        let zh_tw = macos_menu_labels_for_language_tag("zh-Hant-TW");
+        assert_eq!(zh_tw.file, "檔案");
+        assert_eq!(zh_tw.edit, "編輯");
+        assert_eq!(zh_tw.quit, "結束 Pi^n");
+
+        let en = macos_menu_labels_for_language_tag("en-US");
+        assert_eq!(en.file, "File");
+        assert_eq!(en.edit, "Edit");
+        assert_eq!(en.quit, "Quit Pi^n");
+    }
+
+    #[test]
+    fn desktop_image_helpers_validate_decode_and_sanitize() {
+        let png = b"\x89PNG\r\n\x1a\n\nhello";
+        let decoded = decode_base64_image("data:image/png;base64,iVBORw0KGgoKaGVsbG8=").unwrap();
+        assert_eq!(decoded, png);
+        assert_eq!(detect_desktop_image_extension(&decoded).unwrap(), "png");
+        assert!(detect_desktop_image_extension(b"plain text not image").is_err());
+
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("artifacts/01-main-menu.png"), "png"),
+            "01-main-menu.png"
+        );
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("../../../etc/passwd"), "png"),
+            "passwd.png"
+        );
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("photo.png"), "jpg"),
+            "photo.jpg"
+        );
+        assert_eq!(sanitize_desktop_image_filename(None, "webp"), "image.webp");
+        let long_name = format!("{}.png", "a".repeat(140));
+        let sanitized_long = sanitize_desktop_image_filename(Some(&long_name), "png");
+        assert!(sanitized_long.ends_with(".png"));
+        assert!(sanitized_long.chars().count() <= 114);
+        assert!(decode_base64_image("AA==AAAA").is_err());
+
+        let temp = tempfile::tempdir().unwrap();
+        let first = unique_destination_path(temp.path(), "shot.png");
+        assert_eq!(first, temp.path().join("shot.png"));
+        fs::write(&first, png).unwrap();
+        let second = unique_destination_path(temp.path(), "shot.png");
+        assert_eq!(second, temp.path().join("shot (1).png"));
     }
 }

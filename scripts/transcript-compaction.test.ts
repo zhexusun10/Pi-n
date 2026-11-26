@@ -4,8 +4,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { VirtualizedTranscript } from "../src/components/VirtualizedTranscript.tsx";
 import { CompactedCard } from "../src/components/CompactedCard.tsx";
+import { TranscriptNoticeCard } from "../src/components/TranscriptNoticeCard.tsx";
 import { parseTranscriptChunkLines, type ParseTranscriptChunkState } from "../src/services/transcriptParser.ts";
-import { applyPlannerCompaction, initialPlannerStream } from "../src/services/plannerStream.ts";
+import {
+  applyPlannerAssistantMessageEnd,
+  applyPlannerCompaction,
+  applyPlannerEntryAppended,
+  initialPlannerStream,
+} from "../src/services/plannerStream.ts";
 
 const line = (event: unknown) => JSON.stringify(event) + "\n";
 
@@ -212,4 +218,204 @@ test("applyPlannerCompaction toggles compacting and appends a live Compacted car
   assert.equal(ended.items[0].animateAppear, true);
   assert.equal(ended.items[0].compaction?.reason, "overflow");
   assert.equal(ended.items[0].compaction?.tokensBefore, 190000);
+});
+
+test("compaction billing folds into CompactedCard and honors showCost", () => {
+  const state = freshState();
+  const result = parse([
+    {
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: {
+        summary: "Compacted history with usage.",
+        firstKeptEntryId: "entry-9",
+        tokensBefore: 128400,
+        estimatedTokensAfter: 18200,
+        usage: {
+          input: 28000,
+          output: 2200,
+          cacheRead: 4000,
+          cacheWrite: 0,
+          cost: { input: 0.11, output: 0.03, cacheRead: 0.002, cacheWrite: 0, total: 0.142 },
+        },
+      },
+    },
+  ], state);
+  assert.equal(result.currentItems.length, 1);
+  assert.equal(result.currentItems[0].compaction?.billedTokens, 34200);
+  assert.equal(result.currentItems[0].compaction?.billedCost, 0.142);
+
+  const shownHtml = renderToStaticMarkup(createElement(CompactedCard, { item: result.currentItems[0], showCost: true }));
+  assert.match(shownHtml, /compacted-billing/);
+  assert.match(shownHtml, /34\.2k/);
+  assert.match(shownHtml, /~\$0\.14/);
+
+  const hiddenHtml = renderToStaticMarkup(createElement(CompactedCard, { item: result.currentItems[0], showCost: false }));
+  assert.doesNotMatch(hiddenHtml, /compacted-billing/);
+});
+
+test("cache miss, reasoning drop (deduped), and collapsed cache warming notices render separately from errors", () => {
+  const t0 = Date.parse("2026-11-26T06:00:00.000Z");
+  const t1 = Date.parse("2026-11-26T06:08:00.000Z");
+  const output = [
+    line({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-6.2-sol",
+        timestamp: t0,
+        content: [{ type: "text", text: "Turn 1 answer." }],
+        usage: {
+          input: 10000,
+          output: 400,
+          cacheRead: 50000,
+          cacheWrite: 0,
+          cost: { input: 0.02, output: 0.004, cacheRead: 0.005, cacheWrite: 0, total: 0.029 },
+        },
+      },
+    }),
+    line({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-6.2-sol",
+        timestamp: t1,
+        content: [{ type: "text", text: "Turn 2 answer after idle." }],
+        diagnostics: [
+          {
+            type: "openai_input_transformations",
+            details: {
+              transformations: [
+                { type: "reasoning", reason: "prefix_mismatch" },
+                { type: "reasoning", reason: "prefix_mismatch" },
+              ],
+            },
+          },
+        ],
+        usage: {
+          input: 64000,
+          output: 500,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0.16, output: 0.005, cacheRead: 0, cacheWrite: 0, total: 0.165 },
+        },
+      },
+    }),
+    line({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        provider: "openai",
+        model: "gpt-6.2-sol",
+        timestamp: t1 + 30_000,
+        content: [{ type: "text", text: "Turn 3 answer." }],
+        diagnostics: [
+          {
+            type: "openai_input_transformations",
+            details: {
+              transformations: [
+                { type: "reasoning", reason: "prefix_mismatch" },
+                { type: "reasoning", reason: "prefix_mismatch" },
+              ],
+            },
+          },
+        ],
+        usage: {
+          input: 1000,
+          output: 200,
+          cacheRead: 64000,
+          cacheWrite: 0,
+          cost: { input: 0.002, output: 0.002, cacheRead: 0.006, cacheWrite: 0, total: 0.01 },
+        },
+      },
+    }),
+    line({
+      type: "entry_appended",
+      entry: {
+        type: "usage",
+        kind: "cache_warm",
+        provider: "anthropic",
+        model: "claude-sonnet-5-5",
+        timestamp: "2026-11-26T06:12:00.000Z",
+        note: "idle keep-alive",
+        usage: { input: 200, output: 1, cacheRead: 40000, cacheWrite: 0, cost: { total: 0.012 } },
+      },
+    }),
+    line({
+      type: "entry_appended",
+      entry: {
+        type: "usage",
+        kind: "cache_warm",
+        provider: "anthropic",
+        model: "claude-sonnet-5-5",
+        timestamp: "2026-11-26T06:16:00.000Z",
+        note: "idle keep-alive",
+        usage: { input: 200, output: 1, cacheRead: 40000, cacheWrite: 0, cost: { total: 0.013 } },
+      },
+    }),
+  ].join("");
+
+  // Shown directly by default when cards are expanded.
+  const shownHtml = renderToStaticMarkup(createElement(VirtualizedTranscript, {
+    output, inline: true, settled: true, emptyText: "", cardsCollapsed: false,
+  }));
+  assert.doesNotMatch(shownHtml, /transcript-error-card/);
+  assert.equal((shownHtml.match(/data-notice-kind="reasoning_drop"/g) ?? []).length, 1, "deduped repeated drop");
+  assert.equal((shownHtml.match(/data-notice-kind="cache_miss"/g) ?? []).length, 1);
+  assert.equal((shownHtml.match(/data-notice-kind="cache_warming"/g) ?? []).length, 1, "merged adjacent warmings");
+  assert.match(shownHtml, /prefix_mismatch/);
+  assert.match(shownHtml, /60k/);
+  assert.match(shownHtml, /~\$0\.15/);
+  assert.match(shownHtml, /~\$0\.03/);
+
+  // Hidden automatically when cards are collapsed ("收起卡片").
+  const collapsedHtml = renderToStaticMarkup(createElement(VirtualizedTranscript, {
+    output, inline: true, settled: true, emptyText: "", cardsCollapsed: true,
+  }));
+  assert.doesNotMatch(collapsedHtml, /transcript-notice-card/);
+  assert.doesNotMatch(collapsedHtml, /transcript-error-card/);
+
+  const expandedNoticeHtml = renderToStaticMarkup(createElement(TranscriptNoticeCard, {
+    expanded: true,
+    item: {
+      id: "n1",
+      type: "notice",
+      role: "system",
+      notice: { kind: "reasoning_drop", provider: "OpenAI", droppedCount: 2, droppedNoun: "reasoning", reasons: ["prefix_mismatch"] },
+    },
+  }));
+  assert.match(expandedNoticeHtml, /transcript-notice-body/);
+  assert.match(expandedNoticeHtml, /prefix_mismatch/);
+});
+
+test("live Planner stream collects reasoning drop, cache miss, and cache warm notices without creating errors", () => {
+  const s1 = applyPlannerAssistantMessageEnd(initialPlannerStream, {
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-sonnet-5-5",
+    timestamp: 1_000_000,
+    content: [{ type: "text", text: "Step 1" }],
+    usage: { input: 5000, output: 100, cacheRead: 45000, cacheWrite: 0, cost: { input: 0.015, output: 0.001, cacheRead: 0.0135, cacheWrite: 0, total: 0.03 } },
+  });
+  const s2 = applyPlannerAssistantMessageEnd(s1, {
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-6.2-sol",
+    timestamp: 1_060_000,
+    content: [{ type: "text", text: "Step 2" }],
+    diagnostics: [{ type: "openai_input_transformations", details: { transformations: [{ type: "reasoning", reason: "prefix_mismatch" }] } }],
+    usage: { input: 50000, output: 100, cacheRead: 0, cacheWrite: 0, cost: { input: 0.15, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.151 } },
+  });
+  const s3 = applyPlannerEntryAppended(s2, {
+    type: "entry_appended",
+    entry: { type: "usage", kind: "cache_warm", provider: "openai", model: "gpt-6.2-sol", timestamp: "2026-11-26T06:20:00.000Z", usage: { input: 100, output: 0, cacheRead: 50000, cacheWrite: 0, cost: { total: 0.02 } } },
+  });
+  const notices = s3.items.filter(item => item.type === "notice");
+  assert.deepEqual(notices.map(n => n.notice?.kind), ["reasoning_drop", "cache_miss", "cache_warming"]);
+  assert.equal(notices[1].notice?.modelChanged, true);
+  assert.equal(s3.items.some(item => item.isError || item.status === "error"), false);
 });

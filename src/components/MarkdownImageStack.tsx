@@ -47,6 +47,7 @@ export function buildStackPreviewState(
     if (i === targetIndex) mappedIndex = items.length;
     items.push({
       src: resolvedSrc,
+      ...(img.workspacePath ? { workspacePath: img.workspacePath } : {}),
       alt: img.alt || img.title || fallbackAlt(i),
       name: img.alt || img.title || undefined,
     });

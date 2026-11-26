@@ -201,11 +201,11 @@ test("sidebar cards and menus support keyboard navigation without opening conver
     const focused = () => items.evaluateAll(elements => elements.findIndex(item => item === document.activeElement));
     assert.equal(await focused(), 0);
     await page.keyboard.press("ArrowUp");
-    assert.equal(await focused(), 3);
+    assert.equal(await focused(), 4);
     await page.keyboard.press("ArrowDown");
     assert.equal(await focused(), 0);
     await page.keyboard.press("End");
-    assert.equal(await focused(), 3);
+    assert.equal(await focused(), 4);
     await page.keyboard.press("Home");
     assert.equal(await focused(), 0);
     await page.keyboard.press("Escape");
@@ -1160,6 +1160,309 @@ test("continuing an older conversation moves its card to the first position with
     assert.deepEqual(errors, []);
   } finally {
     releaseGraphFollowUp();
+    await context.close();
+  }
+});
+
+test("conversations can be pinned with customizable dot colors, stay above new conversations, animate dot enter/exit without breathing, and persist across reload", { timeout: 30_000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: "en-US", reducedMotion: "no-preference" });
+  const errors = [];
+  const ws = "/mock/pin-repo";
+  const wsConfig = { ...config, repository: ws };
+  const summaries = [
+    { runId: "c3", repository: ws, title: "Newest conversation", phase: "completed", planType: "serial" },
+    { runId: "c2", repository: ws, title: "Middle conversation", phase: "completed", planType: "serial" },
+    { runId: "c1", repository: ws, title: "Oldest conversation", phase: "completed", planType: "serial" },
+  ];
+  const snapshots = Object.fromEntries(summaries.map(s => [s.runId, {
+    ...empty,
+    runId: s.runId,
+    config: wsConfig,
+    phase: "completed",
+    planType: "serial",
+    graph: { originalGoal: s.title, nodes: [{ id: "task", task: s.title }], edges: [] },
+    nodes: { task: { status: "completed", revision: 1, head: null, instruction: s.title, error: null } },
+  }]));
+  let newRunCounter = 0;
+  try {
+    await context.addInitScript(({ ws, wsConfig }) => {
+      if (localStorage.getItem("__pin_test_seeded")) return;
+      localStorage.setItem("__pin_test_seeded", "1");
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([
+        { id: ws, path: ws, name: "Pin Repo", branch: "main", clean: true, lastOpened: 10 },
+      ]));
+      localStorage.setItem("pi_n_config", JSON.stringify(wsConfig));
+    }, { ws, wsConfig });
+    await context.route("**/api/*", async route => {
+      const command = new URL(route.request().url()).pathname.slice(5);
+      const body = route.request().postDataJSON();
+      if (command === "plan_goal_stream") {
+        newRunCounter += 1;
+        const newId = `fresh-${newRunCounter}`;
+        const snap = { ...empty, runId: newId, config: wsConfig, phase: "completed", planType: "serial",
+          graph: { originalGoal: body.goal, nodes: [{ id: "task", task: body.goal }], edges: [] },
+          nodes: { task: { status: "completed", revision: 1, head: null, instruction: body.goal, error: null } } };
+        snapshots[newId] = snap;
+        summaries.unshift({ runId: newId, repository: ws, title: body.goal, phase: "completed", planType: "serial" });
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: `event: run_started\ndata: ${JSON.stringify({ runId: newId })}\n\nevent: complete\ndata: ${JSON.stringify({ snapshot: snap })}\n\n`,
+        });
+        return;
+      }
+      if (command === "control" && body.action === "intervene") {
+        const current = snapshots[body.runId];
+        const next = {
+          ...current,
+          events: [...(current.events || []), { sequence: 10, type: "invalidated", target: body.node || "task", instruction: body.instruction, request_id: body.requestId }],
+        };
+        snapshots[body.runId] = next;
+        await route.fulfill({ json: { result: next } });
+        return;
+      }
+      const defaults = {
+        bootstrap: { config: wsConfig, snapshot: empty, runs: summaries.map(s => s.runId), conversations: summaries, dataPath: "/mock", repositoryInfo: null },
+        save_config: { config: body?.config ?? wsConfig, snapshot: empty, runs: summaries.map(s => s.runId), dataPath: "/mock", repositoryInfo: null },
+        snapshot: body?.runId ? snapshots[body.runId] ?? empty : empty,
+        history: body?.runId ? snapshots[body.runId] ?? empty : empty,
+        snapshot_if_changed: { version: "fixed", snapshot: null },
+        repository_status: { repository: body?.repository ?? ws, valid: true, error: null },
+        detect_repository: { path: ws, name: "Pin Repo", branch: "main", head: "", clean: true },
+        list_plannings: [], list_files: { files: [] }, list_skills: { skills: [] },
+        provider_auth: { providers: [{ id: "test", name: "Test", configured: true, methods: [] }], models: [], warning: null },
+        pi_extensions: { globalDirectory: "mock", extensions: [] },
+        environment_capabilities: { platform: "darwin", arch: "arm64", nativeWorkspace: true },
+        composer_command: { instance: "i", commands: [] },
+        get_planning_output: { runId: body?.runId ?? "", planningId: body?.planningId ?? "", role: "planner", content: "", startOffset: 0, nextOffset: 0, totalBytes: 0, complete: true, running: false },
+        get_execution_output: { runId: body?.runId ?? "", executionId: body?.executionId ?? "", content: "", startOffset: 0, nextOffset: 0, totalBytes: 0, complete: true, running: false, status: "completed" },
+        get_file_changes: { runId: body?.runId, executionId: null, executionIds: null, summary: { files: [], totalFiles: 0, addedCount: 0, modifiedCount: 0, deletedCount: 0, renamedCount: 0, totalAdditions: 0, totalDeletions: 0, isRunning: false } },
+      };
+      if (!Object.hasOwn(defaults, command)) errors.push(`Unexpected API: ${command}`);
+      await route.fulfill({ json: { result: defaults[command] ?? null } });
+    });
+
+    const page = await context.newPage();
+    page.setDefaultTimeout(8_000);
+    page.on("pageerror", error => errors.push(String(error)));
+    await page.goto(origin, { waitUntil: "domcontentloaded" });
+    await page.locator('.run-item[data-run-id="c1"]').waitFor();
+    const cardOrder = () => page.locator(".runs-list .run-item").evaluateAll(items => items.map(item => item.dataset.runId));
+    assert.deepEqual(await cardOrder(), ["c3", "c2", "c1"]);
+
+    // 1. Direct click on "Pin conversation" pins with default black dot (animated entrance, no infinite breathing) and moves card to top.
+    await page.locator('.run-item[data-run-id="c1"]').click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Pin conversation", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c1,c3,c2");
+    const c1Dot = page.locator('.run-item[data-run-id="c1"] .run-pin-dot');
+    await c1Dot.waitFor();
+    assert.equal(await c1Dot.getAttribute("data-pin-color"), "black");
+    await page.waitForTimeout(260);
+    const dotMotion = await c1Dot.evaluate(el => ({
+      animationName: getComputedStyle(el).animationName,
+      infiniteCount: el.getAnimations().filter(a => a.effect?.getTiming().iterations === Infinity).length,
+      bg: getComputedStyle(el).backgroundColor,
+      width: getComputedStyle(el).width,
+      height: getComputedStyle(el).height,
+    }));
+    assert.equal(dotMotion.animationName, "none", "idle pin dot must not use breathing CSS animation");
+    assert.equal(dotMotion.infiniteCount, 0, "idle pin dot must not run an infinite breathing animation");
+    assert.equal(dotMotion.bg, "rgb(24, 24, 27)");
+    assert.equal(dotMotion.width, "8px");
+    assert.equal(dotMotion.height, "8px");
+
+    // 2. Hovering "Pin conversation" reveals the 5-color submenu; selecting Coral pins c2 at index 0 with coral dot.
+    await page.locator('.run-item[data-run-id="c2"]').click({ button: "right" });
+    const pinTrigger = page.getByRole("menuitem", { name: "Pin conversation", exact: true });
+    await pinTrigger.hover();
+    const submenu = page.getByRole("menu", { name: "Pin color", exact: true });
+    await submenu.waitFor();
+    const colorLabels = await submenu.getByRole("menuitem").allTextContents();
+    assert.deepEqual(colorLabels, ["Black", "White", "Coral", "Blue", "Yellow"]);
+    await submenu.getByRole("menuitem", { name: "Coral", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c2,c1,c3");
+    assert.equal(await page.locator('.run-item[data-run-id="c2"] .run-pin-dot').getAttribute("data-pin-color"), "coral");
+
+    // 3. Changing color of an already-pinned card via "Pin color" submenu (including keyboard navigation) updates color in place.
+    await page.locator('.run-item[data-run-id="c1"]').click({ button: "right" });
+    const colorTrigger = page.getByRole("menuitem", { name: "Pin color", exact: true });
+    await colorTrigger.focus();
+    await page.keyboard.press("ArrowRight");
+    const colorMenu = page.getByRole("menu", { name: "Pin color", exact: true });
+    await colorMenu.waitFor();
+    await page.keyboard.press("ArrowLeft");
+    await colorMenu.waitFor({ state: "detached" });
+    assert.equal(await colorTrigger.evaluate(el => el === document.activeElement), true);
+    await colorTrigger.hover();
+    await colorMenu.waitFor();
+    await colorMenu.getByRole("menuitem", { name: "White", exact: true }).click();
+    assert.equal(await page.locator('.run-item[data-run-id="c1"] .run-pin-dot').getAttribute("data-pin-color"), "white");
+    await page.waitForFunction(() => {
+      const dot = document.querySelector('.run-item[data-run-id="c1"] .run-pin-dot');
+      return dot && getComputedStyle(dot).backgroundColor === "rgb(255, 255, 255)";
+    });
+    const whiteStyle = await page.locator('.run-item[data-run-id="c1"] .run-pin-dot').evaluate(el => ({
+      bg: getComputedStyle(el).backgroundColor,
+      boxShadow: getComputedStyle(el).boxShadow,
+      borderWidth: getComputedStyle(el).borderWidth,
+    }));
+    assert.equal(whiteStyle.bg, "rgb(255, 255, 255)");
+    assert.equal(whiteStyle.boxShadow, "none", "white pin dot must not have a stroke");
+    assert.equal(whiteStyle.borderWidth, "0px");
+    assert.deepEqual(await cardOrder(), ["c2", "c1", "c3"], "changing color must not reorder pinned cards");
+
+    // 3b. When a pinned conversation is actively running, the pin dot itself breathes and no extra blue dot is added.
+    const c2Summary = summaries.find(s => s.runId === "c2");
+    c2Summary.phase = "running";
+    c2Summary.hasActiveExecutions = true;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator('.run-item[data-run-id="c2"] .run-pin-dot.is-working').waitFor();
+    assert.equal(await page.locator('.run-item[data-run-id="c2"] .run-dot.running-pulse').count(), 0,
+      "a running pinned conversation must not render a second blue dot");
+    assert.equal(
+      await page.locator('.run-item[data-run-id="c2"] .run-pin-dot.is-working').evaluate(el => getComputedStyle(el).animationName),
+      "pin-pulse-glow",
+    );
+    c2Summary.phase = "completed";
+    c2Summary.hasActiveExecutions = false;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator('.run-item[data-run-id="c2"] .run-pin-dot').waitFor();
+    assert.equal(await page.locator('.run-item[data-run-id="c2"] .run-pin-dot.is-working').count(), 0);
+
+    // 4. Starting a new conversation inserts below pinned cards (never pushes pinned cards down).
+    await page.locator(".landing-screen textarea").fill("Brand new conversation");
+    await page.locator(".landing-screen textarea").press("Enter");
+    await page.locator('.run-item[data-run-id="fresh-1"]').waitFor();
+    assert.deepEqual(await cardOrder(), ["c2", "c1", "fresh-1", "c3"]);
+
+    // 5. Sending a follow-up in an unpinned conversation promotes it only to the top of unpinned cards.
+    await page.locator('.run-item[data-run-id="c3"]').click();
+    await page.locator('.run-item[data-run-id="c3"].chosen').waitFor();
+    await page.locator(".pane-bottom-chat textarea").fill("Follow up in c3");
+    await page.locator(".pane-bottom-chat textarea").press("Enter");
+    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c2,c1,c3,fresh-1");
+
+    // 6. Reload preserves pinned cards, dot colors, and pinned ordering.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator('.run-item[data-run-id="c2"]').waitFor();
+    assert.deepEqual(await cardOrder(), ["c2", "c1", "c3", "fresh-1"]);
+    assert.equal(await page.locator('.run-item[data-run-id="c2"] .run-pin-dot').getAttribute("data-pin-color"), "coral");
+    assert.equal(await page.locator('.run-item[data-run-id="c1"] .run-pin-dot').getAttribute("data-pin-color"), "white");
+
+    // 7. Unpinning c2 animates its dot away and places it below remaining pinned card c1.
+    await page.locator('.run-item[data-run-id="c2"]').click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Unpin conversation", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c1,c2,c3,fresh-1");
+    await page.locator('.run-item[data-run-id="c2"] .run-pin-dot').waitFor({ state: "detached" });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("workspace and conversation cards can be reordered by dragging without accidental clicks and respect pin boundaries across reload", { timeout: 30_000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: "en-US", reducedMotion: "no-preference" });
+  const errors = [];
+  const ws1 = "/mock/drag-alpha";
+  const ws2 = "/mock/drag-beta";
+  const ws3 = "/mock/drag-gamma";
+  const wsConfig = { ...config, repository: ws1 };
+  const summaries = [
+    { runId: "p1", repository: ws1, title: "Pinned One", phase: "completed", planType: "serial" },
+    { runId: "p2", repository: ws1, title: "Pinned Two", phase: "completed", planType: "serial" },
+    { runId: "u1", repository: ws1, title: "Unpinned One", phase: "completed", planType: "serial" },
+    { runId: "u2", repository: ws1, title: "Unpinned Two", phase: "completed", planType: "serial" },
+  ];
+  const dragCard = async (page, sourceLocator, targetLocator, extraY = 0) => {
+    const src = await sourceLocator.boundingBox();
+    const dst = await targetLocator.boundingBox();
+    assert.ok(src && dst, "source and target cards must have bounding boxes");
+    await page.mouse.move(src.x + src.width / 2, src.y + src.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(dst.x + dst.width / 2, dst.y + dst.height / 2 + extraY, { steps: 10 });
+    await page.mouse.up();
+  };
+  try {
+    await context.addInitScript(({ ws1, ws2, ws3, wsConfig }) => {
+      if (localStorage.getItem("__drag_test_seeded")) return;
+      localStorage.setItem("__drag_test_seeded", "1");
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([
+        { id: ws1, path: ws1, name: "Alpha", branch: "main", clean: true, lastOpened: 300 },
+        { id: ws2, path: ws2, name: "Beta", branch: "main", clean: true, lastOpened: 200 },
+        { id: ws3, path: ws3, name: "Gamma", branch: "main", clean: true, lastOpened: 100 },
+      ]));
+      localStorage.setItem("pi_n_config", JSON.stringify(wsConfig));
+      localStorage.setItem("pi-n-format-1:/mock:pi_n_pinned_runs", JSON.stringify({ p1: "blue", p2: "yellow" }));
+      localStorage.setItem("pi-n-format-1:/mock:pi_n_workspace_run_order", JSON.stringify({ [ws1]: ["p1", "p2", "u1", "u2"] }));
+    }, { ws1, ws2, ws3, wsConfig });
+    await context.route("**/api/*", async route => {
+      const command = new URL(route.request().url()).pathname.slice(5);
+      const body = route.request().postDataJSON();
+      const defaults = {
+        bootstrap: { config: wsConfig, snapshot: empty, runs: summaries.map(s => s.runId), conversations: summaries, dataPath: "/mock", repositoryInfo: null },
+        save_config: { config: body?.config ?? wsConfig, snapshot: empty, runs: summaries.map(s => s.runId), dataPath: "/mock", repositoryInfo: null },
+        snapshot: empty, history: empty, snapshot_if_changed: { version: "fixed", snapshot: null },
+        repository_status: { repository: body?.repository ?? ws1, valid: true, error: null },
+        detect_repository: { path: body?.repository ?? ws1, name: "Alpha", branch: "main", head: "", clean: true },
+        list_plannings: [], list_files: { files: [] }, list_skills: { skills: [] },
+        provider_auth: { providers: [{ id: "test", name: "Test", configured: true, methods: [] }], models: [], warning: null },
+        pi_extensions: { globalDirectory: "mock", extensions: [] },
+        environment_capabilities: { platform: "darwin", arch: "arm64", nativeWorkspace: true },
+        get_file_changes: { runId: body?.runId, executionId: null, executionIds: null, summary: { files: [], totalFiles: 0, addedCount: 0, modifiedCount: 0, deletedCount: 0, renamedCount: 0, totalAdditions: 0, totalDeletions: 0, isRunning: false } },
+      };
+      if (!Object.hasOwn(defaults, command)) errors.push(`Unexpected API: ${command}`);
+      await route.fulfill({ json: { result: defaults[command] ?? null } });
+    });
+
+    const page = await context.newPage();
+    page.setDefaultTimeout(8_000);
+    page.on("pageerror", error => errors.push(String(error)));
+    await page.goto(origin, { waitUntil: "domcontentloaded" });
+    await page.locator('.run-item[data-run-id="u2"]').waitFor();
+    const wsOrder = () => page.locator(".projects-list .project-workspace-item strong").allTextContents();
+    const runOrder = () => page.locator(".runs-list .run-item").evaluateAll(items => items.map(item => item.dataset.runId));
+
+    assert.deepEqual(await wsOrder(), ["Alpha", "Beta", "Gamma"]);
+    assert.deepEqual(await runOrder(), ["p1", "p2", "u1", "u2"]);
+
+    // 1. Drag Gamma workspace card above Alpha; active workspace remains Alpha (no accidental click).
+    await dragCard(
+      page,
+      page.locator(".project-workspace-item", { hasText: "Gamma" }),
+      page.locator(".project-workspace-item", { hasText: "Alpha" }),
+      -10,
+    );
+    assert.deepEqual(await wsOrder(), ["Gamma", "Alpha", "Beta"]);
+    assert.equal(await page.locator(".project-workspace-item.active strong").innerText(), "Alpha");
+
+    // 2. Drag pinned card p2 above p1 -> reorders within pinned group without opening a conversation.
+    await dragCard(page, page.locator('.run-item[data-run-id="p2"]'), page.locator('.run-item[data-run-id="p1"]'), -8);
+    assert.deepEqual(await runOrder(), ["p2", "p1", "u1", "u2"]);
+    assert.equal(await page.locator(".run-item.chosen").count(), 0);
+
+    // 3. Drag unpinned card u2 all the way up past p2 -> clamped strictly below pinned group (moves above u1 only).
+    await dragCard(page, page.locator('.run-item[data-run-id="u2"]'), page.locator('.run-item[data-run-id="p2"]'), -12);
+    assert.deepEqual(await runOrder(), ["p2", "p1", "u2", "u1"]);
+    assert.equal(await page.locator(".run-item.chosen").count(), 0);
+
+    // 4. Escape mid-drag cancels cleanly without committing.
+    const u1Box = await page.locator('.run-item[data-run-id="u1"]').boundingBox();
+    const u2Box = await page.locator('.run-item[data-run-id="u2"]').boundingBox();
+    await page.mouse.move(u1Box.x + u1Box.width / 2, u1Box.y + u1Box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(u2Box.x + u2Box.width / 2, u2Box.y + u2Box.height / 2 - 8, { steps: 6 });
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    assert.deepEqual(await runOrder(), ["p2", "p1", "u2", "u1"]);
+
+    // 5. Reload persists both dragged workspace order and dragged conversation order.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator('.run-item[data-run-id="u1"]').waitFor();
+    assert.deepEqual(await wsOrder(), ["Gamma", "Alpha", "Beta"]);
+    assert.deepEqual(await runOrder(), ["p2", "p1", "u2", "u1"]);
+    assert.deepEqual(errors, []);
+  } finally {
     await context.close();
   }
 });

@@ -517,7 +517,7 @@ fn send_steer(
     let mut command_val = serde_json::json!({"id": id, "type": "prompt", "message": instruction, "streamingBehavior": "steer"});
     if let Some(imgs) = images {
         if !imgs.is_empty() {
-            command_val["images"] = serde_json::json!(imgs);
+            command_val["images"] = crate::model::ImageAttachment::rpc_payload(&imgs);
         }
     }
     let command = command_val.to_string();
@@ -1628,7 +1628,7 @@ fn run_pi_with_timeout(
             serde_json::json!({"id": initial_rpc_id, "type": "prompt", "message": request.task});
         if let Some(imgs) = request.images {
             if !imgs.is_empty() {
-                initial_val["images"] = serde_json::json!(imgs);
+                initial_val["images"] = crate::model::ImageAttachment::rpc_payload(imgs);
             }
         }
         let initial = initial_val.to_string();
@@ -2541,7 +2541,7 @@ fn begin_resumed_turn(
         serde_json::json!({"id": initial_rpc_id, "type": "prompt", "message": request.task});
     if let Some(images) = request.images {
         if !images.is_empty() {
-            initial_val["images"] = serde_json::json!(images);
+            initial_val["images"] = crate::model::ImageAttachment::rpc_payload(images);
         }
     }
     sender
@@ -4056,6 +4056,7 @@ sys.stdin.read()
                     mime_type: "image/png".into(),
                     data: index.to_string(),
                     name: None,
+                    original_path: None,
                 }]),
             )
             .unwrap();
@@ -4081,6 +4082,7 @@ assert second['message'] == 'instruction with image'
 assert 'images' in second and len(second['images']) == 1
 assert second['images'][0]['mimeType'] == 'image/png'
 assert second['images'][0]['data'] == 'ZmFrZQ=='
+assert 'originalPath' not in second['images'][0]
 print(json.dumps({'type':'response','id':second['id'],'command':'prompt','success':True}), flush=True)
 print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'image received'}]}}), flush=True)
 print(json.dumps({'type':'agent_settled'}), flush=True)
@@ -4141,6 +4143,7 @@ sys.stdin.read()
             mime_type: "image/png".into(),
             data: "ZmFrZQ==".into(),
             name: Some("test.png".into()),
+            original_path: Some("/tmp/attachment-inputs/11111111-1111-1111-1111-111111111111/test.png".into()),
         };
         steer(&id, "instruction with image", Some(vec![test_image])).unwrap();
         let (result, output) = worker.join().unwrap();

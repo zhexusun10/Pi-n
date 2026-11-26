@@ -37,21 +37,18 @@ fn directory_inspection_ignores_git_metadata_and_keeps_the_selected_path() {
 }
 
 #[test]
-fn directory_inspection_rejects_missing_files_and_failed_admission() {
+fn directory_inspection_rejects_missing_files_without_scanning_size() {
     let temp = TempDir::new().unwrap();
     let missing = temp.path().join("missing");
     let file = temp.path().join("file.txt");
     fs::write(&file, "file").unwrap();
     for path in [&missing, &file] {
-        assert!(
-            workspace::inspect_directory_with_size_check(Some(path), |_| {
-                panic!("non-directories must not be scanned");
-            })
-            .unwrap()
-            .is_none()
-        );
+        assert!(workspace::inspect_directory(Some(path)).unwrap().is_none());
     }
-    let error = workspace::inspect_directory_with_size_check(Some(temp.path()), |_| {
+    assert!(workspace::inspect_directory(Some(temp.path()))
+        .unwrap()
+        .is_some());
+    let error = workspace::validate_admission_with_size_check(temp.path(), |_| {
         Err("workspace exceeds size limit".into())
     })
     .unwrap_err();

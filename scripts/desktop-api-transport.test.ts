@@ -5,6 +5,7 @@ import {
   getCachedApiUrl,
   getDesktopBackendState,
   invalidateBackendBaseUrl,
+  isMacosPlatform,
   isMacosTauriDesktop,
   isTauriDesktop,
   normalizeBackendBaseUrl,
@@ -631,18 +632,27 @@ test("isMacosTauriDesktop activates only for Tauri desktop on macOS and stays fa
   try {
     clearTauriGlobals();
     setNavigator({ platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" });
+    assert.equal(isMacosPlatform(), true);
     assert.equal(isMacosTauriDesktop(), false);
 
     installTauriInvoke(async () => "http://127.0.0.1:43000");
+    assert.equal(isMacosPlatform(), true);
     assert.equal(isMacosTauriDesktop(), true);
 
     setNavigator({ platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    assert.equal(isMacosPlatform(), false);
     assert.equal(isMacosTauriDesktop(), false);
 
     setNavigator({ userAgentData: { platform: "macOS" }, platform: "MacIntel", userAgent: "" });
+    assert.equal(isMacosPlatform(), true);
     assert.equal(isMacosTauriDesktop(), true);
 
     setNavigator({ userAgentData: { platform: "Windows" }, platform: "Win32", userAgent: "" });
+    assert.equal(isMacosPlatform(), false);
+    assert.equal(isMacosTauriDesktop(), false);
+
+    setNavigator({ platform: "iPhone", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" });
+    assert.equal(isMacosPlatform(), false);
     assert.equal(isMacosTauriDesktop(), false);
   } finally {
     if (originalNavigator) {

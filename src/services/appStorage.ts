@@ -1,11 +1,14 @@
-import type { Config, PlanMode, ProjectItem, RoleModelConfig, ThinkingLevel } from "../types";
+import { isPinDotColor, type Config, type PinDotColor, type PlanMode, type ProjectItem, type RoleModelConfig, type ThinkingLevel } from "../types";
 import { normalizeWorkspacePath } from "./workspaceConversations";
 
 export const STORAGE_KEYS = {
   projects: "pi_n_projects",
+  projectOrder: "pi_n_project_order",
   lastWorkspace: "pi_n_last_workspace",
   workspaceRuns: "pi_n_workspace_runs",
+  workspaceRunOrder: "pi_n_workspace_run_order",
   archivedRuns: "pi_n_archived_runs",
+  pinnedRuns: "pi_n_pinned_runs",
   runLabels: "pi_n_run_labels",
   runModes: "pi_n_run_modes",
   config: "pi_n_config",
@@ -15,8 +18,11 @@ export const STORAGE_KEYS = {
 
 type StoredJson = {
   pi_n_projects: ProjectItem[];
+  pi_n_project_order: string[];
   pi_n_workspace_runs: Record<string, string[]>;
+  pi_n_workspace_run_order: Record<string, string[]>;
   pi_n_archived_runs: string[];
+  pi_n_pinned_runs: Record<string, PinDotColor>;
   pi_n_run_labels: Record<string, string>;
   pi_n_run_modes: Record<string, PlanMode>;
   pi_n_config: Partial<Config>;
@@ -73,13 +79,21 @@ function config(value: unknown): Partial<Config> | null {
 
 const decoders: { [K in keyof StoredJson]: (value: unknown) => StoredJson[K] | null } = {
   pi_n_projects: projects,
+  pi_n_project_order: value => Array.isArray(value)
+    ? [...new Set(value.filter((key): key is string => typeof key === "string" && key.length > 0))]
+    : null,
   pi_n_config: config,
   pi_n_workspace_runs: value => record(value) ? Object.fromEntries(Object.entries(value)
     .filter(([, ids]) => Array.isArray(ids))
     .map(([path, ids]) => [path, (ids as unknown[]).filter((id): id is string => typeof id === "string")])) : null,
+  pi_n_workspace_run_order: value => record(value) ? Object.fromEntries(Object.entries(value)
+    .filter(([, ids]) => Array.isArray(ids))
+    .map(([path, ids]) => [path, [...new Set((ids as unknown[]).filter((id): id is string => typeof id === "string" && id.length > 0 && !id.startsWith("pending-")))]])) : null,
   pi_n_archived_runs: value => Array.isArray(value)
     ? [...new Set(value.filter((id): id is string => typeof id === "string" && id.length > 0 && !id.startsWith("pending-")))]
     : null,
+  pi_n_pinned_runs: value => record(value) ? Object.fromEntries(Object.entries(value)
+    .filter((entry): entry is [string, PinDotColor] => entry[0].length > 0 && !entry[0].startsWith("pending-") && isPinDotColor(entry[1]))) : null,
   pi_n_run_labels: value => record(value) ? Object.fromEntries(Object.entries(value)
     .filter((entry): entry is [string, string] => typeof entry[1] === "string")) : null,
   pi_n_run_modes: value => record(value) ? Object.fromEntries(Object.entries(value)
@@ -91,7 +105,7 @@ export function readStorageString(key: string): string | null {
 }
 
 export function storageJsonKey(key: string): string {
-  if ([STORAGE_KEYS.workspaceRuns, STORAGE_KEYS.archivedRuns, STORAGE_KEYS.runLabels, STORAGE_KEYS.runModes, STORAGE_KEYS.config].includes(key as any)) {
+  if ([STORAGE_KEYS.workspaceRuns, STORAGE_KEYS.workspaceRunOrder, STORAGE_KEYS.archivedRuns, STORAGE_KEYS.pinnedRuns, STORAGE_KEYS.runLabels, STORAGE_KEYS.runModes, STORAGE_KEYS.config].includes(key as any)) {
     return `pi-n-format-1:${readStorageString(STORAGE_KEYS.dataPath) ?? ""}:${key}`;
   }
   return key;

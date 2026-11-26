@@ -41,7 +41,7 @@
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 .prompt-command-notice .prompt-command-notice-close:hover:not(:disabled) {
-  background: var(--bg-surface-hover, #f1f5f9);
+  background: var(--bg-surface-hover, #f0f0f2);
   color: var(--text-primary, #0f172a);
   filter: none;
 }

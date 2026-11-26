@@ -6,6 +6,12 @@ import { MarkdownRenderer } from "../MarkdownRenderer";
 import { useSmoothStreamText } from "../../hooks/useSmoothStreamText";
 import { parseMessageAttachmentsAndText, AttachmentCard } from "../../utils/attachmentUtils";
 import { ImagePreviewModal, type PreviewImageItem } from "../modals/ImagePreviewModal";
+import { ImageContextMenu } from "../ui/ImageContextMenu";
+import type { ContextMenuAnchor } from "../ui/context-menu";
+import {
+  imageAttachmentFingerprint,
+  resolveOriginalImagePath,
+} from "../../services/originalImagePreview";
 import { notifyTranscriptContentGrowth, notifyTranscriptFinalOutput, transcriptScrollParent } from "../../services/transcriptScroll";
 import { copyTextToClipboard } from "../../services/externalLink";
 
@@ -118,6 +124,7 @@ export function EditableUserBubble({
   const [copyHold, setCopyHold] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [imageMenu, setImageMenu] = useState<{ anchor: ContextMenuAnchor; index: number } | null>(null);
   const [visibleChars, setVisibleChars] = useState<number | null>(null);
   const submittingRef = useRef(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,6 +150,8 @@ export function EditableUserBubble({
   const previewImages = useMemo<PreviewImageItem[]>(() =>
     allImages.map((img, idx) => ({
       src: img.data.startsWith("data:") ? img.data : `data:${img.mimeType || "image/png"};base64,${img.data}`,
+      originalPath: resolveOriginalImagePath(img),
+      sessionOriginalKey: imageAttachmentFingerprint(img),
       alt: img.name || t("图片 {0}", idx + 1),
       name: img.name,
     })),
@@ -315,6 +324,14 @@ export function EditableUserBubble({
                   type="button"
                   className="chat-user-image-thumb"
                   onClick={() => setPreviewIndex(idx)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setImageMenu({
+                      anchor: { x: event.clientX, y: event.clientY, trigger: event.currentTarget },
+                      index: idx,
+                    });
+                  }}
                   aria-label={t("预览图片")}
                 >
                   <img
@@ -423,6 +440,14 @@ export function EditableUserBubble({
           ) : null}
         </div>
       </div>
+      {imageMenu && previewImages[imageMenu.index] && (
+        <ImageContextMenu
+          anchor={imageMenu.anchor}
+          target={previewImages[imageMenu.index]}
+          onPreview={() => setPreviewIndex(imageMenu.index)}
+          onClose={() => setImageMenu(null)}
+        />
+      )}
       <ImagePreviewModal
         images={previewImages}
         index={previewIndex}

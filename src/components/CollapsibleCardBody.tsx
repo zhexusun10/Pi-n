@@ -7,6 +7,29 @@ function easeOutCubic(t: number): number {
   return 1 - inv * inv * inv;
 }
 
+function easeCollapsible(t: number, softness: number): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  const cubicOut = easeOutCubic(t);
+  if (softness <= 0) return cubicOut;
+  const inv = 1 - t;
+  const quadOut = 1 - inv * inv;
+  const sineInOut = 0.5 * (1 - Math.cos(Math.PI * t));
+  const gentle = 0.45 * sineInOut + 0.55 * quadOut;
+  return cubicOut + (gentle - cubicOut) * Math.min(1, softness);
+}
+
+function getVisibleViewportBottom(element: HTMLElement): number {
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const overflowY = getComputedStyle(parent).overflowY;
+    if (/^(auto|scroll|overlay)$/.test(overflowY)) {
+      const rect = parent.getBoundingClientRect();
+      return Math.min(window.innerHeight, rect.top + parent.clientTop + parent.clientHeight);
+    }
+  }
+  return window.innerHeight;
+}
+
 /** Animate intrinsic content with integer-pixel height without ever collapsing
  * the DOM to 0 before an exit animation starts (which would clamp a nested
  * conversation scroller to its final bottom).
@@ -17,12 +40,18 @@ function easeOutCubic(t: number): number {
  * while retained during exit, so a section placed after it jumped by the gap at
  * the very end of the exit. Cancelling the gap alongside the shrinking height
  * keeps both the body and everything below it moving continuously.
+ *
+ * When `clampToViewport` is enabled (e.g. expanding an `ActivitySummaryRow`
+ * holding dozens of cards), off-screen height below the scroll viewport is
+ * excluded from the animated height travel so cards unfurl smoothly through the
+ * visible area instead of blasting past the viewport in two frames.
  */
-export function CollapsibleCardBody({ expanded, children, collapseGap = 0, durationMs = 240 }: {
+export function CollapsibleCardBody({ expanded, children, collapseGap = 0, durationMs = 240, clampToViewport = false }: {
   expanded: boolean;
   children: () => ReactNode;
   collapseGap?: number;
   durationMs?: number;
+  clampToViewport?: boolean;
 }) {
   const reduceMotion = useReducedMotion();
   const outerRef = useRef<HTMLDivElement>(null);
@@ -76,9 +105,28 @@ export function CollapsibleCardBody({ expanded, children, collapseGap = 0, durat
       return;
     }
 
-    const startHeight = expanded
+    const viewportCap = clampToViewport
+      ? Math.max(160, Math.round(getVisibleViewportBottom(outer) - outer.getBoundingClientRect().top) + 28)
+      : Infinity;
+    const rawStartHeight = expanded
       ? (wasAnimating ? Math.round(outer.offsetHeight || outer.getBoundingClientRect().height) : 0)
       : Math.round(outer.offsetHeight || outer.getBoundingClientRect().height);
+    const startHeight = !expanded && clampToViewport
+      ? Math.min(rawStartHeight, viewportCap)
+      : rawStartHeight;
+    const initialFullTargetHeight = expanded
+      ? Math.round(inner.offsetHeight || inner.getBoundingClientRect().height)
+      : 0;
+    const initialAnimatedTarget = expanded && clampToViewport
+      ? Math.min(initialFullTargetHeight, viewportCap)
+      : initialFullTargetHeight;
+    const animatedSpan = Math.abs(initialAnimatedTarget - startHeight);
+    const effectiveDurationMs = clampToViewport && animatedSpan > 260
+      ? Math.round(durationMs + Math.min(60, ((animatedSpan - 260) / 500) * 60))
+      : durationMs;
+    const softness = clampToViewport && animatedSpan > 220
+      ? Math.min(1, (animatedSpan - 220) / 380)
+      : 0;
     const parsedOpacity = parseFloat(outer.style.opacity);
     const startOpacity = expanded
       ? (wasAnimating && Number.isFinite(parsedOpacity) ? parsedOpacity : 0)
@@ -119,12 +167,15 @@ export function CollapsibleCardBody({ expanded, children, collapseGap = 0, durat
       if (startTime === 0) {
         startTime = now - 16;
       }
-      const progress = Math.min(1, Math.max(0, (now - startTime) / durationMs));
-      const eased = easeOutCubic(progress);
+      const progress = Math.min(1, Math.max(0, (now - startTime) / effectiveDurationMs));
+      const eased = easeCollapsible(progress, softness);
 
-      const targetHeight = expanded
+      const rawTargetHeight = expanded
         ? Math.round(inner.offsetHeight || inner.getBoundingClientRect().height)
         : 0;
+      const targetHeight = expanded && clampToViewport
+        ? Math.min(rawTargetHeight, viewportCap)
+        : rawTargetHeight;
       const nextHeight = Math.round(startHeight + (targetHeight - startHeight) * eased);
       if (nextHeight !== lastHeight) {
         outer.style.height = `${nextHeight}px`;
@@ -158,7 +209,7 @@ export function CollapsibleCardBody({ expanded, children, collapseGap = 0, durat
     };
 
     rafIdRef.current = requestAnimationFrame(tick);
-  }, [expanded, reduceMotion, collapseGap, durationMs]);
+  }, [expanded, reduceMotion, collapseGap, durationMs, clampToViewport]);
 
   if (!rendered) return null;
 

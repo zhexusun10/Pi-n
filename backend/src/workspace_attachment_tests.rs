@@ -445,6 +445,7 @@ fn serial_initial_route_delivers_images_to_first_job_and_survives_replay() {
         mime_type: "image/png".into(),
         data: "iVBORw0KGgo=".into(),
         name: Some("screen.png".into()),
+        original_path: None,
     };
     let mut runtime = Runtime::open(&root).unwrap();
     let graph: Graph = serde_json::from_value(serde_json::json!({
@@ -667,6 +668,7 @@ fn snapshot_metadata_strips_duplicate_node_images_while_preserving_routed_event_
         mime_type: "image/png".into(),
         data: "iVBORw0KGgo=".into(),
         name: Some("ui.png".into()),
+        original_path: None,
     };
     runtime
         .set_route_with_images("serial", Some(vec![image]))
@@ -697,12 +699,14 @@ fn graph_planner_images_persist_under_run_attachments_and_support_session_branch
             mime_type: "image/jpeg".into(),
             data: "aGVsbG8=".into(),
             name: Some("retina.png".into()),
+            original_path: None,
         },
         crate::model::ImageAttachment {
             r#type: "image".into(),
             mime_type: "image/png".into(),
             data: "d29ybGQ=".into(),
             name: None,
+            original_path: None,
         },
     ];
 
@@ -794,4 +798,84 @@ fn graph_planner_images_persist_under_run_attachments_and_support_session_branch
     )
     .unwrap();
     assert!(initial_branch.first_user_turn);
+}
+
+#[test]
+fn pre_run_original_image_paths_are_adopted_by_run_and_preserved_from_orphan_pruning() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("data");
+    let repo = temp.path().join("repo");
+    init_repo(&repo);
+
+    let pre_run_attachment_id = Uuid::new_v4().to_string();
+    let original = attachment_inputs::store(
+        &root,
+        None,
+        &pre_run_attachment_id,
+        "photo.png",
+        b"\x89PNG\r\n\x1a\nfull-resolution-bytes",
+    )
+    .unwrap();
+    let original_display = attachment_inputs::display_path(&original);
+
+    let mut runtime = Runtime::open(&root).unwrap();
+    let graph: Graph = serde_json::from_value(serde_json::json!({
+        "originalGoal": "Inspect this photo",
+        "nodes": [{ "id": "task", "task": "Inspect this photo" }],
+        "edges": [],
+    }))
+    .unwrap();
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "repository": repo,
+        "model": "test/model",
+        "maxParallel": 1,
+        "maxFeedback": 1,
+    }))
+    .unwrap();
+    runtime.create(graph, config).unwrap();
+    let image = crate::model::ImageAttachment {
+        r#type: "image".into(),
+        mime_type: "image/webp".into(),
+        data: "Y29tcHJlc3NlZA==".into(),
+        name: Some("photo.png".into()),
+        original_path: Some(original_display.clone()),
+    };
+    runtime
+        .set_route_with_images("serial", Some(vec![image]))
+        .unwrap();
+
+    // Cleanup ownership must include the adopted pre-run original image directory.
+    let owned = runtime
+        .store
+        .owned_cleanup_targets(&runtime.state.run_id)
+        .unwrap();
+    assert!(
+        owned.contains(&crate::cleanup::Target::data(
+            attachment_inputs::BUCKET,
+            &pre_run_attachment_id
+        )),
+        "Run must adopt pre-run originalPath for cleanup ownership"
+    );
+    // Orphan pruning with max_age = 0 must keep the adopted original image intact.
+    assert_eq!(
+        attachment_inputs::prune_orphaned_unscoped(
+            &root,
+            &runtime.store,
+            std::time::Duration::ZERO
+        )
+        .unwrap(),
+        0
+    );
+    assert!(original.exists());
+
+    // RPC payload must strip `originalPath` while keeping vision fields intact.
+    let rpc = crate::model::ImageAttachment::rpc_payload(
+        runtime.state.nodes["task"]
+            .instruction_images
+            .as_deref()
+            .unwrap(),
+    );
+    assert_eq!(rpc[0]["mimeType"], "image/webp");
+    assert_eq!(rpc[0]["data"], "Y29tcHJlc3NlZA==");
+    assert!(rpc[0].get("originalPath").is_none());
 }

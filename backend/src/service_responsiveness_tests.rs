@@ -261,20 +261,10 @@ fn repository_status_does_not_wait_for_a_busy_primary_runtime() {
     fs::create_dir(&source).unwrap();
     let primary = primary(&temp.path().join("runtime"));
     let held = primary.runtime.lock().unwrap();
-    let other_primary = primary.clone();
     let (tx, rx) = std::sync::mpsc::channel();
-    let scanned = Arc::new(AtomicBool::new(false));
-    let scan = scanned.clone();
     let worker = thread::spawn(move || {
-        tx.send(repository_status(
-            &other_primary,
-            source.to_string_lossy().into_owned(),
-            |_| {
-                scan.store(true, Ordering::SeqCst);
-                Err("size warning".into())
-            },
-        ))
-        .unwrap();
+        tx.send(repository_status(source.to_string_lossy().into_owned()))
+            .unwrap();
     });
     let result = rx.recv_timeout(Duration::from_secs(2));
     // Release and join before asserting so the old blocking implementation
@@ -286,7 +276,6 @@ fn repository_status_does_not_wait_for_a_busy_primary_runtime() {
         .unwrap();
     assert_eq!(status["valid"], true);
     assert_eq!(status["sizeLimitExceeded"], false);
-    assert!(!scanned.load(Ordering::SeqCst));
 }
 
 #[test]

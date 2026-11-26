@@ -283,6 +283,7 @@ fn image(data: &str) -> ImageAttachment {
         mime_type: "image/png".into(),
         data: data.into(),
         name: Some(data.into()),
+        original_path: None,
     }
 }
 

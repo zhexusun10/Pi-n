@@ -10,6 +10,7 @@ use std::{
 };
 
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_ATTACHMENT_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 fn system_temp_image_roots() -> Vec<PathBuf> {
     #[cfg(unix)]
@@ -166,7 +167,7 @@ fn resolve_image_target(
     resolve_from_roots_allowing_outside(workspace_roots, &validated)
 }
 
-fn open_regular_image_file(target: &Path) -> Result<fs::File, String> {
+fn open_regular_file_limited(target: &Path, max_bytes: u64, limit_error: &str) -> Result<fs::File, String> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -179,10 +180,14 @@ fn open_regular_image_file(target: &Path) -> Result<fs::File, String> {
     if !metadata.is_file() {
         return Err("Workspace image must be a regular file".into());
     }
-    if metadata.len() > MAX_IMAGE_BYTES {
-        return Err("Workspace image exceeds 20 MiB".into());
+    if metadata.len() > max_bytes {
+        return Err(limit_error.into());
     }
     Ok(file)
+}
+
+fn open_regular_image_file(target: &Path) -> Result<fs::File, String> {
+    open_regular_file_limited(target, MAX_IMAGE_BYTES, "Workspace image exceeds 20 MiB")
 }
 
 fn is_avif(bytes: &[u8]) -> bool {
@@ -378,6 +383,57 @@ fn read_image(
     }
     let mime = detect_image_mime(&target, &bytes)
         .ok_or_else(|| "Unsupported workspace image format".to_string())?;
+    Ok((bytes, mime))
+}
+
+fn detect_raster_attachment_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+pub(super) fn get_attachment_image(
+    service: &Arc<Service>,
+    body: &serde_json::Value,
+) -> Result<(Vec<u8>, &'static str), String> {
+    let path: String = argument(body, "path")?;
+    let run_id: Option<String> = argument(body, "runId")?;
+    let root = {
+        let runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+        if let Some(id) = run_id.as_deref().filter(|id| !id.is_empty()) {
+            if runtime.state.run_id != id {
+                return Err("Run does not match service".into());
+            }
+        }
+        runtime.root.clone()
+    };
+    let target = crate::attachment_inputs::resolve_managed_path(
+        &root,
+        run_id.as_deref().filter(|id| !id.is_empty()),
+        &path,
+    )?;
+    let file = open_regular_file_limited(
+        &target,
+        MAX_ATTACHMENT_IMAGE_BYTES,
+        "Attachment image exceeds 32 MiB",
+    )?;
+    let mut bytes = Vec::new();
+    file.take(MAX_ATTACHMENT_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_ATTACHMENT_IMAGE_BYTES {
+        return Err("Attachment image exceeds 32 MiB".into());
+    }
+    let mime = detect_raster_attachment_mime(&bytes)
+        .ok_or_else(|| "Unsupported attachment image format".to_string())?;
     Ok((bytes, mime))
 }
 
@@ -696,5 +752,103 @@ mod tests {
             assert!(open_regular_image_file(&fifo).is_err());
             assert!(read_image(&roots, &real_temp_roots, &format!("/tmp/{dir_name}/pipe.png")).is_err());
         }
+    }
+
+    #[test]
+    fn attachment_images_serve_managed_originals_and_reject_unsafe_paths_and_formats() {
+        use crate::runtime::Runtime;
+        use std::sync::{atomic::AtomicBool, Condvar, Mutex};
+
+        let temp = tempfile::tempdir().unwrap();
+        let data_root = temp.path().join(".pi-n");
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let other_run = uuid::Uuid::new_v4().to_string();
+        let attachment_id = uuid::Uuid::new_v4().to_string();
+        let pre_run_id = uuid::Uuid::new_v4().to_string();
+        let svg_id = uuid::Uuid::new_v4().to_string();
+
+        let png = b"\x89PNG\r\n\x1a\noriginal-full-res-png";
+        let webp = b"RIFF\x18\x00\x00\x00WEBPoriginal-webp";
+        let svg = b"<svg xmlns='http://www.w3.org/2000/svg'></svg>";
+
+        let run_png = crate::attachment_inputs::store(
+            &data_root,
+            Some(&run_id),
+            &attachment_id,
+            "retina.png",
+            png,
+        )
+        .unwrap();
+        let pre_run_webp =
+            crate::attachment_inputs::store(&data_root, None, &pre_run_id, "draft.webp", webp)
+                .unwrap();
+        let run_svg = crate::attachment_inputs::store(
+            &data_root,
+            Some(&run_id),
+            &svg_id,
+            "vector.svg",
+            svg,
+        )
+        .unwrap();
+
+        let mut runtime = Runtime::open(&data_root).unwrap();
+        runtime.state.run_id = run_id.clone();
+        let service = Arc::new(Service {
+            runtime: Mutex::new(runtime),
+            driving: AtomicBool::new(false),
+            drive_signal: (Mutex::new(0), Condvar::new()),
+            planning: AtomicBool::new(false),
+            extension: PathBuf::new(),
+        });
+
+        // Works even when data_root contains `.pi-n`, both with and without runId.
+        let run_png_str = crate::attachment_inputs::display_path(&run_png);
+        assert_eq!(
+            get_attachment_image(&service, &serde_json::json!({ "path": run_png_str, "runId": run_id })).unwrap(),
+            (png.to_vec(), "image/png")
+        );
+        assert_eq!(
+            get_attachment_image(&service, &serde_json::json!({ "path": run_png_str })).unwrap(),
+            (png.to_vec(), "image/png")
+        );
+
+        // Pre-run unscoped original image loads cleanly too.
+        let pre_run_str = crate::attachment_inputs::display_path(&pre_run_webp);
+        assert_eq!(
+            get_attachment_image(&service, &serde_json::json!({ "path": pre_run_str })).unwrap(),
+            (webp.to_vec(), "image/webp")
+        );
+
+        // Mismatched runId is rejected.
+        let other_png = crate::attachment_inputs::store(
+            &data_root,
+            Some(&other_run),
+            &uuid::Uuid::new_v4().to_string(),
+            "other.png",
+            png,
+        )
+        .unwrap();
+        assert!(get_attachment_image(
+            &service,
+            &serde_json::json!({
+                "path": crate::attachment_inputs::display_path(&other_png),
+                "runId": run_id
+            })
+        )
+        .is_err());
+
+        // Non-raster attachments (SVG, arbitrary files) and paths outside attachment-inputs are rejected.
+        assert!(get_attachment_image(
+            &service,
+            &serde_json::json!({ "path": crate::attachment_inputs::display_path(&run_svg) })
+        )
+        .is_err());
+        let outside = temp.path().join("outside.png");
+        fs::write(&outside, png).unwrap();
+        assert!(get_attachment_image(
+            &service,
+            &serde_json::json!({ "path": outside.to_string_lossy() })
+        )
+        .is_err());
     }
 }

@@ -3,6 +3,7 @@
 
 :root {
   --surface-card-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 1px 3px rgba(15, 23, 42, 0.02);
   font-family: "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   color: var(--text-primary);
   background: var(--bg-canvas);
@@ -148,8 +149,9 @@ h3 {
   width: 100%;
   height: 100%;
   min-height: 0;
-  overflow: clip;
+  overflow: hidden;
   position: relative;
+  z-index: 1;
   isolation: isolate;
   /* The persistent root paints the canvas; do not repaint it on navigation. */
   background: transparent;
@@ -243,7 +245,7 @@ h3 {
   width: 100%;
   height: 100dvh;
   min-height: 0;
-  overflow: clip;
+  overflow: hidden;
   position: relative;
   background: var(--bg-canvas);
   display: flex;
@@ -307,6 +309,7 @@ h3 {
 }
 
 .app-background-root>.relative>.absolute {
+  z-index: 0;
   transition: opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1);
   pointer-events: none;
 }
@@ -811,9 +814,9 @@ h3 {
 }
 
 .project-workspace-item.active {
-  background: var(--brand-subtle);
-  border-color: var(--brand-border);
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.06);
+  background: rgba(15, 23, 42, 0.055);
+  border-color: var(--border-default);
+  box-shadow: var(--card-shadow);
 }
 
 .proj-details {
@@ -854,7 +857,7 @@ h3 {
 /* 工作区右键上下文菜单 */
 .context-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: 9500;
   min-width: 150px;
   background: var(--bg-surface, #ffffff);
   backdrop-filter: none;
@@ -959,6 +962,83 @@ h3 {
   height: 1px;
   background: var(--border-default);
   margin: 4px 2px;
+}
+
+.context-menu-submenu {
+  z-index: 9510;
+  min-width: 132px;
+}
+
+.context-menu-submenu-trigger {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.context-menu-submenu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.context-menu-submenu-chevron {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.context-menu-submenu-trigger[data-submenu-open="true"]:not(:hover):not(:focus-visible) {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.context-menu-pin-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.context-menu-pin-swatch.is-color-black,
+.run-pin-dot.is-color-black {
+  background: #18181B;
+  --pin-glow: rgba(24, 24, 27, 0.35);
+}
+
+.context-menu-pin-swatch.is-color-white,
+.run-pin-dot.is-color-white {
+  background: #FFFFFF;
+  box-shadow: none;
+  --pin-glow: rgba(255, 255, 255, 0.7);
+}
+
+.context-menu-pin-swatch.is-color-coral,
+.run-pin-dot.is-color-coral {
+  background: var(--pi-coral, #F09082);
+  --pin-glow: rgba(240, 144, 130, 0.55);
+}
+
+.context-menu-pin-swatch.is-color-blue,
+.run-pin-dot.is-color-blue {
+  background: var(--pi-blue, #4D9ABF);
+  --pin-glow: rgba(77, 154, 191, 0.55);
+}
+
+.context-menu-pin-swatch.is-color-yellow,
+.run-pin-dot.is-color-yellow {
+  background: var(--pi-yellow, #F1BE58);
+  --pin-glow: rgba(241, 190, 88, 0.55);
+}
+
+.context-menu-item:hover:not(:disabled) .context-menu-pin-swatch:not(.is-color-white),
+.keyboard-context-menu .context-menu-item:focus-visible:not(:disabled) .context-menu-pin-swatch:not(.is-color-white) {
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.88);
+}
+
+.context-menu-check {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* 应用内确认弹窗 */
@@ -1194,16 +1274,16 @@ h3 {
 }
 
 .sidebar-archive-btn.is-active {
-  background: var(--brand-subtle);
+  background: rgba(15, 23, 42, 0.055);
   color: var(--text-primary);
-  border-color: var(--brand-border);
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.06);
+  border-color: var(--border-default);
+  box-shadow: var(--card-shadow);
 }
 
 .sidebar-archive-btn.is-active:hover {
-  background: var(--brand-subtle);
+  background: rgba(15, 23, 42, 0.055);
   color: var(--text-primary);
-  border-color: var(--brand-border);
+  border-color: var(--border-default);
 }
 
 .sidebar-add-btn:focus-visible,
@@ -1381,7 +1461,7 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 0;
   width: min(var(--sidebar-content-width, 230px), 100%);
   min-width: 0;
   min-height: 40px;
@@ -1429,14 +1509,10 @@ h3 {
 }
 
 .run-item.chosen {
-  background: var(--brand-subtle);
-  border-color: var(--brand-border);
+  background: rgba(15, 23, 42, 0.055);
+  border-color: var(--border-default);
   color: var(--text-primary);
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.06);
-}
-
-.run-item.is-loading {
-  opacity: 0.85;
+  box-shadow: var(--card-shadow);
 }
 
 .run-item.chosen .run-title-text {
@@ -1477,6 +1553,23 @@ h3 {
   color: var(--text-secondary);
 }
 
+.run-pin-dot-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.run-pin-dot-scale {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
 .run-dot {
   height: 6px;
   width: 6px;
@@ -1487,10 +1580,75 @@ h3 {
   transition: all 0.2s ease;
 }
 
+.run-dot.run-pin-dot {
+  width: 8px;
+  height: 8px;
+  margin: 0;
+  animation: none;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.run-dot.run-pin-dot.is-working {
+  box-shadow: 0 0 8px var(--pin-glow, rgba(24, 24, 27, 0.35));
+  animation: pin-pulse-glow 1.5s infinite ease-in-out;
+}
+
+.run-dot.run-pin-dot.is-color-white.is-working {
+  box-shadow: none;
+}
+
 .run-dot.running-pulse {
+  margin: 0 11px 0 3px;
   background: var(--brand-default);
   box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
   animation: pulse-glow 1.5s infinite ease-in-out;
+}
+
+@keyframes pin-pulse-glow {
+
+  0%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.78;
+  }
+
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.projects-list.is-dragging,
+.runs-list.is-dragging {
+  cursor: grabbing;
+}
+
+.projects-list.is-dragging .project-workspace-item:not(.is-drag-source),
+.runs-list.is-dragging .run-item:not(.is-drag-source) {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.projects-list.is-dragging .project-workspace-item:not(.active):not(.is-drag-source):hover,
+.runs-list.is-dragging .run-item:not(.chosen):not(.is-drag-source):hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.project-workspace-item.is-drag-source,
+.run-item.is-drag-source {
+  z-index: 20;
+  cursor: grabbing;
+  background: var(--bg-canvas, #FFFFFF);
+  border-color: var(--border-hover, #CBD5E1);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.05);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .projects-list.is-dragging .project-workspace-item:not(.is-drag-source),
+  .runs-list.is-dragging .run-item:not(.is-drag-source) {
+    transition: none !important;
+  }
 }
 
 @keyframes pulse-glow {
@@ -1742,18 +1900,28 @@ h3 {
 
 /* 着陆页 (未创建工作图前的默认界面：仅居中输入框) */
 .landing-screen {
+  --landing-padding-top: clamp(16px, 4vh, 32px);
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: stretch;
   justify-content: center;
   /* Match workbench margin (12), border (1), and chat bottom padding (14). */
-  padding: clamp(16px, 4vh, 32px) 24px 27px;
+  padding: var(--landing-padding-top) 24px 27px;
   width: 100%;
   height: 100%;
   position: relative;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+/* On macOS, .sidebar and .workbench drop their 12px top margin beneath the
+   32px overlay titlebar (forming the symmetric [inset - 12px, H] frame used by
+   .landing-page-grid). Drop the same 12px from .landing-screen's top padding
+   so the slogan's vertical center receives the same (inset - 12px) / 2 offset
+   and restores automatically in fullscreen. */
+.has-desktop-titlebar .app-shell.is-tauri-macos .landing-screen {
+  padding-top: max(0px, calc(var(--landing-padding-top) - 12px));
 }
 
 /* Let the title-anchored dots reach the canvas behind the sidebar, while the
@@ -1830,8 +1998,9 @@ h3 {
 }
 
 /* Three-colour notebook grid in the icon palette, laid out from the exact
-   centre of its box: a yellow vertical and a blue horizontal line cross at the
-   midpoint, and each direction cycles yellow/blue/coral outwards from there. */
+   centre of its content region: a yellow vertical and a blue horizontal line
+   cross at the midpoint, and each direction cycles yellow/blue/coral outwards
+   from there. */
 .landing-page-grid,
 .settings-background-preview.settings-background-preview-grid {
   --grid-cell: 60px;
@@ -1841,7 +2010,8 @@ h3 {
   --grid-yellow: color-mix(in srgb, var(--pi-yellow) var(--grid-alpha), transparent);
   --grid-period: calc(var(--grid-cell) * 3);
   /* A tile positioned at 50% + period/2 starts exactly at the centre line. */
-  --grid-origin: calc(50% + var(--grid-period) / 2);
+  --grid-origin-x: calc(50% + var(--grid-period) / 2);
+  --grid-origin-y: calc(50% + var(--grid-period) / 2 + var(--grid-offset-y, 0px));
   background-image:
     linear-gradient(90deg, var(--grid-yellow) 0 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-blue) 0 1px, transparent 1px),
@@ -1853,13 +2023,22 @@ h3 {
     var(--grid-period) 100%, var(--grid-period) 100%, var(--grid-period) 100%,
     100% var(--grid-period), 100% var(--grid-period), 100% var(--grid-period);
   background-position:
-    var(--grid-origin) 0,
-    calc(var(--grid-origin) + var(--grid-cell)) 0,
-    calc(var(--grid-origin) + var(--grid-cell) * 2) 0,
-    0 var(--grid-origin),
-    0 calc(var(--grid-origin) + var(--grid-cell)),
-    0 calc(var(--grid-origin) + var(--grid-cell) * 2);
+    var(--grid-origin-x) 0,
+    calc(var(--grid-origin-x) + var(--grid-cell)) 0,
+    calc(var(--grid-origin-x) + var(--grid-cell) * 2) 0,
+    0 var(--grid-origin-y),
+    0 calc(var(--grid-origin-y) + var(--grid-cell)),
+    0 calc(var(--grid-origin-y) + var(--grid-cell) * 2);
   background-repeat: repeat-x, repeat-x, repeat-x, repeat-y, repeat-y, repeat-y;
+}
+
+/* On macOS the transparent overlay titlebar floats over the full-bleed grid and
+   sidebar/workbench cards drop their 12px top margin (spanning y = inset..H-12).
+   Center the grid on the symmetric 12px-padded frame around those cards
+   ([inset - 12px, H]) — even though that top margin overlaps the titlebar —
+   while keeping tiles continuous through the titlebar. */
+.has-desktop-titlebar > .desktop-titlebar.is-macos ~ * .landing-page-grid {
+  --grid-offset-y: calc((var(--desktop-titlebar-inset, 32px) - 12px) / 2);
 }
 
 /* Copy fade/exit motion must not overwrite the responsive horizontal placement. */
@@ -2010,6 +2189,10 @@ h3 {
   flex-direction: column;
   position: relative;
   box-sizing: border-box;
+  /* Keep the composer on a single stable compositing layer across WAAPI
+     navigation handoffs so WKWebView does not flash its backing store on
+     layer promotion/demotion. */
+  transform: translateZ(0);
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
 }
@@ -2689,11 +2872,11 @@ h3 {
   position: fixed;
   inset: 0;
   z-index: 9000;
-  background: rgba(15, 23, 42, 0.84);
+  background: rgba(15, 23, 42, 0.88);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(24px, calc(var(--desktop-titlebar-inset, 0px) + 16px)) 24px 24px;
+  padding: max(20px, calc(var(--desktop-titlebar-inset, 0px) + 16px)) 24px 24px;
 }
 
 .image-preview-dialog {
@@ -2702,25 +2885,26 @@ h3 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  max-width: 92vw;
-  max-height: 90vh;
+  max-width: 86vw;
+  max-height: min(84vh, calc(100vh - var(--desktop-titlebar-inset, 0px) - 88px));
   outline: none;
 }
 
 .image-preview-full-img {
-  max-width: 90vw;
-  max-height: 82vh;
+  max-width: 86vw;
+  max-height: min(84vh, calc(100vh - var(--desktop-titlebar-inset, 0px) - 88px));
   width: auto;
   height: auto;
   object-fit: contain;
-  border-radius: 10px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  box-shadow: none;
+  background: transparent;
   user-select: none;
 }
 
 .image-preview-close-btn {
   position: fixed;
+  z-index: 2;
   top: calc(var(--desktop-titlebar-inset, 0px) + 16px);
   right: 20px;
   width: 36px;
@@ -2743,6 +2927,7 @@ h3 {
 
 .image-preview-nav-btn {
   position: fixed;
+  z-index: 2;
   top: 50%;
   transform: translateY(-50%);
   width: 40px;
@@ -2771,17 +2956,23 @@ h3 {
 }
 
 .image-preview-caption {
-  margin-top: 12px;
+  position: fixed;
+  z-index: 2;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 0;
   display: inline-flex;
   align-items: center;
   gap: 10px;
   max-width: 80vw;
-  padding: 6px 12px;
+  padding: 5px 12px;
   border-radius: 9999px;
   background: rgba(15, 23, 42, 0.72);
   color: #f8fafc;
   font-size: 12px;
   line-height: 1.4;
+  pointer-events: none;
 }
 
 .image-preview-name {
@@ -2798,6 +2989,7 @@ h3 {
 /* Pause infinite decorative animations when the window is hidden or unfocused
    in desktop mode so WKWebView stops burning GPU/WindowServer frames off-focus. */
 :root.window-inactive .run-dot.running-pulse,
+:root.window-inactive .run-dot.run-pin-dot.is-working,
 :root.window-inactive .thinking-icon-box.pulse,
 :root.window-inactive .tool-call-card.running::before,
 :root.window-inactive .activity-summary-icon.spin,

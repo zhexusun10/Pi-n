@@ -7,6 +7,7 @@ import { useCardAppear } from "../services/cardAnimations";
 import { syncOverscrollContainment } from "../services/transcriptScroll";
 import { observeElementResize } from "../services/sharedResizeObserver";
 import { formatTokenCount } from "../utils/tokenUsage";
+import { formatNoticeUsd } from "../services/transcriptNotices";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { CardReveal } from "./CardReveal";
 import { CollapsibleCardBody } from "./CollapsibleCardBody";
@@ -16,7 +17,17 @@ interface CompactedCardProps {
   defaultExpanded?: boolean;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean, card?: HTMLElement) => void;
+  showCost?: boolean;
   className?: string;
+}
+
+function billingBadgeText(info: CompactionItemInfo): string | null {
+  const tokens = info.billedTokens && info.billedTokens > 0 ? formatTokenCount(info.billedTokens) : null;
+  const cost = formatNoticeUsd(info.billedCost);
+  if (tokens && cost) return t("计费 {0} ({1})", tokens, cost);
+  if (tokens) return t("计费 {0} tokens", tokens);
+  if (cost) return t("计费 {0}", cost);
+  return null;
 }
 
 function shortReasonLabel(reason: CompactionItemInfo["reason"]): string | null {
@@ -41,7 +52,7 @@ function headerSummaryText(info: CompactionItemInfo): string | null {
 }
 
 export const CompactedCard: React.FC<CompactedCardProps> = React.memo(
-  ({ item, defaultExpanded = false, expanded, onExpandedChange, className = "" }) => {
+  ({ item, defaultExpanded = false, expanded, onExpandedChange, showCost = true, className = "" }) => {
     const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
     const isExpanded = expanded ?? internalExpanded;
     const [isCopied, setIsCopied] = useState(false);
@@ -69,6 +80,7 @@ export const CompactedCard: React.FC<CompactedCardProps> = React.memo(
     const summary = info.summary.trim();
     const headerSummary = headerSummaryText(info);
     const reasonBadge = shortReasonLabel(info.reason);
+    const billingBadge = showCost ? billingBadgeText(info) : null;
     const modifiedFiles = info.modifiedFiles ?? [];
     const readFiles = info.readFiles ?? [];
     const hasFiles = modifiedFiles.length > 0 || readFiles.length > 0;
@@ -132,6 +144,9 @@ export const CompactedCard: React.FC<CompactedCardProps> = React.memo(
             </div>
 
             <div className="compacted-header-right">
+              {billingBadge && (
+                <span className="compacted-billing" data-testid="compacted-billing">{billingBadge}</span>
+              )}
               {reasonBadge && (
                 <span className="compacted-reason">{reasonBadge}</span>
               )}

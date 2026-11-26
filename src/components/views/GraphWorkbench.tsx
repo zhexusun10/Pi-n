@@ -20,13 +20,14 @@ import { createUuid } from "../../lib/uuid";
 import { PromptBox, type PromptBoxSubmitOptions } from "../ui/chatgpt-prompt-input";
 import type { ConfirmModalState } from "../modals/ConfirmModal";
 import { MarkdownRenderer } from "../MarkdownRenderer";
-import { WorkspaceImageProvider } from "../WorkspaceImages";
+import { WorkspaceImageProvider, WORKSPACE_IMAGE_SETTLED_EVENT } from "../WorkspaceImages";
+import { indexOriginalImagePathsFromEvents } from "../../services/originalImagePreview";
 import { EditableUserBubble, StreamingAssistantBubble } from "./ChatBubbles";
 import { NodeTaskCard } from "./NodeTaskCard";
 import { CreateNodeForm } from "./CreateNodeForm";
 import { getMergerSystemPrompt } from "../../services/mergerPrompt";
 import { runtimeService } from "../../services/runtime";
-import { getDesktopTitlebarInset } from "../../services/apiBase";
+import { getDesktopTitlebarInset, isMacosPlatform } from "../../services/apiBase";
 import { copyTextToClipboard } from "../../services/externalLink";
 import { deduceRouteType, shouldShowRouteBadge } from "../../services/executionRoute";
 import { activeNodeConversationEvents, buildConversationTurns, localMessagesAfterEdit, nodeConversationExecutions, executionIdForMessage, versionIndexForEdit, versionsForEdit, type ConversationExecution } from "../../services/conversationBranch";
@@ -36,7 +37,7 @@ import { resolveGraphPhase } from "../../lib/graphPhase";
 import { ComposerDrafts, type RecalledMessage } from "../../services/composerDrafts";
 import { projectLiveSteerWithdrawals, projectWithdrawnSteers, inlineSteerKey, isUncommittedSteer, liveSteerConsumed, nodeInstructionText, numberSteers, steerFallbackPosition, steerRollbackKey, type InlineSteerAttachment, type InlineUserTurnWindow, type LiveSteerMarker } from "../../lib/pendingSteers";
 import { ThinkingCard } from "../ThinkingCard";
-import { ActivitySummaryRow, beginCardsTransitionAnchor, cancelCardsTransitionAnchor, finishCardsTransitionAnchor, CARDS_TRANSITION_DURATION_MS, type CardsTransitionPhase } from "../ActivitySummaryRow";
+import { ActivitySummaryRow, beginCardsTransitionAnchor, cancelCardsTransitionAnchor, finishCardsTransitionAnchor, CARDS_TRANSITION_MAX_DURATION_MS, type CardsTransitionPhase } from "../ActivitySummaryRow";
 import { useCollapseCards, setCollapseCards } from "../../services/displayPreferences";
 import { ExecutionTiming } from "../ExecutionTiming";
 import { ExecutionTimeTookText, PlannerTimeTookText, formatSessionStartTime } from "../ExecutionTimeTook";
@@ -71,6 +72,11 @@ import { useExecutionOverview } from "../../services/displayPreferences";
 const EMPTY_ID_SET: ReadonlySet<string> = new Set();
 /** Stable empty transcript window so a view switch cannot invalidate memos. */
 const EMPTY_INLINE_USER_TURNS: Record<string, InlineUserTurnWindow> = {};
+
+function steerShortcutHint(): string {
+  const modifier = isMacosPlatform() ? "Option" : "Alt";
+  return t("{0} + Q 撤回排队消息 · {0} + S 打断工具并发送", modifier);
+}
 
 function plannerSteerLabel(row: PlannerSteerRow): string {
   switch (row.status) {
@@ -766,7 +772,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         onSwitchVersion={(idx) => onSwitchMessageVersion?.(steer, idx)}
       />
       {isUncommittedSteer(steer, inlineUserTurns) && <div className="planner-steer-state">
-        {t("已排队，等待当前步骤结束")} · {t("Alt + Q 撤回排队消息 · Alt + S 打断工具并发送")}
+        {t("已排队，等待当前步骤结束")} · {steerShortcutHint()}
       </div>}
     </div>
   );
@@ -985,6 +991,9 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   // Apply the continuation layout with the optimistic message, rather than
   // waiting for the backend to insert a new execution and its record header.
   const cardsCollapsed = useCollapseCards();
+  useMemo(() => {
+    indexOriginalImagePathsFromEvents(state.events);
+  }, [state.events]);
   const deferOlderNodeAttempts = useMemo(() => shouldDeferOlderExecutions(attempts, cardsCollapsed), [attempts, cardsCollapsed]);
   const showExecutionRecords = attempts.length > 1 || (waitingForNodeExecution && attempts.length > 0);
   const provisionalRunIdRef = useRef<string | null>(null);
@@ -1343,6 +1352,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   const suppressAutoScrollRef = useRef(false);
   const resetChatScrollFrameRef = useRef<number | null>(null);
   const revealChatFrameRef = useRef<number | null>(null);
+  const revealImagesCleanupRef = useRef<(() => void) | null>(null);
   const revealingGenerationRef = useRef(-1);
   const contentGrowthFrameRef = useRef<number | null>(null);
   const [readyConversationKey, setReadyConversationKey] = useState("");
@@ -1475,7 +1485,11 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       const saved = captureViewScrollState(scroll, isUserScrolledUpRef.current);
       if (saved.isUserScrolledUp) {
         const viewport = scroll.getBoundingClientRect();
-        const row = [...scroll.querySelectorAll<HTMLElement>(".planning-activity [data-transcript-id]")].find(item => {
+        const rows = [...scroll.querySelectorAll<HTMLElement>(".planning-activity [data-transcript-id]")];
+        const row = rows.find(item => {
+          const bounds = item.getBoundingClientRect();
+          return bounds.top >= viewport.top - 4 && bounds.top < viewport.bottom;
+        }) ?? rows.find(item => {
           const bounds = item.getBoundingClientRect();
           return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
         });
@@ -1490,6 +1504,8 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       cancelAnimationFrame(revealChatFrameRef.current);
       revealChatFrameRef.current = null;
     }
+    revealImagesCleanupRef.current?.();
+    revealImagesCleanupRef.current = null;
     revealingGenerationRef.current = -1;
     expandedCardObserverRef.current?.disconnect();
     expandedCardObserverRef.current = null;
@@ -1981,7 +1997,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       expandedCardTimerRef.current = setTimeout(() => {
         expandedCardTimerRef.current = null;
         finishResize();
-      }, CARDS_TRANSITION_DURATION_MS + 40);
+      }, CARDS_TRANSITION_MAX_DURATION_MS + 40);
     } else if (expanded && card) {
       const reveal = () => {
         const scroll = chatScrollRef.current;
@@ -2220,6 +2236,8 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       cancelAnimationFrame(revealChatFrameRef.current);
       revealChatFrameRef.current = null;
     }
+    revealImagesCleanupRef.current?.();
+    revealImagesCleanupRef.current = null;
     revealingGenerationRef.current = -1;
   }, []);
 
@@ -2655,6 +2673,106 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     if (showRightPane) focusGraphPaneToggle(graphResizerRef.current);
   }, [showRightPane, focusGraphPaneToggle]);
 
+  // When opening a right pane (e.g. File Changes or Graph), lock the
+  // conversation text column to its exact final split width on frame 0 so
+  // paragraphs wrap once before paint and glide smoothly left instead of
+  // continuously reflowing on every animation frame.
+  const conversationPaneRef = useRef<HTMLDivElement>(null);
+  const prevPaneTransitionRef = useRef<{ runKey: string; showRightPane: boolean }>({
+    runKey: currentRunKey,
+    showRightPane,
+  });
+  const contentWidthLockCleanupRef = useRef<(() => void) | null>(null);
+  const releaseContentWidthLock = useCallback(() => {
+    contentWidthLockCleanupRef.current?.();
+    contentWidthLockCleanupRef.current = null;
+    conversationPaneRef.current?.style.removeProperty("--conversation-content-max-width");
+  }, []);
+  useEffect(() => {
+    if (isResizing) releaseContentWidthLock();
+  }, [isResizing, releaseContentWidthLock]);
+  useEffect(() => () => {
+    contentWidthLockCleanupRef.current?.();
+    contentWidthLockCleanupRef.current = null;
+  }, []);
+  useLayoutEffect(() => {
+    const prev = prevPaneTransitionRef.current;
+    prevPaneTransitionRef.current = { runKey: currentRunKey, showRightPane };
+    if (prev.runKey !== currentRunKey || !showRightPane || prev.showRightPane || reduceMotion || isResizing) {
+      releaseContentWidthLock();
+      return;
+    }
+    const wb = workbenchRef.current;
+    const pane = conversationPaneRef.current;
+    const scroll = chatScrollRef.current;
+    if (!wb || !pane || !scroll) return;
+    const wbWidth = wb.clientWidth;
+    if (wbWidth <= 720) return;
+
+    const targetPaneWidth = Math.max(
+      280,
+      Math.min(wbWidth * splitRatio, wbWidth * 0.85, wbWidth - 320),
+    );
+    const paneRect = pane.getBoundingClientRect();
+    const scrollStyle = getComputedStyle(scroll);
+    const padX = (parseFloat(scrollStyle.paddingLeft) || 0) + (parseFloat(scrollStyle.paddingRight) || 0);
+    const currentInnerWidth = scroll.clientWidth - padX;
+    const totalInset = Math.max(0, paneRect.width - currentInnerWidth);
+    const targetContentWidth = Math.min(860, Math.max(200, Math.floor(targetPaneWidth - totalInset)));
+    const currentEffectiveWidth = Math.min(860, Math.floor(currentInnerWidth));
+    if (targetContentWidth >= currentEffectiveWidth - 1) return;
+
+    const distanceFromBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+    const pinBottom = distanceFromBottom <= 4
+      || (shouldFollowOutput() && !userScrolledAwayRef.current && !historyReadingRef.current);
+    let anchorRow: HTMLElement | null = null;
+    let anchorTop = 0;
+    if (!pinBottom) {
+      const scrollTopEdge = scroll.getBoundingClientRect().top + scroll.clientTop;
+      const rows = scroll.querySelectorAll<HTMLElement>("[data-transcript-id], .chat-message-row");
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (rect.bottom > scrollTopEdge + 4) {
+          anchorRow = row;
+          anchorTop = rect.top;
+          break;
+        }
+      }
+    }
+
+    pane.style.setProperty("--conversation-content-max-width", `${targetContentWidth}px`);
+
+    if (pinBottom) {
+      scroll.scrollTop = scroll.scrollHeight;
+      lastScrollTopRef.current = scroll.scrollTop;
+      prevScrollHeightRef.current = scroll.scrollHeight;
+      scroll.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
+    } else if (anchorRow && anchorRow.isConnected) {
+      const delta = anchorRow.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(delta) >= 0.5) {
+        scroll.scrollTop += delta;
+        lastScrollTopRef.current = scroll.scrollTop;
+        prevScrollHeightRef.current = scroll.scrollHeight;
+        scroll.dispatchEvent(new Event(TRANSCRIPT_SCROLL_ADJUSTED_EVENT));
+      }
+    }
+
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === pane && event.propertyName === "width") {
+        releaseContentWidthLock();
+      }
+    };
+    const onWindowResize = () => releaseContentWidthLock();
+    const timer = setTimeout(releaseContentWidthLock, 520);
+    pane.addEventListener("transitionend", onTransitionEnd);
+    window.addEventListener("resize", onWindowResize);
+    contentWidthLockCleanupRef.current = () => {
+      clearTimeout(timer);
+      pane.removeEventListener("transitionend", onTransitionEnd);
+      window.removeEventListener("resize", onWindowResize);
+    };
+  }, [currentRunKey, showRightPane, reduceMotion, isResizing, splitRatio, releaseContentWidthLock, shouldFollowOutput]);
+
   const animatedNodes = useAnimatedNodes(nodes, state.runId);
   const graphViewportKey = `${currentRunKey}:${graphPane.generation}`;
   const { ready: isGraphReadyForRun, initialize: centerGraph, synchronize: synchronizeGraph, manualFit: manualGraphFit } = useGraphViewport(
@@ -2734,15 +2852,21 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
 
   // File-change reads run independently and must not hold up the transcript.
   const revealConversation = useCallback(() => {
+    const IMAGE_REVEAL_WAIT_MS = 600;
     const key = conversationViewKey;
     const generation = conversationGenerationRef.current;
     if (activeConversationViewRef.current !== key) return;
     syncViewScroll(key);
-    if (revealChatFrameRef.current !== null && revealingGenerationRef.current === generation) return;
+    if ((revealChatFrameRef.current !== null || revealImagesCleanupRef.current !== null) &&
+      revealingGenerationRef.current === generation) return;
     if (revealChatFrameRef.current !== null) cancelAnimationFrame(revealChatFrameRef.current);
+    revealImagesCleanupRef.current?.();
+    revealImagesCleanupRef.current = null;
     revealingGenerationRef.current = generation;
     const commitReveal = () => {
       revealChatFrameRef.current = null;
+      revealImagesCleanupRef.current?.();
+      revealImagesCleanupRef.current = null;
       revealingGenerationRef.current = -1;
       if (activeConversationViewRef.current !== key || conversationGenerationRef.current !== generation) return;
       syncViewScroll(key);
@@ -2753,13 +2877,94 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     };
     // Let the transcript parse and measure its rows before the first visible frame.
     revealChatFrameRef.current = requestAnimationFrame(() => {
+      revealChatFrameRef.current = null;
       if (activeConversationViewRef.current !== key || conversationGenerationRef.current !== generation) {
-        revealChatFrameRef.current = null;
         revealingGenerationRef.current = -1;
         return;
       }
       syncViewScroll(key);
-      revealChatFrameRef.current = requestAnimationFrame(commitReveal);
+      const scroller = chatScrollRef.current;
+      const getPendingImages = (): HTMLImageElement[] => {
+        if (!scroller) return [];
+        const sr = scroller.getBoundingClientRect();
+        const pending: HTMLImageElement[] = [];
+        for (const img of scroller.querySelectorAll<HTMLImageElement>(".markdown-content img")) {
+          if (img.getClientRects().length === 0) continue;
+          const isWorkspacePending =
+            img.getAttribute("aria-busy") === "true" ||
+            (Boolean(img.dataset.workspacePath) && !img.getAttribute("src"));
+          const src = img.getAttribute("src");
+          const isSrcPending = Boolean(src) && !img.complete;
+          if (!isWorkspacePending && !isSrcPending) continue;
+          if (!isWorkspacePending && img.loading === "lazy" && sr.height > 0) {
+            const ir = img.getBoundingClientRect();
+            if (ir.bottom < sr.top - sr.height || ir.top > sr.bottom + sr.height) continue;
+          }
+          pending.push(img);
+        }
+        return pending;
+      };
+      const pendingImages = getPendingImages();
+      if (pendingImages.length === 0) {
+        revealChatFrameRef.current = requestAnimationFrame(commitReveal);
+        return;
+      }
+      // Wait briefly for mounted Markdown images to finish loading & decoding
+      // while the scroller is still opaque-0 so the first reveal lands at final
+      // image dimensions and scrollTop without a placeholder-to-image jump.
+      let finished = false;
+      const finishWait = () => {
+        if (finished) return;
+        finished = true;
+        revealImagesCleanupRef.current?.();
+        revealImagesCleanupRef.current = null;
+        if (activeConversationViewRef.current !== key || conversationGenerationRef.current !== generation) {
+          revealChatFrameRef.current = null;
+          revealingGenerationRef.current = -1;
+          return;
+        }
+        syncViewScroll(key);
+        revealChatFrameRef.current = requestAnimationFrame(() => {
+          if (activeConversationViewRef.current !== key || conversationGenerationRef.current !== generation) {
+            revealChatFrameRef.current = null;
+            revealingGenerationRef.current = -1;
+            return;
+          }
+          syncViewScroll(key);
+          commitReveal();
+        });
+      };
+      const checkReady = () => {
+        if (finished) return;
+        if (getPendingImages().length === 0) finishWait();
+      };
+      const listeners: Array<() => void> = [];
+      for (const img of pendingImages) {
+        const onDone = () => {
+          if (img.complete && img.naturalWidth > 0 && typeof img.decode === "function") {
+            img.decode().then(checkReady, checkReady);
+          } else {
+            checkReady();
+          }
+        };
+        img.addEventListener("load", onDone, { once: true });
+        img.addEventListener("error", onDone, { once: true });
+        img.addEventListener("pi-n:image-error", onDone, { once: true });
+        listeners.push(() => {
+          img.removeEventListener("load", onDone);
+          img.removeEventListener("error", onDone);
+          img.removeEventListener("pi-n:image-error", onDone);
+        });
+      }
+      const onWorkspaceSettled = () => checkReady();
+      scroller?.addEventListener(WORKSPACE_IMAGE_SETTLED_EVENT, onWorkspaceSettled);
+      const timer = setTimeout(finishWait, IMAGE_REVEAL_WAIT_MS);
+      revealImagesCleanupRef.current = () => {
+        clearTimeout(timer);
+        scroller?.removeEventListener(WORKSPACE_IMAGE_SETTLED_EVENT, onWorkspaceSettled);
+        for (const off of listeners) off();
+      };
+      checkReady();
     });
   }, [conversationViewKey, syncViewScroll, setScrollBottomVisible]);
 
@@ -3009,7 +3214,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         releaseCardsScrollSuppression(true);
       });
       setCardsTransition(nextCollapsed ? "collapsing" : "expanding");
-      cardsTransitionTimerRef.current = setTimeout(finish, CARDS_TRANSITION_DURATION_MS + 400);
+      cardsTransitionTimerRef.current = setTimeout(finish, CARDS_TRANSITION_MAX_DURATION_MS + 400);
     } else {
       cancelCardsTransitionAnchor();
       releaseCardsScrollSuppression(true);
@@ -3172,6 +3377,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       )}
       {/* Keep the grey surface outside all content reveal animations. */}
       <div
+        ref={conversationPaneRef}
         className={`conversation-pane ${showRightPane ? "split" : "full-width"}`}
         style={showRightPane ? undefined : { width: "100%", maxWidth: "100%" }}
       >
@@ -3637,7 +3843,6 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                       onBeforeToggle={handleWorkspaceDetailsBeforeToggle}
                       onAfterToggle={handleWorkspaceDetailsAfterToggle}
                     >
-                      <p>Workspace: {serialExecution?.worktree || config.repository || repoInfo?.name || "preparing workspace…"}</p>
                       <p>Session id: {serialExecution?.sessionId || "waiting for initialization…"}</p>
                       <div className="session-details-row">
                         <p>Start time: {formatSessionStartTime(serialSession.startedAt ?? serialExecution?.startedAt)}</p>
@@ -3857,7 +4062,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                                 editing={false} draft="" onDraftChange={() => {}} onCancel={() => {}} onSend={() => false} />
                             </div>
                           <div className="planner-steer-state"><span>{plannerSteerLabel(row)}</span>
-                            {["submitted", "queued", "accepted"].includes(row.status) && <> · {t("Alt + Q 撤回排队消息 · Alt + S 打断工具并发送")}</>}
+                            {["submitted", "queued", "accepted"].includes(row.status) && <> · {steerShortcutHint()}</>}
                           </div>
                         </div>;
                       })}

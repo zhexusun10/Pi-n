@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { StreamingMarkdownCache } from "../services/streamingMarkdown";
 import { observeElementResize } from "../services/sharedResizeObserver";
 import { copyTextToClipboard } from "../services/externalLink";
@@ -6,6 +6,10 @@ import { segmentMarkdownImageStacks } from "../services/markdownImageStack";
 import { t } from "../i18n";
 import { useWorkspaceImages } from "./WorkspaceImages";
 import { MarkdownImageStack } from "./MarkdownImageStack";
+import { ImagePreviewModal, type PreviewImageItem } from "./modals/ImagePreviewModal";
+import { ImageContextMenu } from "./ui/ImageContextMenu";
+import type { ContextMenuAnchor } from "./ui/context-menu";
+import type { ImageActionTarget } from "../services/imageActions";
 
 function syncCodeBlockOverflow(container: HTMLElement): void {
   const wrappers = container.querySelectorAll<HTMLElement>(".code-block-wrapper");
@@ -229,61 +233,156 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(
     );
 
     const imageScopeKey = useWorkspaceImages(root, sanitizedHtml);
+    const [previewState, setPreviewState] = useState<{ items: PreviewImageItem[]; index: number } | null>(null);
+    const [imageMenu, setImageMenu] = useState<{
+      anchor: ContextMenuAnchor;
+      target: ImageActionTarget;
+      previewImg: HTMLImageElement;
+    } | null>(null);
 
-    const handleCopy = async (event: React.MouseEvent) => {
+    const openImagePreview = useCallback((clickedImg: HTMLImageElement) => {
+      const container = root.current;
+      if (!container || !container.contains(clickedImg)) return;
+      const items: PreviewImageItem[] = [];
+      let clickedIndex = -1;
+      for (const img of container.querySelectorAll<HTMLImageElement>("img")) {
+        if (img.getAttribute("aria-busy") === "true") continue;
+        const src = img.currentSrc || img.getAttribute("src") || "";
+        if (!src) continue;
+        if (img === clickedImg) clickedIndex = items.length;
+        const workspacePath = img.dataset.workspacePath || undefined;
+        const name = img.getAttribute("title") || img.alt || workspacePath?.split(/[\\/]/).pop() || undefined;
+        items.push({
+          src,
+          workspacePath,
+          alt: img.alt || name,
+          name,
+        });
+      }
+      if (clickedIndex >= 0 && items.length > 0) {
+        setPreviewState({ items, index: clickedIndex });
+      }
+    }, []);
+
+    const handleClick = async (event: React.MouseEvent) => {
       const target = event.target;
       const copyBtn = target instanceof Element ? target.closest<HTMLButtonElement>("button.code-copy-btn") : null;
-      if (!copyBtn || !event.currentTarget.contains(copyBtn)) return;
-      const codeBlock = copyBtn.closest(".code-block-wrapper")?.querySelector("pre code");
-      if (!codeBlock) return;
-      event.preventDefault();
-      event.stopPropagation();
+      if (copyBtn && event.currentTarget.contains(copyBtn)) {
+        const codeBlock = copyBtn.closest(".code-block-wrapper")?.querySelector("pre code");
+        if (!codeBlock) return;
+        event.preventDefault();
+        event.stopPropagation();
 
-      try {
-        if (!await copyTextToClipboard(codeBlock.textContent || "")) return;
-        if (!copyBtn.isConnected) return;
-        clearTimeout(copyTimers.current.get(copyBtn));
-        copyBtn.classList.add("copied");
-        copyBtn.setAttribute("aria-label", t("已复制"));
-        copyTimers.current.set(copyBtn, setTimeout(() => {
-          copyBtn.classList.remove("copied");
-          copyBtn.setAttribute("aria-label", copyLabel);
-          copyTimers.current.delete(copyBtn);
-        }, 1800));
-      } catch (error) {
-        console.warn("Copy code failed:", error);
+        try {
+          if (!await copyTextToClipboard(codeBlock.textContent || "")) return;
+          if (!copyBtn.isConnected) return;
+          clearTimeout(copyTimers.current.get(copyBtn));
+          copyBtn.classList.add("copied");
+          copyBtn.setAttribute("aria-label", t("已复制"));
+          copyTimers.current.set(copyBtn, setTimeout(() => {
+            copyBtn.classList.remove("copied");
+            copyBtn.setAttribute("aria-label", copyLabel);
+            copyTimers.current.delete(copyBtn);
+          }, 1800));
+        } catch (error) {
+          console.warn("Copy code failed:", error);
+        }
+        return;
+      }
+
+      const img = target instanceof Element ? target.closest<HTMLImageElement>("img") : null;
+      if (
+        img &&
+        event.currentTarget.contains(img) &&
+        !img.closest(".markdown-image-stack") &&
+        !img.closest("a[href]") &&
+        img.getAttribute("aria-busy") !== "true" &&
+        (img.currentSrc || img.getAttribute("src"))
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        openImagePreview(img);
       }
     };
 
+    const handleContextMenu = (event: React.MouseEvent) => {
+      const target = event.target;
+      const img = target instanceof Element
+        ? (target.closest<HTMLImageElement>("img")
+          ?? target.closest(".markdown-image-stack-card")?.querySelector<HTMLImageElement>("img")
+          ?? null)
+        : null;
+      if (!img || !event.currentTarget.contains(img) || img.getAttribute("aria-busy") === "true") {
+        return;
+      }
+      const src = img.currentSrc || img.getAttribute("src") || "";
+      if (!src) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const workspacePath = img.dataset.workspacePath || undefined;
+      const name = img.getAttribute("title") || workspacePath?.split(/[\\/]/).pop() || img.alt || undefined;
+      setImageMenu({
+        anchor: {
+          x: event.clientX,
+          y: event.clientY,
+          trigger: img,
+        },
+        target: {
+          src,
+          workspacePath,
+          name,
+          alt: img.alt || undefined,
+        },
+        previewImg: img,
+      });
+    };
+
     return (
-      <div key={imageScopeKey} ref={root}
-        className={`markdown-content ${isStreaming ? "streaming" : ""} ${className}`}
-        onClick={handleCopy}
-      >
-        {segments ? (
-          segments.map(segment =>
-            segment.type === "image-stack" ? (
-              <MarkdownImageStack
-                key={segment.key}
-                images={segment.images}
-                trailingCursor={segment.trailingCursor}
-              />
-            ) : (
-              <MarkdownHtmlBlocks
-                key={segment.key}
-                blocks={segment.blocks}
-                html={segment.html}
-              />
+      <>
+        <div key={imageScopeKey} ref={root}
+          className={`markdown-content ${isStreaming ? "streaming" : ""} ${className}`}
+          onClick={handleClick}
+          onContextMenu={handleContextMenu}
+        >
+          {segments ? (
+            segments.map(segment =>
+              segment.type === "image-stack" ? (
+                <MarkdownImageStack
+                  key={segment.key}
+                  images={segment.images}
+                  trailingCursor={segment.trailingCursor}
+                />
+              ) : (
+                <MarkdownHtmlBlocks
+                  key={segment.key}
+                  blocks={segment.blocks}
+                  html={segment.html}
+                />
+              )
             )
-          )
-        ) : (
-          <MarkdownHtmlBlocks
-            key="html-0"
-            blocks={renderedResult.blocks}
-            html={sanitizedHtml}
+          ) : (
+            <MarkdownHtmlBlocks
+              key="html-0"
+              blocks={renderedResult.blocks}
+              html={sanitizedHtml}
+            />
+          )}
+        </div>
+        {imageMenu && (
+          <ImageContextMenu
+            anchor={imageMenu.anchor}
+            target={imageMenu.target}
+            onPreview={() => openImagePreview(imageMenu.previewImg)}
+            onClose={() => setImageMenu(null)}
           />
         )}
-      </div>
+        <ImagePreviewModal
+          images={previewState?.items ?? []}
+          index={previewState?.index ?? null}
+          onChangeIndex={(next) => setPreviewState((prev) => (prev ? { ...prev, index: next } : null))}
+          onClose={() => setPreviewState(null)}
+        />
+      </>
     );
   }
 );

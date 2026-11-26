@@ -148,6 +148,49 @@ pub(crate) fn resolve_repository(root: &Path, config: &Config) -> Result<PathBuf
     Ok(repository)
 }
 
+pub(crate) fn is_transient_source_change_error(error: &str) -> bool {
+    error.contains("Source changed while copying project Git")
+        || error.contains("Source changed while capturing its workspace")
+        || error.contains("Project changed while binding its byte snapshot")
+}
+
+const SOURCE_SNAPSHOT_RETRY_BACKOFFS: [std::time::Duration; 2] = [
+    std::time::Duration::from_millis(250),
+    std::time::Duration::from_millis(500),
+];
+
+fn sleep_interruptible(duration: std::time::Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + duration;
+    loop {
+        crate::process_control::check_current_owner_stop()?;
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return Ok(());
+        };
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(50)));
+    }
+}
+
+fn retry_transient_source_change<T>(
+    mut collect: impl FnMut() -> Result<T, String>,
+    backoffs: &[std::time::Duration],
+) -> Result<T, String> {
+    let mut attempt = 0usize;
+    loop {
+        crate::process_control::check_current_owner_stop()?;
+        match collect() {
+            Ok(value) => return Ok(value),
+            Err(error) if is_transient_source_change_error(&error) && attempt < backoffs.len() => {
+                sleep_interruptible(backoffs[attempt])?;
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Collect (or reuse) the lazy source snapshot for a plain-directory job or
 /// the first private batch after shared-source promotion. `fresh` is true when this Run has no recorded snapshot yet: the current
 /// source files are force-collected then. Git work runs without the runtime
@@ -158,11 +201,16 @@ pub(crate) fn collect_source_snapshot(
     fresh: bool,
 ) -> Result<String, String> {
     if fresh {
-        return if workspace::is_standard_git(repository) {
-            workspace::snapshot_repository_scoped(repository, exclusions)
-        } else {
-            workspace::materialize_shadow_repo(repository, exclusions)
-        };
+        return retry_transient_source_change(
+            || {
+                if workspace::is_standard_git(repository) {
+                    workspace::snapshot_repository_scoped(repository, exclusions)
+                } else {
+                    workspace::materialize_shadow_repo(repository, exclusions)
+                }
+            },
+            &SOURCE_SNAPSHOT_RETRY_BACKOFFS,
+        );
     }
     let shadow = workspace::shadow_repo_if_exists(repository)?
         .ok_or_else(|| "临时 Git 快照不存在或已回收；请重新派发节点或开启新对话。".to_string())?;
@@ -689,8 +737,18 @@ impl Runtime {
         }
         // Batched creation/admission must preserve the same physical ownership
         // and adopted-source receipts as single-event emit before persistence.
+        let mut batch_plan_type = self.state.plan_type.as_deref();
         for kind in &events {
-            crate::cleanup::remember_event(&self.root, &self.store, &self.state, kind)?;
+            if let EventKind::Routed { plan_type, .. } = kind {
+                batch_plan_type = Some(plan_type.as_str());
+            }
+            crate::cleanup::remember_event_with_plan_type(
+                &self.root,
+                &self.store,
+                &self.state,
+                kind,
+                batch_plan_type,
+            )?;
         }
         let mut has_non_output = false;
         let mut targets: std::collections::BTreeMap<String, (usize, bool)> =
@@ -1131,28 +1189,7 @@ impl Runtime {
         } else {
             return true;
         };
-        let Ok(entries) = fs::read_dir(&journal_root) else {
-            return true;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else {
-                return false;
-            };
-            let Ok(kind) = entry.file_type() else {
-                return false;
-            };
-            if !kind.is_dir() {
-                continue;
-            }
-            let attempt = entry.path();
-            let has_state = attempt.join("prepared.json").is_file()
-                || attempt.join("input.json").is_file()
-                || attempt.join("applying").is_file();
-            if has_state && !attempt.join("installed").is_file() {
-                return false;
-            }
-        }
-        true
+        crate::cleanup::publication_journal_settled(&journal_root)
     }
 
     /// Prune obsolete environment snapshots (`versions/`, `blobs/`, `launches/`)
@@ -8066,4 +8103,58 @@ fn perform_with_merger_inner(
         Ok(())
     })?;
     Ok((head, output))
+}
+
+#[cfg(test)]
+mod source_snapshot_retry_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[test]
+    fn retries_transient_source_change_until_success() {
+        let attempts = AtomicUsize::new(0);
+        let result = retry_transient_source_change(
+            || {
+                let n = attempts.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    Err("Source changed while copying project Git (foo.txt modified); original data retained, retry preparation".into())
+                } else {
+                    Ok("deadbeef".to_string())
+                }
+            },
+            &[Duration::from_millis(1), Duration::from_millis(1)],
+        );
+        assert_eq!(result.unwrap(), "deadbeef");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn fails_immediately_on_non_transient_error_and_stops_after_budget() {
+        let non_transient_attempts = AtomicUsize::new(0);
+        let err = retry_transient_source_change(
+            || {
+                non_transient_attempts.fetch_add(1, Ordering::SeqCst);
+                Err::<String, String>("Unresolved merge conflicts remain".into())
+            },
+            &[Duration::from_millis(1), Duration::from_millis(1)],
+        )
+        .unwrap_err();
+        assert_eq!(err, "Unresolved merge conflicts remain");
+        assert_eq!(non_transient_attempts.load(Ordering::SeqCst), 1);
+
+        let exhausted_attempts = AtomicUsize::new(0);
+        let err = retry_transient_source_change(
+            || {
+                exhausted_attempts.fetch_add(1, Ordering::SeqCst);
+                Err::<String, String>(
+                    "Source changed while capturing its workspace; retry preparation".into(),
+                )
+            },
+            &[Duration::from_millis(1), Duration::from_millis(1)],
+        )
+        .unwrap_err();
+        assert!(err.contains("Source changed while capturing its workspace"));
+        assert_eq!(exhausted_attempts.load(Ordering::SeqCst), 3);
+    }
 }

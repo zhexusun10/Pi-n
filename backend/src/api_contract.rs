@@ -236,6 +236,7 @@ pub const READ_COMMANDS: &[&str] = &[
     "get_file_changes",
     "get_file_diff",
     "get_workspace_image",
+    "get_attachment_image",
     "get_merger_prompt",
     "list_skills",
     "list_files",

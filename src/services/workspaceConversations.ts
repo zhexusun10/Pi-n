@@ -1,6 +1,88 @@
-import type { ConversationSummary, Snapshot } from "../types";
+import type { ConversationSummary, ProjectItem, Snapshot } from "../types";
 
 export type WorkspaceRuns = Record<string, string[]>;
+
+export function partitionRunsByPinned(
+  ids: readonly string[],
+  pinnedRunIds?: ReadonlySet<string>,
+): string[] {
+  if (!pinnedRunIds || pinnedRunIds.size === 0 || ids.length <= 1) return [...ids];
+  const pinned: string[] = [];
+  const unpinned: string[] = [];
+  for (const id of ids) {
+    if (pinnedRunIds.has(id)) pinned.push(id);
+    else unpinned.push(id);
+  }
+  if (pinned.length === 0 || unpinned.length === 0) return [...ids];
+  return [...pinned, ...unpinned];
+}
+
+export function reorderSubset<T>(
+  all: readonly T[],
+  visibleKeys: readonly string[],
+  fromVisibleIndex: number,
+  toVisibleIndex: number,
+  keyOf: (item: T) => string,
+): T[] {
+  if (
+    fromVisibleIndex === toVisibleIndex ||
+    fromVisibleIndex < 0 ||
+    toVisibleIndex < 0 ||
+    fromVisibleIndex >= visibleKeys.length ||
+    toVisibleIndex >= visibleKeys.length
+  ) {
+    return [...all];
+  }
+  const nextVisible = [...visibleKeys];
+  const [moved] = nextVisible.splice(fromVisibleIndex, 1);
+  nextVisible.splice(toVisibleIndex, 0, moved);
+
+  const itemByKey = new Map<string, T>();
+  const visibleSet = new Set(visibleKeys);
+  const slotIndices: number[] = [];
+  all.forEach((item, idx) => {
+    const key = keyOf(item);
+    if (visibleSet.has(key)) {
+      slotIndices.push(idx);
+      itemByKey.set(key, item);
+    }
+  });
+  if (slotIndices.length !== nextVisible.length) return [...all];
+
+  const result = [...all];
+  slotIndices.forEach((slotIdx, i) => {
+    const item = itemByKey.get(nextVisible[i]);
+    if (item !== undefined) result[slotIdx] = item;
+  });
+  return result;
+}
+
+export function orderProjects(
+  items: readonly ProjectItem[],
+  projectOrder?: readonly string[] | null,
+): ProjectItem[] {
+  const normalized = items.map((p) => ({
+    ...p,
+    path: normalizeWorkspacePath(p.path),
+    id: normalizeWorkspacePath(p.id || p.path),
+  }));
+  if (!projectOrder || projectOrder.length === 0) {
+    return normalized.sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+  }
+  const orderIndex = new Map<string, number>();
+  projectOrder.forEach((rawKey, idx) => {
+    const key = workspaceKey(rawKey);
+    if (key && !orderIndex.has(key)) orderIndex.set(key, idx);
+  });
+  return normalized.sort((a, b) => {
+    const idxA = orderIndex.get(workspaceKey(a.path));
+    const idxB = orderIndex.get(workspaceKey(b.path));
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+    if (idxA !== undefined) return 1;
+    if (idxB !== undefined) return -1;
+    return (b.lastOpened || 0) - (a.lastOpened || 0);
+  });
+}
 
 export function normalizeWorkspacePath(path: string): string {
   if (path.startsWith("\\\\?\\UNC\\")) return `\\\\${path.slice(8)}`;
@@ -27,8 +109,27 @@ export function normalizeWorkspaceRuns(index: WorkspaceRuns): WorkspaceRuns {
   return result;
 }
 
+function insertAfterPinned(
+  list: readonly string[],
+  runId: string,
+  pinnedRunIds?: ReadonlySet<string>,
+): string[] {
+  if (!pinnedRunIds || pinnedRunIds.size === 0 || pinnedRunIds.has(runId)) {
+    return [runId, ...list];
+  }
+  const insertAt = list.findIndex(id => !pinnedRunIds.has(id));
+  if (insertAt === -1) return [...list, runId];
+  return [...list.slice(0, insertAt), runId, ...list.slice(insertAt)];
+}
+
 /** Ownership comes from the Run, never from the workspace currently on screen. */
-export function bindRunToWorkspace(index: WorkspaceRuns, runId: string, repository: string, replacedId?: string): WorkspaceRuns {
+export function bindRunToWorkspace(
+  index: WorkspaceRuns,
+  runId: string,
+  repository: string,
+  replacedId?: string,
+  pinnedRunIds?: ReadonlySet<string>,
+): WorkspaceRuns {
   const owner = workspaceKey(repository);
   if (!runId || !owner) return index;
   if (index[owner]?.includes(runId) &&
@@ -43,29 +144,115 @@ export function bindRunToWorkspace(index: WorkspaceRuns, runId: string, reposito
   // A provisional card keeps its position when its durable ID arrives.
   next[owner] = replacedId && existing.includes(replacedId)
     ? [...new Set(existing.map(id => id === replacedId ? runId : id))]
-    : [runId, ...(next[owner] ?? [])];
+    : insertAfterPinned(next[owner] ?? [], runId, pinnedRunIds);
   return next;
 }
 
 /**
- * Move a conversation to the first position of its workspace list (and enforce
- * exclusive ownership) when a new turn starts in that conversation.
+ * Move a conversation to the first unpinned position of its workspace list (and
+ * enforce exclusive ownership) when a new turn starts in that conversation.
+ * Pinned conversations keep their pinned position so new turns never push them down.
  */
-export function promoteRunInWorkspace(index: WorkspaceRuns, runId: string, repository: string): WorkspaceRuns {
+export function promoteRunInWorkspace(
+  index: WorkspaceRuns,
+  runId: string,
+  repository: string,
+  pinnedRunIds?: ReadonlySet<string>,
+): WorkspaceRuns {
   const owner = workspaceKey(repository);
   if (!runId || !owner) return index;
   const existing = index[owner] ?? [];
-  if (existing[0] === runId &&
-    !Object.entries(index).some(([key, ids]) => key !== owner && ids.includes(runId))) {
-    return index;
+  const exclusive = !Object.entries(index).some(([key, ids]) => key !== owner && ids.includes(runId));
+  const isPinned = Boolean(pinnedRunIds?.has(runId));
+
+  if (isPinned && existing.includes(runId) && exclusive) {
+    const partitioned = partitionRunsByPinned(existing, pinnedRunIds);
+    if (partitioned.every((id, idx) => id === existing[idx])) return index;
+    return { ...index, [owner]: partitioned };
+  }
+
+  if (!isPinned && exclusive) {
+    const firstUnpinnedIndex = existing.findIndex(id => !pinnedRunIds?.has(id));
+    if (firstUnpinnedIndex !== -1 && existing[firstUnpinnedIndex] === runId) {
+      return index;
+    }
   }
 
   const next: WorkspaceRuns = {};
   for (const [key, ids] of Object.entries(index)) {
     next[key] = ids.filter(id => id !== runId);
   }
-  next[owner] = [runId, ...(next[owner] ?? [])];
+  const targetList = partitionRunsByPinned(next[owner] ?? [], pinnedRunIds);
+  next[owner] = insertAfterPinned(targetList, runId, pinnedRunIds);
   return next;
+}
+
+/** Pin a conversation to the very top of its workspace list. */
+export function pinRunInWorkspace(
+  index: WorkspaceRuns,
+  runId: string,
+  repository: string,
+  pinnedRunIds: ReadonlySet<string>,
+): WorkspaceRuns {
+  if (!runId) return index;
+  let owner = repository ? workspaceKey(repository) : "";
+  if (!owner || !index[owner]?.includes(runId)) {
+    const found = Object.entries(index).find(([, ids]) => ids.includes(runId));
+    if (found) owner = found[0];
+  }
+  if (!owner) return index;
+  const existing = index[owner] ?? [];
+  const rest = existing.filter(id => id !== runId);
+  const nextList = partitionRunsByPinned([runId, ...rest], pinnedRunIds);
+  if (nextList.length === existing.length && nextList.every((id, idx) => id === existing[idx])) {
+    return index;
+  }
+  return { ...index, [owner]: nextList };
+}
+
+/** Re-partition a workspace list after unpinning a conversation so remaining pinned cards stay above it. */
+export function unpinRunInWorkspace(
+  index: WorkspaceRuns,
+  runId: string,
+  repository: string,
+  remainingPinnedRunIds: ReadonlySet<string>,
+): WorkspaceRuns {
+  if (!runId) return index;
+  let owner = repository ? workspaceKey(repository) : "";
+  if (!owner || !index[owner]?.includes(runId)) {
+    const found = Object.entries(index).find(([, ids]) => ids.includes(runId));
+    if (found) owner = found[0];
+  }
+  if (!owner) return index;
+  const existing = index[owner] ?? [];
+  const nextList = partitionRunsByPinned(existing, remainingPinnedRunIds);
+  if (nextList.length === existing.length && nextList.every((id, idx) => id === existing[idx])) {
+    return index;
+  }
+  return { ...index, [owner]: nextList };
+}
+
+/** Reorder visible conversations within a workspace while preserving pinned/unpinned grouping. */
+export function reorderRunsInWorkspace(
+  index: WorkspaceRuns,
+  repository: string,
+  visibleRunIds: readonly string[],
+  fromVisibleIndex: number,
+  toVisibleIndex: number,
+  pinnedRunIds?: ReadonlySet<string>,
+): WorkspaceRuns {
+  const owner = workspaceKey(repository);
+  if (!owner) return index;
+  const existing = index[owner];
+  if (!existing || existing.length <= 1) return index;
+  const reordered = partitionRunsByPinned(
+    reorderSubset(existing, visibleRunIds, fromVisibleIndex, toVisibleIndex, id => id),
+    pinnedRunIds,
+  );
+  if (reordered.length === existing.length && reordered.every((id, idx) => id === existing[idx])) {
+    return index;
+  }
+  return { ...index, [owner]: reordered };
 }
 
 /**
@@ -98,11 +285,14 @@ export function mergeValidatedWorkspaceRuns(
   return merged;
 }
 
-/** Replace the browser hint with the authoritative, newest-first backend index. */
+/** Replace the browser hint with the authoritative, newest-first backend index,
+ * preserving user-defined sidebar order and pinned conversations when present. */
 export function workspaceRunsFromSummaries(
   summaries: ConversationSummary[],
   cached: WorkspaceRuns = {},
   unavailableRunIds: string[] = [],
+  pinnedRunIds?: ReadonlySet<string>,
+  customOrder?: WorkspaceRuns,
 ): WorkspaceRuns {
   const result: WorkspaceRuns = {};
   const seen = new Set<string>();
@@ -121,6 +311,19 @@ export function workspaceRunsFromSummaries(
       seen.add(id);
       (result[owner] ??= []).push(id);
     }
+  }
+  const normalizedOrder = customOrder ? normalizeWorkspaceRuns(customOrder) : {};
+  for (const [owner, authoritative] of Object.entries(result)) {
+    const preferred = normalizedOrder[owner];
+    let ordered = authoritative;
+    if (preferred && preferred.length > 0) {
+      const authSet = new Set(authoritative);
+      const knownInPreferred = preferred.filter(id => authSet.has(id));
+      const knownSet = new Set(knownInPreferred);
+      const fresh = authoritative.filter(id => !knownSet.has(id));
+      ordered = [...fresh, ...knownInPreferred];
+    }
+    result[owner] = partitionRunsByPinned(ordered, pinnedRunIds);
   }
   return result;
 }

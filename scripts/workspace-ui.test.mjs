@@ -7,7 +7,12 @@ import { createServer } from "vite";
 // Observe the full transition, not just its final rectangle: a position projection
 // can otherwise hide a jump behind an eventually correct composer layout.
 async function sampleHomeComposerToggle(page, expanded, collapsedHeight) {
-  await page.waitForFunction(() => getComputedStyle(document.querySelector(".landing-screen .prompt-box-container")).transform === "none");
+  await page.waitForFunction(() => {
+    const box = document.querySelector(".landing-screen .prompt-box-container");
+    if (!box) return false;
+    const t = getComputedStyle(box).transform;
+    return (t === "none" || t === "matrix(1, 0, 0, 1, 0, 0)" || t === "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)") && box.getAnimations().length === 0;
+  });
   return page.evaluate(({ expanded, collapsedHeight }) => new Promise((resolve, reject) => {
     const box = document.querySelector(".landing-screen .prompt-box-container");
     const title = document.querySelector(".landing-title-copy");
@@ -175,7 +180,12 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
     // Expanded editing stays inside the real home layout without welcome-copy overlap.
     const homeInput = page.locator(".landing-screen textarea");
     const defaultTextareaHeight = (await homeInput.boundingBox()).height;
-    await page.waitForFunction(() => getComputedStyle(document.querySelector(".landing-screen .prompt-box-container")).transform === "none");
+    await page.waitForFunction(() => {
+      const box = document.querySelector(".landing-screen .prompt-box-container");
+      if (!box) return false;
+      const t = getComputedStyle(box).transform;
+      return (t === "none" || t === "matrix(1, 0, 0, 1, 0, 0)" || t === "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)") && box.getAnimations().length === 0;
+    });
     await page.evaluate(() => {
       window.autosizeFrames = [];
       window.sampleAutosize = true;
@@ -525,18 +535,19 @@ test("workspace removal commits backend deletion before pruning indexes and surv
   }
 });
 
-test("workspace size warning appears after background Run completion and stays dismissed", { timeout: 30_000 }, async () => {
+test("workspace size warning appears only when sending Compile with isolated parallel workspaces enabled", { timeout: 30_000 }, async () => {
   const repository = "C:\\Projects\\Alpha";
-  const config = { repository, model: "test/model", maxParallel: 1, maxFeedback: 3 };
-  const sizeError = "工作区体积超过 15GB 限制。请将大型文件（例如数据集、模型权重或构建缓存）移至目录外，或进入更里层的子文件夹建立工作区。";
-  const state = {
-    runId: "background-run", config, planType: "graph", phase: "running",
-    graph: { originalGoal: "Background work", nodes: [], edges: [] }, nodes: {}, plan: null,
-    executions: [], mergers: [], events: [], approved: true, paused: false, base: "", feedbackCounts: {},
+  let config = { repository, model: "test/model", maxParallel: 1, maxFeedback: 3, isolateParallelNodes: true };
+  const sizeError = "工作区体积超过 15GB 限制。请将大型文件（例如数据集、模型权重或构建缓存）移至目录外，或进入更里层的子文件夹建立工作区。\n也可以在设置中关闭「并行节点独立工作区」以解决此问题。";
+  const empty = {
+    runId: "", config, planType: "undecided", phase: "draft",
+    graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, plan: null,
+    executions: [], mergers: [], events: [], approved: false, paused: false, base: "", feedbackCounts: {},
   };
+  let current = empty;
   const info = { path: repository, name: "Alpha", branch: "main", head: "", clean: true };
   const errors = [];
-  const controls = [];
+  const planRequests = [];
   const server = await createServer({ cacheDir: "node_modules/.vite-workspace-size-ui", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
   let browser;
   try {
@@ -545,55 +556,105 @@ test("workspace size warning appears after background Run completion and stays d
     const context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_plan_mode", "graph");
       localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Alpha", lastOpened: 1 }]));
       localStorage.setItem("pi_n_config", JSON.stringify(config));
     }, { repository, config });
     await context.route("**/api/*", async route => {
       const command = new URL(route.request().url()).pathname.slice(5);
       const body = route.request().postDataJSON();
-      const finished = state.phase === "completed";
+      if (command === "plan_goal_stream") {
+        planRequests.push(body);
+        if (body.mode === "graph" && body.config?.isolateParallelNodes !== false) {
+          await route.fulfill({
+            status: 200,
+            contentType: "text/event-stream",
+            body: `event: error\ndata: ${JSON.stringify({ error: sizeError })}\n\n`,
+          });
+          return;
+        }
+        current = {
+          ...empty,
+          runId: "admitted-shared-run",
+          config: body.config,
+          planType: "graph",
+          phase: "awaiting_approval",
+          graph: { originalGoal: body.goal, nodes: [{ id: "task", task: body.goal }], edges: [] },
+          plan: { executionBatches: [["task"]], rootNodes: ["task"], terminals: ["task"], warnings: [] },
+          nodes: { task: { status: "waiting", revision: 0, head: null, instruction: "", error: null } },
+        };
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            `event: run_started\ndata: ${JSON.stringify({ runId: current.runId })}\n\n`,
+            `event: route_decision\ndata: ${JSON.stringify({ planType: "graph" })}\n\n`,
+            `event: complete\ndata: ${JSON.stringify({ snapshot: current })}\n\n`,
+          ].join(""),
+        });
+        return;
+      }
       let result;
       switch (command) {
-        case "bootstrap": result = { config, snapshot: state, runs: [state.runId], conversations: fixtureSummaries([state]), repositoryInfo: info, dataPath: "/mock/.pi-n" }; break;
-        case "get_file_changes": result = fixtureFileChanges(body); break;
+        case "bootstrap": result = { config, snapshot: current, runs: current.runId ? [current.runId] : [], conversations: current.runId ? fixtureSummaries([current]) : [], repositoryInfo: info, dataPath: "/mock/.pi-n" }; break;
+        case "save_config": config = { ...config, ...body.config }; result = { config, snapshot: current, runs: [], conversations: [], repositoryInfo: info, dataPath: "/mock/.pi-n" }; break;
+        case "host_preflight": result = { gitAvailable: true, gitError: null }; break;
         case "extension_command": result = { instance: "standalone", commands: [] }; break;
-        case "load_run": case "snapshot": case "history": result = state; break;
-        case "snapshot_if_changed": result = { version: state.phase, snapshot: state }; break;
-        case "repository_status": result = { repository: body.repository, valid: true, error: finished ? sizeError : null, sizeLimitExceeded: finished }; break;
+        case "snapshot": case "history": case "load_run": result = current; break;
+        case "snapshot_if_changed": result = { version: current.runId || "draft", snapshot: current }; break;
+        case "get_file_changes": result = fixtureFileChanges(body); break;
+        case "repository_status": result = { repository: body.repository, valid: true, error: null, sizeLimitExceeded: false }; break;
         case "detect_repository": result = info; break;
         case "list_plannings": result = []; break;
         case "list_files": result = { files: [] }; break;
         case "list_skills": result = { skills: [] }; break;
-        case "provider_auth": result = { providers: [], models: [], warning: null }; break;
+        case "provider_auth": result = { providers: [{ id: "test", name: "Test", methods: [], configured: true }], models: [{ id: "model", provider: "test", name: "Model", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off", "low"], thinkingLevelFallbacks: { minimal: "low", medium: "low", high: "low", xhigh: "low", max: "low" } }], warning: null }; break;
         case "pi_extensions": result = { globalDirectory: "mock", extensions: [] }; break;
         case "environment_capabilities": result = { platform: "windows", arch: "x86_64", nativeWorkspace: true }; break;
-        case "control": controls.push(body); result = state; break;
         default: errors.push(`Unexpected API: ${command}`); result = null;
       }
       await route.fulfill({ json: { result } });
     });
     const page = await context.newPage();
+    page.setDefaultTimeout(5000);
     page.on("pageerror", error => errors.push(String(error)));
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`, { waitUntil: "networkidle" });
     const alert = page.locator(".floating-error-banner");
-    assert.equal(await alert.count(), 0);
-    const refreshStatus = async () => {
-      const response = page.waitForResponse("**/api/repository_status");
-      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-      await response;
-    };
-    state.phase = "publishing";
-    await refreshStatus();
-    assert.equal(await alert.count(), 0, "publication still belongs to the active Run");
-    state.phase = "completed";
-    await refreshStatus();
+    assert.equal(await alert.count(), 0, "joining or selecting a workspace must not show a size warning");
+
+    const composer = page.locator("textarea").first();
+    await composer.waitFor();
+    await composer.fill("Plan a multi-node build");
+    await composer.press("Enter");
     await alert.waitFor();
-    assert.match(await alert.textContent(), /15GB/);
-    await page.getByRole("button", { name: "Dismiss error", exact: true }).click();
-    await alert.waitFor({ state: "detached" });
-    await refreshStatus();
-    assert.equal(await alert.count(), 0, "unchanged polls must not reopen a dismissed warning");
-    assert.deepEqual(controls, [], "size status must never stop, cancel or pause a Run");
+    const bannerText = await alert.textContent();
+    assert.match(bannerText || "", /15GB/);
+    assert.match(bannerText || "", /Isolate parallel node workspaces/);
+    assert.equal(planRequests.length, 1);
+    assert.equal(planRequests[0].mode, "graph");
+    assert.equal(planRequests[0].config.isolateParallelNodes, true);
+
+    // Following the warning's suggestion to disable parallel workspace isolation
+    // in Settings lets the next Compile submission succeed without warning.
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const isolateToggle = page.getByLabel("Isolate parallel node workspaces", { exact: true });
+    await isolateToggle.waitFor();
+    await isolateToggle.uncheck();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.locator(".settings-modal").waitFor({ state: "detached" });
+    assert.equal(await alert.count(), 0);
+
+    const retryComposer = page.locator("textarea").first();
+    await retryComposer.fill("Retry with shared workspace");
+    const retryResponse = page.waitForResponse("**/api/plan_goal_stream");
+    await retryComposer.press("Enter");
+    await retryResponse;
+    await page.locator('[data-run-id="admitted-shared-run"]').waitFor();
+    await page.locator('.task-node[data-node-id="task"]').waitFor();
+    assert.equal(planRequests.length, 2);
+    assert.equal(planRequests[1].mode, "graph");
+    assert.equal(planRequests[1].config.isolateParallelNodes, false);
+    assert.equal(await alert.count(), 0);
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

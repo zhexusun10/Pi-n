@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import zlib from "node:zlib";
 import { fixtureSummaries, fixtureFileChanges } from "./fixtures/current-api.mjs";
 import test from "node:test";
 import { chromium } from "@playwright/test";
@@ -370,6 +371,7 @@ for (const reducedMotion of ["no-preference"]) {
         await page.evaluate(({ id, expectedNames }) => {
           window.switchFrames = [];
           window.surfaceFrames = [];
+          window.sidebarCardFrames = [];
           window.summaryFrames = [];
           window.progressFrames = [];
           window.composerFrames = [];
@@ -385,6 +387,8 @@ for (const reducedMotion of ["no-preference"]) {
             return value;
           };
           const sample = () => {
+            const card = document.querySelector(`[data-run-id="${id}"]`);
+            if (card) window.sidebarCardFrames.push(opacity(card));
             const workbench = document.querySelector(".workbench");
             if (workbench !== previousWorkbench) {
               if (workbench) {
@@ -469,11 +473,14 @@ for (const reducedMotion of ["no-preference"]) {
           document.querySelector(`[data-run-id="${id}"]`).click();
         }, { id, expectedNames: Object.keys(snapshots[id].nodes).sort() });
         await page.waitForFunction(() => window.switchSamplingCompleted);
-        const { frames, surfaces, summaries, changes, composers, progress } = await page.evaluate(() => ({
+        const { frames, surfaces, sidebarCards, summaries, changes, composers, progress } = await page.evaluate(() => ({
           frames: window.switchFrames, surfaces: window.surfaceFrames,
+          sidebarCards: window.sidebarCardFrames,
           summaries: window.summaryFrames, changes: window.workbenchChanges,
           composers: window.composerFrames, progress: window.progressFrames,
         }));
+        assert.ok(sidebarCards.length > 0 && sidebarCards.every(cardOpacity => cardOpacity > 0.99),
+          `${id}: clicked sidebar conversation card stays opaque without flickering: ${JSON.stringify(sidebarCards)}`);
         assert.ok(surfaces.length > 0, `${id}: sample the workbench from its first frame`);
         const background = surfaces.at(-1).surfaces[0].background;
         assert.notEqual(background, "rgba(0, 0, 0, 0)", "the conversation paints an opaque surface");
@@ -829,3 +836,170 @@ for (const reducedMotion of ["no-preference"]) {
     } finally { await browser?.close(); server.httpServer?.closeAllConnections?.(); await server.close(); }
   });
 }
+
+function makeTestPng(width, height) {
+  function crc32(buf) {
+    let crc = 0xffffffff;
+    for (const byte of buf) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+  function chunk(type, data) {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const tag = Buffer.from(type);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([tag, data])), 0);
+    return Buffer.concat([len, tag, data, crc]);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const raw = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * (width * 3 + 1)] = 0;
+    for (let x = 0; x < width; x++) {
+      const idx = y * (width * 3 + 1) + 1 + x * 3;
+      raw[idx] = 80;
+      raw[idx + 1] = 140;
+      raw[idx + 2] = 210;
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+test("history Markdown images settle before first reveal and returning home stays opaque", { timeout: 60_000 }, async () => {
+  const repository = "/mock/project";
+  const config = { repository, model: "test/model", maxParallel: 2, maxFeedback: 3, autoApprove: false };
+  const pngBuf = makeTestPng(600, 400);
+  const text = `${"Historical context paragraph.\n\n".repeat(12)}Preview:\n\n![chart](chart.png)\n\nClosing notes.`;
+  const content = JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } }) + "\n";
+  const snapshot = {
+    runId: "img-run", config, planType: "serial", phase: "completed", approved: true, paused: false,
+    graph: { originalGoal: "Render chart", nodes: [{ id: "task", task: "Render chart" }], edges: [] },
+    nodes: { task: { status: "completed" } },
+    plan: null,
+    executions: [{
+      id: "exec-img", node: "task", status: "completed", output: "", outputBytes: Buffer.byteLength(content),
+      revision: 1, attempt: 1, startedAt: 1, completedAt: 2, sessionId: "session-img",
+      worktree: repository, before: "", after: "",
+    }],
+    events: [], base: "", feedbackCounts: {},
+  };
+  const empty = {
+    runId: "", config: null, planType: "graph", phase: "draft", approved: false, paused: false,
+    graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {}, plan: null,
+    executions: [], events: [], base: "", feedbackCounts: {},
+  };
+  const repositoryInfo = { path: repository, name: "Project", branch: "main", head: "", clean: true };
+  const errors = [];
+  const server = await createServer({ cacheDir: "node_modules/.vite-graph-switching", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 768 } });
+    await context.addInitScript(({ repository, config }) => {
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
+      localStorage.setItem("pi_n_config", JSON.stringify(config));
+    }, { repository, config });
+    await context.route("**/api/*", async route => {
+      const command = new URL(route.request().url()).pathname.slice(5);
+      const body = route.request().postDataJSON();
+      if (command === "get_workspace_image") {
+        await new Promise(resolve => setTimeout(resolve, 120));
+        await route.fulfill({ status: 200, contentType: "image/png", body: pngBuf });
+        return;
+      }
+      let result;
+      switch (command) {
+        case "bootstrap": case "save_config":
+          result = { config, snapshot: empty, runs: ["img-run"], conversations: fixtureSummaries([snapshot]), repositoryInfo, dataPath: "/mock/.pi-n" }; break;
+        case "get_file_changes": result = fixtureFileChanges(body); break;
+        case "load_run": case "history": case "snapshot": result = body.runId === "img-run" ? snapshot : empty; break;
+        case "snapshot_if_changed": result = { version: "1", snapshot: body.runId === "img-run" ? snapshot : null }; break;
+        case "get_execution_output":
+          result = { runId: body.runId, executionId: body.executionId, content, startOffset: 0,
+            nextOffset: Buffer.byteLength(content), totalBytes: Buffer.byteLength(content), complete: true, status: "completed" }; break;
+        case "repository_status": result = { repository, valid: true, error: null }; break;
+        case "detect_repository": result = repositoryInfo; break;
+        case "list_plannings": result = []; break;
+        case "list_files": result = { files: [] }; break;
+        case "list_skills": result = { skills: [] }; break;
+        case "provider_auth": result = { providers: [], models: [], warning: null }; break;
+        default: errors.push(`Unexpected API: ${command}`); result = null;
+      }
+      try { await route.fulfill({ json: { result } }); } catch {}
+    });
+    const page = await context.newPage();
+    page.on("pageerror", error => errors.push(String(error)));
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`, { waitUntil: "networkidle" });
+    await page.locator('[data-run-id="img-run"]').waitFor();
+
+    await page.evaluate(() => {
+      window.imageRevealFrames = [];
+      window.sampleImageReveal = true;
+      const sample = () => {
+        const scroller = document.querySelector(".initial-query-scroll");
+        const img = scroller?.querySelector(".markdown-content img");
+        if (scroller) {
+          const opacity = Number(getComputedStyle(scroller).opacity);
+          if (opacity > 0) {
+            window.imageRevealFrames.push({
+              opacity,
+              scrollTop: Math.round(scroller.scrollTop),
+              scrollHeight: Math.round(scroller.scrollHeight),
+              imgHeight: img ? Math.round(img.getBoundingClientRect().height) : 0,
+              natWidth: img?.naturalWidth ?? 0,
+              busy: img?.getAttribute("aria-busy") ?? null,
+            });
+          }
+        }
+        if (window.sampleImageReveal) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await page.locator('[data-run-id="img-run"]').click();
+    await page.waitForFunction(() => {
+      const scroller = document.querySelector(".initial-query-scroll");
+      const img = scroller?.querySelector(".markdown-content img");
+      return scroller && Number(getComputedStyle(scroller).opacity) >= 0.99 && img && img.naturalWidth === 600;
+    });
+    await page.waitForTimeout(80);
+    const revealFrames = await page.evaluate(() => {
+      window.sampleImageReveal = false;
+      return window.imageRevealFrames;
+    });
+    assert.ok(revealFrames.length > 0, "captured visible frames during image history reveal");
+    const firstVisible = revealFrames[0];
+    const lastVisible = revealFrames.at(-1);
+    assert.equal(firstVisible.natWidth, 600, `first visible frame already has decoded image: ${JSON.stringify(firstVisible)}`);
+    assert.equal(firstVisible.busy, null, `first visible frame is no longer aria-busy: ${JSON.stringify(firstVisible)}`);
+    assert.ok(Math.abs(firstVisible.imgHeight - lastVisible.imgHeight) <= 1,
+      `image height stays stable from first visible frame (${firstVisible.imgHeight} vs ${lastVisible.imgHeight})`);
+    assert.ok(Math.abs(firstVisible.scrollTop - lastVisible.scrollTop) <= 1,
+      `scrollTop does not jump after reveal (${firstVisible.scrollTop} vs ${lastVisible.scrollTop})`);
+
+    // Returning home must unmount the workspace in the same commit and keep the
+    // landing composer strictly opaque on every frame.
+    await assertOpaqueComposerNavigation(page, () =>
+      page.getByRole("button", { name: "New conversation", exact: true }).click()
+    );
+    assert.equal(await page.locator(".workspace-view-wrapper").count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser?.close();
+    server.httpServer?.closeAllConnections?.();
+    await server.close();
+  }
+});

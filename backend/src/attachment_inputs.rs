@@ -302,24 +302,29 @@ pub(crate) fn store(
     crate::path_identity::actual_path(&path).or_else(|_| path.canonicalize().map_err(|e| e.to_string()))
 }
 
-/// Delete a managed attachment returned by `store`. Rejects any path outside
-/// `<root>/attachment-inputs/` or outside the requested Run scope.
-pub(crate) fn remove(
+struct VerifiedManagedPath {
+    scope_run: Option<String>,
+    directory: PathBuf,
+    expected: PathBuf,
+    name: String,
+}
+
+fn verify_managed_path(
     root: &Path,
-    run: Option<&str>,
     target_path: &str,
-) -> Result<String, String> {
+    reject_message: &str,
+) -> Result<VerifiedManagedPath, String> {
     if target_path.trim().is_empty() || target_path.contains('\0') {
-        return Err("Only managed attachment paths can be deleted".into());
+        return Err(reject_message.into());
     }
     let candidate = Path::new(target_path);
     if !candidate.is_absolute() {
-        return Err("Only managed attachment paths can be deleted".into());
+        return Err(reject_message.into());
     }
     let normalized = target_path.replace('\\', "/");
     let marker = format!("/{BUCKET}/");
     let Some((_, suffix)) = normalized.rsplit_once(&marker) else {
-        return Err("Only managed attachment paths can be deleted".into());
+        return Err(reject_message.into());
     };
     let parts: Vec<&str> = suffix.split('/').collect();
     let (scope_run, id, name) = match parts.as_slice() {
@@ -335,11 +340,8 @@ pub(crate) fn remove(
         {
             (None, *attachment_id, *filename)
         }
-        _ => return Err("Only managed attachment paths can be deleted".into()),
+        _ => return Err(reject_message.into()),
     };
-    if scope_run != run {
-        return Err("Only managed attachment paths can be deleted".into());
-    }
     let directory = attachment_directory(root, scope_run, id)?;
     let expected = directory.join(name);
     // Verify the supplied absolute path points at the exact managed location
@@ -354,13 +356,50 @@ pub(crate) fn remove(
         expected_display == candidate_display
     };
     if !matches {
-        return Err("Only managed attachment paths can be deleted".into());
+        return Err(reject_message.into());
     }
-    if let Some(actual) = real_child_path(root, &expected, true)? {
+    Ok(VerifiedManagedPath {
+        scope_run: scope_run.map(str::to_string),
+        directory,
+        expected,
+        name: name.to_string(),
+    })
+}
+
+/// Resolve an existing managed attachment path strictly under `<root>/attachment-inputs/`.
+/// Rejects symlinks, traversal, paths outside `root`, and mismatched Run scopes.
+pub(crate) fn resolve_managed_path(
+    root: &Path,
+    expected_run: Option<&str>,
+    target_path: &str,
+) -> Result<PathBuf, String> {
+    const REJECT: &str = "Invalid attachment path";
+    let verified = verify_managed_path(root, target_path, REJECT)?;
+    if let (Some(path_run), Some(req_run)) = (verified.scope_run.as_deref(), expected_run) {
+        if !req_run.is_empty() && path_run != req_run {
+            return Err(REJECT.into());
+        }
+    }
+    real_child_path(root, &verified.expected, true)?.ok_or_else(|| "Attachment image not found".into())
+}
+
+/// Delete a managed attachment returned by `store`. Rejects any path outside
+/// `<root>/attachment-inputs/` or outside the requested Run scope.
+pub(crate) fn remove(
+    root: &Path,
+    run: Option<&str>,
+    target_path: &str,
+) -> Result<String, String> {
+    const REJECT: &str = "Only managed attachment paths can be deleted";
+    let verified = verify_managed_path(root, target_path, REJECT)?;
+    if verified.scope_run.as_deref() != run {
+        return Err(REJECT.into());
+    }
+    if let Some(actual) = real_child_path(root, &verified.expected, true)? {
         fs::remove_file(actual).map_err(|error| format!("Cannot delete attachment: {error}"))?;
-        let _ = fs::remove_dir(&directory);
+        let _ = fs::remove_dir(&verified.directory);
     }
-    Ok(name.to_string())
+    Ok(verified.name)
 }
 
 /// Ensure `<root>/attachment-inputs/<run>` exists so sandboxed executions can
@@ -444,6 +483,24 @@ pub(crate) fn adopt_for_run(
         store.remember_cleanup_targets(run_id, &targets)?;
     }
     Ok(())
+}
+
+/// Record cleanup ownership for any unscoped pre-run original image preview
+/// files referenced by `ImageAttachment.original_path`.
+pub(crate) fn adopt_images_for_run(
+    root: &Path,
+    store: &Store,
+    run_id: &str,
+    images: &[crate::model::ImageAttachment],
+) -> Result<(), String> {
+    let paths: Vec<&str> = images
+        .iter()
+        .filter_map(|image| image.original_path.as_deref())
+        .collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    adopt_for_run(root, store, run_id, &paths)
 }
 
 /// Collect all read-only attachment directories authorized for a Run's

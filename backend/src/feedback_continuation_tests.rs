@@ -327,6 +327,7 @@ fn feedback_continuation_queued_input_does_not_wake_or_reconfigure_dirty_nodes()
                         mime_type: "image/png".into(),
                         data: name.into(),
                         name: None,
+                        original_path: None,
                     }]),
                 )
                 .unwrap();
@@ -394,6 +395,7 @@ fn node_input_recovery_feedback_target_retains_queued_turn_across_restart() {
                     mime_type: "image/png".into(),
                     data: "repair".into(),
                     name: None,
+                    original_path: None,
                 }]),
             )
             .unwrap();

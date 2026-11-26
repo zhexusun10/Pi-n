@@ -2,6 +2,21 @@ import type { FitViewOptions, ReactFlowInstance, Rect, Viewport } from "@xyflow/
 
 export const graphFitOptions = { padding: 0.1, minZoom: 0.3, maxZoom: 1.6 } satisfies FitViewOptions;
 
+/**
+ * Compensate sub-1x viewport scaling so card borders remain crisp (~1px on screen)
+ * instead of collapsing into subpixel hairlines that fade or get occluded at minZoom.
+ */
+export function taskNodeStrokeMetrics(zoom: number): { borderWidth: string; selectedRingWidth: string } {
+  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const clamped = Math.min(1, Math.max(0.2, safeZoom));
+  const borderPx = Math.round((1 / clamped) * 1000) / 1000;
+  const ringPx = Math.round(Math.max(3, 2 / clamped) * 1000) / 1000;
+  return {
+    borderWidth: `${borderPx}px`,
+    selectedRingWidth: `${ringPx}px`,
+  };
+}
+
 /** Use current rendered geometry, excluding the hidden or unmeasured nodes that fitView ignores. */
 export function runningViewportForGraph(instance: ReactFlowInstance, width: number, height: number): Viewport | null {
   const visible = instance.getNodes().filter(node => {

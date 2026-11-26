@@ -42,6 +42,7 @@ export function useWorkspaceTerminalControl(): WorkspaceTerminalControl | null {
   return useContext(WorkspaceTerminalContext);
 }
 
+const DEFAULT_HOME_TERMINAL_KEY = "__pi_n_default_home__";
 const DEFAULT_TERMINAL_HEIGHT = 240;
 const MIN_TERMINAL_HEIGHT = 160;
 const MAX_TERMINAL_HEIGHT = 600;
@@ -88,7 +89,7 @@ function prefersReducedMotion(): boolean {
 export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTerminalsHandle {
   const supported = isWorkspaceTerminalSupported();
   const trimmedWorkspacePath = activeWorkspacePath.trim();
-  const activeKey = trimmedWorkspacePath ? workspaceKey(trimmedWorkspacePath) : "";
+  const activeKey = trimmedWorkspacePath ? workspaceKey(trimmedWorkspacePath) : DEFAULT_HOME_TERMINAL_KEY;
 
   const [entriesByKey, setEntriesByKey] = useState<Record<string, WorkspaceTerminalEntry>>({});
   const entriesRef = useRef(entriesByKey);
@@ -264,7 +265,7 @@ export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTer
 
   const spawnForWorkspace = useCallback(
     (key: string, workspacePath: string, targetMode: WorkspaceTerminalMode, preservedHeight?: number) => {
-      if (!supported || !key || !workspacePath) return;
+      if (!supported || !key) return;
       const instanceId = nextInstanceIdRef.current++;
       const existing = entriesRef.current[key];
       if (existing?.sessionId) {
@@ -316,7 +317,7 @@ export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTer
           // writable before handing those bytes to xterm, even before commit.
           entriesRef.current = {
             ...entriesRef.current,
-            [key]: { ...current, sessionId: info.sessionId, shell: info.shell, ptyBackend: info.ptyBackend, status: "running", error: null },
+            [key]: { ...current, workspacePath: info.cwd || current.workspacePath, sessionId: info.sessionId, shell: info.shell, ptyBackend: info.ptyBackend, status: "running", error: null },
           };
           setEntriesByKey((prev) => {
             const latest = prev[key];
@@ -325,6 +326,7 @@ export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTer
               ...prev,
               [key]: {
                 ...latest,
+                workspacePath: info.cwd || latest.workspacePath,
                 sessionId: info.sessionId,
                 shell: info.shell,
                 ptyBackend: info.ptyBackend,
@@ -370,7 +372,7 @@ export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTer
   );
 
   const toggleActiveTerminal = useCallback(() => {
-    if (!supported || !activeKey || !trimmedWorkspacePath) return;
+    if (!supported || !activeKey) return;
     const current = entriesRef.current[activeKey];
     if (!current || current.closing) {
       spawnForWorkspace(activeKey, trimmedWorkspacePath, "open");
@@ -534,10 +536,10 @@ export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTer
       supported: true,
       active: Boolean(liveActiveEntry && liveActiveEntry.mode !== "minimized"),
       running: Boolean(liveActiveEntry),
-      disabled: !activeKey,
+      disabled: false,
       onToggle: toggleActiveTerminal,
     };
-  }, [supported, liveActiveEntry, activeKey, toggleActiveTerminal]);
+  }, [supported, liveActiveEntry, toggleActiveTerminal]);
 
   return {
     supported,

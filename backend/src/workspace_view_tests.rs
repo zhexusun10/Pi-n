@@ -3551,3 +3551,160 @@ fn view_unobservable_preserves_directories_with_tracked_descendants_in_reserved_
         "directory containing only untracked runtime/generated leftovers is unobservable"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn git_host_metadata_ds_store_is_ignored_during_capture_copy_and_legacy_load() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    fs::create_dir_all(repo.join(".git/objects")).unwrap();
+    fs::create_dir_all(repo.join(".git/modules")).unwrap();
+    fs::write(repo.join(".git/.DS_Store"), b"finder-root-v1").unwrap();
+    fs::write(repo.join(".git/objects/.DS_Store"), b"finder-objects-v1").unwrap();
+    fs::write(repo.join(".git/._HEAD"), b"appledouble-v1").unwrap();
+
+    let inspected = inspect_source_scoped_with_stats(&repo, &[]).unwrap();
+    let git_entries = inspected.view.git_entries.as_ref().unwrap();
+    assert!(!git_entries.contains_key(".DS_Store"));
+    assert!(!git_entries.contains_key("objects/.DS_Store"));
+    assert!(!git_entries.contains_key("._HEAD"));
+
+    // Mutate and add Finder metadata inside `.git/` after initial inspection
+    // and before capture completes — must not trigger false source-changed errors.
+    fs::write(repo.join(".git/.DS_Store"), b"finder-root-v2-changed").unwrap();
+    fs::write(repo.join(".git/objects/.DS_Store"), b"finder-objects-v2-changed").unwrap();
+    fs::write(repo.join(".git/modules/.DS_Store"), b"finder-modules-added").unwrap();
+
+    let head = "1111111111111111111111111111111111111111";
+    let identity = view_identity(&inspected.view).unwrap();
+    capture_source_with_inspection(&repo, head, &identity, &[], inspected).unwrap();
+
+    let record = record_path(&repo, head).unwrap();
+    assert!(!record.join("git/.DS_Store").exists());
+    assert!(!record.join("git/objects/.DS_Store").exists());
+    assert!(!record.join("git/modules/.DS_Store").exists());
+    assert!(!record.join("git/._HEAD").exists());
+
+    // Simulate a legacy persisted view record that previously serialized
+    // `.git/.DS_Store` before this filter existed: `load()` must still verify
+    // its original checksum, strip host metadata afterwards, and allow `copy_git`.
+    let legacy_head = "2222222222222222222222222222222222222222";
+    let legacy_record = record_path(&repo, legacy_head).unwrap();
+    fs::create_dir_all(legacy_record.join("git")).unwrap();
+    let mut legacy_view = load(&record).unwrap();
+    legacy_view.git_entries.as_mut().unwrap().insert(
+        ".DS_Store".to_string(),
+        Entry::File {
+            mode: 0o644,
+            blob: git2::Oid::hash_object(git2::ObjectType::Blob, b"legacy")
+                .unwrap()
+                .to_string(),
+            extra: crate::workspace_metadata::Extra::default(),
+        },
+    );
+    save(&legacy_record, &legacy_view).unwrap();
+    let loaded = load(&legacy_record).unwrap();
+    assert!(!loaded.git_entries.as_ref().unwrap().contains_key(".DS_Store"));
+    let copy_dest = temp.path().join("legacy-git-copy");
+    copy_git(&record.join("git"), &copy_dest, legacy_view.git_entries.as_ref()).unwrap();
+    assert!(!copy_dest.join(".DS_Store").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn stat_reused_capture_caches_old_files_and_still_detects_content_or_metadata_changes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    let old_file = repo.join("old.txt");
+    let fresh_file = repo.join("fresh.txt");
+    fs::write(&old_file, "same-size-1\n").unwrap();
+    fs::write(&fresh_file, "brand-new\n").unwrap();
+
+    // Backdate `old.txt` past SAFE_STAT_AGE (2s) so it is eligible for stat reuse.
+    // Note: `utimes` advances ctime to now, so we verify the ctime guard by
+    // checking both: (a) a newly written/utimes file stays uncached (racy guard),
+    // and (b) synthetic older cutoff caches `old.txt` and still catches mutations.
+    let inspected_now = inspect_source_scoped_with_stats(&repo, &[]).unwrap();
+    assert!(
+        !inspected_now.stats.entries.contains_key("fresh.txt"),
+        "newly created file within racy window must not be stat-cached"
+    );
+
+    // Build an inspection with a future safe cutoff (now + 10s) to exercise the
+    // exact stat-reuse hit path deterministically without sleeping 2+ seconds.
+    let future_cutoff = FileStatKey::safe_cutoff(
+        std::time::SystemTime::now() + std::time::Duration::from_secs(10),
+    );
+    let (view, stats) = inspect_scoped_with_stats(&repo, &repo, &[], None, future_cutoff).unwrap();
+    assert!(
+        stats.entries.contains_key("old.txt"),
+        "eligible file older than cutoff must populate stat cache"
+    );
+    assert!(
+        stats.git_entries.contains_key("HEAD"),
+        "eligible standard .git file must populate git stat cache"
+    );
+
+    // 1. Unchanged source succeeds through the stat-reuse fast path.
+    let head_ok = "3333333333333333333333333333333333333333";
+    let identity = view_identity(&view).unwrap();
+    capture_source_with_inspection(
+        &repo,
+        head_ok,
+        &identity,
+        &[],
+        SourceInspection {
+            view: view.clone(),
+            stats: stats.clone(),
+        },
+    )
+    .unwrap();
+
+    // 2. Same-length byte mutation on a stat-cached file MUST still be detected.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&old_file, "same-size-2\n").unwrap();
+    let head_dirty = "4444444444444444444444444444444444444444";
+    let err = capture_source_with_inspection(
+        &repo,
+        head_dirty,
+        &identity,
+        &[],
+        SourceInspection {
+            view: view.clone(),
+            stats: stats.clone(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("Source changed while copying project Git")
+            && err.contains("old.txt modified"),
+        "{err}"
+    );
+
+    // 3. Metadata-only change (chmod mode/ctime) on a stat-cached file MUST be detected.
+    let (view2, stats2) =
+        inspect_scoped_with_stats(&repo, &repo, &[], None, future_cutoff).unwrap();
+    let identity2 = view_identity(&view2).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let c_path = std::ffi::CString::new(old_file.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::chmod(c_path.as_ptr(), 0o755) }, 0);
+    let head_mode = "5555555555555555555555555555555555555555";
+    let err_mode = capture_source_with_inspection(
+        &repo,
+        head_mode,
+        &identity2,
+        &[],
+        SourceInspection {
+            view: view2,
+            stats: stats2,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err_mode.contains("Source changed while copying project Git")
+            && err_mode.contains("old.txt modified"),
+        "{err_mode}"
+    );
+}

@@ -118,8 +118,32 @@ pub struct PickResult {
     pub cancelled: bool,
 }
 
+#[cfg(test)]
+fn inherited_host_data_dir() -> Option<&'static PathBuf> {
+    static INHERITED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    INHERITED
+        .get_or_init(|| {
+            // When `cargo test` runs inside a Pi^n agent subprocess, it
+            // inherits the enclosing host app's live `PI_N_DATA_DIR` alongside
+            // `PI_N_ENVIRONMENT_DATA`. Ignore that inherited host path so unit
+            // tests never pollute real user data, while still honoring any
+            // explicit `PI_N_DATA_DIR` override set by a caller or test.
+            let env_data = crate::native::environment_path("PI_N_ENVIRONMENT_DATA")?;
+            crate::native::environment_path("PI_N_DATA_DIR")
+                .filter(|dir| crate::path_identity::same_path(dir, &env_data))
+        })
+        .as_ref()
+}
+
 pub fn data_root() -> PathBuf {
-    let path = crate::native::environment_path("PI_N_DATA_DIR").unwrap_or_else(|| {
+    #[cfg(test)]
+    let configured = crate::native::environment_path("PI_N_DATA_DIR").filter(|dir| {
+        inherited_host_data_dir()
+            .is_none_or(|inherited| !crate::path_identity::same_path(dir, inherited))
+    });
+    #[cfg(not(test))]
+    let configured = crate::native::environment_path("PI_N_DATA_DIR");
+    let path = configured.unwrap_or_else(|| {
         // Unit tests must never write shadow/workspace data into the
         // checkout; integration fixtures call `ensure_test_data_root()`
         // explicitly because this library is compiled without `cfg(test)`.
@@ -352,6 +376,7 @@ mod workspace_guard_tests {
         // Over limit (150 bytes) fails with actionable message
         let err = check_workspace_size(&project, 150).unwrap_err();
         assert!(err.contains("15GB"));
+        assert!(err.contains("并行节点独立工作区"));
         assert_eq!(MAX_WORKSPACE_BYTES, 15 * 1024 * 1024 * 1024);
         assert!(check_workspace_size(&project, 200).is_ok());
         assert!(check_workspace_size(&project, 199).is_err());
@@ -432,7 +457,7 @@ fn is_desktop_workspace(
 
 pub const MAX_WORKSPACE_BYTES: u64 = 15 * 1024 * 1024 * 1024; // 15 GB
 
-const WORKSPACE_SIZE_EXCEEDED_ERROR: &str = "工作区体积超过 15GB 限制。请将大型文件（例如数据集、模型权重或构建缓存）移至目录外，或进入更里层的子文件夹建立工作区。";
+const WORKSPACE_SIZE_EXCEEDED_ERROR: &str = "工作区体积超过 15GB 限制。请将大型文件（例如数据集、模型权重或构建缓存）移至目录外，或进入更里层的子文件夹建立工作区。\n也可以在设置中关闭「并行节点独立工作区」以解决此问题。";
 
 pub fn check_workspace_size(root: &Path, max_bytes: u64) -> Result<(), String> {
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -1574,11 +1599,12 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
     };
     let git_dir = shadow.to_str().ok_or("Invalid shadow path")?;
     let work_tree = canonical.to_str().ok_or("Invalid target path")?;
-    let head_exists = git(
+    let prior_head = git(
         &canonical,
         &["--git-dir", git_dir, "rev-parse", "-q", "--verify", "HEAD"],
     )
-    .is_ok();
+    .ok();
+    let head_exists = prior_head.is_some();
     if !head_exists {
         // A crashed first collection can leave a stale lock behind. Only a
         // missing `HEAD` justifies removing it; a valid repository keeps its lock.
@@ -1587,9 +1613,9 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
             fs::remove_file(&lock).map_err(|error| error.to_string())?;
         }
     }
-    let view = crate::workspace_view::inspect_source_scoped(&canonical, exclusions)?;
-    let identity = crate::workspace_view::view_identity(&view)?;
-    crate::workspace_view::stage_project_with_view(&canonical, &shadow, &view)?;
+    let inspected = crate::workspace_view::inspect_source_scoped_with_stats(&canonical, exclusions)?;
+    let identity = crate::workspace_view::view_identity(&inspected.view)?;
+    crate::workspace_view::stage_project_with_view(&canonical, &shadow, &inspected.view)?;
     let lock = host_ref_lock(&canonical)?;
     let _guard = lock.lock().map_err(|e| e.to_string())?;
     let mut commit = vec![
@@ -1620,10 +1646,10 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
             // Git omits empty directories and most filesystem metadata. Reuse
             // HEAD only when its recorded project view is still equivalent.
             let head = bridge_plain_snapshot(&canonical)?;
-            if !crate::workspace_view::source_record_changed(&canonical, &head, &view)? {
+            if !crate::workspace_view::source_record_changed(&canonical, &head, &inspected.view)? {
                 if !crate::workspace_view::has_record(&canonical, &head) {
-                    crate::workspace_view::capture_source_with_view(
-                        &canonical, &head, &identity, exclusions, view,
+                    crate::workspace_view::capture_source_with_inspection(
+                        &canonical, &head, &identity, exclusions, inspected,
                     )?;
                 }
                 return Ok(head);
@@ -1635,9 +1661,16 @@ pub fn materialize_shadow_repo(target: &Path, exclusions: &[String]) -> Result<S
     git(&canonical, &commit)?;
     let head = bridge_plain_snapshot(&canonical)?;
     if !crate::workspace_view::has_record(&canonical, &head) {
-        crate::workspace_view::capture_source_with_view(
-            &canonical, &head, &identity, exclusions, view,
-        )?;
+        if let Err(error) = crate::workspace_view::capture_source_with_inspection(
+            &canonical, &head, &identity, exclusions, inspected,
+        ) {
+            if let Some(prev) = prior_head.as_deref() {
+                let _ = repository_git(&canonical, &["update-ref", "HEAD", prev]);
+            } else if let Ok(sym) = repository_git(&canonical, &["symbolic-ref", "HEAD"]) {
+                let _ = repository_git(&canonical, &["update-ref", "-d", &sym]);
+            }
+            return Err(error);
+        }
     }
     Ok(head)
 }
@@ -1821,20 +1854,11 @@ pub fn pick_repository() -> Result<PickResult, String> {
     }
 }
 
-pub fn detect(target: Option<&Path>) -> Result<Option<RepositoryInfo>, String> {
-    detect_with_size_check(target, cached_check_workspace_size)
-}
-
 /// Navigation needs a directory identity, not a Git repository or its state.
 /// Preserve the selected directory even when its .git metadata is unavailable.
+/// Workspace size is not checked on folder discovery or binding; it is deferred
+/// to Compile Runs that isolate parallel node workspaces.
 pub fn inspect_directory(target: Option<&Path>) -> Result<Option<WorkspaceDirectory>, String> {
-    inspect_directory_with_size_check(target, cached_check_workspace_size)
-}
-
-pub(crate) fn inspect_directory_with_size_check(
-    target: Option<&Path>,
-    check_size: impl FnOnce(&Path) -> Result<(), String>,
-) -> Result<Option<WorkspaceDirectory>, String> {
     let candidate = match target {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir().map_err(|error| error.to_string())?,
@@ -1846,7 +1870,6 @@ pub(crate) fn inspect_directory_with_size_check(
     #[cfg(target_os = "macos")]
     let canonical = crate::path_identity::actual_path(&canonical).unwrap_or(canonical);
     validate_binding(&canonical)?;
-    check_size(&canonical)?;
     let path = normalize_workspace_display_path(&canonical);
     let name = canonical
         .file_name()
@@ -1884,11 +1907,9 @@ fn detect_git_metadata_fast(candidate: &Path) -> Option<(PathBuf, String, String
 }
 
 /// Git-aware metadata for execution and internal discovery. Sidebar navigation
-/// uses `inspect_directory` instead.
-pub(crate) fn detect_with_size_check(
-    target: Option<&Path>,
-    check_size: impl FnOnce(&Path) -> Result<(), String>,
-) -> Result<Option<RepositoryInfo>, String> {
+/// uses `inspect_directory` instead. Workspace size is deferred to Compile Runs
+/// that isolate parallel node workspaces.
+pub fn detect(target: Option<&Path>) -> Result<Option<RepositoryInfo>, String> {
     let candidate = match target {
         Some(path) => {
             if !path.exists() {
@@ -1904,7 +1925,6 @@ pub(crate) fn detect_with_size_check(
     if let Some(reason) = prohibited_workspace_reason(&candidate) {
         return Err(reason);
     }
-    check_size(&candidate)?;
 
     if is_standard_git(&candidate) {
         let (top_level, branch, head) = match detect_git_metadata_fast(&candidate) {
@@ -2531,11 +2551,20 @@ pub(crate) fn working_tree_git(repository: &Path, args: &[&str]) -> Result<Strin
     }
 }
 
-/// Admission for a new Run. Existing Runs use `validate_binding` so growth
-/// cannot interrupt scheduling, snapshotting, native tools or publication.
+/// Admission for a new Compile (graph) Run with isolated parallel node workspaces.
+/// Direct (serial) Runs, shared-source Compile Runs (`!isolate_parallel_nodes`),
+/// and existing Runs use `validate_binding` so directory size never blocks them
+/// or interrupts scheduling, snapshotting, native tools, or publication.
 pub fn validate_admission(repository: &Path) -> Result<(), String> {
+    validate_admission_with_size_check(repository, cached_check_workspace_size)
+}
+
+pub(crate) fn validate_admission_with_size_check(
+    repository: &Path,
+    check_size: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
     validate_binding(repository)?;
-    cached_check_workspace_size(repository)
+    check_size(repository)
 }
 
 /// Read-only validation of the original binding. Never search, rebind, create a
@@ -3890,7 +3919,7 @@ pub(crate) fn is_reserved_pi_n_runtime_path(relative: &Path) -> bool {
     })
 }
 
-fn is_host_metadata_path(relative: &Path) -> bool {
+pub(crate) fn is_host_metadata_path(relative: &Path) -> bool {
     cfg!(target_os = "macos")
         && relative.file_name().is_some_and(|name| {
             let name = name.to_string_lossy();
@@ -4719,16 +4748,16 @@ fn snapshot_source_scoped(
         let _index_guard = index_lock.lock().map_err(|e| e.to_string())?;
         // A source view embeds the project's own Git state, so only a durable
         // snapshot inspects it; a live tree check compares collected content.
-        let source_view = if evidence {
-            Some(crate::workspace_view::inspect_source_scoped(
+        let source_inspection = if evidence {
+            Some(crate::workspace_view::inspect_source_scoped_with_stats(
                 path, exclusions,
             )?)
         } else {
             None
         };
-        let identity = source_view
+        let identity = source_inspection
             .as_ref()
-            .map(crate::workspace_view::view_identity)
+            .map(|inspected| crate::workspace_view::view_identity(&inspected.view))
             .transpose()?;
         let head = git(path, &["rev-parse", "HEAD"]).ok();
         let shadow = {
@@ -4774,8 +4803,8 @@ fn snapshot_source_scoped(
             // repository.
             repository_git(path, &["read-tree", "--empty"])?;
         }
-        let tree = if let Some(view) = source_view.as_ref() {
-            crate::workspace_view::stage_project_with_view(path, &shadow, view)?
+        let tree = if let Some(inspected) = source_inspection.as_ref() {
+            crate::workspace_view::stage_project_with_view(path, &shadow, &inspected.view)?
         } else {
             crate::workspace_view::stage_project_scoped(path, &shadow, exclusions)?
         };
@@ -4858,9 +4887,9 @@ fn snapshot_source_scoped(
         let (snapshot, newly_created) = if let Some(existing) = existing {
             (existing, false)
         } else {
-            let changed_view = match (head.as_deref(), source_view.as_ref()) {
-                (Some(head), Some(view)) if original.as_deref() == Some(tree.as_str()) => {
-                    crate::workspace_view::source_record_changed(path, head, view)?
+            let changed_view = match (head.as_deref(), source_inspection.as_ref()) {
+                (Some(head), Some(inspected)) if original.as_deref() == Some(tree.as_str()) => {
+                    crate::workspace_view::source_record_changed(path, head, &inspected.view)?
                 }
                 _ => false,
             };
@@ -4901,9 +4930,9 @@ fn snapshot_source_scoped(
         // `HEAD` must stay on the previous recorded snapshot so subsequent
         // retries preserve the common ancestor needed for publication.
         if !crate::workspace_view::has_record(path, &snapshot) {
-            if let (Some(identity), Some(view)) = (identity.as_deref(), source_view) {
-                crate::workspace_view::capture_source_with_view(
-                    path, &snapshot, identity, exclusions, view,
+            if let (Some(identity), Some(inspected)) = (identity.as_deref(), source_inspection) {
+                crate::workspace_view::capture_source_with_inspection(
+                    path, &snapshot, identity, exclusions, inspected,
                 )?;
             } else if let Some(identity) = identity {
                 crate::workspace_view::capture_source(path, &snapshot, &identity)?;
@@ -4937,22 +4966,22 @@ fn snapshot_source_scoped(
         };
         let git_dir_str = shadow.to_str().ok_or("Invalid shadow path")?;
         let work_tree_str = canonical.to_str().ok_or("Invalid target path")?;
-        let source_view = if evidence {
-            Some(crate::workspace_view::inspect_source_scoped(
+        let source_inspection = if evidence {
+            Some(crate::workspace_view::inspect_source_scoped_with_stats(
                 &canonical, exclusions,
             )?)
         } else {
             None
         };
-        let identity = source_view
+        let identity = source_inspection
             .as_ref()
-            .map(crate::workspace_view::view_identity)
+            .map(|inspected| crate::workspace_view::view_identity(&inspected.view))
             .transpose()?;
         if !evidence {
             return crate::workspace_view::live_tree_scoped(&canonical, &shadow, exclusions, None);
         }
-        if let Some(view) = source_view.as_ref() {
-            crate::workspace_view::stage_project_with_view(&canonical, &shadow, view)?;
+        if let Some(inspected) = source_inspection.as_ref() {
+            crate::workspace_view::stage_project_with_view(&canonical, &shadow, &inspected.view)?;
         } else {
             crate::workspace_view::stage_project_scoped(&canonical, &shadow, exclusions)?;
         }
@@ -4991,7 +5020,10 @@ fn snapshot_source_scoped(
             crate::workspace_view::source_record_changed(
                 &canonical,
                 head,
-                source_view.as_ref().ok_or("Missing source view")?,
+                &source_inspection
+                    .as_ref()
+                    .ok_or("Missing source view")?
+                    .view,
             )?
         } else {
             false
@@ -5013,11 +5045,11 @@ fn snapshot_source_scoped(
         }
         let head = bridge_plain_snapshot(&canonical)?;
         if !crate::workspace_view::has_record(&canonical, &head) {
-            let capture_result = if let (Some(identity), Some(view)) =
-                (identity.as_deref(), source_view)
+            let capture_result = if let (Some(identity), Some(inspected)) =
+                (identity.as_deref(), source_inspection)
             {
-                crate::workspace_view::capture_source_with_view(
-                    &canonical, &head, identity, exclusions, view,
+                crate::workspace_view::capture_source_with_inspection(
+                    &canonical, &head, identity, exclusions, inspected,
                 )
             } else if let Some(identity) = &identity {
                 crate::workspace_view::capture_source(&canonical, &head, identity)

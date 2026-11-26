@@ -660,22 +660,49 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     const macLayout = await mac.page.evaluate(() => {
       const bar = document.querySelector(".desktop-titlebar");
       const bgStage = document.querySelector(".app-background-root > .relative");
+      const grid = document.querySelector(".landing-page-grid");
       const appShell = document.querySelector(".app-shell");
       const sidebar = document.querySelector(".sidebar");
       const main = document.querySelector(".main");
+      const landingScreen = document.querySelector(".landing-screen");
+      const titleContainer = document.querySelector(".landing-title-container");
+      const titleRect = titleContainer?.getBoundingClientRect();
       const barCs = bar ? getComputedStyle(bar) : null;
       const topCenterHit = document.elementFromPoint(Math.floor(window.innerWidth / 2), 16);
+      const parseGridCenterY = (el) => {
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        const period = Number.parseFloat(cs.backgroundSize.split(",")[3]?.trim().split(/\s+/)[1] ?? "0");
+        const layerY = cs.backgroundPositionY.split(",")[3]?.trim() ?? "";
+        const calcMatch = layerY.match(/calc\(([-0-9.]+)%\s*([+-])\s*([-0-9.]+)px\)/);
+        if (calcMatch) {
+          const pct = Number.parseFloat(calcMatch[1]) / 100;
+          const sign = calcMatch[2] === "-" ? -1 : 1;
+          const px = Number.parseFloat(calcMatch[3]) * sign;
+          return rect.top + pct * (rect.height - period) + px;
+        }
+        const pxMatch = layerY.match(/^([-0-9.]+)px$/);
+        if (pxMatch) return rect.top + Number.parseFloat(pxMatch[1]);
+        return null;
+      };
       return {
+        viewportHeight: window.innerHeight,
         barHeight: barCs?.height,
         barBorderBottomWidth: barCs?.borderBottomWidth,
         barBackgroundColor: barCs?.backgroundColor,
         barTop: bar?.getBoundingClientRect().top,
         barBottom: bar?.getBoundingClientRect().bottom,
         bgStageTop: bgStage?.getBoundingClientRect().top,
+        gridTop: grid?.getBoundingClientRect().top,
+        gridCenterY: parseGridCenterY(grid),
         appShellTop: appShell?.getBoundingClientRect().top,
         sidebarTop: sidebar?.getBoundingClientRect().top,
+        sidebarBottom: sidebar?.getBoundingClientRect().bottom,
         sidebarMarginTop: sidebar ? getComputedStyle(sidebar).marginTop : null,
         mainTop: main?.getBoundingClientRect().top,
+        landingPaddingTop: landingScreen ? Number.parseFloat(getComputedStyle(landingScreen).paddingTop) : null,
+        sloganCenterY: titleRect ? titleRect.top + titleRect.height / 2 : null,
         topCenterIsDragRegion: Boolean(topCenterHit?.closest("[data-tauri-drag-region]")),
         insetVar: getComputedStyle(document.documentElement).getPropertyValue("--desktop-titlebar-inset").trim(),
       };
@@ -686,6 +713,13 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     assert.equal(macLayout.barTop, 0);
     assert.equal(macLayout.barBottom, 32);
     assert.equal(macLayout.bgStageTop, 0, "landing background extends to the top edge behind the transparent macOS titlebar");
+    assert.equal(macLayout.gridTop, 0, "tri-color grid still extends through the transparent macOS titlebar");
+    assert.equal(
+      macLayout.gridCenterY,
+      (macLayout.sidebarTop + macLayout.sidebarBottom) / 2,
+      "macOS tri-color grid centers vertically on the symmetric 12px-padded sidebar/workbench frame",
+    );
+    assert.equal(macLayout.gridCenterY, macLayout.viewportHeight / 2 + 10);
     assert.equal(macLayout.appShellTop, 0, "app shell extends to the top edge so dot-pattern backgrounds reach behind the transparent macOS titlebar");
     assert.equal(macLayout.sidebarTop, 32, "macOS sidebar sits directly beneath the 32px overlay titlebar without a redundant 12px top margin");
     assert.equal(macLayout.sidebarMarginTop, "0px");
@@ -708,14 +742,40 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     await titlebar.waitFor({ state: "hidden" });
     const fullscreenLayout = await mac.page.evaluate(() => {
       const sidebar = document.querySelector(".sidebar");
+      const grid = document.querySelector(".landing-page-grid");
+      const landingScreen = document.querySelector(".landing-screen");
+      const titleContainer = document.querySelector(".landing-title-container");
+      const titleRect = titleContainer?.getBoundingClientRect();
+      const rect = grid?.getBoundingClientRect();
+      const cs = grid ? getComputedStyle(grid) : null;
+      const period = cs ? Number.parseFloat(cs.backgroundSize.split(",")[3]?.trim().split(/\s+/)[1] ?? "0") : 0;
+      const layerY = cs ? cs.backgroundPositionY.split(",")[3]?.trim() ?? "" : "";
+      const calcMatch = layerY.match(/calc\(([-0-9.]+)%\s*([+-])\s*([-0-9.]+)px\)/);
+      const gridCenterY = rect && calcMatch
+        ? rect.top + (Number.parseFloat(calcMatch[1]) / 100) * (rect.height - period) + Number.parseFloat(calcMatch[3]) * (calcMatch[2] === "-" ? -1 : 1)
+        : null;
       return {
+        viewportHeight: window.innerHeight,
         bgStageTop: document.querySelector(".app-background-root > .relative")?.getBoundingClientRect().top,
+        gridCenterY,
+        landingPaddingTop: landingScreen ? Number.parseFloat(getComputedStyle(landingScreen).paddingTop) : null,
+        sloganCenterY: titleRect ? titleRect.top + titleRect.height / 2 : null,
         sidebarTop: sidebar?.getBoundingClientRect().top,
         sidebarMarginTop: sidebar ? getComputedStyle(sidebar).marginTop : null,
         insetVar: getComputedStyle(document.documentElement).getPropertyValue("--desktop-titlebar-inset").trim(),
       };
     });
     assert.equal(fullscreenLayout.bgStageTop, 0);
+    assert.equal(fullscreenLayout.gridCenterY, fullscreenLayout.viewportHeight / 2, "macOS fullscreen returns the grid center to the full viewport midpoint");
+    assert.equal(
+      macLayout.landingPaddingTop,
+      fullscreenLayout.landingPaddingTop - 12,
+      "macOS landing screen drops the same 12px top padding as sidebar/workbench beneath the overlay titlebar",
+    );
+    assert.ok(
+      Math.abs((macLayout.sloganCenterY - fullscreenLayout.sloganCenterY) - 10) < 0.5,
+      `macOS slogan vertical center receives the same (inset - 12px) / 2 (+10px) offset as the grid/cards (got mac=${macLayout.sloganCenterY}, fullscreen=${fullscreenLayout.sloganCenterY})`,
+    );
     assert.equal(fullscreenLayout.sidebarTop, 12, "macOS fullscreen restores the 12px sidebar top margin");
     assert.equal(fullscreenLayout.sidebarMarginTop, "12px");
     assert.equal(fullscreenLayout.insetVar, "0px");
@@ -730,14 +790,32 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     await titlebar.waitFor({ state: "visible" });
     const restoredLayout = await mac.page.evaluate(() => {
       const sidebar = document.querySelector(".sidebar");
+      const grid = document.querySelector(".landing-page-grid");
+      const titleContainer = document.querySelector(".landing-title-container");
+      const titleRect = titleContainer?.getBoundingClientRect();
+      const rect = grid?.getBoundingClientRect();
+      const cs = grid ? getComputedStyle(grid) : null;
+      const period = cs ? Number.parseFloat(cs.backgroundSize.split(",")[3]?.trim().split(/\s+/)[1] ?? "0") : 0;
+      const layerY = cs ? cs.backgroundPositionY.split(",")[3]?.trim() ?? "" : "";
+      const calcMatch = layerY.match(/calc\(([-0-9.]+)%\s*([+-])\s*([-0-9.]+)px\)/);
+      const gridCenterY = rect && calcMatch
+        ? rect.top + (Number.parseFloat(calcMatch[1]) / 100) * (rect.height - period) + Number.parseFloat(calcMatch[3]) * (calcMatch[2] === "-" ? -1 : 1)
+        : null;
       return {
         bgStageTop: document.querySelector(".app-background-root > .relative")?.getBoundingClientRect().top,
+        gridCenterY,
+        sloganCenterY: titleRect ? titleRect.top + titleRect.height / 2 : null,
         sidebarTop: sidebar?.getBoundingClientRect().top,
         sidebarMarginTop: sidebar ? getComputedStyle(sidebar).marginTop : null,
         insetVar: getComputedStyle(document.documentElement).getPropertyValue("--desktop-titlebar-inset").trim(),
       };
     });
     assert.equal(restoredLayout.bgStageTop, 0);
+    assert.equal(restoredLayout.gridCenterY, macLayout.gridCenterY, "leaving macOS fullscreen restores the content-centered grid origin");
+    assert.ok(
+      Math.abs(restoredLayout.sloganCenterY - macLayout.sloganCenterY) < 0.5,
+      "leaving macOS fullscreen restores the compensated slogan vertical center",
+    );
     assert.equal(restoredLayout.sidebarTop, 32);
     assert.equal(restoredLayout.sidebarMarginTop, "0px");
     assert.equal(restoredLayout.insetVar, "32px");
@@ -767,13 +845,24 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     const winLayout = await win.page.evaluate(() => {
       const bar = document.querySelector(".desktop-titlebar");
       const sidebar = document.querySelector(".sidebar");
+      const grid = document.querySelector(".landing-page-grid");
       const barCs = bar ? getComputedStyle(bar) : null;
       const sidebarCs = sidebar ? getComputedStyle(sidebar) : null;
+      const rect = grid?.getBoundingClientRect();
+      const cs = grid ? getComputedStyle(grid) : null;
+      const period = cs ? Number.parseFloat(cs.backgroundSize.split(",")[3]?.trim().split(/\s+/)[1] ?? "0") : 0;
+      const layerY = cs ? cs.backgroundPositionY.split(",")[3]?.trim() ?? "" : "";
+      const calcMatch = layerY.match(/calc\(([-0-9.]+)%\s*([+-])\s*([-0-9.]+)px\)/);
+      const gridCenterY = rect && calcMatch
+        ? rect.top + (Number.parseFloat(calcMatch[1]) / 100) * (rect.height - period) + Number.parseFloat(calcMatch[3]) * (calcMatch[2] === "-" ? -1 : 1)
+        : null;
       return {
+        viewportHeight: window.innerHeight,
         barHeight: barCs?.height,
         barBackgroundColor: barCs?.backgroundColor,
         sidebarBackgroundColor: sidebarCs?.backgroundColor,
         bgStageTop: document.querySelector(".app-background-root > .relative")?.getBoundingClientRect().top,
+        gridCenterY,
         sidebarTop: sidebar?.getBoundingClientRect().top,
         sidebarMarginTop: sidebarCs?.marginTop ?? null,
         insetVar: getComputedStyle(document.documentElement).getPropertyValue("--desktop-titlebar-inset").trim(),
@@ -783,6 +872,7 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     assert.equal(winLayout.barBackgroundColor, winLayout.sidebarBackgroundColor, "Windows titlebar matches the sidebar surface color");
     assert.equal(winLayout.barBackgroundColor, "rgb(249, 249, 250)");
     assert.equal(winLayout.bgStageTop, 32);
+    assert.equal(winLayout.gridCenterY, 32 + (winLayout.viewportHeight - 32) / 2, "Windows grid centers vertically on the content area below its bordered titlebar");
     assert.equal(winLayout.sidebarTop, 44, "Windows keeps the 12px sidebar top margin below its bordered titlebar");
     assert.equal(winLayout.sidebarMarginTop, "12px");
     assert.equal(winLayout.insetVar, "32px");

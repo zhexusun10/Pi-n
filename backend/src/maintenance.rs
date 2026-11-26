@@ -170,7 +170,17 @@ fn workspace_plan_with_stale(
                         && crate::path_identity::same_path(owner_parent, parent)
                 )
             });
-            if live.contains(&id)
+            let settled_orphan_publication = !live.contains(&id)
+                && !is_protected(&path)
+                && !recorded
+                && !store.run_was_deleted(&id)?
+                && crate::cleanup::is_settled_orphan_publication_dir(
+                    &path,
+                    std::time::Duration::from_secs(60),
+                );
+            if settled_orphan_publication {
+                plan.paths.insert(path);
+            } else if live.contains(&id)
                 || is_protected(&path)
                 || !store.run_was_deleted(&id)?
                 || !recorded
@@ -202,6 +212,7 @@ fn workspace_plan_with_stale(
     // Graphs whose private ancestry is still conversation-owned. Skip entries
     // that fail shadow name validation or are symlinks.
     if let Ok(Some(shadow_root)) = real_child_path(root, &root.join("shadow_repos"), false) {
+        let mut shadow_candidates = Vec::new();
         for entry in fs::read_dir(&shadow_root).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -213,10 +224,16 @@ fn workspace_plan_with_stale(
             let Ok(Some(path)) = target.resolve(root, "offline-gc") else {
                 continue;
             };
-            if store.shadow_repo_in_use(&path)? {
-                plan.shadow_retained += 1;
-            } else {
-                plan.shadow_paths.insert(path);
+            shadow_candidates.push(path);
+        }
+        if !shadow_candidates.is_empty() {
+            let referenced = store.referenced_shadow_repos()?;
+            for path in shadow_candidates {
+                if referenced.contains(&crate::path_identity::path_key(&path)) {
+                    plan.shadow_retained += 1;
+                } else {
+                    plan.shadow_paths.insert(path);
+                }
             }
         }
     }

@@ -26,10 +26,22 @@ import { ExtensionCommandUI } from "./ExtensionCommandUI";
 import { ComposerNotice } from "./ComposerNotice";
 import { ScopedModelsModal } from "../modals/ScopedModelsModal";
 import { ImagePreviewModal, type PreviewImageItem } from "../modals/ImagePreviewModal";
+import { ImageContextMenu } from "./ImageContextMenu";
+import type { ContextMenuAnchor } from "./context-menu";
 import { useHideAutoMode } from "../../services/displayPreferences";
 import { formatFileSize, getFileIcon } from "../../utils/attachmentUtils";
 import { extractDroppedFiles, hasDraggedFiles } from "../../utils/fileDrop";
-import { prepareVisionImageAttachment } from "../../utils/imageCompress";
+import {
+  computePerImageBase64Budget,
+  prepareVisionImageAttachment,
+} from "../../utils/imageCompress";
+import {
+  imageAttachmentFingerprint,
+  indexOriginalImagePath,
+  registerImageBlobUrl,
+  rememberSessionOriginalImage,
+  resolveOriginalImagePath,
+} from "../../services/originalImagePreview";
 import { createUuid } from "../../lib/uuid";
 import type { SkillItem, ImageAttachment } from "../../types";
 
@@ -364,6 +376,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     };
     const textareaId = useId();
     const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+    const [imageMenu, setImageMenu] = useState<{ anchor: ContextMenuAnchor; index: number } | null>(null);
     const { visionDraftAttachments, fileDraftAttachments, composerPreviewImages, previewIndexByAttachmentId, restoredImageStartIndex } = useMemo(() => {
       const visionItems: typeof draftAttachments[number][] = [];
       const fileItems: typeof draftAttachments[number][] = [];
@@ -390,6 +403,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       for (const image of restoredImages) {
         previewItems.push({
           src: `data:${image.mimeType};base64,${image.data}`,
+          originalPath: resolveOriginalImagePath(image),
+          sessionOriginalKey: imageAttachmentFingerprint(image),
           alt: image.name || t("上传附件预览"),
           name: image.name,
         });
@@ -884,6 +899,14 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       const box = containerRef.current;
       if (!layoutId || !box) return;
 
+      // Reserve the settled flow height before measuring targetRect so the
+      // landing flex layout already reflects the real composer height.
+      const initialHeight = box.getBoundingClientRect().height;
+      if (flowRef.current && initialHeight > 0) {
+        const reserved = `${initialHeight}px`;
+        if (flowRef.current.style.height !== reserved) flowRef.current.style.height = reserved;
+      }
+
       let prev: ComposerHandoffSnapshot | null = null;
       const existing = activeComposers.get(layoutId);
       if (existing && existing.element !== box && existing.element.isConnected) {
@@ -990,7 +1013,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             ],
             {
               duration: 240,
-              delay: 40,
+              delay: animateBox ? 40 : 0,
               easing: "cubic-bezier(0.22, 1, 0.36, 1)",
               fill: "backwards",
             }
@@ -1181,7 +1204,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           let previewIsObjectUrl = false;
           let needsDataUrlFallback = false;
           if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
-            imagePreview = URL.createObjectURL(file);
+            imagePreview = registerImageBlobUrl(URL.createObjectURL(file), file);
             previewIsObjectUrl = true;
           } else {
             needsDataUrlFallback = true;
@@ -1450,25 +1473,74 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
         setIsPreparing(true);
         try {
           let totalImageBase64Bytes = restoredImages.reduce((sum, img) => sum + img.data.length, 0);
+          let remainingVisionImages = submittedAttachments.reduce(
+            (count, item) => count + (visionImageMimeType(item.file) ? 1 : 0),
+            0,
+          );
           for (const item of submittedAttachments) {
             const imageMimeType = visionImageMimeType(item.file);
             if (imageMimeType) {
+              const remainingBudget = MAX_TOTAL_INLINE_IMAGE_BASE64_BYTES - totalImageBase64Bytes;
+              if (remainingBudget <= 0) {
+                throw new Error(t("图片总大小超过单次请求限制，请减少图片数量后重试。"));
+              }
+              const perImageBudget = computePerImageBase64Budget(
+                remainingBudget,
+                remainingVisionImages,
+              );
               const prepared = await prepareVisionImageAttachment(
                 item.file,
                 imageMimeType,
                 item.imagePreview,
+                { maxBase64Bytes: perImageBudget },
               );
+              remainingVisionImages -= 1;
               if (!isCurrent()) return;
               totalImageBase64Bytes += prepared.data.length;
               if (totalImageBase64Bytes > MAX_TOTAL_INLINE_IMAGE_BASE64_BYTES) {
                 throw new Error(t("图片总大小超过单次请求限制，请减少图片数量后重试。"));
               }
-              structuredImages.push({
+              let originalPath: string | undefined;
+              if (prepared.compressed) {
+                if (item.file.size <= MAX_EXTERNAL_ATTACHMENT_BYTES) {
+                  const canReuseUploaded = Boolean(
+                    item.uploadedPath &&
+                    item.uploadedContext?.repository === repository &&
+                    item.uploadedContext?.runId === runId,
+                  );
+                  if (canReuseUploaded && item.uploadedPath) {
+                    originalPath = item.uploadedPath;
+                  } else {
+                    try {
+                      const uploaded = await runtimeService.writeWorkspaceFile(item.file, repository, {
+                        runId, attachmentId: item.attachmentId,
+                      });
+                      if (!isCurrent()) return;
+                      originalPath = uploaded.path;
+                      submitDrafts.updateAttachment(submitKey, item.attachmentId, {
+                        uploadedPath: uploaded.path,
+                        uploadedContext: { repository, runId },
+                      });
+                    } catch (uploadErr) {
+                      console.warn("Failed to persist original image for HD preview:", uploadErr);
+                      rememberSessionOriginalImage(prepared, item.file);
+                    }
+                  }
+                } else {
+                  rememberSessionOriginalImage(prepared, item.file);
+                }
+              }
+              const attachment: ImageAttachment = {
                 type: "image",
                 mimeType: prepared.mimeType,
                 data: prepared.data,
                 name: item.file.name,
-              });
+                ...(originalPath ? { originalPath } : {}),
+              };
+              if (originalPath) {
+                indexOriginalImagePath(attachment);
+              }
+              structuredImages.push(attachment);
             } else {
               if (item.file.size > MAX_EXTERNAL_ATTACHMENT_BYTES) {
                 throw new Error(t("文件「{0}」超过 22 MB 上限。", item.file.name));
@@ -1834,6 +1906,15 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                             type="button"
                             className="prompt-box-image-open-btn"
                             onClick={() => idx !== undefined && setPreviewIndex(idx)}
+                            onContextMenu={(event) => {
+                              if (idx === undefined) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setImageMenu({
+                                anchor: { x: event.clientX, y: event.clientY, trigger: event.currentTarget },
+                                index: idx,
+                              });
+                            }}
                             aria-label={t("预览图片")}
                           >
                             <img
@@ -1903,6 +1984,14 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
               type="button"
               className="prompt-box-image-open-btn"
               onClick={() => setPreviewIndex(restoredImageStartIndex + index)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setImageMenu({
+                  anchor: { x: event.clientX, y: event.clientY, trigger: event.currentTarget },
+                  index: restoredImageStartIndex + index,
+                });
+              }}
               aria-label={t("预览图片")}
             >
               <img src={`data:${image.mimeType};base64,${image.data}`} alt={image.name || t("上传附件预览")} className="prompt-box-preview-img" />
@@ -2152,6 +2241,14 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             </button>
           </div>
         </div>
+        {imageMenu && composerPreviewImages[imageMenu.index] && (
+          <ImageContextMenu
+            anchor={imageMenu.anchor}
+            target={composerPreviewImages[imageMenu.index]}
+            onPreview={() => setPreviewIndex(imageMenu.index)}
+            onClose={() => setImageMenu(null)}
+          />
+        )}
         <ImagePreviewModal
           images={composerPreviewImages}
           index={previewIndex}

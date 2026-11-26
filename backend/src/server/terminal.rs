@@ -353,10 +353,11 @@ mod tests {
     fn failed_terminal_create_releases_its_pending_capacity_slot() {
         let manager = WebTerminals::default();
         let temp = tempfile::tempdir().unwrap();
-        let missing = temp.path().join("does-not-exist");
+        let not_a_dir = temp.path().join("not-a-dir.txt");
+        std::fs::write(&not_a_dir, "hi").unwrap();
         for _ in 0..MAX_SESSIONS + 2 {
             let err = manager
-                .create(&json!({ "workspacePath": missing.to_string_lossy() }))
+                .create(&json!({ "workspacePath": not_a_dir.to_string_lossy() }))
                 .unwrap_err();
             assert!(!err.contains("Too many open terminals"), "{err}");
         }

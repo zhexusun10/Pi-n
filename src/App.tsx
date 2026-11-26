@@ -1,11 +1,11 @@
 import { t, localizeError } from "./i18n";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle, X } from "lucide-react";
-import { motion, AnimatePresence, LayoutGroup } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 
 import {
   defaultConfig, emptyGraph, emptySnapshot, normalizeMaxFeedback, normalizeMaxParallel,
-  type Config, type Graph, type HostPreflight, type ManualNodeRequest, type ProjectItem, type WorkspaceDirectory,
+  type Config, type Graph, type HostPreflight, type ManualNodeRequest, type PinDotColor, type ProjectItem, type WorkspaceDirectory,
   type Snapshot, type PlanRouteType,
   type RuntimeActivity,
   type PlanningSummary, type PlanMode, type ChatMessage,
@@ -32,6 +32,7 @@ import {
 import { DesktopTitlebar, useDesktopTitlebar } from "./components/layout/DesktopTitlebar";
 import { enableRuntimeEvents } from "./services/runtimeEvents";
 import { invalidateTranscriptCaches } from "./services/transcriptCache";
+import { unregisterImageBlobUrl } from "./services/originalImagePreview";
 import { providerAuth } from "./services/providerAuth";
 import { ComposerModels, type ComposerScope } from "./services/composerCommands";
 import { applyModelConfig, modelRoles, planningModelRoles, providerIdForModel, roleModelConfig, updateRoleModelConfig } from "./modelConfig";
@@ -51,6 +52,7 @@ import {
   applyPlannerAssistantMessageEnd, applyPlannerEdgeEditsToState, applyPlannerNodeEditsToState, applyPlannerExtensionError,
   applyPlannerTextDelta, applyPlannerThinkingUpdate, applyPlannerToolCallUpdate,
   applyPlannerCompaction,
+  applyPlannerEntryAppended,
   applyPlannerToolExecutionEnd, applyPlannerToolExecutionStart, applyPlannerUserMessageStart,
   initialPlannerStream,
 } from "./services/plannerStream";
@@ -73,7 +75,19 @@ import { useRunIndicators } from "./hooks/useRunIndicators";
 import { useAppUpdater } from "./hooks/useAppUpdater";
 import { Sidebar } from "./components/layout/Sidebar";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { bindRunToWorkspace, normalizeWorkspacePath, promoteRunInWorkspace, snapshotBelongsToWorkspace, workspaceKey, workspaceRunsFromSummaries } from "./services/workspaceConversations";
+import {
+  bindRunToWorkspace,
+  normalizeWorkspacePath,
+  orderProjects,
+  pinRunInWorkspace,
+  promoteRunInWorkspace,
+  reorderRunsInWorkspace,
+  reorderSubset,
+  snapshotBelongsToWorkspace,
+  unpinRunInWorkspace,
+  workspaceKey,
+  workspaceRunsFromSummaries,
+} from "./services/workspaceConversations";
 import { landingDraftKey, loadLandingDraft, saveLandingDraft, clearLandingDraft } from "./services/landingDraft";
 import { useCompletionNotifications, useCompletionNotificationSound, useHideAutoMode, useLandingBackground } from "./services/displayPreferences";
 import {
@@ -156,13 +170,9 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectItem[]>(() => {
     const items = readStorageJson(STORAGE_KEYS.projects);
     if (!Array.isArray(items)) return [];
-    // Match the order bootstrap derives from `lastOpened`; otherwise the
-    // first authoritative sort visibly rearranges the restored cards.
-    return items.map((p) => ({
-      ...p,
-      path: normalizeWorkspacePath(p.path),
-      id: normalizeWorkspacePath(p.id || p.path),
-    })).sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+    // Match the order bootstrap derives from saved drag order or `lastOpened`;
+    // otherwise the first authoritative sort visibly rearranges restored cards.
+    return orderProjects(items, readStorageJson(STORAGE_KEYS.projectOrder));
   });
   const [config, setConfig] = useState<Config>(() => {
     let initialConfig: Config = { ...defaultConfig };
@@ -236,13 +246,6 @@ export default function App() {
     getDesktopBackendState,
   );
   const updater = useAppUpdater({ scheduleStartupCheck: true });
-  // The backend withholds size warnings until every active Run in this
-  // workspace has drained, including background conversations/publication.
-  // Depend on the warning value, not each poll, so dismissing it stays dismissed.
-  const workspaceSizeError = repositoryStatus?.sizeLimitExceeded ? repositoryStatus.error : null;
-  useEffect(() => {
-    if (workspaceSizeError) setError(workspaceSizeError);
-  }, [config.repository, workspaceSizeError]);
   const copyPromptRequestRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [isOpeningProject, setIsOpeningProject] = useState(false);
@@ -259,6 +262,10 @@ export default function App() {
   const [workspaceRuns, setWorkspaceRuns] = useState<Record<string, string[]>>({});
   const [archivedRunIds, setArchivedRunIds] = useState<string[]>(() => readStorageJson(STORAGE_KEYS.archivedRuns) ?? []);
   const archivedRunIdSet = useMemo(() => new Set(archivedRunIds), [archivedRunIds]);
+  const [pinnedRuns, setPinnedRuns] = useState<Record<string, PinDotColor>>(() => readStorageJson(STORAGE_KEYS.pinnedRuns) ?? {});
+  const pinnedRunsRef = useRef(pinnedRuns);
+  pinnedRunsRef.current = pinnedRuns;
+  const workspaceRunOrderRef = useRef<Record<string, string[]>>(readStorageJson(STORAGE_KEYS.workspaceRunOrder) ?? {});
   const [openedProjectSeq, setOpenedProjectSeq] = useState(0);
   // Current cache IDs only suppress re-entry motion after the index validates a
   // card; they never render a card or trigger a history read before bootstrap.
@@ -543,22 +550,37 @@ export default function App() {
     if (summary) setSelected("");
   }));
 
+  const syncWorkspaceRunOrder = (owner: string, ids: readonly string[], force = false) => {
+    if (!owner) return;
+    if (!force && !workspaceRunOrderRef.current[owner]) return;
+    const durable = ids.filter(id => !id.startsWith("pending-"));
+    const next = { ...workspaceRunOrderRef.current, [owner]: durable };
+    workspaceRunOrderRef.current = next;
+    writeStorageJson(STORAGE_KEYS.workspaceRunOrder, next);
+  };
+
   const recordRunToWorkspace = (runId: string, repo: string) => {
     if (deletedRunIdsRef.current.has(runId)) return;
+    const pinnedSet = new Set(Object.keys(pinnedRunsRef.current));
     setWorkspaceRuns((prev) => {
-      const updated = bindRunToWorkspace(prev, runId, repo);
+      const updated = bindRunToWorkspace(prev, runId, repo, undefined, pinnedSet);
       if (updated === prev) return prev;
       writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+      const owner = workspaceKey(repo);
+      if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner]);
       return updated;
     });
   };
 
   const promoteRunToTop = useCallback((runId: string, repo: string) => {
     if (!runId || !repo || deletedRunIdsRef.current.has(runId)) return;
+    const pinnedSet = new Set(Object.keys(pinnedRunsRef.current));
     setWorkspaceRuns((prev) => {
-      const updated = promoteRunInWorkspace(prev, runId, repo);
+      const updated = promoteRunInWorkspace(prev, runId, repo, pinnedSet);
       if (updated === prev) return prev;
       writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+      const owner = workspaceKey(repo);
+      if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner]);
       return updated;
     });
   }, []);
@@ -568,9 +590,12 @@ export default function App() {
     // Keep the sidebar card keyed by the provisional ID so adopting the durable
     // Run ID reuses the same node instead of replaying its entrance/exit.
     setRunCardKeys((prev) => (prev[newId] === oldId ? prev : { ...prev, [newId]: oldId }));
+    const pinnedSet = new Set(Object.keys(pinnedRunsRef.current));
     setWorkspaceRuns((prev) => {
-      const updated = bindRunToWorkspace(prev, newId, repository, oldId);
+      const updated = bindRunToWorkspace(prev, newId, repository, oldId, pinnedSet);
       writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+      const owner = workspaceKey(repository);
+      if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner]);
       return updated;
     });
 
@@ -1151,24 +1176,32 @@ export default function App() {
       : null;
 
     const storedWorkspaceRuns = readStorageJson(STORAGE_KEYS.workspaceRuns);
+    const storedWorkspaceRunOrder = readStorageJson(STORAGE_KEYS.workspaceRunOrder) ?? {};
+    workspaceRunOrderRef.current = storedWorkspaceRunOrder;
     const storedArchivedRuns = readStorageJson(STORAGE_KEYS.archivedRuns) ?? [];
     const storedArchivedRunSet = new Set(storedArchivedRuns);
     setArchivedRunIds(storedArchivedRuns);
+    const storedPinnedRuns = readStorageJson(STORAGE_KEYS.pinnedRuns) ?? {};
+    const storedPinnedRunSet = new Set(Object.keys(storedPinnedRuns));
+    pinnedRunsRef.current = storedPinnedRuns;
+    setPinnedRuns(storedPinnedRuns);
+    const storedProjectOrder = readStorageJson(STORAGE_KEYS.projectOrder);
 
     let activeRepo = "";
     let activeInfo: WorkspaceDirectory | null = null;
 
     if (storedProjects !== null && storedProjects.length > 0) {
-      const sorted = [...storedProjects].sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+      const byLastOpened = [...storedProjects].sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+      const ordered = orderProjects(storedProjects, storedProjectOrder);
       const lastWorkspace = workspaceKey(readStorageString(STORAGE_KEYS.lastWorkspace) ?? "");
-      const latestProj = sorted.find(p => !p.archived && workspaceKey(p.path) === lastWorkspace)
-        ?? sorted.find(p => !p.archived);
+      const latestProj = byLastOpened.find(p => !p.archived && workspaceKey(p.path) === lastWorkspace)
+        ?? byLastOpened.find(p => !p.archived);
       if (latestProj) {
         activeRepo = latestProj.path;
         activeInfo = { name: latestProj.name, path: latestProj.path };
-        setProjects(sorted);
+        setProjects(ordered);
       } else {
-        setProjects(sorted);
+        setProjects(ordered);
         activeRepo = "";
         activeInfo = null;
       }
@@ -1269,7 +1302,13 @@ export default function App() {
       // One lightweight authoritative read replaces N history replays. Empty
       // titles are resolved too; never fetch a snapshot just to label a card.
       const summaries = data.conversations.filter(item => !deletedRunIdsRef.current.has(item.runId));
-      indexedRuns = workspaceRunsFromSummaries(summaries, storedWorkspaceRuns || {}, data.unavailableConversationIds);
+      indexedRuns = workspaceRunsFromSummaries(
+        summaries,
+        storedWorkspaceRuns || {},
+        data.unavailableConversationIds,
+        storedPinnedRunSet,
+        storedWorkspaceRunOrder,
+      );
       // Seed the poller before enabling/rendering the indexed Runs. Settled
       // cards never need a snapshot just to discover their phase; live and
       // standalone-Merger work remain covered by the SSE watchdog.
@@ -1302,6 +1341,28 @@ export default function App() {
         writeStorageJson(STORAGE_KEYS.archivedRuns, prunedArchivedRuns);
       }
       setArchivedRunIds(prunedArchivedRuns);
+      const prunedPinnedRuns: Record<string, PinDotColor> = {};
+      let pinnedChanged = false;
+      for (const [id, color] of Object.entries(storedPinnedRuns)) {
+        if (knownIds.has(id) && !storedArchivedRunSet.has(id)) prunedPinnedRuns[id] = color;
+        else pinnedChanged = true;
+      }
+      if (pinnedChanged) {
+        writeStorageJson(STORAGE_KEYS.pinnedRuns, prunedPinnedRuns);
+      }
+      pinnedRunsRef.current = prunedPinnedRuns;
+      setPinnedRuns(prunedPinnedRuns);
+      const prunedRunOrder: Record<string, string[]> = {};
+      let runOrderChanged = false;
+      for (const [repo, ids] of Object.entries(storedWorkspaceRunOrder)) {
+        const filtered = ids.filter(id => knownIds.has(id));
+        if (filtered.length > 0) prunedRunOrder[repo] = filtered;
+        if (filtered.length !== ids.length) runOrderChanged = true;
+      }
+      if (runOrderChanged) {
+        writeStorageJson(STORAGE_KEYS.workspaceRunOrder, prunedRunOrder);
+      }
+      workspaceRunOrderRef.current = prunedRunOrder;
       setIsSidebarReady(true);
       if (data.snapshot.runId) setBackendStatus(data.snapshot);
     } else {
@@ -1401,6 +1462,11 @@ export default function App() {
           setProjects((prev) => {
             const next = [item, ...prev.filter((p) => workspaceKey(p.path) !== workspaceKey(normalizedPath))];
             writeStorageJson(STORAGE_KEYS.projects, next);
+            const savedOrder = readStorageJson(STORAGE_KEYS.projectOrder);
+            if (savedOrder && savedOrder.length > 0) {
+              const openedKey = workspaceKey(normalizedPath);
+              writeStorageJson(STORAGE_KEYS.projectOrder, [openedKey, ...savedOrder.filter(k => workspaceKey(k) !== openedKey)]);
+            }
             return next;
           });
           setOpenedProjectSeq((seq) => seq + 1);
@@ -1457,6 +1523,10 @@ export default function App() {
     if (remaining.length !== projects.length) {
       setProjects(remaining);
       writeStorageJson(STORAGE_KEYS.projects, remaining);
+      const savedOrder = readStorageJson(STORAGE_KEYS.projectOrder);
+      if (savedOrder && savedOrder.length > 0) {
+        writeStorageJson(STORAGE_KEYS.projectOrder, savedOrder.filter(k => workspaceKey(k) !== key));
+      }
     }
     // An open folder picker owns the next workspace selection, and bootstrap
     // still owns the initial foreground state. Detaching now would invalidate
@@ -1518,6 +1588,10 @@ export default function App() {
         setProjects(prev => {
           const remaining = prev.filter(p => workspaceKey(p.path) !== key);
           writeStorageJson(STORAGE_KEYS.projects, remaining);
+          const savedOrder = readStorageJson(STORAGE_KEYS.projectOrder);
+          if (savedOrder && savedOrder.length > 0) {
+            writeStorageJson(STORAGE_KEYS.projectOrder, savedOrder.filter(k => workspaceKey(k) !== key));
+          }
           return remaining;
         });
         setWorkspaceRuns((prev) => {
@@ -1528,6 +1602,21 @@ export default function App() {
           writeStorageJson(STORAGE_KEYS.workspaceRuns, copy);
           return copy;
         });
+        const nextRunOrder: Record<string, string[]> = {};
+        let runOrderModified = false;
+        for (const [repo, ids] of Object.entries(workspaceRunOrderRef.current)) {
+          if (repo === key) {
+            runOrderModified = true;
+            continue;
+          }
+          const filtered = ids.filter(id => !deletedIds.has(id));
+          if (filtered.length !== ids.length) runOrderModified = true;
+          if (filtered.length > 0) nextRunOrder[repo] = filtered;
+        }
+        if (runOrderModified) {
+          workspaceRunOrderRef.current = nextRunOrder;
+          writeStorageJson(STORAGE_KEYS.workspaceRunOrder, nextRunOrder);
+        }
         const forgetLabels = (prev: Record<string, string>) => Object.fromEntries(Object.entries(prev).filter(([id]) => !deletedIds.has(id)));
         setRunLabels(prev => {
           const next = forgetLabels(prev);
@@ -1542,6 +1631,14 @@ export default function App() {
         setArchivedRunIds(prev => {
           const next = prev.filter(id => !deletedIds.has(id));
           if (next.length !== prev.length) writeStorageJson(STORAGE_KEYS.archivedRuns, next);
+          return next;
+        });
+        setPinnedRuns(prev => {
+          const next = Object.fromEntries(Object.entries(prev).filter(([id]) => !deletedIds.has(id)));
+          if (Object.keys(next).length !== Object.keys(prev).length) {
+            pinnedRunsRef.current = next;
+            writeStorageJson(STORAGE_KEYS.pinnedRuns, next);
+          }
           return next;
         });
 
@@ -1604,6 +1701,25 @@ export default function App() {
       writeStorageJson(STORAGE_KEYS.archivedRuns, next);
       return next;
     });
+    setPinnedRuns((prev) => {
+      if (!(runIdToDelete in prev)) return prev;
+      const next = { ...prev };
+      delete next[runIdToDelete];
+      pinnedRunsRef.current = next;
+      writeStorageJson(STORAGE_KEYS.pinnedRuns, next);
+      return next;
+    });
+    const nextRunOrder: Record<string, string[]> = {};
+    let runOrderChanged = false;
+    for (const [repo, idList] of Object.entries(workspaceRunOrderRef.current)) {
+      const filtered = idList.filter(id => id !== runIdToDelete);
+      if (filtered.length !== idList.length) runOrderChanged = true;
+      if (filtered.length > 0) nextRunOrder[repo] = filtered;
+    }
+    if (runOrderChanged) {
+      workspaceRunOrderRef.current = nextRunOrder;
+      writeStorageJson(STORAGE_KEYS.workspaceRunOrder, nextRunOrder);
+    }
     messagesByRunRef.current.delete(runIdToDelete);
     composerDraftsRef.current.delete(runIdToDelete);
   };
@@ -1665,6 +1781,22 @@ export default function App() {
       writeStorageJson(STORAGE_KEYS.archivedRuns, next);
       return next;
     });
+    if (runId in pinnedRunsRef.current) {
+      const nextPinned = { ...pinnedRunsRef.current };
+      delete nextPinned[runId];
+      pinnedRunsRef.current = nextPinned;
+      setPinnedRuns(nextPinned);
+      writeStorageJson(STORAGE_KEYS.pinnedRuns, nextPinned);
+      const remainingPinned = new Set(Object.keys(nextPinned));
+      setWorkspaceRuns((prev) => {
+        const updated = unpinRunInWorkspace(prev, runId, config.repository, remainingPinned);
+        if (updated === prev) return prev;
+        writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+        const owner = Object.entries(updated).find(([, ids]) => ids.includes(runId))?.[0] ?? workspaceKey(config.repository);
+        if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner]);
+        return updated;
+      });
+    }
     if (state.runId === runId || loadingRunId === runId || plannerStream.runId === runId) {
       handleNewConversation();
     }
@@ -1676,6 +1808,69 @@ export default function App() {
       if (!prev.includes(runId)) return prev;
       const next = prev.filter((id) => id !== runId);
       writeStorageJson(STORAGE_KEYS.archivedRuns, next);
+      return next;
+    });
+  };
+
+  const handlePinRun = (runId: string, color: PinDotColor) => {
+    if (!runId || runId.startsWith("pending-")) return;
+    const wasPinned = runId in pinnedRunsRef.current;
+    const nextPinned: Record<string, PinDotColor> = { ...pinnedRunsRef.current, [runId]: color };
+    pinnedRunsRef.current = nextPinned;
+    setPinnedRuns(nextPinned);
+    writeStorageJson(STORAGE_KEYS.pinnedRuns, nextPinned);
+    if (!wasPinned) {
+      const pinnedSet = new Set(Object.keys(nextPinned));
+      setWorkspaceRuns((prev) => {
+        const updated = pinRunInWorkspace(prev, runId, config.repository, pinnedSet);
+        const owner = Object.entries(updated).find(([, ids]) => ids.includes(runId))?.[0] ?? workspaceKey(config.repository);
+        if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner], true);
+        if (updated === prev) return prev;
+        writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+        return updated;
+      });
+    }
+  };
+
+  const handleUnpinRun = (runId: string) => {
+    if (!runId || !(runId in pinnedRunsRef.current)) return;
+    const nextPinned = { ...pinnedRunsRef.current };
+    delete nextPinned[runId];
+    pinnedRunsRef.current = nextPinned;
+    setPinnedRuns(nextPinned);
+    writeStorageJson(STORAGE_KEYS.pinnedRuns, nextPinned);
+    const remainingPinned = new Set(Object.keys(nextPinned));
+    setWorkspaceRuns((prev) => {
+      const updated = unpinRunInWorkspace(prev, runId, config.repository, remainingPinned);
+      const owner = Object.entries(updated).find(([, ids]) => ids.includes(runId))?.[0] ?? workspaceKey(config.repository);
+      if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner], true);
+      if (updated === prev) return prev;
+      writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+      return updated;
+    });
+  };
+
+  const handleReorderRuns = (visibleRunIds: string[], fromIndex: number, toIndex: number) => {
+    const owner = workspaceKey(config.repository);
+    if (!owner || fromIndex === toIndex) return;
+    const pinnedSet = new Set(Object.keys(pinnedRunsRef.current));
+    setWorkspaceRuns((prev) => {
+      const updated = reorderRunsInWorkspace(prev, owner, visibleRunIds, fromIndex, toIndex, pinnedSet);
+      if (updated === prev) return prev;
+      writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
+      if (updated[owner]) syncWorkspaceRunOrder(owner, updated[owner], true);
+      return updated;
+    });
+  };
+
+  const handleReorderProjects = (visibleProjectPaths: string[], fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const visibleKeys = visibleProjectPaths.map(path => workspaceKey(path));
+    setProjects((prev) => {
+      const next = reorderSubset(prev, visibleKeys, fromIndex, toIndex, p => workspaceKey(p.path));
+      if (next.length === prev.length && next.every((item, idx) => item === prev[idx])) return prev;
+      writeStorageJson(STORAGE_KEYS.projects, next);
+      writeStorageJson(STORAGE_KEYS.projectOrder, next.map(p => workspaceKey(p.path)));
       return next;
     });
   };
@@ -2447,6 +2642,8 @@ export default function App() {
                 setPlannerStream((prev) => applyPlannerToolExecutionEnd(prev, pEvent, resText, exitCode, isErr, truncated, args));
               } else if (pEvent?.type === "compaction_start" || pEvent?.type === "compaction_end" || pEvent?.type === "compaction") {
                 queuePlannerStream((prev) => applyPlannerCompaction(prev, pEvent));
+              } else if (pEvent?.type === "entry_appended" && pEvent.entry?.type === "usage") {
+                queuePlannerStream((prev) => applyPlannerEntryAppended(prev, pEvent));
               }
             } else if (event.type === "error") {
               endLocalWork(scope);
@@ -2577,6 +2774,7 @@ export default function App() {
           typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
         for (const item of clearedLandingAttachments) {
           if (item.previewIsObjectUrl && item.imagePreview) {
+            unregisterImageBlobUrl(item.imagePreview);
             URL.revokeObjectURL(item.imagePreview);
           }
         }
@@ -3472,6 +3670,9 @@ export default function App() {
     cancelPromptCopy: useStableCallback(() => { copyPromptRequestRef.current += 1; }),
     removeProject: useStableCallback(handleRemoveWorkspaceConfirm), deleteRun: useStableCallback(handleDeleteRunConfirm),
     archiveProject: useStableCallback(handleArchiveProject), unarchiveProject: useStableCallback(handleUnarchiveProject),
+    reorderProjects: useStableCallback(handleReorderProjects),
+    pinRun: useStableCallback(handlePinRun), unpinRun: useStableCallback(handleUnpinRun),
+    reorderRuns: useStableCallback(handleReorderRuns),
     archiveRun: useStableCallback(handleArchiveRun), unarchiveRun: useStableCallback(handleUnarchiveRun),
     newConversation: useStableCallback(handleNewConversation), send: useStableCallback(handleSendMessage),
     edit: useStableCallback(handleEditMessageSubmit), switchVersion: useStableCallback(handleSwitchMessageVersion),
@@ -3709,9 +3910,11 @@ export default function App() {
             onRemoveProject={actions.removeProject}
             onArchiveProject={actions.archiveProject}
             onUnarchiveProject={actions.unarchiveProject}
+            onReorderProjects={actions.reorderProjects}
             openedProjectSeq={openedProjectSeq}
             runs={runs}
             archivedRunIds={archivedRunIdSet}
+            pinnedRuns={pinnedRuns}
             runLabels={runLabels}
             runCardKeys={runCardKeys}
             initialRunIds={initialRunIds}
@@ -3722,6 +3925,9 @@ export default function App() {
             onLoadRun={handleLoadRun}
             onCopyRunPrompt={actions.copyRunPrompt}
             onCancelPendingPromptCopy={actions.cancelPromptCopy}
+            onPinRun={actions.pinRun}
+            onUnpinRun={actions.unpinRun}
+            onReorderRuns={actions.reorderRuns}
             onArchiveRun={actions.archiveRun}
             onUnarchiveRun={actions.unarchiveRun}
             onDeleteRun={actions.deleteRun}
@@ -3846,9 +4052,7 @@ export default function App() {
             </div>
 
             {/* Shared inputs must stay opaque; only local content/decorations fade. */}
-            <LayoutGroup id="main-conversation">
             <div className="main-view-stage">
-            <AnimatePresence initial={false}>
               {showLandingView || !Workbench ? (
                 <LandingView
                   key="landing-view"
@@ -3866,17 +4070,11 @@ export default function App() {
                   draftKey={landingDraftKey(config?.repository)}
                 />
               ) : (
-                <motion.div
+                <div
                   key="workspace-view"
                   className="workspace-view-wrapper"
                   inert={navigationPending ? true : undefined}
                   aria-busy={navigationPending || undefined}
-                  initial={false}
-                  animate={{ opacity: 1 }}
-                  // Presence can retain the source while its composer moves.
-                  // Hide it immediately, without fading the incoming input.
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0 }}
                 >
                   <Workbench
                     key={workbenchIdentityRef.current.key}
@@ -3938,11 +4136,9 @@ export default function App() {
                     edges={edges}
                     tokens={tokens}
                   />
-                </motion.div>
+                </div>
               )}
-            </AnimatePresence>
             </div>
-            </LayoutGroup>
             {workspaceTerminals.supported && (
               <WorkspaceTerminalHost
                 entries={workspaceTerminals.entries}

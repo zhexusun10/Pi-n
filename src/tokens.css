@@ -9,7 +9,7 @@
 
   /* 容器与表面 */
   --bg-surface: #F9F9FA;
-  --bg-surface-hover: #F1F5F9;
+  --bg-surface-hover: #F0F0F2;
 
   /* 边框、分割线与容器圆角 */
   --radius-surface: 16px;

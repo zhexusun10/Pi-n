@@ -411,6 +411,17 @@ export const runtimeService = {
       }
       return response.blob();
     }, metadataTimeoutMs, t("后端响应超时，请稍后重试。"), signal),
+  getAttachmentImage: (path: string, runId?: string, signal?: AbortSignal): Promise<Blob> =>
+    withRequestTimeout(async deadline => {
+      const response = await fetchApi("/api/get_attachment_image", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, ...(runId ? { runId } : {}) }), signal: deadline,
+      }, { retrySafe: true });
+      if (!response.ok || !/^image\/(?:png|jpeg|gif|webp)$/i.test(response.headers.get("Content-Type") || "")) {
+        throw new Error(t("无法加载图片"));
+      }
+      return response.blob();
+    }, metadataTimeoutMs, t("后端响应超时，请稍后重试。"), signal),
   getMergerPrompt: async (runId: string, executionId: string, signal?: AbortSignal): Promise<string> => {
     const res = await request<{ runId: string; executionId: string; prompt: string }>(
       "get_merger_prompt", { runId, executionId }, signal

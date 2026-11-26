@@ -182,6 +182,16 @@ export interface WorkspaceDirectory {
   name: string;
 }
 
+export type PinDotColor = "black" | "white" | "coral" | "blue" | "yellow";
+
+export const PIN_DOT_COLORS: readonly PinDotColor[] = ["black", "white", "coral", "blue", "yellow"];
+export const DEFAULT_PIN_DOT_COLOR: PinDotColor = "black";
+
+const pinDotColorSet = new Set<string>(PIN_DOT_COLORS);
+export function isPinDotColor(value: unknown): value is PinDotColor {
+  return typeof value === "string" && pinDotColorSet.has(value);
+}
+
 export interface ProjectItem {
   id: string;
   name: string;
@@ -281,8 +291,10 @@ export type PlanMode = "auto" | "serial" | "graph";
 export interface ImageAttachment {
   type: "image";
   mimeType: string;
-  data: string; // Base64 encoded string
+  data: string; // Base64 encoded string (compressed for agent when oversized)
   name?: string;
+  /** Managed attachment-inputs path to the uncompressed original image, when compressed. */
+  originalPath?: string;
 }
 
 export interface FileAttachment {
@@ -351,6 +363,8 @@ export interface CompactionItemInfo {
   reason?: "manual" | "threshold" | "overflow";
   tokensBefore?: number;
   tokensAfter?: number;
+  billedTokens?: number;
+  billedCost?: number;
   summary: string;
   firstKeptEntryId?: string;
   readFiles?: string[];
@@ -358,12 +372,41 @@ export interface CompactionItemInfo {
   fromHook?: boolean;
 }
 
+export type TranscriptNoticeKind = "cache_miss" | "reasoning_drop" | "cache_warming";
+
+export interface TranscriptNoticeInfo {
+  kind: TranscriptNoticeKind;
+  /** Prompt tokens re-billed instead of read from cache (cache_miss). */
+  missedTokens?: number;
+  /** Extra USD cost paid due to the miss (cache_miss). */
+  missedCost?: number;
+  /** Whole minutes idle since the previous request when >= cache TTL (cache_miss). */
+  idleMinutes?: number;
+  /** True when the model/provider changed since the previous request (cache_miss). */
+  modelChanged?: boolean;
+  /** Provider name that reported dropped reasoning (reasoning_drop). */
+  provider?: string;
+  /** Number of withheld thinking/reasoning blocks (reasoning_drop). */
+  droppedCount?: number;
+  /** Terminology matching the provider diagnostic (reasoning_drop). */
+  droppedNoun?: "thinking" | "reasoning";
+  /** Distinct provider reason codes, e.g. prefix_mismatch (reasoning_drop). */
+  reasons?: string[];
+  /** Cumulative USD cost of back-to-back cache warming calls (cache_warming). */
+  warmingCost?: number;
+  /** Optional provider/runtime note attached to cache warming (cache_warming). */
+  warmingNote?: string;
+  /** Number of consecutive cache warming entries merged into this row. */
+  warmingCount?: number;
+}
+
 export interface TranscriptItem {
   id: string;
-  type: "text" | "thinking" | "tool_call" | "compaction" | "system" | "divider" | "activity_summary";
+  type: "text" | "thinking" | "tool_call" | "compaction" | "notice" | "system" | "divider" | "activity_summary";
   role?: "user" | "assistant" | "system";
   content?: string;
   compaction?: CompactionItemInfo;
+  notice?: TranscriptNoticeInfo;
   userTurnOffset?: number;
   steerRequestId?: string;
   images?: ImageAttachment[];

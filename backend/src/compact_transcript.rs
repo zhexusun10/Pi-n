@@ -451,9 +451,87 @@ fn compact_assistant_message(
     let mut tool_call_indices = HashSet::new();
 
     out.insert("role".into(), Value::String("assistant".into()));
-    for key in ["id", "errorMessage", "stopReason", "isError"] {
+    for key in [
+        "id",
+        "errorMessage",
+        "stopReason",
+        "isError",
+        "provider",
+        "model",
+        "timestamp",
+    ] {
         if let Some(val) = msg.get(key) {
             out.insert(key.into(), val.clone());
+        }
+    }
+    if let Some(usage) = msg.get("usage").and_then(Value::as_object) {
+        let mut usage_out = Map::new();
+        for key in ["input", "output", "cacheRead", "cacheWrite"] {
+            if let Some(val) = usage.get(key) {
+                usage_out.insert(key.into(), val.clone());
+            }
+        }
+        if let Some(cost) = usage.get("cost").and_then(Value::as_object) {
+            let mut cost_out = Map::new();
+            for key in ["input", "output", "cacheRead", "cacheWrite", "total"] {
+                if let Some(val) = cost.get(key) {
+                    cost_out.insert(key.into(), val.clone());
+                }
+            }
+            if !cost_out.is_empty() {
+                usage_out.insert("cost".into(), Value::Object(cost_out));
+            }
+        }
+        if !usage_out.is_empty() {
+            out.insert("usage".into(), Value::Object(usage_out));
+        }
+    }
+    if let Some(diagnostics) = msg.get("diagnostics").and_then(Value::as_array) {
+        let mut kept = Vec::new();
+        for entry in diagnostics {
+            let Some(obj) = entry.as_object() else {
+                continue;
+            };
+            let Some(kind) = obj.get("type").and_then(Value::as_str) else {
+                continue;
+            };
+            if kind != "anthropic_input_transformations" && kind != "openai_input_transformations" {
+                continue;
+            }
+            let Some(transforms) = obj
+                .get("details")
+                .and_then(|d| d.get("transformations"))
+                .and_then(Value::as_array)
+            else {
+                continue;
+            };
+            let compact_transforms: Vec<Value> = transforms
+                .iter()
+                .filter_map(|t| {
+                    let t_obj = t.as_object()?;
+                    let mut next = Map::new();
+                    if let Some(val) = t_obj.get("type") {
+                        next.insert("type".into(), val.clone());
+                    }
+                    if let Some(val) = t_obj.get("reason") {
+                        next.insert("reason".into(), val.clone());
+                    }
+                    if next.is_empty() {
+                        None
+                    } else {
+                        Some(Value::Object(next))
+                    }
+                })
+                .collect();
+            if !compact_transforms.is_empty() {
+                kept.push(json!({
+                    "type": kind,
+                    "details": { "transformations": compact_transforms }
+                }));
+            }
+        }
+        if !kept.is_empty() {
+            out.insert("diagnostics".into(), Value::Array(kept));
         }
     }
     if let Some(content) = msg.get("content") {
@@ -1043,7 +1121,29 @@ fn compact_json_line(
                 _ => CompactLineResult::Emit(trimmed.to_string()),
             }
         }
+        "usage" => {
+            if obj.get("kind").and_then(Value::as_str) == Some("cache_warm") {
+                CompactLineResult::Emit(trimmed.to_string())
+            } else {
+                CompactLineResult::Drop
+            }
+        }
+        "entry_appended" => {
+            let is_cache_warm = obj
+                .get("entry")
+                .and_then(Value::as_object)
+                .is_some_and(|e| {
+                    e.get("type").and_then(Value::as_str) == Some("usage")
+                        && e.get("kind").and_then(Value::as_str) == Some("cache_warm")
+                });
+            if is_cache_warm {
+                CompactLineResult::Emit(trimmed.to_string())
+            } else {
+                CompactLineResult::Drop
+            }
+        }
         "extension_error"
+        | "branch_summary"
         | "compaction"
         | "compaction_start"
         | "compaction_end"
@@ -1955,5 +2055,65 @@ mod tests {
         assert!(!compacted.contains("turn_end"));
         assert!(!compacted.contains("reasoning"));
         assert!(compacted.contains("visible"));
+    }
+
+    #[test]
+    fn preserves_compact_notice_metadata_and_cache_warm_entries() {
+        let assistant = serde_json::to_string(&json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "provider": "openai",
+                "model": "gpt-6.2-sol",
+                "timestamp": 1700000000000_u64,
+                "content": [{ "type": "text", "text": "Done." }],
+                "usage": {
+                    "input": 64000,
+                    "output": 400,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "cost": { "input": 0.16, "output": 0.004, "cacheRead": 0, "cacheWrite": 0, "total": 0.164 }
+                },
+                "diagnostics": [
+                    {
+                        "type": "openai_input_transformations",
+                        "details": {
+                            "transformations": [
+                                { "type": "reasoning", "reason": "prefix_mismatch", "extraBlob": "STRIP_ME" }
+                            ]
+                        }
+                    },
+                    { "type": "unrelated_diag", "details": { "secret": "DROP_ME" } }
+                ]
+            }
+        }))
+        .unwrap();
+        let warm = serde_json::to_string(&json!({
+            "type": "entry_appended",
+            "entry": {
+                "type": "usage",
+                "kind": "cache_warm",
+                "provider": "anthropic",
+                "model": "claude-sonnet-5-5",
+                "usage": { "input": 100, "output": 0, "cacheRead": 40000, "cacheWrite": 0, "cost": { "total": 0.01 } }
+            }
+        }))
+        .unwrap();
+        let other_entry = serde_json::to_string(&json!({
+            "type": "entry_appended",
+            "entry": { "type": "custom", "customType": "ignore" }
+        }))
+        .unwrap();
+        let chunk = format!("{assistant}\n{warm}\n{other_entry}\n");
+        let compacted = compact_transcript_chunk(&chunk, 0, false);
+        assert!(compacted.contains(r#""provider":"openai""#));
+        assert!(compacted.contains(r#""model":"gpt-6.2-sol""#));
+        assert!(compacted.contains(r#""input":64000"#));
+        assert!(compacted.contains(r#""openai_input_transformations""#));
+        assert!(compacted.contains(r#""prefix_mismatch""#));
+        assert!(!compacted.contains("STRIP_ME"));
+        assert!(!compacted.contains("DROP_ME"));
+        assert!(compacted.contains(r#""cache_warm""#));
+        assert!(!compacted.contains(r#""customType""#));
     }
 }

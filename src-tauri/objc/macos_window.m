@@ -2,6 +2,8 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 // Match Apple's modern macOS 26+ 14x14pt traffic light diameter inside the 32pt
@@ -341,5 +343,79 @@ void pi_n_macos_configure_traffic_lights(void *ns_window_ptr) {
         dispatch_async(dispatch_get_main_queue(), ^{
             pi_n_apply_macos_traffic_lights_on_main(window);
         });
+    }
+}
+
+// Returns 1 for Simplified Chinese, 2 for Traditional Chinese, 0 otherwise,
+// following macOS System Settings -> Language & Region preferred languages.
+int pi_n_macos_preferred_menu_language(void) {
+    @autoreleasepool {
+        NSArray<NSString *> *languages = [NSLocale preferredLanguages];
+        if (languages == nil || languages.count == 0) {
+            return 0;
+        }
+        NSString *primary = [languages.firstObject lowercaseString];
+        if ([primary hasPrefix:@"zh"]) {
+            if ([primary containsString:@"hant"] ||
+                [primary containsString:@"-tw"] ||
+                [primary containsString:@"_tw"] ||
+                [primary containsString:@"-hk"] ||
+                [primary containsString:@"_hk"] ||
+                [primary containsString:@"-mo"] ||
+                [primary containsString:@"_mo"]) {
+                return 2;
+            }
+            return 1;
+        }
+        return 0;
+    }
+}
+
+static char *pi_n_run_save_image_panel_on_main(NSString *defaultName, NSString *defaultDir) {
+    @autoreleasepool {
+        NSSavePanel *panel = [NSSavePanel savePanel];
+        panel.canCreateDirectories = YES;
+        if (defaultName != nil && defaultName.length > 0) {
+            panel.nameFieldStringValue = defaultName;
+        }
+        if (defaultDir != nil && defaultDir.length > 0) {
+            BOOL isDir = NO;
+            if ([[NSFileManager defaultManager] fileExistsAtPath:defaultDir isDirectory:&isDir] && isDir) {
+                panel.directoryURL = [NSURL fileURLWithPath:defaultDir isDirectory:YES];
+            }
+        }
+        if ([panel runModal] != NSModalResponseOK) {
+            return NULL;
+        }
+        NSString *selectedPath = panel.URL.path;
+        if (selectedPath == nil || selectedPath.length == 0) {
+            return NULL;
+        }
+        const char *utf8 = [selectedPath UTF8String];
+        if (utf8 == NULL) {
+            return NULL;
+        }
+        return strdup(utf8);
+    }
+}
+
+char *pi_n_macos_choose_save_image_path(const char *default_name, const char *default_dir) {
+    @autoreleasepool {
+        NSString *name = default_name != NULL ? [NSString stringWithUTF8String:default_name] : nil;
+        NSString *dir = default_dir != NULL ? [NSString stringWithUTF8String:default_dir] : nil;
+        if ([NSThread isMainThread]) {
+            return pi_n_run_save_image_panel_on_main(name, dir);
+        }
+        __block char *result = NULL;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            result = pi_n_run_save_image_panel_on_main(name, dir);
+        });
+        return result;
+    }
+}
+
+void pi_n_macos_free_c_string(char *ptr) {
+    if (ptr != NULL) {
+        free(ptr);
     }
 }

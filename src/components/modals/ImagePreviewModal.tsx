@@ -1,11 +1,25 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { t } from "../../i18n";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import {
+  getCachedOriginalImageUrl,
+  loadOriginalImageUrl,
+} from "../../services/originalImagePreview";
+import { ImageContextMenu } from "../ui/ImageContextMenu";
+import type { ContextMenuAnchor } from "../ui/context-menu";
 
 export interface PreviewImageItem {
   src: string;
+  /** Optional managed attachment path to load the uncompressed original on demand. */
+  originalPath?: string;
+  /** Optional workspace/source path used to derive a clean download filename. */
+  workspacePath?: string;
+  /** Optional run scope for loading `originalPath`. */
+  runId?: string;
+  /** Optional in-memory fallback key for oversized originals in the current session. */
+  sessionOriginalKey?: string;
   alt?: string;
   name?: string;
 }
@@ -27,6 +41,40 @@ export function ImagePreviewModal({
   const current = open ? images[index] : null;
   const total = images.length;
   const canNavigate = open && total > 1 && !!onChangeIndex;
+
+  const originalPath = current?.originalPath;
+  const runId = current?.runId;
+  const sessionOriginalKey = current?.sessionOriginalKey;
+  const targetKey = current ? `${originalPath ?? ""}::${sessionOriginalKey ?? ""}::${current.src}` : "";
+  const cachedOriginalSrc = current
+    ? getCachedOriginalImageUrl({ originalPath, runId, sessionOriginalKey })
+    : null;
+  const [resolvedOriginal, setResolvedOriginal] = useState<{ key: string; url: string } | null>(null);
+  const [failedOriginalKey, setFailedOriginalKey] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuAnchor | null>(null);
+
+  useEffect(() => {
+    setContextMenu(null);
+  }, [open, index]);
+
+  useEffect(() => {
+    if (!open || !current || (!originalPath && !sessionOriginalKey)) return;
+    if (cachedOriginalSrc) return;
+    let cancelled = false;
+    void loadOriginalImageUrl({ originalPath, runId, sessionOriginalKey }).then((url) => {
+      if (!cancelled && url) {
+        setResolvedOriginal({ key: targetKey, url });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, current, originalPath, runId, sessionOriginalKey, cachedOriginalSrc, targetKey]);
+
+  const upgradedSrc = failedOriginalKey === targetKey
+    ? null
+    : (cachedOriginalSrc ?? (resolvedOriginal?.key === targetKey ? resolvedOriginal.url : null));
+  const displayedSrc = upgradedSrc ?? current?.src ?? "";
 
   const dialogRef = useDialogFocus<HTMLDivElement>({
     open,
@@ -97,10 +145,41 @@ export function ImagePreviewModal({
         )}
 
         <img
-          src={current.src}
+          src={displayedSrc}
           alt={current.alt || current.name || t("图片预览")}
           className="image-preview-full-img"
+          onContextMenu={(event) => {
+            if (!displayedSrc) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+              trigger: event.currentTarget,
+            });
+          }}
+          onError={() => {
+            if (upgradedSrc && failedOriginalKey !== targetKey) {
+              setFailedOriginalKey(targetKey);
+            }
+          }}
         />
+
+        {contextMenu && displayedSrc && (
+          <ImageContextMenu
+            anchor={contextMenu}
+            target={{
+              src: displayedSrc,
+              originalPath: current.originalPath,
+              runId: current.runId,
+              sessionOriginalKey: current.sessionOriginalKey,
+              workspacePath: current.workspacePath,
+              name: current.name,
+              alt: current.alt,
+            }}
+            onClose={() => setContextMenu(null)}
+          />
+        )}
 
         {(current.name || total > 1) && (
           <div className="image-preview-caption">

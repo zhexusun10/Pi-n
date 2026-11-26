@@ -1230,6 +1230,7 @@ fn steer_attachments_survive_replay_and_legacy_events_remain_readable() {
         mime_type: "image/png".into(),
         data: "aW1hZ2U=".into(),
         name: Some("sample.png".into()),
+        original_path: None,
     };
     runtime
         .emit(EventKind::Steered {

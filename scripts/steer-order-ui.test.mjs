@@ -84,7 +84,8 @@ for (const mode of ["serial", "graph"]) {
       await expect(bubbles).toHaveCount(2);
       events = await page.evaluate(() => window.steerAudit.events);
       assert.equal(new Set(events.map(event => event.request_id)).size, 2);
-      await expect(page.getByText(/Alt \+ Q to restore queued messages/).first()).toBeVisible();
+      const expectedModifier = process.platform === "darwin" ? "Option" : "Alt";
+      await expect(page.getByText(`${expectedModifier} + Q to restore queued messages · ${expectedModifier} + S to interrupt tools and send`).first()).toBeVisible();
       await page.evaluate(() => window.steerAudit.consume("SAME"));
       await page.getByText("OUTPUT AFTER STEER", { exact: true }).waitFor();
       await input.fill("EXISTING DRAFT");
@@ -451,3 +452,58 @@ for (const mode of ["serial", "graph"]) {
     } finally { await context.close(); }
   });
 }
+
+test("queued steer shortcut hint shows Option on macOS and Alt on non-macOS platforms", { timeout: 30_000 }, async () => {
+  const cases = [
+    {
+      platform: "MacIntel",
+      userAgentPlatform: "macOS",
+      language: "zh-CN",
+      expected: "Option + Q 撤回排队消息 · Option + S 打断工具并发送",
+      forbidden: "Alt + S",
+    },
+    {
+      platform: "MacIntel",
+      userAgentPlatform: "macOS",
+      language: "en",
+      expected: "Option + Q to restore queued messages · Option + S to interrupt tools and send",
+      forbidden: "Alt + S",
+    },
+    {
+      platform: "Win32",
+      userAgentPlatform: "Windows",
+      language: "zh-CN",
+      expected: "Alt + Q 撤回排队消息 · Alt + S 打断工具并发送",
+      forbidden: "Option + S",
+    },
+    {
+      platform: "Win32",
+      userAgentPlatform: "Windows",
+      language: "en",
+      expected: "Alt + Q to restore queued messages · Alt + S to interrupt tools and send",
+      forbidden: "Option + S",
+    },
+  ];
+  for (const item of cases) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
+    await context.addInitScript(({ platform, userAgentPlatform, language }) => {
+      localStorage.setItem("pi_n_language_v1", language);
+      Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+      Object.defineProperty(navigator, "userAgentData", { value: { platform: userAgentPlatform }, configurable: true });
+    }, item);
+    await context.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
+    const page = await fixturePage(context);
+    try {
+      await page.goto(`${origin}/__steer?mode=serial`);
+      await page.getByText("OUTPUT BEFORE STEER", { exact: true }).waitFor();
+      const input = page.locator(".pane-bottom-chat textarea").first();
+      await input.fill("CHECK HINT");
+      await input.press("Enter");
+      const hint = page.locator(".planner-steer-state").first();
+      await expect(hint).toContainText(item.expected);
+      assert.equal((await hint.textContent())?.includes(item.forbidden), false);
+    } finally {
+      await context.close();
+    }
+  }
+});

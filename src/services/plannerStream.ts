@@ -3,6 +3,13 @@ import type { PlannerEdgeEdit, PlannerNodeEdit } from "../lib/plannerGraphEdits"
 import { plannerContentText, stripPlannerContext } from "./plannerText";
 import { closeThinkingItems, finalizeThinkingItems, updateThinkingItems } from "./thinkingTranscript";
 import { createCompactionTranscriptItem, extractCompactionInfo } from "./compactionEvent";
+import {
+  appendOrMergeNoticeItem,
+  collectAssistantMessageNotices,
+  collectCacheWarmNotice,
+  resetNoticeCacheTracking,
+  type NoticeTrackerState,
+} from "./transcriptNotices";
 import { upsertToolCall } from "./toolCallUpdates";
 import { appendItemDelta } from "./transcriptUpdates";
 import { extensionErrorText } from "./extensionErrors";
@@ -25,6 +32,7 @@ export interface PlannerStreamState {
   tools: TranscriptItem[];
   // Live Planner auto-compaction: no transcript rows, only the working label.
   compacting: boolean;
+  noticeTracker?: NoticeTrackerState;
 }
 
 export const initialPlannerStream: PlannerStreamState = {
@@ -44,6 +52,7 @@ export const initialPlannerStream: PlannerStreamState = {
   plannerText: "",
   tools: [],
   compacting: false,
+  noticeTracker: {},
 };
 
 function appendErrorItem(items: TranscriptItem[], errorMsg: string): TranscriptItem[] {
@@ -101,9 +110,12 @@ export function applyPlannerCompaction(
       return prev.compacting ? { ...prev, compacting: false } : prev;
     }
     const now = Date.now();
+    const noticeTracker: NoticeTrackerState = { ...prev.noticeTracker };
+    resetNoticeCacheTracking(noticeTracker);
     return {
       ...prev,
       compacting: false,
+      noticeTracker,
       items: [
         ...closed,
         createCompactionTranscriptItem(`planner_compact_${now}_${closed.length}`, compaction, now, true),
@@ -111,6 +123,26 @@ export function applyPlannerCompaction(
     };
   }
   return prev;
+}
+
+export function applyPlannerEntryAppended(
+  prev: PlannerStreamState,
+  event: any,
+): PlannerStreamState {
+  const entry = event?.type === "entry_appended" ? event.entry : event;
+  if (!entry || entry.type !== "usage" || entry.kind !== "cache_warm") return prev;
+  const noticeTracker: NoticeTrackerState = { ...prev.noticeTracker };
+  const notice = collectCacheWarmNotice(noticeTracker, entry);
+  if (!notice) return prev;
+  const now = Date.now();
+  const items = appendOrMergeNoticeItem(
+    prev.items,
+    `planner_notice_${now}_${prev.items.length}`,
+    notice,
+    now,
+    true,
+  );
+  return { ...prev, noticeTracker, items };
 }
 
 export function applyPlannerExtensionError(
@@ -259,9 +291,18 @@ export function applyPlannerAssistantMessageEnd(
   if ((failureStopReason === "error" || failureStopReason === "aborted") && failureMessage) {
     items = appendErrorItem(items, failureMessage);
   }
+  const noticeTracker: NoticeTrackerState = { ...prev.noticeTracker };
+  const notices = collectAssistantMessageNotices(noticeTracker, message);
+  if (notices.length > 0) {
+    const now = Date.now();
+    for (const notice of notices) {
+      items = appendOrMergeNoticeItem(items, `planner_notice_${now}_${items.length}`, notice, now, true);
+    }
+  }
   return {
     ...prev,
     items,
+    noticeTracker,
     tools: items.filter(item => item.type === "tool_call"),
     plannerMessageStart: items.length,
     plannerThinking: items.filter(item => item.type === "thinking" && item.content).map(item => item.content).join("\n\n"),

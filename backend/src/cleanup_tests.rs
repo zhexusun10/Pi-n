@@ -1861,3 +1861,242 @@ fn completed_run_prunes_stale_environment_snapshots_while_keeping_published_resu
         "historical-input-content"
     );
 }
+
+#[test]
+fn serial_runs_do_not_record_shadow_repo_ownership_when_shadow_exists() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("data");
+    let source = temp.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("hello.txt"), "hi\n").unwrap();
+
+    // Ensure a shadow repo already exists for `source` before the serial run starts.
+    let _ = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    assert!(crate::workspace::shadow_repo_dir(&source).unwrap().is_dir());
+
+    let mut runtime = Runtime::open(&root).unwrap();
+    runtime.state.run_id = Uuid::new_v4().to_string();
+    let cfg: Config = serde_json::from_value(serde_json::json!({
+        "repository": source.to_string_lossy(),
+        "model": "test",
+        "maxParallel": 1
+    }))
+    .unwrap();
+    runtime
+        .emit(EventKind::PlanningStarted {
+            goal: "direct question".into(),
+            config: cfg.clone(),
+            plan_type: None,
+            planning: crate::model::PlanningSummary::default(),
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Routed {
+            plan_type: "serial".into(),
+            images: None,
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Created {
+            graph: graph(),
+            config: cfg,
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+    runtime.emit(EventKind::Approved { base: "".into() }).unwrap();
+
+    let owned = runtime
+        .store
+        .owned_cleanup_targets(&runtime.state.run_id)
+        .unwrap();
+    assert!(
+        !owned
+            .iter()
+            .any(|target| matches!(target, Target::Shadow { .. })),
+        "serial run must not record Target::Shadow ownership: {owned:?}"
+    );
+
+    // Batched serial creation (`emit_outputs`) must also observe `Routed("serial")`
+    // within the same batch before recording targets for `Created`/`Approved`.
+    drop(runtime);
+    let mut batched = Runtime::open(&root).unwrap();
+    batched.state.run_id = Uuid::new_v4().to_string();
+    let batched_cfg: Config = serde_json::from_value(serde_json::json!({
+        "repository": source.to_string_lossy(),
+        "model": "test",
+        "maxParallel": 1
+    }))
+    .unwrap();
+    batched
+        .emit_outputs(vec![
+            EventKind::PlanningStarted {
+                goal: "batched direct".into(),
+                config: batched_cfg.clone(),
+                plan_type: None,
+                planning: crate::model::PlanningSummary::default(),
+            },
+            EventKind::Routed {
+                plan_type: "serial".into(),
+                images: None,
+            },
+            EventKind::Created {
+                graph: graph(),
+                config: batched_cfg,
+                planning_id: None,
+                planning: None,
+            },
+            EventKind::Approved { base: "".into() },
+        ])
+        .unwrap();
+    let batched_owned = batched
+        .store
+        .owned_cleanup_targets(&batched.state.run_id)
+        .unwrap();
+    assert!(
+        !batched_owned
+            .iter()
+            .any(|target| matches!(target, Target::Shadow { .. })),
+        "batched serial run must not record Target::Shadow ownership: {batched_owned:?}"
+    );
+}
+
+#[test]
+fn orphan_shadow_and_publication_pruning_reclaim_only_unreferenced_settled_artifacts() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("data");
+    let live_source = temp.path().join("live-source");
+    let orphan_source = temp.path().join("orphan-source");
+    fs::create_dir_all(&live_source).unwrap();
+    fs::create_dir_all(&orphan_source).unwrap();
+    fs::write(live_source.join("a.txt"), "a\n").unwrap();
+    fs::write(orphan_source.join("b.txt"), "b\n").unwrap();
+
+    let mut runtime = Runtime::open(&root).unwrap();
+    runtime.state.run_id = Uuid::new_v4().to_string();
+    let cfg: Config = serde_json::from_value(serde_json::json!({
+        "repository": live_source.to_string_lossy(),
+        "model": "test",
+        "maxParallel": 1
+    }))
+    .unwrap();
+    runtime
+        .emit(EventKind::Routed {
+            plan_type: "graph".into(),
+            images: None,
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Created {
+            graph: graph(),
+            config: cfg,
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+
+    // Place both shadow repos inside this test's isolated `root/shadow_repos`.
+    // Record `live_shadow` ownership and remove `live_source` so `shadow_repo_in_use`
+    // exercises recorded-ownership protection without touching the process-wide data_root().
+    let live_shadow_name = crate::workspace::shadow_repo_dir(&live_source)
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let orphan_shadow_name = crate::workspace::shadow_repo_dir(&orphan_source)
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let live_shadow = root.join("shadow_repos").join(&live_shadow_name);
+    let orphan_shadow = root.join("shadow_repos").join(&orphan_shadow_name);
+    fs::create_dir_all(&live_shadow).unwrap();
+    fs::create_dir_all(&orphan_shadow).unwrap();
+    runtime
+        .store
+        .remember_cleanup_targets(
+            &runtime.state.run_id,
+            &BTreeSet::from([Target::Shadow {
+                root: root.clone(),
+                name: live_shadow_name,
+                source: Some(live_source.clone()),
+            }]),
+        )
+        .unwrap();
+    fs::remove_dir_all(&live_source).unwrap();
+
+    // Recently created orphan shadow is skipped when min_age > 0, then reclaimed when min_age == 0.
+    assert_eq!(
+        crate::cleanup::prune_orphaned_shadow_repos(
+            &root,
+            &runtime.store,
+            std::time::Duration::from_secs(3600)
+        )
+        .unwrap(),
+        0
+    );
+    assert!(orphan_shadow.is_dir());
+    assert_eq!(
+        crate::cleanup::prune_orphaned_shadow_repos(
+            &root,
+            &runtime.store,
+            std::time::Duration::ZERO
+        )
+        .unwrap(),
+        1
+    );
+    assert!(!orphan_shadow.exists());
+    assert!(live_shadow.is_dir(), "referenced live shadow repo must survive");
+
+    // Set up 3 synthetic UUID roots under workspaces_parent(root)/.pi-n-worktrees:
+    // 1) settled standalone publication dir -> MUST be reclaimed
+    // 2) unsettled publication dir (missing `installed`) -> MUST survive
+    // 3) unknown dir containing non-publication checkout -> MUST survive
+    let bucket = crate::workspace::workspaces_parent(&root).join(".pi-n-worktrees");
+    let settled_id = Uuid::new_v4().to_string();
+    let settled_dir = bucket.join(&settled_id);
+    let settled_attempt = settled_dir.join("publication-files-0123456789abcdef.publication/00000000");
+    fs::create_dir_all(&settled_attempt).unwrap();
+    fs::write(settled_attempt.join("prepared.json"), "{}").unwrap();
+    fs::write(settled_attempt.join("installed"), "done").unwrap();
+    fs::create_dir_all(settled_dir.join("publication-view-fedcba9876543210")).unwrap();
+    fs::create_dir_all(settled_dir.join(".pi-n-state")).unwrap();
+
+    let unsettled_id = Uuid::new_v4().to_string();
+    let unsettled_dir = bucket.join(&unsettled_id);
+    let unsettled_attempt =
+        unsettled_dir.join("publication-files-aaaaaaaaaaaaaaaa.publication/00000000");
+    fs::create_dir_all(&unsettled_attempt).unwrap();
+    fs::write(unsettled_attempt.join("prepared.json"), "{}").unwrap();
+
+    let foreign_id = Uuid::new_v4().to_string();
+    let foreign_dir = bucket.join(&foreign_id);
+    fs::create_dir_all(foreign_dir.join("publication-view-1111111111111111")).unwrap();
+    fs::create_dir_all(foreign_dir.join("worker")).unwrap();
+
+    assert_eq!(
+        crate::cleanup::prune_orphaned_publication_dirs(
+            &root,
+            &runtime.store,
+            std::time::Duration::from_secs(3600)
+        )
+        .unwrap(),
+        0
+    );
+    assert!(settled_dir.is_dir());
+
+    assert_eq!(
+        crate::cleanup::prune_orphaned_publication_dirs(
+            &root,
+            &runtime.store,
+            std::time::Duration::ZERO
+        )
+        .unwrap(),
+        1
+    );
+    assert!(!settled_dir.exists(), "settled orphan publication dir must be pruned");
+    assert!(unsettled_dir.is_dir(), "unsettled publication journal must survive");
+    assert!(foreign_dir.is_dir(), "dir with non-publication checkout must survive");
+}

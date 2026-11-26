@@ -3,15 +3,37 @@ import type { FileAttachment, ImageAttachment, TranscriptItem } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingCard } from "./ThinkingCard";
 import { CompactedCard } from "./CompactedCard";
+import { TranscriptNoticeCard } from "./TranscriptNoticeCard";
 import { TranscriptErrorCard } from "./TranscriptErrorCard";
 import { ActivitySummaryRow, type CardsTransitionPhase } from "./ActivitySummaryRow";
 import { EditableUserBubble, StreamingAssistantBubble } from "./views/ChatBubbles";
 import { AnimatedUserTurn } from "./AnimatedUserTurn";
 
-export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cardsTransition, getChildExpanded, onExpandedChange, onChildResize, onChildExpandedChange, editing, draft,
+function mergeImageMetadata(
+  primary?: ImageAttachment[],
+  fallback?: ImageAttachment[],
+): ImageAttachment[] | undefined {
+  if (!primary?.length) return fallback;
+  if (!fallback?.length) return primary;
+  let changed = false;
+  const merged = primary.map((img, idx) => {
+    if (img.originalPath && img.name) return img;
+    const match = fallback.find(candidate => candidate.data === img.data) ?? fallback[idx];
+    if (!match) return img;
+    const name = img.name ?? match.name;
+    const originalPath = img.originalPath ?? match.originalPath;
+    if (name === img.name && originalPath === img.originalPath) return img;
+    changed = true;
+    return { ...img, ...(name ? { name } : {}), ...(originalPath ? { originalPath } : {}) };
+  });
+  return changed ? merged : primary;
+}
+
+export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cardsTransition, showNotices = false, getChildExpanded, onExpandedChange, onChildResize, onChildExpandedChange, editing, draft,
   onDraftChange, onStartEdit, onCancelEdit, onEditUser, steerAttachments }: {
   item: TranscriptItem; expanded?: boolean;
   cardsTransition?: CardsTransitionPhase;
+  showNotices?: boolean;
   getChildExpanded?: (id: string) => boolean | undefined;
   onExpandedChange: (id: string, expanded: boolean, card?: HTMLElement) => void;
   onChildResize?: (expanded: boolean, card?: HTMLElement) => void;
@@ -28,7 +50,8 @@ export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cards
   if (item.type === "divider") return <div className="transcript-divider" role="separator" aria-hidden="true" />;
   if (item.type === "activity_summary") return <ActivitySummaryRow item={item} expanded={expanded} transitionPhase={cardsTransition} getChildExpanded={getChildExpanded} onExpandedChange={expand} onChildResize={onChildResize} onChildExpandedChange={onChildExpandedChange} />;
   if (item.type === "tool_call") return <ToolCallCard item={item} expanded={expanded} onExpandedChange={expand} />;
-  if (item.type === "compaction") return <CompactedCard item={item} expanded={expanded} onExpandedChange={expand} />;
+  if (item.type === "compaction") return <CompactedCard item={item} showCost={showNotices} expanded={expanded} onExpandedChange={expand} />;
+  if (item.type === "notice") return <TranscriptNoticeCard item={item} expanded={expanded} onExpandedChange={expand} />;
   if (item.type === "thinking") return <ThinkingCard item={item} isStreaming={item.status === "running"}
     title="Chain of Thought"
     defaultExpanded={item.defaultExpanded ?? (item.status === "running")} autoExpandWhileStreaming={true} expanded={expanded} onExpandedChange={expand} />;
@@ -40,12 +63,13 @@ export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cards
   </div>;
   if (item.role === "user") {
     const displayedText = (item.steerRequestId && steerAttachments?.text) ? steerAttachments.text : (item.content || "");
+    const resolvedImages = mergeImageMetadata(item.images, steerAttachments?.images);
     return <AnimatedUserTurn id={item.id} animateAppear={item.animateAppear}
-    className="chat-message-row user planner-user-turn"><EditableUserBubble text={displayedText} images={item.images?.length ? item.images : steerAttachments?.images} files={item.files ?? steerAttachments?.files}
+    className="chat-message-row user planner-user-turn"><EditableUserBubble text={displayedText} images={resolvedImages} files={item.files ?? steerAttachments?.files}
     editing={editing} draft={draft} onDraftChange={onDraftChange}
     onEdit={onEditUser ? () => onStartEdit(item.id, displayedText) : undefined}
     onCancel={onCancelEdit} onSend={onEditUser ? text => {
-      return Promise.resolve(onEditUser(item.content || "", text, item.userTurnOffset, item.images?.length ? item.images : steerAttachments?.images)).then(accepted => {
+      return Promise.resolve(onEditUser(item.content || "", text, item.userTurnOffset, resolvedImages)).then(accepted => {
         if (accepted !== false) onCancelEdit();
         return accepted === false ? false : true;
       });

@@ -7,6 +7,7 @@ import type { TranscriptRestoreAnchor } from "../services/conversationScroll";
 import { closeThinkingItems } from "../services/thinkingTranscript";
 import { isNestedScrollGesture, notifyTranscriptFinalOutput } from "../services/transcriptScroll";
 import { parseTranscriptChunkLines, type ParseTranscriptChunkState, type TranscriptParseOptions } from "../services/transcriptParser";
+import type { NoticeTrackerState } from "../services/transcriptNotices";
 import { finishTranscriptParseCacheLease, invalidateTranscriptParseCache, leaseTranscriptParseCache, readTranscriptParse, writeTranscriptParse } from "../services/transcriptParseCache";
 import { settleInterruptedItems } from "../services/transcriptSettle";
 import { Terminal } from "lucide-react";
@@ -96,6 +97,8 @@ interface VirtualizedTranscriptProps {
   /** Collapse thinking/tool/error cards into inline Codex-style summary rows. */
   cardsCollapsed?: boolean;
   cardsTransition?: CardsTransitionPhase;
+  /** Override whether Pi 1.6.1 cache/diagnostic notices & compaction costs render. */
+  showNotices?: boolean;
   /** Called when a user expands an individual summary row so compact mode can
    * upgrade on demand to load full tool results and thinking bodies when the
    * backend does not provide per-record raw byte ranges. */
@@ -160,6 +163,7 @@ function freshSegmentState(segment: PlanningSegment): SegmentParseState {
     assistantStartIndex: 0,
     userMessageStarts: new Set(),
     compacting: false,
+    noticeTracker: {},
     startOffset: segment.startOffset,
     text: segment.text,
     parsedChars: 0,
@@ -289,6 +293,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
   inlineSteerAttachments,
   cardsCollapsed = false,
   cardsTransition = "idle",
+  showNotices,
   onExpandSummary,
   hydratedCards,
   hydratingKeys,
@@ -297,6 +302,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
 }) => {
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [userDraft, setUserDraft] = useState("");
+  const effectiveShowNotices = showNotices ?? !cardsCollapsed;
   const containerRef = useRef<HTMLDivElement>(null);
   const expandedRows = useRef(new Map<string, boolean>());
   const expandedSummaryMetaRef = useRef(new Map<string, ActivitySummaryAnchor>());
@@ -346,6 +352,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
   // re-parses; reporting is deferred to an effect so a parent never setState
   // during this component's render.
   const compactingRef = useRef(false);
+  const noticeTrackerRef = useRef<NoticeTrackerState>({});
   const lastSegmentSourceRef = useRef("");
   const reportedCompactingRef = useRef<boolean | null>(null);
   const onCompactingChangeRef = useRef(onCompactingChange);
@@ -681,6 +688,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
       finalResponseSuppressedRef.current = false;
       lastRawOutputRef.current = "";
       compactingRef.current = false;
+      noticeTrackerRef.current = {};
     }
 
     if (lastProcessedPosRef.current === 0) {
@@ -704,6 +712,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
         assistantStartIndexRef.current = state.assistantStartIndex;
         userMessageStartsRef.current = state.userMessageStarts;
         compactingRef.current = state.compacting;
+        noticeTrackerRef.current = state.noticeTracker ?? {};
         itemsRef.current = annotateSegmentItems(cached.items, [], "fresh", settled, inline,
           liveThinkingIdsRef.current, liveThinkingKeysRef.current, suppressInitialAppear);
         for (const item of itemsRef.current) if (item.type === "thinking" && item.status === "running") {
@@ -747,6 +756,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
       assistantStartIndex: assistantStartIndexRef.current,
       userMessageStarts: userMessageStartsRef.current,
       compacting: compactingRef.current,
+      noticeTracker: noticeTrackerRef.current,
     };
 
     const result = parseTranscriptChunkLines(
@@ -767,6 +777,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
     pendingUserStartRef.current = forwardState.pendingUserStart;
     assistantStartIndexRef.current = forwardState.assistantStartIndex;
     compactingRef.current = forwardState.compacting;
+    noticeTrackerRef.current = forwardState.noticeTracker ?? {};
 
     currentItems = result.currentItems;
     const previousIds = isIncrementalLive ? new Set(previousItems.map(item => item.id)) : null;
@@ -775,7 +786,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
       // avoiding per-chunk metadata scans and deep structural-sharing walks.
       if (isIncrementalLive && previousItems[index] === item) return item;
       const isNewInLiveChunk = isIncrementalLive && !previousIds!.has(item.id);
-      if ((item.type === "thinking" || item.type === "tool_call" || item.type === "compaction") && item.animateAppear === undefined) {
+      if ((item.type === "thinking" || item.type === "tool_call" || item.type === "compaction" || item.type === "notice") && item.animateAppear === undefined) {
         const shouldAnimate = !settled && (inline || suppressInitialAppear ? isNewInLiveChunk : (item.status === "running" || isNewInLiveChunk));
         item = { ...item, animateAppear: shouldAnimate };
       }
@@ -880,6 +891,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
             finalResponseSuppressed: finalResponseSuppressedRef.current, seenFirstUser: seenFirstUserRef.current,
             pendingUserStart: pendingUserStartRef.current, assistantStartIndex: assistantStartIndexRef.current,
             userMessageStarts: userMessageStartsRef.current, compacting: compactingRef.current,
+            noticeTracker: noticeTrackerRef.current,
           } }, { showUserTurns, skipFirstUser, skipLeadingUserTurn, userTurnTexts, userTurnRequestIds });
       }
     };
@@ -936,11 +948,11 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
     const canPrepend = segmentedRef.current
       ? (firstSegmentSource ? (segmentStatesRef.current.get(firstSegmentSource)?.startOffset ?? 0) > 0 : false)
       : startOffset > 0;
-    const raw = visibleTranscriptRows(rows, starts, { collapseCards: cardsCollapsed, live: !settled, canPrepend });
+    const raw = visibleTranscriptRows(rows, starts, { collapseCards: cardsCollapsed, live: !settled, canPrepend, showNotices: effectiveShowNotices });
     if (!cardsCollapsed || previousSummariesRef.current.length === 0) return raw;
     const stabilized = stabilizeActivitySummaryIds(raw.rows, previousSummariesRef.current);
     return stabilized === raw.rows ? raw : { ...raw, rows: stabilized };
-  }, [parsedItems, settled, sourceUserFallbacks, output, startOffset, cardsCollapsed, hydratedCards, hydratingKeys]);
+  }, [parsedItems, settled, sourceUserFallbacks, output, startOffset, cardsCollapsed, hydratedCards, hydratingKeys, effectiveShowNotices]);
   const hasRangeSupportRef = useRef(false);
   hasRangeSupportRef.current = parsedItems.some(
     item => Boolean(item.rawRange || item.rawArgsRange || item.rawResultRange),
@@ -950,7 +962,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
   if (prevCardsCollapsedRef.current && !cardsCollapsed) {
     markCardsPresented(
       items
-        .filter(item => item.type === "tool_call" || item.type === "thinking" || item.type === "compaction")
+        .filter(item => item.type === "tool_call" || item.type === "thinking" || item.type === "compaction" || item.type === "notice")
         .map(item => item.id),
     );
   }
@@ -1389,12 +1401,12 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
   const cancelEdit = useCallback(() => setEditingUser(null), []);
   const getChildExpanded = useCallback((id: string) => expandedRows.current.get(id), []);
   const renderRow = useCallback((item: TranscriptItem, _index?: number, allowTransition = true) => <TranscriptRow item={item}
-    expanded={expandedRows.current.get(item.id)} cardsTransition={allowTransition ? cardsTransition : "idle"} getChildExpanded={getChildExpanded} onExpandedChange={handleExpandedChange} onChildResize={onUserResize}
+    expanded={expandedRows.current.get(item.id)} cardsTransition={allowTransition ? cardsTransition : "idle"} showNotices={effectiveShowNotices} getChildExpanded={getChildExpanded} onExpandedChange={handleExpandedChange} onChildResize={onUserResize}
     onChildExpandedChange={handleChildExpandedChange}
     editing={editingUser === item.id} draft={editingUser === item.id ? userDraft : ""}
     onDraftChange={setUserDraft} onStartEdit={startEdit} onCancelEdit={cancelEdit} onEditUser={onEditUser}
     steerAttachments={steerRowAttachments.get(item.id)} />,
-    [cardsTransition, getChildExpanded, handleExpandedChange, handleChildExpandedChange, onUserResize, editingUser, userDraft, startEdit, cancelEdit, onEditUser, steerRowAttachments]);
+    [cardsTransition, effectiveShowNotices, getChildExpanded, handleExpandedChange, handleChildExpandedChange, onUserResize, editingUser, userDraft, startEdit, cancelEdit, onEditUser, steerRowAttachments]);
 
   const isEmptyTranscript = settled && items.length === 0;
 

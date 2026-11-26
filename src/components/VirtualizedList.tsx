@@ -751,13 +751,19 @@ export function VirtualizedList<T extends { id: string }>({ items, renderRow, ga
   const liveTop = liveTopRef.current;
   const prevStart = previousRangeStartRef.current;
   const prevEnd = previousRangeEndRef.current;
+  const isTailAppendOnly =
+    structureChanged &&
+    beforeIds.length > 0 &&
+    ids.length > beforeIds.length &&
+    ids[0] === beforeIds[0] &&
+    ids[beforeIds.length - 1] === beforeIds[beforeIds.length - 1];
   const liveWithinSafeWindow =
-    !structureChanged &&
+    (!structureChanged || isTailAppendOnly) &&
     liveTop !== null &&
     prevEnd > prevStart &&
     prevEnd <= offsets.length - 1 &&
     (prevStart === 0 || liveTop >= (offsets[prevStart] ?? 0) + safeMargin) &&
-    (prevEnd >= ids.length || liveTop + height <= (offsets[prevEnd] ?? 0) - safeMargin);
+    (prevEnd >= (isTailAppendOnly ? beforeIds.length : ids.length) || liveTop + height <= (offsets[prevEnd] ?? 0) - safeMargin);
   // Preserve window hysteresis across unrelated re-renders (such as new
   // streaming output arriving while the reader scrolled slightly upward inside
   // the overscan buffer): shifting `range.start` early mounts unmeasured older

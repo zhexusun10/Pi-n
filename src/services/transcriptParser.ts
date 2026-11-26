@@ -4,6 +4,13 @@ import { extensionErrorText } from "./extensionErrors";
 import { matchRequestedUserTurn, plannerContentSteerId, plannerContentText, stripPiImageDimensionHints, stripPlannerContext } from "./plannerText";
 import { closeThinkingItems, finalizeThinkingItems, updateThinkingItems } from "./thinkingTranscript";
 import { createCompactionTranscriptItem, extractCompactionInfo } from "./compactionEvent";
+import {
+  appendOrMergeNoticeItem,
+  collectAssistantMessageNotices,
+  collectCacheWarmNotice,
+  resetNoticeCacheTracking,
+  type NoticeTrackerState,
+} from "./transcriptNotices";
 import { toolOutputPreview, truncateToolArgs } from "./toolOutput";
 import { findToolCallIndex, laterToolPhase, toolNameUpdate, type ToolCallPhase } from "./toolCallUpdates";
 
@@ -26,6 +33,7 @@ export interface ParseTranscriptChunkState {
   assistantStartIndex: number;
   userMessageStarts: Set<string>;
   compacting: boolean;
+  noticeTracker?: NoticeTrackerState;
 }
 
 // The runtime adds a trailing newline around its plain-text fallback. Ignore
@@ -70,6 +78,17 @@ export function parseTranscriptChunkLines(
   let lineOffset = state.byteOffset;
   let localId = 0;
   const rowId = (type: string) => `${type}_${state.source}_${lineOffset}_${localId++}`;
+  let noticeTracker: NoticeTrackerState = (state.noticeTracker ??= {});
+
+  const appendNotices = (notices: ReturnType<typeof collectAssistantMessageNotices>, ts?: unknown) => {
+    if (!notices.length) return;
+    const parsedTs = typeof ts === "number" && Number.isFinite(ts) && ts > 0
+      ? ts
+      : typeof ts === "string" ? (Date.parse(ts) || Date.now()) : Date.now();
+    for (const notice of notices) {
+      currentItems = appendOrMergeNoticeItem(currentItems, rowId("notice"), notice, parsedTs);
+    }
+  };
 
   const appendFinalResponseLine = (line: string) => {
     if (state.finalResponseSuppressed) return;
@@ -300,6 +319,7 @@ export function parseTranscriptChunkLines(
     });
     retireFinalResponseCopy(message.content.filter((part: any) => part?.type === "text")
       .map((part: any) => part.text || "").join(""));
+    appendNotices(collectAssistantMessageNotices(noticeTracker, message), message.timestamp);
   };
 
   for (const rawLine of lines) {
@@ -330,6 +350,8 @@ export function parseTranscriptChunkLines(
         state.finalResponseSuppressed = false;
         currentItems = closeThinkingItems(currentItems);
         state.assistantStartIndex = currentItems.length;
+        noticeTracker = {};
+        state.noticeTracker = noticeTracker;
         continue;
       }
       state.inFinalResponse = false;
@@ -612,7 +634,22 @@ export function parseTranscriptChunkLines(
             type: "text", role: "assistant", content: missing, timestamp: Date.now(),
           });
         }
-        if (message?.role === "assistant") state.assistantStartIndex = currentItems.length;
+        if (message?.role === "assistant") {
+          appendNotices(collectAssistantMessageNotices(noticeTracker, message), message.timestamp ?? event.timestamp);
+          state.assistantStartIndex = currentItems.length;
+        }
+        continue;
+      }
+
+      if (event.type === "usage" || (event.type === "entry_appended" && event.entry?.type === "usage")) {
+        const entry = event.type === "entry_appended" ? event.entry : event;
+        const notice = collectCacheWarmNotice(noticeTracker, entry);
+        if (notice) appendNotices([notice], entry.timestamp ?? event.timestamp);
+        continue;
+      }
+
+      if (event.type === "branch_summary") {
+        resetNoticeCacheTracking(noticeTracker);
         continue;
       }
 
@@ -626,6 +663,7 @@ export function parseTranscriptChunkLines(
         state.compacting = false;
         const compaction = extractCompactionInfo(event);
         if (compaction) {
+          resetNoticeCacheTracking(noticeTracker);
           currentItems = closeThinkingItems(currentItems);
           const previous = currentItems[currentItems.length - 1];
           const isDuplicate = previous?.type === "compaction" &&

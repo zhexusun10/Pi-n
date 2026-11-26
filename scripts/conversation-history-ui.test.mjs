@@ -834,14 +834,19 @@ for (const [mode, language] of [["graph", "en"], ["serial", "zh-CN"], ["planner"
         const labels = (await details.locator("p").allTextContents()).map(text => text.split(":")[0]);
         for (const label of labels) assert.match(label, /^[A-Z]/, `${mode}: ${label}`);
         for (const label of [
-          "Workspace", ...(mode === "planner" ? [] : ["Session id"]),
+          ...(mode === "serial" ? [] : ["Workspace"]),
+          ...(mode === "planner" ? [] : ["Session id"]),
           ...(mode === "graph" ? ["Commit"] : []),
           "Start time", "Time took",
           "Cumulative tokens", "Input", "Output", "Cache read", "Cache write", "Reasoning", "Context window", "Current context",
           // Model settings sit on the last row, after token usage.
           "Model", "Thinking level",
         ]) assert.ok(labels.includes(label), `${mode}: missing ${label}`);
-        await details.getByText("Workspace: /mock", { exact: true }).waitFor();
+        if (mode === "serial") {
+          assert.ok(!labels.includes("Workspace"), "serial: should not show Workspace row");
+        } else {
+          await details.getByText("Workspace: /mock", { exact: true }).waitFor();
+        }
         await details.getByText("Model: test/model", { exact: true }).waitFor();
         await details.getByText(`Thinking level: ${mode === "planner" ? "high" : "low"}`, { exact: true }).waitFor();
         if (mode !== "planner") await details.getByText("Session id: session", { exact: true }).waitFor();
