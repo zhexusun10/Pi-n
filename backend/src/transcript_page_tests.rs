@@ -1034,4 +1034,55 @@ fn forward_and_tail_projections_skip_over_4mb_jsonl_lines_cleanly() {
     assert!(combined_forward.contains("Before giant record"));
     assert!(combined_forward.contains("After giant record"));
     assert!(!combined_forward.contains("QAUAFAB"));
+
+    // Planning output forward pagination must likewise advance past a >4 MiB
+    // JSONL line to its newline boundary without leaking the base64 tail.
+    let planning_id = Uuid::new_v4().to_string();
+    let planning_dir = temp.path().join("planning").join(&planning_id);
+    std::fs::create_dir_all(&planning_dir).unwrap();
+    write_planning_summary(
+        &planning_dir,
+        &PlanningSummary {
+            planning_id: planning_id.clone(),
+            run_id: Some(run_id.into()),
+            repository: Some(temp.path().to_string_lossy().into()),
+            goal: Some("oversized".into()),
+            status: Some("completed".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::write(planning_dir.join("planner.jsonl"), &full).unwrap();
+
+    for proj in [
+        crate::compact_transcript::TranscriptProjection::Summary,
+        crate::compact_transcript::TranscriptProjection::CardShell,
+    ] {
+        let mut plan_offset = 0u64;
+        let mut plan_forward = String::new();
+        for _ in 0..8 {
+            let page = get_planning_output_with_options(
+                planning_id.clone(),
+                "planner".into(),
+                plan_offset,
+                false,
+                None,
+                None,
+                Some(proj),
+                None,
+                &service,
+            )
+            .unwrap();
+            plan_forward.push_str(page["content"].as_str().unwrap());
+            let next = page["nextOffset"].as_u64().unwrap();
+            assert!(next > plan_offset || page["complete"].as_bool() == Some(true));
+            plan_offset = next;
+            if page["complete"].as_bool() == Some(true) {
+                break;
+            }
+        }
+        assert!(plan_forward.contains("Before giant record"));
+        assert!(plan_forward.contains("After giant record"));
+        assert!(!plan_forward.contains("QAUAFAB"));
+    }
 }

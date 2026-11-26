@@ -1626,11 +1626,13 @@ test("fast upward scrolling and older-page prepends in expanded mode have zero b
   const logBytes = Buffer.from(fullLog);
   const pageSize = Math.floor(logBytes.length / 3);
 
+  let olderPagesFetched = 0;
   const { page, context, errors } = await fixture(
     `node&settled=1&bytes=${logBytes.length}`,
     { width: 1280, height: 700 },
     undefined,
     async (body) => {
+      if (body.before != null) olderPagesFetched++;
       const end = body.before ?? logBytes.length;
       let start = Math.max(0, end - pageSize);
       if (start > 0) {
@@ -1676,13 +1678,15 @@ test("fast upward scrolling and older-page prepends in expanded mode have zero b
         const beforeTop = anchor.getBoundingClientRect().top;
         const beforeScrollTop = el.scrollTop;
         const delta = Math.min(520, el.scrollTop);
+        const expectedScrollTop = beforeScrollTop - delta;
         el.dispatchEvent(new WheelEvent("wheel", { deltaY: -delta, bubbles: true }));
         el.scrollTop -= delta;
-        const hitTopBoundary = beforeScrollTop - delta <= 120;
+        const hitTopBoundary = expectedScrollTop <= 120;
         const expectedTop = beforeTop + delta;
         steps++;
         let frame0Top = null;
         let frame0ScrollTop = el.scrollTop;
+        let stepObservedPrepend = false;
         for (let frame = 0; frame < 3; frame++) {
           await new Promise(resolve => requestAnimationFrame(resolve));
           const nowVisible = [...el.querySelectorAll("[data-transcript-id]")].filter(row => {
@@ -1697,8 +1701,17 @@ test("fast upward scrolling and older-page prepends in expanded mode have zero b
               if (frame === 0) {
                 frame0Top = rect.top;
                 frame0ScrollTop = el.scrollTop;
+                // Synchronous prefetched-page commits (`flushSync` in scroll containment)
+                // compensate `scrollTop` upward before frame 0 paints.
+                if (el.scrollTop > expectedScrollTop + 500) {
+                  prependsObserved++;
+                  stepObservedPrepend = true;
+                }
               } else {
-                if (el.scrollTop > frame0ScrollTop + 500) prependsObserved++;
+                if (!stepObservedPrepend && el.scrollTop > frame0ScrollTop + 500) {
+                  prependsObserved++;
+                  stepObservedPrepend = true;
+                }
                 if (frame0Top !== null) {
                   const frameShift = Math.abs(rect.top - frame0Top);
                   if (frameShift > worstFrameToFrame) worstFrameToFrame = frameShift;
@@ -1720,6 +1733,7 @@ test("fast upward scrolling and older-page prepends in expanded mode have zero b
         steps,
       };
     });
+    assert.ok(olderPagesFetched >= 1, `expected at least one older-page fetch during scrollback, got ${olderPagesFetched}`);
     assert.ok(metrics.steps >= 5, `expected multiple upward scroll steps, got ${JSON.stringify(metrics)}`);
     assert.ok(metrics.prependsObserved >= 1, `expected at least one older-page prepend during scrollback, got ${JSON.stringify(metrics)}`);
     assert.equal(metrics.blankFrames, 0, `viewport flashed blank during fast upward scroll: ${JSON.stringify(metrics)}`);

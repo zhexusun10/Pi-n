@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { buildStackPreviewState } from "../src/components/MarkdownImageStack.tsx";
 import { MarkdownRenderer } from "../src/components/MarkdownRenderer.tsx";
 import { StreamingMarkdownCache } from "../src/services/streamingMarkdown.ts";
-import { segmentMarkdownImageStacks } from "../src/services/markdownImageStack.ts";
+import { segmentMarkdownImageStacks, type StackedMarkdownImage } from "../src/services/markdownImageStack.ts";
 
 const segment = (content: string, streaming = false) => {
   const cache = new StreamingMarkdownCache();
@@ -114,4 +115,59 @@ test("safe inline base64 raster images stack together when count exceeds two", (
   assert.equal(segments[0].type, "image-stack");
   assert.equal(segments[0].images.length, 3);
   assert.ok(segments[0].images.every(img => img.src === px));
+});
+
+test("out-of-range numeric HTML entities in img attributes do not crash segmentation", () => {
+  const html = [
+    '<p><img src="https://example.com/1.png" alt="Dec &#99999999; valid &#65;"></p>',
+    '<p><img src="https://example.com/2.png" alt="Hex &#x110000; valid &#x42;"></p>',
+    '<p><img src="https://example.com/3.png" alt="Normal"></p>',
+  ].join("");
+  const segments = segmentMarkdownImageStacks(null, html);
+  assert.ok(segments);
+  assert.equal(segments.length, 1);
+  assert.equal(segments[0].type, "image-stack");
+  assert.deepEqual(
+    segments[0].images.map(img => img.alt),
+    ["Dec &#99999999; valid A", "Hex &#x110000; valid B", "Normal"],
+  );
+});
+
+test("buildStackPreviewState excludes failed cards and refuses to open failed or unresolved targets", () => {
+  const images: StackedMarkdownImage[] = [
+    { workspacePath: "missing.png", alt: "Missing" },
+    { src: "https://example.com/broken.png", alt: "Broken HTTP" },
+    { workspacePath: "pending.png", alt: "Pending" },
+    { src: "https://example.com/ok-1.png", alt: "OK 1" },
+    { workspacePath: "ok-2.png", alt: "OK 2" },
+  ];
+  const cardKeys = [
+    "missing.png::0",
+    "https://example.com/broken.png::0",
+    "pending.png::0",
+    "https://example.com/ok-1.png::0",
+    "ok-2.png::0",
+  ];
+  const errorMap = {
+    "missing.png::0": "无法加载图片 · Missing",
+    "https://example.com/broken.png::0": "无法加载图片 · Broken HTTP",
+  };
+  const resolved = new Map<number, string>([
+    [3, "https://example.com/ok-1.png"],
+    [4, "blob:ok-2"],
+  ]);
+  const resolveSrc = (index: number, image: StackedMarkdownImage) => resolved.get(index) ?? image.src ?? "";
+
+  assert.equal(buildStackPreviewState(images, cardKeys, errorMap, resolveSrc, 0), null);
+  assert.equal(buildStackPreviewState(images, cardKeys, errorMap, resolveSrc, 1), null);
+  assert.equal(buildStackPreviewState(images, cardKeys, errorMap, resolveSrc, 2), null);
+
+  const previewOk2 = buildStackPreviewState(images, cardKeys, errorMap, resolveSrc, 4);
+  assert.deepEqual(previewOk2, {
+    index: 1,
+    items: [
+      { src: "https://example.com/ok-1.png", alt: "OK 1", name: "OK 1" },
+      { src: "blob:ok-2", alt: "OK 2", name: "OK 2" },
+    ],
+  });
 });

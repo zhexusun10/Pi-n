@@ -196,7 +196,7 @@ export function localizeError(error: unknown, language: Locale = locale): string
   }
   if (language === "zh-CN") {
     const manualNodeErrors: Record<string, string> = {
-      "Manual nodes require an existing Graph run": "只能在已有的 Graph 运行中添加节点。",
+      "Manual nodes require an existing Graph run": "只能在已有的 Compile 运行中添加节点。",
       "Wait for the published result to finish before adding a node": "请等待已发布结果的运行结束后再添加节点。",
       "Wait for publication or the active follow-up to finish before adding a node": "请等待发布或正在进行的后续任务结束后再添加节点。",
       "A feedback edge requires a target node": "反馈边需要选择目标节点。",

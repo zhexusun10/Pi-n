@@ -1308,7 +1308,7 @@ button.transcript-error-toggle {
 
 .markdown-content img[data-workspace-path]:not([src]) {
   min-height: 80px;
-  background: var(--bg-secondary);
+  background: var(--bg-surface, #F9F9FA);
 }
 
 .markdown-image-error {

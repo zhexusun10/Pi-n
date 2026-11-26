@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded the bundled Pi source runtime and extension peer packages from 1.6.0 to the official 1.6.1 release, refreshed the reviewed model catalog and dependency profile (upgrading `@google/genai` to `3.6.1` and adding `@aws-sdk/credential-provider-node` `3.972.82`), and rejected the retired `showCacheMissNotices` settings field before upstream migration so users explicitly adopt `notices.*` (`pi`, `engine/pi-lock.json`, `engine/model-data/`, `engine/pi-dependencies/`, `engine/pi-compat.ts`, `package.json`, `package-lock.json`, `scripts/pi-compat.test.ts`). The refreshed catalog enables `xhigh` thinking on Gemini 4 Hydrogen/Neon, replaces Mistral's retired `devstral-medium-latest` default with `mistral-medium-latest`, and removes deprecated Groq, Mistral, OpenAI, and Azure model IDs; replace saved selections of retired IDs explicitly while preserving existing conversation history. Restart the whole application after upgrading so existing workers do not retain the previous Pi modules.
+
 ### Fixed
 
 - Stopped the Changes panel from listing scratch files that a Serial or source-direct agent created and removed through bash (empty "no text changes" rows) and from missing the files it really edited through `sed -i`, redirects, formatters or interpreter scripts: bash-derived rows are now verified against the execution's Git baseline (with bounded pathspecs, a 5-second deadline, `core.fsmonitor=false`, and a short live-poll cache), frozen into the cache and durable sidecar once an execution settles so later commits do not erase history, and the derived sidecar version was bumped so old runs are reparsed; deleted rows with no available diff now display a dedicated deleted-file message (`backend/src/file_changes.rs`, `backend/src/file_changes/bash_candidates.rs`, `backend/src/file_changes/bash_verify.rs`, `backend/src/file_changes/file_diff.rs`, `backend/src/file_changes/persistence.rs`, `backend/src/server.rs`, `backend/src/file_changes_api_tests.rs`, `src/components/changes/ChangedFileRow.tsx`, `src/i18n/en.ts`, `docs/architecture/runtime.md`).
@@ -1067,7 +1071,18 @@ Baseline release. The changelog is restarted from the current codebase at v1.1.0
   - **Configurable**: Can be toggled on/off in Settings (`postTaskReview`, enabled by default).
   - **Loop engineering**: When combined with Auto Approve, creates a robust, closed-loop engineering cycle that autonomously plans, executes, verifies, and iterates until the Planner concludes.
 
-[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v1.9.18...HEAD
+[1.9.18]: https://github.com/zhexusun10/pi-n/compare/v1.9.17...v1.9.18
+[1.9.17]: https://github.com/zhexusun10/pi-n/compare/v1.9.16...v1.9.17
+[1.9.16]: https://github.com/zhexusun10/pi-n/compare/v1.9.15...v1.9.16
+[1.9.15]: https://github.com/zhexusun10/pi-n/compare/v1.9.14...v1.9.15
+[1.9.14]: https://github.com/zhexusun10/pi-n/compare/v1.9.13...v1.9.14
+[1.9.13]: https://github.com/zhexusun10/pi-n/compare/v1.9.12...v1.9.13
+[1.9.12]: https://github.com/zhexusun10/pi-n/compare/v1.9.11...v1.9.12
+[1.9.11]: https://github.com/zhexusun10/pi-n/compare/v1.9.10...v1.9.11
+[1.9.10]: https://github.com/zhexusun10/pi-n/compare/v1.9.9...v1.9.10
+[1.9.9]: https://github.com/zhexusun10/pi-n/compare/v1.8.9...v1.9.9
+[1.8.9]: https://github.com/zhexusun10/pi-n/compare/v1.8.0...v1.8.9
 [1.8.0]: https://github.com/zhexusun10/pi-n/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/zhexusun10/pi-n/compare/v1.7.0...v1.7.1
 [1.6.2]: https://github.com/zhexusun10/pi-n/compare/v1.6.1...v1.6.2

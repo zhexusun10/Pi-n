@@ -25,6 +25,36 @@ function getCardKey(image: StackedMarkdownImage, occurrence: number): string {
   return `${image.workspacePath ?? image.src ?? "img"}::${occurrence}`;
 }
 
+export function buildStackPreviewState(
+  images: readonly StackedMarkdownImage[],
+  cardKeys: readonly string[],
+  errorMap: Readonly<Record<string, string>>,
+  resolveSrc: (index: number, image: StackedMarkdownImage) => string,
+  targetIndex: number,
+  fallbackAlt: (index: number) => string = (index) => t("图片 {0}", index + 1),
+): { items: PreviewImageItem[]; index: number } | null {
+  const targetKey = cardKeys[targetIndex];
+  if (!targetKey || errorMap[targetKey]) return null;
+
+  const items: PreviewImageItem[] = [];
+  let mappedIndex = -1;
+  for (let i = 0; i < images.length; i++) {
+    const key = cardKeys[i];
+    if (key && errorMap[key]) continue;
+    const img = images[i];
+    const resolvedSrc = resolveSrc(i, img);
+    if (!resolvedSrc) continue;
+    if (i === targetIndex) mappedIndex = items.length;
+    items.push({
+      src: resolvedSrc,
+      alt: img.alt || img.title || fallbackAlt(i),
+      name: img.alt || img.title || undefined,
+    });
+  }
+  if (mappedIndex === -1 || items.length === 0) return null;
+  return { items, index: mappedIndex };
+}
+
 interface StackCardProps {
   image: StackedMarkdownImage;
   index: number;
@@ -221,23 +251,19 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
   }, [total]);
 
   const openPreviewAt = useCallback((targetIndex: number) => {
-    const items: PreviewImageItem[] = [];
-    let mappedIndex = 0;
-    for (let i = 0; i < images.length; i++) {
-      const img = images[i];
-      const node = imgNodesRef.current.get(i);
-      const resolvedSrc = node?.currentSrc || node?.getAttribute("src") || img.src || "";
-      if (!resolvedSrc) continue;
-      if (i === targetIndex) mappedIndex = items.length;
-      items.push({
-        src: resolvedSrc,
-        alt: img.alt || img.title || t("图片 {0}", i + 1),
-        name: img.alt || img.title || undefined,
-      });
-    }
-    if (items.length === 0) return;
-    setPreviewState({ items, index: mappedIndex });
-  }, [images]);
+    const next = buildStackPreviewState(
+      images,
+      cardKeys,
+      errorMap,
+      (index, img) => {
+        const node = imgNodesRef.current.get(index);
+        return node?.currentSrc || node?.getAttribute("src") || img.src || "";
+      },
+      targetIndex,
+    );
+    if (!next) return;
+    setPreviewState(next);
+  }, [cardKeys, errorMap, images]);
 
   // Support natural two-finger horizontal swipe on trackpads when hovered,
   // while never hijacking vertical page/transcript scrolling.
@@ -350,6 +376,7 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
 
   const activeImage = images[activeIndex];
   const activeCaption = activeImage?.alt || activeImage?.title || "";
+  const activeHasError = Boolean(cardKeys[activeIndex] && errorMap[cardKeys[activeIndex]]);
 
   return (
     <>
@@ -436,18 +463,20 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
             <ChevronRight size={16} strokeWidth={2.2} />
           </button>
 
-          <button
-            type="button"
-            className="markdown-image-stack-expand"
-            aria-label={t("查看大图")}
-            tabIndex={isBrowse ? 0 : -1}
-            onClick={(event) => {
-              event.stopPropagation();
-              openPreviewAt(activeIndex);
-            }}
-          >
-            <Maximize2 size={13} strokeWidth={2.1} />
-          </button>
+          {!activeHasError ? (
+            <button
+              type="button"
+              className="markdown-image-stack-expand"
+              aria-label={t("查看大图")}
+              tabIndex={isBrowse ? 0 : -1}
+              onClick={(event) => {
+                event.stopPropagation();
+                openPreviewAt(activeIndex);
+              }}
+            >
+              <Maximize2 size={13} strokeWidth={2.1} />
+            </button>
+          ) : null}
         </div>
 
         {/* Footer bar: subtle caption + dots, becomes interactive on hover */}

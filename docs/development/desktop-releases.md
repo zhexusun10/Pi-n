@@ -14,7 +14,7 @@ Before building locally, install prerequisites for your host OS (Node.js 22.19+,
   ```sh
   npm run desktop:icons
   ```
-  Derives the white rounded-square desktop app icon (`#FFFFFF` canvas with the `#4A4A4A` Pi^n web mark) and regenerates `src-tauri/icons/{icon.png,32x32.png,128x128.png,128x128@2x.png,icon.icns,icon.ico}` via `@tauri-apps/cli`.
+  Derives the white rounded-square desktop app icon (`#FFFFFF` canvas with the three-color Pi^n pixel mark) and regenerates `src-tauri/icons/{icon.png,32x32.png,128x128.png,128x128@2x.png,icon.icns,icon.ico}` via `@tauri-apps/cli`.
 - **Stage bundled frontend, release backend, verified Pi runtime, and pinned Node.js `22.19.0` only:**
   ```sh
   npm run desktop:stage -- --target macos-arm64   # or macos-x64 / windows-x64

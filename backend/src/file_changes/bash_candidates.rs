@@ -211,21 +211,14 @@ fn path_like_literal(text: &str) -> bool {
     }
 }
 
-/// Quoted path-like string literals of a command that also contains an
-/// interpreter file-write call (`open(p, 'w').write(...)`, `writeFileSync`).
-/// This is deliberately broad; the baseline comparison removes every literal
-/// that was only read or never changed.
-pub(super) fn interpreter_leads(command: &str) -> Vec<String> {
-    if !INTERPRETER_WRITE_MARKERS
-        .iter()
-        .any(|marker| command.contains(marker))
-    {
-        return Vec::new();
-    }
-    let mut leads = Vec::new();
-    let mut characters = command.chars().peekable();
+fn collect_quoted_literals(text: &str, quote_filter: Option<char>, leads: &mut Vec<String>) {
+    let mut characters = text.chars().peekable();
     while let Some(character) = characters.next() {
-        if character != '\'' && character != '"' {
+        let is_quote = match quote_filter {
+            Some(expected) => character == expected,
+            None => character == '\'' || character == '"',
+        };
+        if !is_quote {
             continue;
         }
         let mut literal = String::new();
@@ -240,10 +233,36 @@ pub(super) fn interpreter_leads(command: &str) -> Vec<String> {
             }
             literal.push(next);
         }
-        if closed && path_like_literal(&literal) && !leads.contains(&literal) {
-            leads.push(literal);
+        if !closed {
+            continue;
+        }
+        if path_like_literal(&literal) {
+            if !leads.contains(&literal) {
+                leads.push(literal);
+            }
+        } else if quote_filter.is_none() {
+            // Inline scripts like `python3 -c "open('a.ts','w').write('x')"`
+            // wrap the code body in outer quotes; inspect opposite-quoted
+            // literals inside non-path code bodies.
+            let inner_quote = if character == '"' { '\'' } else { '"' };
+            collect_quoted_literals(&literal, Some(inner_quote), leads);
         }
     }
+}
+
+/// Quoted path-like string literals of a command that also contains an
+/// interpreter file-write call (`open(p, 'w').write(...)`, `writeFileSync`).
+/// This is deliberately broad; the baseline comparison removes every literal
+/// that was only read or never changed.
+pub(super) fn interpreter_leads(command: &str) -> Vec<String> {
+    if !INTERPRETER_WRITE_MARKERS
+        .iter()
+        .any(|marker| command.contains(marker))
+    {
+        return Vec::new();
+    }
+    let mut leads = Vec::new();
+    collect_quoted_literals(command, None, &mut leads);
     leads
 }
 

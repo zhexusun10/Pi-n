@@ -1367,7 +1367,7 @@ mod shadow_safety_tests {
 const MISSING_SHADOW_ERROR: &str =
     "临时 Git 快照不存在或已回收：快照在首次派发节点时建立，发布成功后删除。请开启新对话后重试。";
 
-const STALE_SHADOW_ERROR: &str = "临时 Git 快照不存在：图运行的快照在首次派发节点时建立，并在发布成功后回收。请开启新对话后重试。";
+const STALE_SHADOW_ERROR: &str = "临时 Git 快照不存在：Compile 运行的快照在首次派发节点时建立，并在发布成功后回收。请开启新对话后重试。";
 
 /// Return the existing host-only source database (Git or plain-directory binding).
 /// Never creates, initializes, follows a symlink, or invokes Git.

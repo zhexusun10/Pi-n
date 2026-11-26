@@ -385,7 +385,7 @@ test('only required pi-trim is locked; bundled continuity and user extensions re
         required: false, enabled: false },
       disabled: false, onToggle() {},
     }));
-    assert.ok(webSearch.replace(/&#x27;/g, "'").includes(t('提供网页搜索与内容抓取能力，默认启用keenable公共端点。')),
+    assert.ok(webSearch.replace(/&#x27;/g, "'").includes(t('提供网页搜索与内容抓取能力，默认启用 Keenable 公共端点。')),
       'web search describes its web search and fetch capabilities');
     assert.ok(!webSearch.includes('extensions/index.ts'), 'bundled web search describes its purpose instead of exposing a local path');
     const webSearchWithNote = renderToStaticMarkup(React.createElement(ExtensionItem, {

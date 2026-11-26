@@ -33,11 +33,11 @@ function decodeHtmlEntities(value: string): string {
   return value.replace(/&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));/gi, (match, hex, dec, named) => {
     if (hex) {
       const code = Number.parseInt(hex, 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
     }
     if (dec) {
       const code = Number.parseInt(dec, 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
     }
     switch (named.toLowerCase()) {
       case "amp": return "&";

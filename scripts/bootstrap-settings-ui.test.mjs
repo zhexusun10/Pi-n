@@ -1517,9 +1517,9 @@ test("model-specific thinking levels update global defaults when Settings is out
     }
     assert.deepEqual(await levels(1), ["off", "low", "high"]);
     assert.equal(await thinking(1).inputValue(), "high", "an explicitly selected Planner model stays independent");
-    await page.getByLabel("Filter available models by provider").selectOption("other");
+    assert.equal(await nodeModel(page).locator('option[value="other/old"]').count(), 1, "models from all configured providers appear in the unified picker");
     assert.equal(await nodeModel(page).inputValue(), "test/plain");
-    assert.deepEqual(await levels(0), ["off"], "provider filtering does not change the selected model's capabilities");
+    assert.deepEqual(await levels(0), ["off"], "having additional providers in the catalog does not change the selected model's capabilities");
     await page.locator(".save-config-btn").click();
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     assert.equal(saved.model, "test/plain"); assert.equal(saved.thinkingLevel, "off");
@@ -1743,16 +1743,23 @@ test("slash model menu matches all Settings choices and tracks catalog refresh w
     await input.press("Escape"); await input.press("Enter");
     await page.waitForFunction(() => document.querySelector("textarea")?.value === "");
     await openSettings(page);
-    assert.equal(await page.locator(".role-model-group").nth(1).locator("select").first().inputValue(), "test/model-65");
+    assert.equal(await nodeModel(page).inputValue(), "test/model-65");
     await page.getByRole("button", { name: "Close dialog", exact: true }).click();
 
-    // Leave /model open while Settings refreshes the catalog. The command
-    // trigger and scope don't change, so a one-time local copy would go stale.
+    // Leave /model open while Settings refreshes the catalog (opening Manage
+    // visible models calls `providerAuth.catalog(true)`). The command trigger
+    // and scope don't change, so a one-time local copy would go stale.
     await input.fill("/model ");
     await openSettings(page);
     models = [...catalog.models, { ...catalog.models[0], id: "fresh-only", name: "Fresh" }];
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    const manageModels = page.getByRole("button", { name: "Manage visible models", exact: true });
+    await manageModels.scrollIntoViewIfNeeded();
+    await manageModels.click();
+    const scope = page.getByRole("dialog", { name: "Global model visibility" });
+    await scope.waitFor();
     await until(async () => (await choices()).length === 4);
+    await scope.getByRole("button", { name: "Cancel", exact: true }).click();
+    await scope.waitFor({ state: "detached" });
     const refreshed = await choices();
     await page.getByRole("button", { name: "Close dialog", exact: true }).click();
     assert.equal(await input.inputValue(), "/model ");
@@ -1771,11 +1778,21 @@ test("home slash model changes are reflected in Settings without writing global 
   try {
     await page.locator('[data-run-id="fast"]').waitFor();
     const input = page.locator("textarea").first();
+    // Home defaults to Direct (`serial`), so `/model` updates Node Agent without writing global defaults.
     await input.fill("/model test/new"); await input.press("Escape"); await input.press("Enter");
     await page.waitForFunction(() => document.querySelector("textarea")?.value === "");
     await openSettings(page);
-    assert.equal(await page.locator(".role-model-group").nth(1).locator("select").first().inputValue(), "test/new");
-    assert.equal(await nodeModel(page).inputValue(), "test/old");
+    assert.equal(await nodeModel(page).inputValue(), "test/new");
+    assert.equal(await page.locator(".role-model-group").nth(1).locator("select").first().inputValue(), "");
+    await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+
+    // Switching Home to Compile (`graph`) routes `/model` to Planner while leaving Node Agent unchanged.
+    await page.getByRole("button", { name: "Compile", exact: true }).click();
+    await input.fill("/model test/plain"); await input.press("Escape"); await input.press("Enter");
+    await page.waitForFunction(() => document.querySelector("textarea")?.value === "");
+    await openSettings(page);
+    assert.equal(await page.locator(".role-model-group").nth(1).locator("select").first().inputValue(), "test/plain");
+    assert.equal(await nodeModel(page).inputValue(), "test/new");
     assert.equal(calls.filter(call => call.command === "save_config").length, 0);
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/old");
     assert.deepEqual(errors, []);

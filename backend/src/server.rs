@@ -5997,14 +5997,66 @@ fn get_planning_output_with_options(
         let current_total = total_bytes
             .max(file.metadata().map(|meta| meta.len()).unwrap_or(0))
             .max(raw_next);
-        let (compacted, consumed) = crate::compact_transcript::compact_forward_chunk_with_options(
-            content,
-            offset as usize,
-            raw_next >= current_total,
-            proj,
-            settled,
-        );
-        let next_offset = offset + consumed as u64;
+        let reached_eof = raw_next >= current_total;
+        let (compacted, next_offset) = if !reached_eof
+            && !content.contains('\n')
+            && content.trim_start().starts_with('{')
+        {
+            // A single JSONL line exceeded the 4 MiB forward ceiling.
+            // Advance to its terminating newline so the next poll does not
+            // start mid-line and emit the trailing base64/JSON tail as text.
+            let mut skip_cursor = raw_next;
+            let mut scanned = length;
+            let mut buf = vec![0u8; crate::compact_transcript::COMPACT_RAW_CHUNK_BYTES];
+            while skip_cursor < current_total
+                && scanned < crate::compact_transcript::MAX_COMPACT_RAW_SCAN_BYTES
+            {
+                let step = crate::compact_transcript::COMPACT_RAW_CHUNK_BYTES
+                    .min((current_total - skip_cursor) as usize);
+                file.seek(SeekFrom::Start(skip_cursor))
+                    .map_err(|e| e.to_string())?;
+                let mut read_len = 0usize;
+                while read_len < step {
+                    let n = file
+                        .read(&mut buf[read_len..step])
+                        .map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    read_len += n;
+                }
+                if read_len == 0 {
+                    break;
+                }
+                if let Some(nl) = buf[..read_len].iter().position(|&b| b == b'\n') {
+                    skip_cursor += (nl + 1) as u64;
+                    break;
+                }
+                // Keep skip_cursor aligned to a UTF-8 character boundary when
+                // continuing or stopping at the scan ceiling.
+                let valid_len = match std::str::from_utf8(&buf[..read_len]) {
+                    Ok(_) => read_len,
+                    Err(error) if error.error_len().is_none() => error.valid_up_to(),
+                    Err(_) => read_len,
+                };
+                if valid_len == 0 {
+                    break;
+                }
+                scanned = scanned.saturating_add(valid_len);
+                skip_cursor += valid_len as u64;
+            }
+            (String::new(), skip_cursor)
+        } else {
+            let (compacted, consumed) =
+                crate::compact_transcript::compact_forward_chunk_with_options(
+                    content,
+                    offset as usize,
+                    reached_eof,
+                    proj,
+                    settled,
+                );
+            (compacted, offset + consumed as u64)
+        };
         return serde_json::to_value(crate::api_contract::PlanningOutputPage {
             planning_id,
             role,

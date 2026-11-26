@@ -726,12 +726,32 @@ fn parse_bash_command_changes(
     // example `cd /tmp && rm -rf build`) moves every following relative target
     // outside it. Commands without a resolved directory cannot be attributed.
     let mut cwd = root;
+    // Accumulate command text executed under the current `cwd` so interpreter
+    // write leads (inline `-c`/`-e` scripts or here-documents) resolve against
+    // the directory active when the interpreter ran rather than the final `cwd`.
+    let mut interpreter_chunk = String::new();
+    let flush_interpreter_chunk = |chunk: &mut String,
+                                   active_cwd: Option<&Path>,
+                                   items: &mut Vec<FileChangeItem>| {
+        if chunk.is_empty() {
+            return;
+        }
+        for raw in bash_candidates::interpreter_leads(chunk) {
+            if let Some(path) = resolve_bash_path(&raw, active_cwd, worktree, repository) {
+                items.push(candidate_item(path, node, execution_id));
+            }
+        }
+        chunk.clear();
+    };
     // Here-document bodies are data for another program, not shell commands.
     let mut heredoc_end: Option<String> = None;
     for line in command.split('\n') {
         if let Some(end) = &heredoc_end {
             if line.trim() == end {
                 heredoc_end = None;
+            } else {
+                interpreter_chunk.push_str(line);
+                interpreter_chunk.push('\n');
             }
             continue;
         }
@@ -762,10 +782,12 @@ fn parse_bash_command_changes(
                 };
                 match cmd {
                     "cd" | "pushd" => {
+                        flush_interpreter_chunk(&mut interpreter_chunk, cwd.as_deref(), &mut items);
                         cwd = args_slice
                             .iter()
                             .find(|arg| !arg.starts_with('-'))
                             .and_then(|arg| resolve_cd_target(arg, cwd.as_deref()));
+                        continue;
                     }
                     "rm" | "unlink" | "del" | "Remove-Item" => {
                         for arg in args_slice {
@@ -802,6 +824,8 @@ fn parse_bash_command_changes(
                     }
                     _ => {}
                 }
+                interpreter_chunk.push_str(trimmed);
+                interpreter_chunk.push('\n');
                 for raw in bash_candidates::segment_leads(&tokens[start..]) {
                     if let Some(path) = resolve_bash_path(raw, cwd.as_deref(), worktree, repository) {
                         items.push(candidate_item(path, node, execution_id));
@@ -810,11 +834,7 @@ fn parse_bash_command_changes(
             }
         }
     }
-    for raw in bash_candidates::interpreter_leads(command) {
-        if let Some(path) = resolve_bash_path(&raw, cwd.as_deref(), worktree, repository) {
-            items.push(candidate_item(path, node, execution_id));
-        }
-    }
+    flush_interpreter_chunk(&mut interpreter_chunk, cwd.as_deref(), &mut items);
     items
 }
 
@@ -2816,5 +2836,31 @@ mod tests {
             "project artifacts stay: {paths:?}"
         );
         assert_eq!(live.added_count, 6);
+    }
+
+    #[test]
+    fn parse_bash_interpreter_leads_use_active_cwd_before_subsequent_cd() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(repo.join("sub")).unwrap();
+        let repo_str = repo.to_string_lossy().to_string();
+
+        // 1. Heredoc write followed by `cd /tmp` must still resolve against workspace root.
+        let cmd1 = "python3 - <<'EOF'\np = 'src/a.ts'\nopen(p, 'w').write('x')\nEOF\ncd /tmp && ls";
+        let items1 = parse_bash_command_changes(cmd1, &repo_str, &repo_str, "n", "e1");
+        let paths1: Vec<&str> = items1.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths1, vec!["src/a.ts"]);
+
+        // 2. Inline write inside `cd sub && ... && cd ..` must resolve under `sub/`.
+        let cmd2 = "cd sub && python3 -c \"open('b.ts','w').write('x')\" && cd ..";
+        let items2 = parse_bash_command_changes(cmd2, &repo_str, &repo_str, "n", "e2");
+        let paths2: Vec<&str> = items2.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths2, vec!["sub/b.ts"]);
+
+        // 3. Multi-line inline script inside `cd sub` before `cd /tmp` keeps `sub/` cwd.
+        let cmd3 = "cd sub && node -e \"\nconst f = 'c.ts';\nfs.writeFileSync(f, 'x');\n\"\ncd /tmp";
+        let items3 = parse_bash_command_changes(cmd3, &repo_str, &repo_str, "n", "e3");
+        let paths3: Vec<&str> = items3.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths3, vec!["sub/c.ts"]);
     }
 }

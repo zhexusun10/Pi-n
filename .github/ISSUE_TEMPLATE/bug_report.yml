@@ -27,8 +27,8 @@ body:
     attributes:
       label: Execution mode
       options:
-        - Serial
-        - Graph
+        - Direct
+        - Compile
         - Auto
         - Not applicable
     validations:

@@ -6,7 +6,7 @@ body:
     id: problem
     attributes:
       label: Problem or use case
-      description: What coding workflow is difficult today? Why is the existing Serial or Graph route insufficient?
+      description: What coding workflow is difficult today? Why is the existing Direct or Compile mode insufficient?
     validations:
       required: true
   - type: textarea

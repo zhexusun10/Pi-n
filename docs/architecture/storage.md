@@ -50,7 +50,7 @@ Graph workspaces default to:
 
 | Platform | Workspace parent |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\Pi^n\workspaces` |
+| Windows | `%LOCALAPPDATA%\Pi-n\workspaces` |
 | macOS | `~/Library/Caches/Pi-n/workspaces` |
 | Linux | `${XDG_CACHE_HOME:-~/.cache}/pi-n/workspaces` |
 

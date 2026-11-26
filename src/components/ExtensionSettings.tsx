@@ -17,7 +17,7 @@ export function ExtensionItem({ extension, disabled, onToggle, statusNote }: {
     'npm:pi-trim': t('精简冗余系统提示词，节省 Token 消耗，让模型更专注于你的任务。'),
     'npm:pi-continuity': t('自动从流式中断、网络波动或额度限制中无缝恢复，让长任务稳定跑完。'),
     'npm:pi-simple-timeout': t('为 Bash 命令设置默认超时（180 秒），避免任务卡死。'),
-    'npm:pi-better-web-search': t('提供网页搜索与内容抓取能力，默认启用keenable公共端点。'),
+    'npm:pi-better-web-search': t('提供网页搜索与内容抓取能力，默认启用 Keenable 公共端点。'),
   };
   const description = extension.bundled
     ? `${extension.source}${bundledDescriptions[extension.id] ? ` · ${bundledDescriptions[extension.id]}` : ''}`
