@@ -6,11 +6,73 @@ use super::compose_graph_scoped;
 use crate::workspace::{self, git, repository_git};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeSet, HashSet},
     fs::{self, OpenOptions},
     hash::{Hash, Hasher},
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PublishOptions {
+    /// When true, concurrent source edits whose paths are strictly disjoint
+    /// from this publication's changed paths are preserved in place instead of
+    /// failing delivery.
+    pub(crate) reconcile_disjoint_source_changes: bool,
+    /// When true and delivery has not yet entered `applying`, retry pre-apply
+    /// source-file/index drift against a fresh attempt journal (reusing
+    /// retained composition/Merger work without rerunning nodes). Branch
+    /// switches, HEAD moves, unrelated merges and in-flight `applying`
+    /// recoveries still fail closed.
+    pub(crate) retry_pre_apply_source_changes: bool,
+}
+
+impl PublishOptions {
+    pub(crate) fn concurrent_friendly() -> Self {
+        Self {
+            reconcile_disjoint_source_changes: true,
+            retry_pre_apply_source_changes: true,
+        }
+    }
+}
+
+enum AttemptError {
+    RetryablePreApply(String),
+    Fatal(String),
+}
+
+impl AttemptError {
+    fn into_message(self) -> String {
+        match self {
+            Self::RetryablePreApply(message) | Self::Fatal(message) => message,
+        }
+    }
+}
+
+impl From<String> for AttemptError {
+    fn from(message: String) -> Self {
+        Self::Fatal(message)
+    }
+}
+
+impl From<&str> for AttemptError {
+    fn from(message: &str) -> Self {
+        Self::Fatal(message.into())
+    }
+}
+
+const SOURCE_LEASE_RETRY_BACKOFFS: [Duration; 4] = [
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(150),
+    Duration::from_millis(200),
+];
+
+const PRE_APPLY_RETRY_BACKOFFS: [Duration; 2] = [
+    Duration::from_millis(150),
+    Duration::from_millis(350),
+];
 
 #[derive(Serialize, Deserialize)]
 struct Prepared {
@@ -130,21 +192,31 @@ fn original_index(journal: &Path) -> Result<Option<Vec<u8>>, String> {
         .ok_or_else(|| "Publication source index evidence is missing".into())
 }
 
-fn verify_source(repository: &Path, journal: &Path, prepared: &Prepared) -> Result<(), String> {
+fn verify_source(
+    repository: &Path,
+    journal: &Path,
+    prepared: &Prepared,
+    allow_index_retry: bool,
+) -> Result<(), AttemptError> {
     let branch = fs::read_to_string(journal.join("source-branch")).map_err(|e| e.to_string())?;
     if source_branch(repository)? != branch {
-        return Err("Source branch changed during publication; retry before checkout, or restore the captured branch to finish an interrupted checkout".into());
+        return Err(AttemptError::Fatal("Source branch changed during publication; retry before checkout, or restore the captured branch to finish an interrupted checkout".into()));
     }
     if git(repository, &["rev-parse", "HEAD"])? != prepared.source_head {
-        return Err("Source HEAD changed during publication; retry before checkout or inspect the retained recovery state".into());
+        return Err(AttemptError::Fatal("Source HEAD changed during publication; retry before checkout or inspect the retained recovery state".into()));
     }
     if read_optional(&source_index(repository)?)? != original_index(journal)? {
-        return Err("Source index changed during publication; refusing to overwrite or silently absorb staged work".into());
+        let message = "Source index changed during publication; refusing to overwrite or silently absorb staged work".to_string();
+        return Err(if allow_index_retry {
+            AttemptError::RetryablePreApply(message)
+        } else {
+            AttemptError::Fatal(message)
+        });
     }
     if git(repository, &["rev-parse", "--verify", "MERGE_HEAD"]).is_ok() {
-        return Err(
+        return Err(AttemptError::Fatal(
             "An unrelated source merge is in progress; finish it before publication".into(),
-        );
+        ));
     }
     Ok(())
 }
@@ -240,13 +312,150 @@ fn record_delivery(
     release_publication_pin(repository, pin)
 }
 
+fn is_transient_publication_capture_error(error: &str) -> bool {
+    crate::runtime::is_transient_source_change_error(error)
+        || error.contains("while capturing publication")
+}
+
+fn capture_publication_input(
+    repository: &Path,
+    journal: &Path,
+    standard: bool,
+    exclusions: &[String],
+    wait_budget: &mut Duration,
+) -> Result<(String, String), String> {
+    let input_path = journal.join("input.json");
+    let mut attempt = 0usize;
+    let (branch, source_head, index, input) = loop {
+        crate::process_control::check_current_owner_stop()?;
+        crate::engine::wait_for_source_writers_with_budget(repository, wait_budget)?;
+        let captured = (|| -> Result<(Option<String>, String, Option<Vec<u8>>, String), String> {
+            let branch = if standard {
+                Some(source_branch(repository)?)
+            } else {
+                None
+            };
+            let source_head = if standard {
+                git(repository, &["rev-parse", "HEAD"])?
+            } else {
+                String::new()
+            };
+            let index = if standard {
+                read_optional(&source_index(repository)?)?
+            } else {
+                None
+            };
+            let input = workspace::snapshot_repository_scoped(repository, exclusions)?;
+            if let Some(branch) = &branch {
+                if source_branch(repository)? != *branch {
+                    return Err(
+                        "Source branch changed while capturing publication; retry publication"
+                            .into(),
+                    );
+                }
+                if git(repository, &["rev-parse", "HEAD"])? != source_head {
+                    return Err(
+                        "Source HEAD changed while capturing publication; retry publication".into(),
+                    );
+                }
+                if read_optional(&source_index(repository)?)? != index {
+                    return Err(
+                        "Source index changed while capturing publication; retry publication"
+                            .into(),
+                    );
+                }
+            }
+            Ok((branch, source_head, index, input))
+        })();
+        match captured {
+            Ok(values) => break values,
+            Err(error)
+                if is_transient_publication_capture_error(&error)
+                    && attempt < crate::runtime::SOURCE_SNAPSHOT_RETRY_BACKOFFS.len() =>
+            {
+                crate::runtime::sleep_interruptible(
+                    crate::runtime::SOURCE_SNAPSHOT_RETRY_BACKOFFS[attempt],
+                )?;
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    if let Some(branch) = branch {
+        if let Some(bytes) = index {
+            save_once(&journal.join("original-index"), &bytes)?;
+        } else {
+            save_once(&journal.join("index-missing"), b"absent\n")?;
+        }
+        save_once(&journal.join("source-branch"), branch.as_bytes())?;
+    }
+    save_once(
+        &input_path,
+        &serde_json::to_vec(&(source_head.clone(), input.clone())).map_err(|e| e.to_string())?,
+    )?;
+    Ok((source_head, input))
+}
+
 pub(super) fn publish(
     repository: &Path,
     heads: &[String],
     exclusions: &[String],
     target: Option<&Path>,
+    resolve: impl FnMut(&Path) -> Result<(), String>,
+) -> Result<String, String> {
+    publish_with_options(
+        repository,
+        heads,
+        exclusions,
+        target,
+        PublishOptions::default(),
+        resolve,
+    )
+}
+
+pub(super) fn publish_with_options(
+    repository: &Path,
+    heads: &[String],
+    exclusions: &[String],
+    target: Option<&Path>,
+    options: PublishOptions,
     mut resolve: impl FnMut(&Path) -> Result<(), String>,
 ) -> Result<String, String> {
+    let mut attempt = 0usize;
+    let mut wait_budget = crate::engine::INITIAL_SOURCE_WRITE_WAIT;
+    loop {
+        crate::process_control::check_current_owner_stop()?;
+        match publish_once(
+            repository,
+            heads,
+            exclusions,
+            target,
+            options,
+            &mut wait_budget,
+            &mut resolve,
+        ) {
+            Ok(head) => return Ok(head),
+            Err(AttemptError::RetryablePreApply(_))
+                if options.retry_pre_apply_source_changes
+                    && attempt < PRE_APPLY_RETRY_BACKOFFS.len() =>
+            {
+                crate::runtime::sleep_interruptible(PRE_APPLY_RETRY_BACKOFFS[attempt])?;
+                attempt += 1;
+            }
+            Err(error) => return Err(error.into_message()),
+        }
+    }
+}
+
+fn publish_once(
+    repository: &Path,
+    heads: &[String],
+    exclusions: &[String],
+    target: Option<&Path>,
+    options: PublishOptions,
+    wait_budget: &mut Duration,
+    resolve: &mut impl FnMut(&Path) -> Result<(), String>,
+) -> Result<String, AttemptError> {
     workspace::validate_binding(repository)?;
     let default_path = publication_workspace(repository, heads)?;
     let path = target.unwrap_or(&default_path).to_path_buf();
@@ -260,7 +469,16 @@ pub(super) fn publish(
         let prepared: Prepared =
             serde_json::from_slice(&fs::read(prepared_path).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-        return deliver(repository, &path, &journal, &prepared, standard, exclusions);
+        return deliver(
+            repository,
+            &path,
+            &journal,
+            &prepared,
+            standard,
+            exclusions,
+            options,
+            wait_budget,
+        );
     }
     fs::create_dir_all(&journal).map_err(|e| e.to_string())?;
     let input_path = journal.join("input.json");
@@ -268,51 +486,7 @@ pub(super) fn publish(
         serde_json::from_slice(&fs::read(&input_path).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?
     } else {
-        let branch = if standard {
-            Some(source_branch(repository)?)
-        } else {
-            None
-        };
-        let source_head = if standard {
-            git(repository, &["rev-parse", "HEAD"])?
-        } else {
-            String::new()
-        };
-        let index = if standard {
-            read_optional(&source_index(repository)?)?
-        } else {
-            None
-        };
-        let input = workspace::snapshot_repository_scoped(repository, exclusions)?;
-        if let Some(branch) = branch {
-            if source_branch(repository)? != branch {
-                return Err(
-                    "Source branch changed while capturing publication; retry publication".into(),
-                );
-            }
-            if git(repository, &["rev-parse", "HEAD"])? != source_head {
-                return Err(
-                    "Source HEAD changed while capturing publication; retry publication".into(),
-                );
-            }
-            if read_optional(&source_index(repository)?)? != index {
-                return Err(
-                    "Source index changed while capturing publication; retry publication".into(),
-                );
-            }
-            if let Some(bytes) = index {
-                save_once(&journal.join("original-index"), &bytes)?;
-            } else {
-                save_once(&journal.join("index-missing"), b"absent\n")?;
-            }
-            save_once(&journal.join("source-branch"), branch.as_bytes())?;
-        }
-        save_once(
-            &input_path,
-            &serde_json::to_vec(&(source_head.clone(), input.clone()))
-                .map_err(|e| e.to_string())?,
-        )?;
-        (source_head, input)
+        capture_publication_input(repository, &journal, standard, exclusions, wait_budget)?
     };
     // Only a workspace created by this attempt is guaranteed to hold exactly
     // the collected base. A pre-existing directory (even one without private
@@ -407,7 +581,16 @@ pub(super) fn publish(
         &prepared_path,
         &serde_json::to_vec(&prepared).map_err(|e| e.to_string())?,
     )?;
-    deliver(repository, &path, &journal, &prepared, standard, exclusions)
+    deliver(
+        repository,
+        &path,
+        &journal,
+        &prepared,
+        standard,
+        exclusions,
+        options,
+        wait_budget,
+    )
 }
 
 /// Directory that holds the composed project view of a workspace-free
@@ -610,25 +793,92 @@ fn diff_paths(
     .collect())
 }
 
-fn valid_partial_checkout(
+fn normalize_path_key(path: &str, case_insensitive: bool) -> String {
+    if case_insensitive {
+        path.to_lowercase()
+    } else {
+        path.to_string()
+    }
+}
+
+fn parent_dir_key(key: &str) -> &str {
+    key.rsplit_once('/').map_or("", |(parent, _)| parent)
+}
+
+/// Returns true iff `left` and `right` touch strictly disjoint paths, including
+/// file-vs-directory ancestor collisions and case-insensitive aliases.
+fn paths_disjoint(
+    left: &BTreeSet<String>,
+    right: &BTreeSet<String>,
+    case_insensitive: bool,
+) -> bool {
+    if left.is_empty() || right.is_empty() {
+        return true;
+    }
+    let mut left_paths = HashSet::with_capacity(left.len());
+    let mut left_prefixes = HashSet::new();
+    let mut left_non_ascii_parents = HashSet::new();
+    for path in left {
+        let key = normalize_path_key(path, case_insensitive);
+        if case_insensitive && !path.is_ascii() {
+            left_non_ascii_parents.insert(parent_dir_key(&key).to_string());
+        }
+        let mut cursor = key.as_str();
+        while let Some((prefix, _)) = cursor.rsplit_once('/') {
+            if !left_prefixes.insert(prefix.to_string()) {
+                break;
+            }
+            cursor = prefix;
+        }
+        left_paths.insert(key);
+    }
+    for path in right {
+        let key = normalize_path_key(path, case_insensitive);
+        if left_paths.contains(&key) || left_prefixes.contains(&key) {
+            return false;
+        }
+        if case_insensitive
+            && !path.is_ascii()
+            && left_non_ascii_parents.contains(parent_dir_key(&key))
+        {
+            // Conservatively reject potential Unicode NFC/NFD aliases within the
+            // same directory on case-insensitive volumes.
+            return false;
+        }
+        let mut cursor = key.as_str();
+        while let Some((prefix, _)) = cursor.rsplit_once('/') {
+            if left_paths.contains(prefix) {
+                return false;
+            }
+            cursor = prefix;
+        }
+    }
+    true
+}
+
+fn source_files_changed_error(
     repository: &Path,
     input: &str,
     result: &str,
     live: &str,
-) -> Result<bool, String> {
-    // A changed path must match exactly either its old or final tree entry.
-    // Anything different from both is unrecorded user work, not host residue.
+) -> Result<String, String> {
     let from_input = diff_paths(repository, input, live)?;
     let from_result = diff_paths(repository, result, live)?;
-    Ok(from_input.is_disjoint(&from_result))
+    let paths = from_input
+        .intersection(&from_result)
+        .take(8)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!("Source files changed during publication; private results are preserved. These paths match neither the original nor the result: {paths}. This may be an interrupted legacy file write, not a user edit. Preserve the current files and reconcile them with the retained publication before retrying."))
 }
 
 fn with_source_lease<T>(
     repository: &Path,
     journal: &Path,
     standard: bool,
-    operation: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
+    operation: impl FnOnce() -> Result<T, AttemptError>,
+) -> Result<T, AttemptError> {
     let lock_path = if standard {
         source_index(repository)?.with_extension("lock")
     } else {
@@ -637,11 +887,29 @@ fn with_source_lease<T>(
     let marker = format!("Pi^n publication {}\n", journal.display());
     // Only this interrupted attempt's marker may be reclaimed.
     release_owned_lock(&lock_path, marker.as_bytes())?;
-    let mut lease = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path)
-        .map_err(|e| format!("Cannot acquire source Git index lease: {e}"))?;
+    let mut attempt = 0usize;
+    let mut lease = loop {
+        crate::process_control::check_current_owner_stop()?;
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => break file,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    && attempt < SOURCE_LEASE_RETRY_BACKOFFS.len() =>
+            {
+                crate::runtime::sleep_interruptible(SOURCE_LEASE_RETRY_BACKOFFS[attempt])?;
+                attempt += 1;
+            }
+            Err(error) => {
+                return Err(AttemptError::Fatal(format!(
+                    "Cannot acquire source Git index lease: {error}"
+                )));
+            }
+        }
+    };
     lease
         .write_all(marker.as_bytes())
         .and_then(|_| lease.sync_all())
@@ -665,7 +933,9 @@ fn deliver(
     prepared: &Prepared,
     standard: bool,
     exclusions: &[String],
-) -> Result<String, String> {
+    options: PublishOptions,
+    wait_budget: &mut Duration,
+) -> Result<String, AttemptError> {
     let lock_path = if standard {
         source_index(repository)?.with_extension("lock")
     } else {
@@ -678,40 +948,103 @@ fn deliver(
         record_delivery(repository, prepared, standard, &pin)?;
         return Ok(prepared.result.clone());
     }
+    crate::engine::wait_for_source_writers_with_budget(repository, wait_budget)?;
+    let applying = journal.join("applying").exists();
     if standard {
-        verify_source(repository, journal, prepared)?;
+        verify_source(repository, journal, prepared, !applying)?;
     }
     with_source_lease(repository, journal, standard, || {
+        let applying = journal.join("applying").exists();
         if standard {
-            verify_source(repository, journal, prepared)?;
+            verify_source(repository, journal, prepared, !applying)?;
         }
         atomic_files::cleanup_temporaries(repository, journal, &prepared.input, &prepared.result)?;
         let live = workspace::live_tree_scoped(repository, exclusions)?;
         let live_tree = live.clone();
         let input_tree = tree(repository, &prepared.input)?;
         let final_tree = tree(repository, &prepared.result)?;
-        if live_tree != input_tree
-            && !(journal.join("applying").exists()
-                && valid_partial_checkout(repository, &prepared.input, &prepared.result, &live)?)
-        {
-            let from_input = diff_paths(repository, &prepared.input, &live)?;
-            let from_result = diff_paths(repository, &prepared.result, &live)?;
-            let paths = from_input
-                .intersection(&from_result)
-                .take(8)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!("Source files changed during publication; private results are preserved. These paths match neither the original nor the result: {paths}. This may be an interrupted legacy file write, not a user edit. Preserve the current files and reconcile them with the retained publication before retrying."));
+        let case_insensitive = crate::path_identity::case_insensitive_volume(repository);
+        let mut compile_changed_cache: Option<BTreeSet<String>> = None;
+        if live_tree != input_tree {
+            if applying {
+                let from_input = diff_paths(repository, &prepared.input, &live)?;
+                let from_result = diff_paths(repository, &prepared.result, &live)?;
+                let mismatched: BTreeSet<String> =
+                    from_input.intersection(&from_result).cloned().collect();
+                if !mismatched.is_empty() {
+                    let disjoint_ok = if options.reconcile_disjoint_source_changes {
+                        let compile_changed =
+                            diff_paths(repository, &prepared.input, &prepared.result)?;
+                        let ok = paths_disjoint(&compile_changed, &mismatched, case_insensitive);
+                        compile_changed_cache = Some(compile_changed);
+                        ok
+                    } else {
+                        false
+                    };
+                    if !disjoint_ok {
+                        return Err(AttemptError::Fatal(source_files_changed_error(
+                            repository,
+                            &prepared.input,
+                            &prepared.result,
+                            &live,
+                        )?));
+                    }
+                }
+            } else if options.reconcile_disjoint_source_changes {
+                let compile_changed = diff_paths(repository, &prepared.input, &prepared.result)?;
+                let live_changed = diff_paths(repository, &prepared.input, &live)?;
+                if paths_disjoint(&compile_changed, &live_changed, case_insensitive) {
+                    compile_changed_cache = Some(compile_changed);
+                } else {
+                    return Err(AttemptError::RetryablePreApply(
+                        source_files_changed_error(
+                            repository,
+                            &prepared.input,
+                            &prepared.result,
+                            &live,
+                        )?,
+                    ));
+                }
+            } else {
+                return Err(AttemptError::RetryablePreApply(
+                    source_files_changed_error(
+                        repository,
+                        &prepared.input,
+                        &prepared.result,
+                        &live,
+                    )?,
+                ));
+            }
         }
         if live_tree != final_tree {
-            atomic_files::install(repository, journal, &prepared.input, &prepared.result)?;
-            if workspace::live_tree_scoped(repository, exclusions)? != final_tree {
-                return Err("Source files changed while applying publication; retained checkout requires explicit recovery".into());
+            let compile_empty = match &compile_changed_cache {
+                Some(changed) => changed.is_empty(),
+                None => input_tree == final_tree,
+            };
+            if !compile_empty {
+                atomic_files::install(repository, journal, &prepared.input, &prepared.result)?;
+            }
+            let after_live = workspace::live_tree_scoped(repository, exclusions)?;
+            if after_live != final_tree {
+                let post_disjoint_ok = if options.reconcile_disjoint_source_changes {
+                    let compile_changed = match compile_changed_cache {
+                        Some(changed) => changed,
+                        None => diff_paths(repository, &prepared.input, &prepared.result)?,
+                    };
+                    let remaining_diff = diff_paths(repository, &prepared.result, &after_live)?;
+                    paths_disjoint(&compile_changed, &remaining_diff, case_insensitive)
+                } else {
+                    false
+                };
+                if !post_disjoint_ok {
+                    return Err(AttemptError::Fatal(
+                        "Source files changed while applying publication; retained checkout requires explicit recovery".into(),
+                    ));
+                }
             }
         }
         if standard {
-            verify_source(repository, journal, prepared)?;
+            verify_source(repository, journal, prepared, false)?;
         }
         save_once(&journal.join("installed"), prepared.result.as_bytes())?;
         record_delivery(repository, prepared, standard, &pin)?;
@@ -970,5 +1303,374 @@ mod tests {
             "merged\n"
         );
         assert!(!delivered.is_empty());
+    }
+
+    #[test]
+    fn paths_disjoint_detects_exact_ancestor_and_case_alias_overlaps() {
+        let set = |items: &[&str]| -> BTreeSet<String> {
+            items.iter().map(|s| (*s).to_string()).collect()
+        };
+        assert!(paths_disjoint(&set(&[]), &set(&["a.txt"]), false));
+        assert!(paths_disjoint(
+            &set(&["src/a.ts", "dir/old.txt"]),
+            &set(&["README.md", "dir/new.txt"]),
+            false,
+        ));
+        assert!(!paths_disjoint(
+            &set(&["src/a.ts"]),
+            &set(&["src/a.ts"]),
+            false,
+        ));
+        assert!(!paths_disjoint(
+            &set(&["foo"]),
+            &set(&["foo/bar.txt"]),
+            false,
+        ));
+        assert!(!paths_disjoint(
+            &set(&["foo/bar.txt"]),
+            &set(&["foo"]),
+            false,
+        ));
+        assert!(paths_disjoint(
+            &set(&["src/App.tsx"]),
+            &set(&["src/app.tsx"]),
+            false,
+        ));
+        assert!(!paths_disjoint(
+            &set(&["src/App.tsx"]),
+            &set(&["src/app.tsx"]),
+            true,
+        ));
+        assert!(!paths_disjoint(
+            &set(&["Dir"]),
+            &set(&["dir/file.txt"]),
+            true,
+        ));
+        assert!(paths_disjoint(
+            &set(&["src/app.ts"]),
+            &set(&["笔记.md"]),
+            true,
+        ));
+    }
+
+    #[test]
+    fn concurrent_friendly_publication_preserves_disjoint_source_edits_without_failing() {
+        for standard in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let source = temp.path().join("source");
+            fs::create_dir(&source).unwrap();
+            fs::write(source.join("shared.txt"), "base\n").unwrap();
+            let (original_head, base) = if standard {
+                git(&source, &["init", "-q"]).unwrap();
+                git(&source, &["add", "-A"]).unwrap();
+                git(&source, &["commit", "-qm", "base"]).unwrap();
+                let head = git(&source, &["rev-parse", "HEAD"]).unwrap();
+                let snap = workspace::snapshot_repository(&source).unwrap();
+                (Some(head), snap)
+            } else {
+                let snap = workspace::materialize_shadow_repo(&source, &[]).unwrap();
+                (None, snap)
+            };
+
+            let node_a = temp.path().join("node-a");
+            workspace::prepare(&source, &node_a, &base, &[]).unwrap();
+            fs::write(node_a.join("shared.txt"), "from a\n").unwrap();
+            let head_a = workspace::snapshot_node_for_run(
+                &node_a,
+                &source,
+                "node-a",
+                Some(&uuid::Uuid::new_v4().to_string()),
+            )
+            .unwrap();
+
+            let node_b = temp.path().join("node-b");
+            workspace::prepare(&source, &node_b, &base, &[]).unwrap();
+            fs::write(node_b.join("shared.txt"), "from b\n").unwrap();
+            let head_b = workspace::snapshot_node_for_run(
+                &node_b,
+                &source,
+                "node-b",
+                Some(&uuid::Uuid::new_v4().to_string()),
+            )
+            .unwrap();
+
+            let path = temp
+                .path()
+                .join(".pi-n-worktrees")
+                .join(uuid::Uuid::new_v4().to_string())
+                .join("publication-disjoint");
+            let mut resolver_calls = 0usize;
+            let delivered = publish_with_options(
+                &source,
+                &[head_a, head_b],
+                &[],
+                Some(&path),
+                PublishOptions::concurrent_friendly(),
+                |workspace| {
+                    resolver_calls += 1;
+                    // Simulate Direct mode writing a disjoint file while Compile is merging.
+                    fs::write(source.join("direct-notes.txt"), "direct work\n").unwrap();
+                    fs::write(workspace.join("shared.txt"), "a+b\n").map_err(|e| e.to_string())?;
+                    git(workspace, &["add", "-f", "--", "shared.txt"])?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(resolver_calls, 1);
+            assert!(!delivered.is_empty());
+            assert_eq!(
+                fs::read_to_string(source.join("shared.txt")).unwrap(),
+                "a+b\n"
+            );
+            assert_eq!(
+                fs::read_to_string(source.join("direct-notes.txt")).unwrap(),
+                "direct work\n"
+            );
+            if let Some(original_head) = original_head {
+                assert_eq!(git(&source, &["rev-parse", "HEAD"]).unwrap(), original_head);
+            }
+            // A follow-up source snapshot captures both Compile's delivery and Direct's file.
+            let next_snap = workspace::snapshot_repository(&source).unwrap();
+            assert_eq!(
+                repository_git(&source, &["show", &format!("{next_snap}:shared.txt")]).unwrap(),
+                "a+b"
+            );
+            assert_eq!(
+                repository_git(&source, &["show", &format!("{next_snap}:direct-notes.txt")])
+                    .unwrap(),
+                "direct work"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_friendly_publication_retries_overlapping_and_index_changes_but_fails_on_branch_or_head(
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        git(&source, &["init", "-q"]).unwrap();
+        fs::write(source.join("shared.txt"), "base\n").unwrap();
+        git(&source, &["add", "-A"]).unwrap();
+        git(&source, &["commit", "-qm", "base"]).unwrap();
+        let original_head = git(&source, &["rev-parse", "HEAD"]).unwrap();
+        let base = workspace::snapshot_repository(&source).unwrap();
+
+        let node_a = temp.path().join("node-a");
+        workspace::prepare(&source, &node_a, &base, &[]).unwrap();
+        fs::write(node_a.join("shared.txt"), "from a\n").unwrap();
+        let head_a = workspace::snapshot_node_for_run(
+            &node_a,
+            &source,
+            "node-a",
+            Some(&uuid::Uuid::new_v4().to_string()),
+        )
+        .unwrap();
+
+        let node_b = temp.path().join("node-b");
+        workspace::prepare(&source, &node_b, &base, &[]).unwrap();
+        fs::write(node_b.join("shared.txt"), "from b\n").unwrap();
+        let head_b = workspace::snapshot_node_for_run(
+            &node_b,
+            &source,
+            "node-b",
+            Some(&uuid::Uuid::new_v4().to_string()),
+        )
+        .unwrap();
+
+        // 1. Overlapping edit during first composition triggers pre-apply retry + re-merge,
+        // preserving both Direct's edit and Compile's changes.
+        let path_overlap = temp
+            .path()
+            .join(".pi-n-worktrees")
+            .join(uuid::Uuid::new_v4().to_string())
+            .join("publication-overlap");
+        let mut calls = 0usize;
+        publish_with_options(
+            &source,
+            &[head_a.clone(), head_b.clone()],
+            &[],
+            Some(&path_overlap),
+            PublishOptions::concurrent_friendly(),
+            |workspace| {
+                calls += 1;
+                if calls == 1 {
+                    fs::write(source.join("shared.txt"), "direct overlapping edit\n").unwrap();
+                    fs::write(workspace.join("shared.txt"), "a+b\n").map_err(|e| e.to_string())?;
+                } else {
+                    fs::write(workspace.join("shared.txt"), "a+b+direct\n")
+                        .map_err(|e| e.to_string())?;
+                }
+                git(workspace, &["add", "-f", "--", "shared.txt"])?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(
+            fs::read_to_string(source.join("shared.txt")).unwrap(),
+            "a+b+direct\n"
+        );
+
+        // 2. Pre-apply `git add` (index change) on an unrelated file retries cleanly
+        // without re-running Merger and keeps the staged file in the user's index.
+        {
+            let temp2 = tempfile::tempdir().unwrap();
+            let source2 = temp2.path().join("source");
+            fs::create_dir(&source2).unwrap();
+            git(&source2, &["init", "-q"]).unwrap();
+            fs::write(source2.join("shared.txt"), "base\n").unwrap();
+            git(&source2, &["add", "-A"]).unwrap();
+            git(&source2, &["commit", "-qm", "base"]).unwrap();
+            let head2 = git(&source2, &["rev-parse", "HEAD"]).unwrap();
+            let base2 = workspace::snapshot_repository(&source2).unwrap();
+
+            let na = temp2.path().join("node-a");
+            workspace::prepare(&source2, &na, &base2, &[]).unwrap();
+            fs::write(na.join("shared.txt"), "from a\n").unwrap();
+            let ha = workspace::snapshot_node_for_run(
+                &na,
+                &source2,
+                "node-a",
+                Some(&uuid::Uuid::new_v4().to_string()),
+            )
+            .unwrap();
+
+            let nb = temp2.path().join("node-b");
+            workspace::prepare(&source2, &nb, &base2, &[]).unwrap();
+            fs::write(nb.join("shared.txt"), "from b\n").unwrap();
+            let hb = workspace::snapshot_node_for_run(
+                &nb,
+                &source2,
+                "node-b",
+                Some(&uuid::Uuid::new_v4().to_string()),
+            )
+            .unwrap();
+
+            let path_index = temp2
+                .path()
+                .join(".pi-n-worktrees")
+                .join(uuid::Uuid::new_v4().to_string())
+                .join("publication-index");
+            let mut index_calls = 0usize;
+            publish_with_options(
+                &source2,
+                &[ha, hb],
+                &[],
+                Some(&path_index),
+                PublishOptions::concurrent_friendly(),
+                |workspace| {
+                    index_calls += 1;
+                    fs::write(source2.join("staged-by-direct.txt"), "staged\n").unwrap();
+                    git(&source2, &["add", "staged-by-direct.txt"])?;
+                    fs::write(workspace.join("shared.txt"), "a+b\n").map_err(|e| e.to_string())?;
+                    git(workspace, &["add", "-f", "--", "shared.txt"])?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(index_calls, 1);
+            assert_eq!(
+                fs::read_to_string(source2.join("shared.txt")).unwrap(),
+                "a+b\n"
+            );
+            assert!(git(&source2, &["diff", "--cached", "--name-only"])
+                .unwrap()
+                .contains("staged-by-direct.txt"));
+            assert_eq!(git(&source2, &["rev-parse", "HEAD"]).unwrap(), head2);
+        }
+
+        // 3. Branch switch during publication still fails closed immediately.
+        {
+            let temp3 = tempfile::tempdir().unwrap();
+            let source3 = temp3.path().join("source");
+            fs::create_dir(&source3).unwrap();
+            git(&source3, &["init", "-q"]).unwrap();
+            fs::write(source3.join("shared.txt"), "base\n").unwrap();
+            git(&source3, &["add", "-A"]).unwrap();
+            git(&source3, &["commit", "-qm", "base"]).unwrap();
+            let head3 = git(&source3, &["rev-parse", "HEAD"]).unwrap();
+            let base3 = workspace::snapshot_repository(&source3).unwrap();
+
+            let na = temp3.path().join("node-a");
+            workspace::prepare(&source3, &na, &base3, &[]).unwrap();
+            fs::write(na.join("shared.txt"), "from a\n").unwrap();
+            let ha = workspace::snapshot_node_for_run(
+                &na,
+                &source3,
+                "node-a",
+                Some(&uuid::Uuid::new_v4().to_string()),
+            )
+            .unwrap();
+
+            let nb = temp3.path().join("node-b");
+            workspace::prepare(&source3, &nb, &base3, &[]).unwrap();
+            fs::write(nb.join("shared.txt"), "from b\n").unwrap();
+            let hb = workspace::snapshot_node_for_run(
+                &nb,
+                &source3,
+                "node-b",
+                Some(&uuid::Uuid::new_v4().to_string()),
+            )
+            .unwrap();
+
+            let path_branch = temp3
+                .path()
+                .join(".pi-n-worktrees")
+                .join(uuid::Uuid::new_v4().to_string())
+                .join("publication-branch");
+            let branch_err = publish_with_options(
+                &source3,
+                &[ha, hb],
+                &[],
+                Some(&path_branch),
+                PublishOptions::concurrent_friendly(),
+                |workspace| {
+                    git(&source3, &["update-ref", "refs/heads/other", &head3])?;
+                    git(&source3, &["symbolic-ref", "HEAD", "refs/heads/other"])?;
+                    fs::write(workspace.join("shared.txt"), "a+b\n").map_err(|e| e.to_string())?;
+                    git(workspace, &["add", "-f", "--", "shared.txt"])?;
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert!(branch_err.contains("Source branch changed"), "{branch_err}");
+            assert_eq!(git(&source3, &["rev-parse", "HEAD"]).unwrap(), head3);
+        }
+        assert_eq!(git(&source, &["rev-parse", "HEAD"]).unwrap(), original_head);
+    }
+
+    #[test]
+    fn publication_waits_for_transient_index_lock_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        git(&source, &["init", "-q"]).unwrap();
+        fs::write(source.join("base.txt"), "base").unwrap();
+        git(&source, &["add", "-A"]).unwrap();
+        git(&source, &["commit", "-qm", "base"]).unwrap();
+        let base = workspace::snapshot_repository(&source).unwrap();
+        let node = temp.path().join("node");
+        workspace::prepare(&source, &node, &base, &[]).unwrap();
+        fs::write(node.join("result.txt"), "result").unwrap();
+        let head = workspace::snapshot_node_for_run(
+            &node,
+            &source,
+            "node",
+            Some(&uuid::Uuid::new_v4().to_string()),
+        )
+        .unwrap();
+
+        let lock_file = source_index(&source).unwrap().with_extension("lock");
+        fs::write(&lock_file, "brief direct git command").unwrap();
+        let lock_to_release = lock_file.clone();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            let _ = fs::remove_file(lock_to_release);
+        });
+        let delivered = publish(&source, &[head], &[], None, |_| panic!()).unwrap();
+        releaser.join().unwrap();
+        assert!(!delivered.is_empty());
+        assert_eq!(fs::read_to_string(source.join("result.txt")).unwrap(), "result");
     }
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced concurrent-workspace conflicts when Direct (Serial) and Compile (Graph) Runs operate on the same repository: broadened transient source-snapshot retry recognition and backoffs (`SOURCE_SNAPSHOT_RETRY_BACKOFFS`, `snapshot_repository_scoped_with_retry`), added bounded interruptible retries for publication input capture, transient `.git/index.lock` / `publication.lock` leases, and pre-`applying` overlapping file/index drift (keeping branch switches, `HEAD` moves, unrelated merges, and interrupted `applying` recoveries fail-closed), reconciled strictly disjoint concurrent source edits in place during Compile publication (`PublishOptions::concurrent_friendly` and `paths_disjoint` covering exact, ancestor/descendant, and case/Unicode alias overlaps), annotated publication source-conflict errors with active direct sessions, and added a single-sided repository write-tool gate (`SourceWriteTracker` / `wait_for_source_writers_with_budget`) so Compile source snapshots and publication delivery pause briefly within a capped interruptible budget until in-flight mutating tools (`write`/`edit`/`bash`) from other source-native Runs finish (`backend/src/engine/source_write_gate.rs`, `backend/src/engine.rs`, `backend/src/process_control.rs`, `backend/src/runtime.rs`, `backend/src/graph_merge.rs`, `backend/src/graph_merge/publication.rs`, `backend/src/publication_driver.rs`, `backend/src/server.rs`).
+
 ## [1.9.99] - 2026-11-27
 
 ### Added

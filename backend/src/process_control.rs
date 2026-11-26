@@ -78,7 +78,6 @@ pub(crate) fn with_resource_limits<T>(
 }
 
 /// Bind process launches in this thread to an individual Run.
-#[cfg(not(feature = "fixture"))]
 pub(crate) fn current_owner() -> Option<String> {
     OWNER.with(|owner| {
         let owner = owner.borrow();

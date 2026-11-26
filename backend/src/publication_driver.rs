@@ -223,7 +223,8 @@ pub(super) fn publish_batch(
                     },
                 )
             },
-        )?;
+        )
+        .map_err(|error| super::annotate_concurrent_source_writer_error(&repository, run_id, error))?;
         let descriptor = match preflight {
             Ok(Some(job)) => match job.validate().and_then(|_| job.descriptor(&head)) {
                 Ok(descriptor) => Some(descriptor),

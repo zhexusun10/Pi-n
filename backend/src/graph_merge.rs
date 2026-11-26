@@ -246,7 +246,14 @@ pub(crate) fn merge_graph_scoped_at(
     path: &Path,
     resolve: impl FnMut(&Path) -> Result<(), String>,
 ) -> Result<String, String> {
-    publication::publish(repository, heads, exclusions, Some(path), resolve)
+    publication::publish_with_options(
+        repository,
+        heads,
+        exclusions,
+        Some(path),
+        publication::PublishOptions::concurrent_friendly(),
+        resolve,
+    )
 }
 
 /// `fresh` means the caller just materialized this workspace from a snapshot, so

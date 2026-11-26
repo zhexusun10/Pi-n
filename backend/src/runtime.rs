@@ -152,14 +152,20 @@ pub(crate) fn is_transient_source_change_error(error: &str) -> bool {
     error.contains("Source changed while copying project Git")
         || error.contains("Source changed while capturing its workspace")
         || error.contains("Project changed while binding its byte snapshot")
+        || error.contains("Project changed while capturing SHA-256 bytes")
+        || error.contains("Project hardlinks changed during capture")
+        || error.contains("Workspace file changed while snapshotting:")
+        || error.contains("Source changed during private block clone")
 }
 
-const SOURCE_SNAPSHOT_RETRY_BACKOFFS: [std::time::Duration; 2] = [
-    std::time::Duration::from_millis(250),
-    std::time::Duration::from_millis(500),
+pub(crate) const SOURCE_SNAPSHOT_RETRY_BACKOFFS: [std::time::Duration; 4] = [
+    std::time::Duration::from_millis(150),
+    std::time::Duration::from_millis(300),
+    std::time::Duration::from_millis(600),
+    std::time::Duration::from_millis(1000),
 ];
 
-fn sleep_interruptible(duration: std::time::Duration) -> Result<(), String> {
+pub(crate) fn sleep_interruptible(duration: std::time::Duration) -> Result<(), String> {
     let deadline = std::time::Instant::now() + duration;
     loop {
         crate::process_control::check_current_owner_stop()?;
@@ -173,7 +179,7 @@ fn sleep_interruptible(duration: std::time::Duration) -> Result<(), String> {
     }
 }
 
-fn retry_transient_source_change<T>(
+pub(crate) fn retry_transient_source_change<T>(
     mut collect: impl FnMut() -> Result<T, String>,
     backoffs: &[std::time::Duration],
 ) -> Result<T, String> {
@@ -191,6 +197,20 @@ fn retry_transient_source_change<T>(
     }
 }
 
+pub(crate) fn snapshot_repository_scoped_with_retry(
+    repository: &Path,
+    exclusions: &[String],
+) -> Result<String, String> {
+    let mut wait_budget = crate::engine::LOCKED_SOURCE_WRITE_WAIT;
+    retry_transient_source_change(
+        || {
+            crate::engine::wait_for_source_writers_with_budget(repository, &mut wait_budget)?;
+            workspace::snapshot_repository_scoped(repository, exclusions)
+        },
+        &SOURCE_SNAPSHOT_RETRY_BACKOFFS,
+    )
+}
+
 /// Collect (or reuse) the lazy source snapshot for a plain-directory job or
 /// the first private batch after shared-source promotion. `fresh` is true when this Run has no recorded snapshot yet: the current
 /// source files are force-collected then. Git work runs without the runtime
@@ -201,8 +221,10 @@ pub(crate) fn collect_source_snapshot(
     fresh: bool,
 ) -> Result<String, String> {
     if fresh {
+        let mut wait_budget = crate::engine::INITIAL_SOURCE_WRITE_WAIT;
         return retry_transient_source_change(
             || {
+                crate::engine::wait_for_source_writers_with_budget(repository, &mut wait_budget)?;
                 if workspace::is_standard_git(repository) {
                     workspace::snapshot_repository_scoped(repository, exclusions)
                 } else {
@@ -2563,7 +2585,7 @@ impl Runtime {
         {
             return Ok(());
         }
-        let head = workspace::snapshot_repository_scoped(&repository, &self.exclusions()?)?;
+        let head = snapshot_repository_scoped_with_retry(&repository, &self.exclusions()?)?;
         if head != self.latest_source_head() {
             self.emit(EventKind::SourceSnapshotted { head })?;
         }
@@ -2633,7 +2655,7 @@ impl Runtime {
             String::new()
         } else {
             workspace::verify(&repository)?;
-            workspace::snapshot_repository_scoped(&repository, &self.exclusions()?)?
+            snapshot_repository_scoped_with_retry(&repository, &self.exclusions()?)?
         };
         self.emit(EventKind::Approved { base })
     }
@@ -2908,7 +2930,7 @@ impl Runtime {
         {
             None
         } else {
-            Some(workspace::snapshot_repository_scoped(
+            Some(snapshot_repository_scoped_with_retry(
                 &repository,
                 &self.exclusions()?,
             )?)
@@ -3060,7 +3082,7 @@ impl Runtime {
         {
             None
         } else {
-            Some(workspace::snapshot_repository_scoped(
+            Some(snapshot_repository_scoped_with_retry(
                 &repository,
                 &self.exclusions()?,
             )?)
@@ -8204,5 +8226,26 @@ mod source_snapshot_retry_tests {
         .unwrap_err();
         assert!(err.contains("Source changed while capturing its workspace"));
         assert_eq!(exhausted_attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn recognizes_all_transient_source_capture_errors() {
+        for message in [
+            "Source changed while copying project Git (foo.txt modified)",
+            "Source changed while capturing its workspace; retry preparation",
+            "Project changed while binding its byte snapshot (a.txt disappeared); retry preparation",
+            "Project changed while capturing SHA-256 bytes",
+            "Project hardlinks changed during capture",
+            "Workspace file changed while snapshotting: /tmp/a.txt",
+            "Source changed during private block clone",
+        ] {
+            assert!(
+                is_transient_source_change_error(message),
+                "expected transient error: {message}"
+            );
+        }
+        assert!(!is_transient_source_change_error(
+            "Unresolved merge conflicts remain"
+        ));
     }
 }

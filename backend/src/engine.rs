@@ -29,7 +29,12 @@ pub mod composer;
 mod context_stats;
 pub(crate) mod feedback_input;
 mod output_buffer;
+mod source_write_gate;
 mod tool_output;
+
+pub(crate) use source_write_gate::{
+    wait_for_source_writers_with_budget, INITIAL_SOURCE_WRITE_WAIT, LOCKED_SOURCE_WRITE_WAIT,
+};
 
 #[cfg(not(feature = "fixture"))]
 mod lingering;
@@ -1750,6 +1755,7 @@ fn run_pi_with_timeout(
         &mut child,
         &mut channels,
         &mut rpc_guard,
+        source_write_tracker(&request),
         &mut on_output,
     )?;
     let result = finish_turn(
@@ -1866,6 +1872,24 @@ struct TurnOutcome {
     first_output_ms: Option<u128>,
 }
 
+fn source_write_tracker(request: &PiRequest<'_>) -> Option<source_write_gate::SourceWriteTracker> {
+    if !matches!(request.role, PiRole::NodeAgent | PiRole::Planner)
+        || request.config.repository.is_empty()
+    {
+        return None;
+    }
+    let repository = Path::new(&request.config.repository);
+    if !crate::path_identity::same_path(request.cwd, repository) {
+        return None;
+    }
+    let run_id = request
+        .environment
+        .iter()
+        .find(|(key, _)| *key == "PI_N_ACTIVE_RUN_ID")
+        .map(|(_, value)| value.as_str());
+    Some(source_write_gate::SourceWriteTracker::new(repository, run_id))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_turn(
     role: PiRole,
@@ -1879,6 +1903,7 @@ fn run_turn(
     child: &mut std::process::Child,
     channels: &mut SessionChannels,
     rpc_guard: &mut Option<NodeRpcGuard>,
+    mut source_write_tracker: Option<source_write_gate::SourceWriteTracker>,
     on_output: &mut impl FnMut(String),
 ) -> Result<TurnOutcome, String> {
     let mut input_error = None;
@@ -2011,6 +2036,9 @@ fn run_turn(
                     }
                 }
                 if let Some(event) = event.as_ref() {
+                    if let Some(tracker) = source_write_tracker.as_mut() {
+                        tracker.observe_event(event);
+                    }
                     match event["type"].as_str().unwrap_or_default() {
                         "agent_start" | "turn_start" if rpc_agent => agent_ended = None,
                         "agent_settled" if rpc_agent => agent_ended = Some(Instant::now()),
@@ -2800,6 +2828,7 @@ fn run_resumed(
         &mut host.child,
         &mut host.channels,
         &mut rpc_guard,
+        source_write_tracker(request),
         &mut on_output,
     ) {
         Ok(outcome) => outcome,

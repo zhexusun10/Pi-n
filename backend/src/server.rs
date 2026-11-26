@@ -375,12 +375,21 @@ fn active_direct_runs_for_repository(
     active.into_iter().collect()
 }
 
+fn is_concurrent_source_writer_error(error: &str) -> bool {
+    crate::runtime::is_transient_source_change_error(error)
+        || error.contains("while capturing publication")
+        || error.contains("changed during publication")
+        || error.contains("changed while applying publication")
+        || error.contains("Source files changed before installing")
+        || error.contains("Cannot acquire source Git index lease")
+}
+
 fn annotate_concurrent_source_writer_error(
     repository: &std::path::Path,
     run_id: &str,
     error: String,
 ) -> String {
-    if !crate::runtime::is_transient_source_change_error(&error) {
+    if !is_concurrent_source_writer_error(&error) {
         return error;
     }
     let active = active_direct_runs_for_repository(repository, run_id);
