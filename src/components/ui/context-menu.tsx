@@ -101,22 +101,29 @@ export function ContextMenu({ anchor, label, onClose, children }: ContextMenuPro
     const outside = (event: Event) => {
       if (!containsTarget(event.target)) close(true);
     };
+    const scrolled = (event: Event) => {
+      // Streaming output auto-scrolls a sibling pane. Only scrolling the
+      // trigger's ancestors (or the viewport) invalidates this menu's anchor.
+      const target = event.target;
+      if (!containsTarget(target) && (target === window ||
+        (target instanceof Node && target.contains(anchor.trigger)))) close(true);
+    };
     const replaced = (event: Event) => {
       if (!containsTarget(event.target)) close(false);
     };
     const resized = () => close(true);
     window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("scroll", outside, true);
+    window.addEventListener("scroll", scrolled, true);
     // Capture before another menu stops propagation, so only one stays open.
     window.addEventListener("contextmenu", replaced, true);
     window.addEventListener("resize", resized);
     return () => {
       window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("scroll", outside, true);
+      window.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("contextmenu", replaced, true);
       window.removeEventListener("resize", resized);
     };
-  }, [close]);
+  }, [anchor.trigger, close]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape" || event.key === "Tab") {

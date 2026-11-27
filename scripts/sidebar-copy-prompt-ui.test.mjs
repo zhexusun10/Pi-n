@@ -230,6 +230,57 @@ test("sidebar cards and menus support keyboard navigation without opening conver
   } finally { await context.close(); }
 });
 
+test("sidebar menus and submenus survive unrelated streaming auto-scroll", { timeout: 30_000 }, async () => {
+  const { context, page, errors } = await openApp(async () => false);
+  try {
+    // A sibling pane grows and pins to the bottom just like streamed output.
+    // Use real browser scroll events, not a synthetic event or a timer delay.
+    await page.evaluate(() => {
+      const pane = document.createElement("div");
+      pane.id = "streaming-scroll-fixture";
+      pane.style.cssText = "position:fixed;right:0;bottom:0;width:300px;height:80px;overflow:auto";
+      document.body.append(pane);
+      window.streamScrolls = 0;
+      pane.addEventListener("scroll", () => window.streamScrolls++);
+    });
+    const stream = () => page.evaluate(async () => {
+      const pane = document.getElementById("streaming-scroll-fixture");
+      const before = window.streamScrolls;
+      for (let chunk = 0; chunk < 8; chunk++) {
+        const row = document.createElement("p");
+        row.textContent = "Streaming rich text output";
+        row.style.height = "40px";
+        pane.append(row);
+        pane.scrollTop = pane.scrollHeight;
+        await new Promise(requestAnimationFrame);
+      }
+      await new Promise(requestAnimationFrame);
+      return window.streamScrolls - before;
+    });
+
+    await page.locator(".project-workspace-item").click({ button: "right" });
+    assert.ok(await stream() > 0);
+    assert.equal(await page.getByRole("menu").count(), 1);
+    await page.getByRole("menuitem", { name: "Copy repository path", exact: true }).click();
+    await page.waitForFunction(() => window.copiedTexts.includes("/mock/sidebar"));
+
+    const run = page.locator('.run-item[data-run-id="a"]');
+    await run.click({ button: "right" });
+    const pin = page.getByRole("menuitem", { name: "Pin conversation", exact: true });
+    await pin.focus();
+    await page.keyboard.press("ArrowRight");
+    const submenu = page.getByRole("menu", { name: "Pin color", exact: true });
+    await submenu.waitFor();
+    assert.ok(await stream() > 0);
+    assert.equal(await page.getByRole("menu").count(), 2);
+    assert.equal(await submenu.evaluate(menu => menu.contains(document.activeElement)), true);
+    await submenu.getByRole("menuitem", { name: "Coral", exact: true }).click();
+    await page.locator('.run-item[data-run-id="a"] .run-pin-dot[data-pin-color="coral"]').waitFor();
+    assert.equal(await page.getByRole("menu").count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 for (const [language, reducedMotion] of [["en", "no-preference"], ["zh-CN", "reduce"]]) {
   test(`sidebar menus fit measured content and dismiss on layout changes (${language}, ${reducedMotion})`, { timeout: 30_000 }, async () => {
     const { context, page, errors } = await openApp(async () => false, language, reducedMotion);
