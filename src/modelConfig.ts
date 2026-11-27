@@ -40,7 +40,6 @@ export function availableCatalogModels(catalog: ProviderCatalog | null | undefin
 export const modelRoles: Array<{ id: ModelRole; label: string; description: string }> = [
   { id: "nodeAgent", label: "Node", description: t("负责任务的具体执行，同时作为其他角色的默认模型。") },
   { id: "planner", label: "Planner", description: t("负责拆解需求与规划执行蓝图，推荐使用能力更强的模型。") },
-  { id: "partitioner", label: "Partitioner", description: t("快速判断任务复杂度并选择执行模式，推荐使用轻量高速模型。") },
 ];
 
 export const THINKING_LEVEL_SCALE: readonly ThinkingLevel[] = [
@@ -68,7 +67,6 @@ export function thinkingLevelLabel(level: ThinkingLevel): string {
 export function defaultRoleThinkingLevel(
   role: ModelRole,
   levels?: ThinkingLevel[],
-  fallbacks?: Partial<Record<ThinkingLevel, ThinkingLevel>>
 ): ThinkingLevel {
   const supported = levels && levels.length > 0
     ? THINKING_LEVEL_SCALE.filter(l => levels.includes(l))
@@ -85,19 +83,8 @@ export function defaultRoleThinkingLevel(
     return supported[n - 1];
   }
 
-  if (role === "nodeAgent") {
-    // Node Agent 默认最高可用等级的低一档（若只有一档则使用该档）
-    return n >= 2 ? supported[n - 2] : supported[0];
-  }
-
-  // Partitioner 默认为低
-  if (supported.includes("low")) {
-    return "low";
-  }
-  if (fallbacks?.low && supported.includes(fallbacks.low)) {
-    return fallbacks.low;
-  }
-  return supported[0];
+  // Node Agent 默认最高可用等级的低一档（若只有一档则使用该档）
+  return n >= 2 ? supported[n - 2] : supported[0];
 }
 
 /** Project one conversation's saved selection onto the shared settings object. */
@@ -137,11 +124,9 @@ export function roleModelConfig(config: Config, role: ModelRole, envOverrides: R
     };
   }
   const defaultLevel: ThinkingLevel =
-    role === "partitioner"
-      ? "low"
-      : role === "planner"
-        ? (config.thinkingLevel && config.thinkingLevel !== "low" ? config.thinkingLevel : "high")
-        : config.thinkingLevel || "low";
+    role === "planner"
+      ? (config.thinkingLevel && config.thinkingLevel !== "low" ? config.thinkingLevel : "high")
+      : config.thinkingLevel || "low";
   return {
     model: envOverrides[role]?.trim() || settings?.model?.trim() || config.model.trim(),
     thinkingLevel: defaultLevel,
@@ -177,18 +162,18 @@ export function normalizeModelThinkingLevels(config: Config, catalog?: ProviderC
       if (levels?.length && !levels.includes(level)) {
         const fallback = model?.thinkingLevelFallbacks?.[level];
         if (fallback && levels.includes(fallback)) level = fallback;
-        else level = defaultRoleThinkingLevel(id, levels, model?.thinkingLevelFallbacks);
+        else level = defaultRoleThinkingLevel(id, levels);
       }
     } else if ((id === "nodeAgent" || config.thinkingLevel === "off") && config.thinkingLevel && config.thinkingLevel !== "low") {
       level = config.thinkingLevel;
       if (levels?.length && !levels.includes(level)) {
         const fallback = model?.thinkingLevelFallbacks?.[level];
         if (fallback && levels.includes(fallback)) level = fallback;
-        else level = defaultRoleThinkingLevel(id, levels, model?.thinkingLevelFallbacks);
+        else level = defaultRoleThinkingLevel(id, levels);
       }
     } else {
       level = levels?.length
-        ? defaultRoleThinkingLevel(id, levels, model?.thinkingLevelFallbacks)
+        ? defaultRoleThinkingLevel(id, levels)
         : settings.thinkingLevel;
     }
     resolved.set(id, level);
@@ -196,7 +181,7 @@ export function normalizeModelThinkingLevels(config: Config, catalog?: ProviderC
   let normalized = config;
   // Resolve every role against the original intent before updating the shared
   // default; otherwise clamping Node Agent could change another model's intent.
-  for (const role of ["nodeAgent", "partitioner", "planner"] as const) {
+  for (const role of ["nodeAgent", "planner"] as const) {
     const thinkingLevel = resolved.get(role);
     if (thinkingLevel && thinkingLevel !== roleModelConfig(normalized, role).thinkingLevel) {
       normalized = updateRoleModelConfig(normalized, role, { thinkingLevel });
@@ -205,8 +190,8 @@ export function normalizeModelThinkingLevels(config: Config, catalog?: ProviderC
   return normalized;
 }
 
-export function planningModelRoles(mode: "auto" | "serial" | "graph"): ModelRole[] {
-  return mode === "serial" ? ["nodeAgent"] : mode === "graph" ? ["planner", "nodeAgent"] : ["partitioner", "planner", "nodeAgent"];
+export function planningModelRoles(mode: "serial" | "graph"): ModelRole[] {
+  return mode === "serial" ? ["nodeAgent"] : ["planner", "nodeAgent"];
 }
 
 // A failed attempt's metrics remain historical evidence. Show its saved retry

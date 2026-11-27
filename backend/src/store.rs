@@ -830,7 +830,7 @@ impl Store {
         run_id: &str,
         cleanup: Option<&crate::cleanup::Manifest>,
     ) -> Result<(), String> {
-        self.delete_runs([(run_id, cleanup)])
+        self.delete_runs([(run_id, cleanup)], true)
     }
 
     /// A workspace removal deletes every conversation in one transaction, not
@@ -843,12 +843,28 @@ impl Store {
             cleanups
                 .iter()
                 .map(|(id, manifest)| (id.as_str(), Some(manifest))),
+            true,
+        )
+    }
+
+    /// Commit logical deletion and cleanup ownership without running SQLite
+    /// page reclamation or WAL truncation while the caller holds Run locks.
+    pub(crate) fn delete_runs_with_cleanup_deferred(
+        &self,
+        cleanups: &[(String, crate::cleanup::Manifest)],
+    ) -> Result<(), String> {
+        self.delete_runs(
+            cleanups
+                .iter()
+                .map(|(id, manifest)| (id.as_str(), Some(manifest))),
+            false,
         )
     }
 
     fn delete_runs<'a>(
         &self,
         runs: impl IntoIterator<Item = (&'a str, Option<&'a crate::cleanup::Manifest>)>,
+        reclaim_pages: bool,
     ) -> Result<(), String> {
         let mut deleted = Vec::new();
         {
@@ -861,7 +877,7 @@ impl Store {
                 // Ownership and tombstones commit with ALL event/log deletions.
                 // A crash or locked file after commit cannot orphan cleanup.
                 if let Some(cleanup) = cleanup {
-                    self.insert_cleanup(&tx, run_id, cleanup)?;
+                    self.insert_cleanup(&tx, run_id, cleanup, true)?;
                 }
                 tx.execute(
                     "INSERT OR IGNORE INTO deleted_runs(run_id) VALUES(?1)",
@@ -889,7 +905,9 @@ impl Store {
             crate::file_changes::invalidate_run(run_id);
         }
         self.execution_offsets.borrow_mut().clear();
-        self.reclaim_deleted_pages();
+        if reclaim_pages {
+            self.reclaim_deleted_pages();
+        }
         Ok(())
     }
 
@@ -901,6 +919,23 @@ impl Store {
         &self,
         cleanups: &[(String, crate::cleanup::Manifest)],
     ) -> Result<(), String> {
+        self.clear_with_cleanup_inner(cleanups, true)
+    }
+
+    /// Commit full history deletion without running SQLite page reclamation or
+    /// WAL truncation while online callers hold Run locks.
+    pub(crate) fn clear_with_cleanup_deferred(
+        &self,
+        cleanups: &[(String, crate::cleanup::Manifest)],
+    ) -> Result<(), String> {
+        self.clear_with_cleanup_inner(cleanups, false)
+    }
+
+    fn clear_with_cleanup_inner(
+        &self,
+        cleanups: &[(String, crate::cleanup::Manifest)],
+        reclaim_pages: bool,
+    ) -> Result<(), String> {
         let cleared = {
             let _write_guard = store_write_guard()?;
             let tx = self
@@ -908,7 +943,7 @@ impl Store {
                 .unchecked_transaction()
                 .map_err(|e| e.to_string())?;
             for (run_id, cleanup) in cleanups {
-                self.insert_cleanup(&tx, run_id, cleanup)?;
+                self.insert_cleanup(&tx, run_id, cleanup, true)?;
                 tx.execute(
                     "INSERT OR IGNORE INTO deleted_runs(run_id) VALUES(?1)",
                     [run_id],
@@ -940,26 +975,44 @@ impl Store {
             crate::file_changes::invalidate_run(&run_id);
         }
         self.execution_offsets.borrow_mut().clear();
-        self.reclaim_deleted_pages();
+        if reclaim_pages {
+            self.reclaim_deleted_pages();
+        }
         Ok(())
     }
 
-    fn reclaim_deleted_pages(&self) {
+    pub(crate) fn reclaim_deleted_pages(&self) {
+        self.reclaim_deleted_pages_inner(true);
+    }
+
+    /// Background-safe page reclamation using a non-blocking `PASSIVE` WAL
+    /// checkpoint so concurrent readers never stall.
+    pub(crate) fn reclaim_deleted_pages_passive(&self) {
+        self.reclaim_deleted_pages_inner(false);
+    }
+
+    fn reclaim_deleted_pages_inner(&self, truncate_wal: bool) {
         // Best effort after the delete commits: errors must not leave callers
         // believing a committed deletion failed (or retaining stale Services).
         // rusqlite::execute_batch steps a row-producing PRAGMA only once.
         // incremental_vacuum yields after EACH reclaimed page, so consume it
         // fully. Bound work to 4096 pages (~16 MiB at the default page size)
         // to avoid a full VACUUM-sized lock alongside active Workers.
+        let Ok(_write_guard) = store_write_guard() else {
+            return;
+        };
         if let Ok(mut statement) = self.connection.prepare("PRAGMA incremental_vacuum(4096)") {
             if let Ok(mut rows) = statement.query([]) {
                 while let Ok(Some(_)) = rows.next() {}
             }
         }
         // Promote the truncation from WAL to the physical database file.
-        let _ = self
-            .connection
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let checkpoint = if truncate_wal {
+            "PRAGMA wal_checkpoint(TRUNCATE);"
+        } else {
+            "PRAGMA wal_checkpoint(PASSIVE);"
+        };
+        let _ = self.connection.execute_batch(checkpoint);
     }
 }
 

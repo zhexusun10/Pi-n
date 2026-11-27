@@ -378,7 +378,7 @@ pub fn track(child: &Child) -> Result<ProcessTree, String> {
     Ok(tree)
 }
 
-/// A prestarted Partitioner becomes owned by the Run only when its prompt is
+/// A prestarted worker becomes owned by the Run only when its prompt is
 /// accepted. Cancellation then kills it just like a normally spawned agent.
 pub fn assign_to_current_owner(tree: &ProcessTree) -> Result<(), String> {
     let owner = OWNER.with(|owner| owner.borrow().clone());

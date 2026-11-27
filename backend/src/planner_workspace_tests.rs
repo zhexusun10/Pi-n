@@ -216,7 +216,6 @@ fn turn(service: &Arc<Service>, config: &Config) -> PlanningResult {
         service,
         |_| {},
         |_| {},
-        |_| {},
     )
 }
 
@@ -1473,7 +1472,7 @@ fn planner_refuses_capture_when_a_newer_physical_owner_is_superseded() {
     let graph = runtime.state.graph.clone();
     runtime
         .emit(EventKind::GraphRevised {
-            graph,
+            graph: Some(graph),
             planning_id: Uuid::new_v4().to_string(),
             planning: PlanningSummary::default(),
             invalidated: vec!["left".into()],
@@ -2065,7 +2064,6 @@ console.log(JSON.stringify({ type: 'message_end', message: {
             None,
             Some(planning_run),
             &planning_service,
-            |_| {},
             |_| {},
             |_| {},
         );

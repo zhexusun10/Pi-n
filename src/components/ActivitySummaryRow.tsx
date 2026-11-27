@@ -370,6 +370,49 @@ function flushPendingTransitionRows(syncAnchor = true) {
   }
 }
 
+type LiveExpandPreparer = () => Promise<void> | void;
+const liveExpandPreparers = new Set<LiveExpandPreparer>();
+export const LIVE_EXPAND_PREFETCH_WAIT_MS = 180;
+
+/** Register a live summary-projected transcript that can upgrade to full output
+ * before the global "Expand cards" animation starts, preventing streaming CoT
+ * cards from expanding as empty shimmer and flashing when full output arrives. */
+export function registerLiveExpandPreparer(prepare: LiveExpandPreparer): () => void {
+  liveExpandPreparers.add(prepare);
+  return () => {
+    liveExpandPreparers.delete(prepare);
+  };
+}
+
+/** Pre-warm any live summary-projected transcripts before starting a global
+ * expand transition. Returns `null` synchronously when nothing needs upgrading. */
+export function prepareLiveCardsExpand(maxWaitMs = LIVE_EXPAND_PREFETCH_WAIT_MS): Promise<void> | null {
+  if (liveExpandPreparers.size === 0) return null;
+  const tasks: Array<Promise<unknown>> = [];
+  for (const prepare of [...liveExpandPreparers]) {
+    try {
+      const result = prepare();
+      if (result && typeof (result as Promise<unknown>).then === "function") {
+        tasks.push(result);
+      }
+    } catch {
+      // Best-effort pre-warm; expand animation still proceeds.
+    }
+  }
+  if (tasks.length === 0) return null;
+  return new Promise<void>(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, maxWaitMs);
+    void Promise.allSettled(tasks).then(finish);
+  });
+}
+
 export function hasActiveCardsTransitionAnchor() {
   return activeTransitionAnchor !== null;
 }

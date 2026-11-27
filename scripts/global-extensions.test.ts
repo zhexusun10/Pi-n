@@ -89,30 +89,24 @@ test('global auto-discovery defaults external extensions to disabled and persist
   } finally { f.close(); }
 });
 
-test('only pi-trim reaches Partitioner; Merger loads continuity and simple-timeout as exceptions; trim is mandatory for all roles', async () => {
+test('Merger loads continuity and simple-timeout as exceptions; trim is mandatory for all roles', async () => {
   const f = fixture();
   try {
     // Even malformed/unreadable user config must not affect restricted roles.
     writeFileSync(join(f.global, 'settings.json'), 'invalid json');
-    for (const role of ['partition', 'merger']) {
+    for (const role of ['merger']) {
       const resources = await executionResources([], f.own, role);
       assert.ok(resources.args.includes(bundledTrim));
       assert.ok(resources.args.includes('--no-extensions'));
       assert.ok(resources.args.includes('--no-skills'));
       assert.ok(!resources.args.includes('--skill'));
-      if (role === 'merger') {
-        assert.deepEqual(
-          resources.extensionFactories.map(factory => typeof factory === 'object' ? factory.name : ''),
-          [workspacePolicyName, simpleTimeoutName],
-          'Merger loads workspace policy and bundled pi-simple-timeout, no MCP factory',
-        );
-        assert.ok(resources.args.includes(bundledContinuity), 'Merger loads continuity as an exception');
-        assert.equal(resources.args.filter(arg => arg === '--extension').length, 2);
-      } else {
-        assert.deepEqual(resources.extensionFactories, [{ name: workspacePolicyName, factory: workspacePolicy }], 'only the mandatory host policy, no MCP factory');
-        assert.ok(!resources.args.includes(bundledContinuity), 'Partitioner does not load continuity');
-        assert.equal(resources.args.filter(arg => arg === '--extension').length, 1);
-      }
+      assert.deepEqual(
+        resources.extensionFactories.map(factory => typeof factory === 'object' ? factory.name : ''),
+        [workspacePolicyName, simpleTimeoutName],
+        'Merger loads workspace policy and bundled pi-simple-timeout, no MCP factory',
+      );
+      assert.ok(resources.args.includes(bundledContinuity), 'Merger loads continuity as an exception');
+      assert.equal(resources.args.filter(arg => arg === '--extension').length, 2);
     }
     writeFileSync(join(f.global, 'settings.json'), '{}');
     const legacy = JSON.stringify({ overrides: { [trimId]: false } });
@@ -122,12 +116,12 @@ test('only pi-trim reaches Partitioner; Merger loads continuity and simple-timeo
       await assert.rejects(setExtensionEnabled(f.own, trimId, enabled), /pi-trim is required/);
     }
     assert.equal(readFileSync(join(f.own, 'extensions.json'), 'utf8'), legacy, 'rejected changes do not write settings');
-    for (const role of ['partition', 'merger', 'planner', 'node']) {
+    for (const role of ['merger', 'planner', 'node']) {
       await assert.rejects(executionResources([], f.own, role), /Unsupported pi-trim override/);
     }
     assert.equal(readFileSync(join(f.own, 'extensions.json'), 'utf8'), legacy);
     writeFileSync(join(f.own, 'extensions.json'), JSON.stringify({ overrides: {} }));
-    for (const role of ['partition', 'merger', 'planner', 'node']) {
+    for (const role of ['merger', 'planner', 'node']) {
       assert.equal((await executionResources([], f.own, role)).args.filter(arg => arg === bundledTrim).length, 1);
     }
   } finally { f.close(); }
@@ -136,9 +130,10 @@ test('only pi-trim reaches Partitioner; Merger loads continuity and simple-timeo
 test('mandatory workspace policy reuses native ESM code but binds fresh tools and paths for each task', async () => {
   const f = fixture();
   const cwd = process.cwd();
-  const keys = ['PI_N_MODE', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS'];
+  const keys = ['PI_N_MODE', 'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_N_ORIGINAL_ROOT', 'PI_N_SOURCE_ALIAS'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
+    delete process.env.PI_N_AGENT_KIND;
     const project = join(f.base, 'project');
     const second = join(f.base, 'second-workspace');
     mkdirSync(project);
@@ -177,17 +172,13 @@ test('execution path guidance directly follows existing prompts without a blank 
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const guideline = 'Use project-root-relative paths in Bash commands and project files.';
   try {
-    for (const role of ['node', 'merger', 'planner', 'partition']) {
+    for (const role of ['node', 'merger', 'planner']) {
       for (const kind of ['source', 'graph']) {
         Object.assign(process.env, { PI_N_MODE: role, PI_N_EXECUTION_KIND: kind,
           PI_N_ORIGINAL_ROOT: process.cwd(), PI_N_SOURCE_ALIAS: process.cwd() });
         const hooks = new Map<string, any>();
         workspacePolicy({ registerTool() {}, on(name: string, handler: any) { hooks.set(name, handler); } } as any);
         const hook = hooks.get('before_agent_start');
-        if (role === 'partition') {
-          assert.equal(hook, undefined, 'Partitioner receives no path hooks');
-          continue;
-        }
         if (role === 'planner') {
           assert.ok(hook, 'Planner normalizes paths without an addendum');
           const options = { cwd: process.cwd(), appendSystemPrompt: 'Keep existing instructions.', forceSystemPrompt: 'Existing override.' };
@@ -291,7 +282,7 @@ test('feedback protocol is a per-turn system rule, scoped to the feedback source
     let withFeedback: ReturnType<typeof buildSystemPromptState> | undefined;
     for (const [role, enabled, continuation] of [
       ['node', 'true', 'false'], ['node', 'true', 'true'], ['node', 'false', 'false'],
-      ['planner', 'true', 'false'], ['merger', 'true', 'false'], ['partition', 'true', 'false'],
+      ['planner', 'true', 'false'], ['merger', 'true', 'false'],
     ]) {
       Object.assign(process.env, { PI_N_MODE: role, PI_N_FEEDBACK_SOURCE: enabled, PI_N_CONTINUE_INTERRUPTED: continuation });
       const hooks = new Map<string, any>();
@@ -411,9 +402,6 @@ test('bundled continuity defaults on, supports persistent removal/restore and ob
         assert.ok(!(await executionResources([flag], f.own, role)).args.includes(bundledContinuity));
       }
     }
-    for (const role of ['partition']) {
-      assert.ok(!(await executionResources([], f.own, role)).args.includes(bundledContinuity));
-    }
     const removed = await setExtensionEnabled(f.own, continuityId, false);
     assert.equal(removed.extensions.find(extension => extension.id === continuityId)?.enabled, false);
     assert.equal(JSON.parse(readFileSync(join(f.own, 'extensions.json'), 'utf8')).overrides[continuityId], false);
@@ -445,13 +433,13 @@ test('bundled web search defaults on for Planner/Node only, persists disable/ena
         assert.ok(!(await executionResources([flag], f.own, role)).extensionFactories.includes(webSearchExtension));
       }
     }
-    for (const role of ['partition', 'merger']) {
+    for (const role of ['merger']) {
       assert.ok(!(await executionResources([], f.own, role)).extensionFactories.includes(webSearchExtension));
     }
     const disabled = await setExtensionEnabled(f.own, webSearchId, false);
     assert.equal(disabled.extensions.find(extension => extension.id === webSearchId)?.enabled, false);
     assert.equal(JSON.parse(readFileSync(join(f.own, 'extensions.json'), 'utf8')).overrides[webSearchId], false);
-    for (const role of ['partition', 'merger', 'planner', 'node']) {
+    for (const role of ['merger', 'planner', 'node']) {
       assert.ok(!(await executionResources([], f.own, role)).extensionFactories.includes(webSearchExtension));
     }
     const enabled = await setExtensionEnabled(f.own, webSearchId, true);
@@ -531,16 +519,14 @@ test('MCP is available only to allowed roles and respects global/dedicated built
       assert.ok(resources.extensionFactories.some(factory => typeof factory === 'object' && factory.name === 'pi-n-mcp'));
     }
     writeFileSync(join(f.global, 'settings.json'), JSON.stringify({ extensions: ['-builtin:mcp'] }));
-    for (const role of ['planner', 'node', 'partition', 'merger']) {
+    for (const role of ['planner', 'node', 'merger']) {
       const factories = (await executionResources([], f.own, role)).extensionFactories;
       assert.ok(!factories.some(factory => typeof factory === 'object' && factory.name === 'pi-n-mcp'));
       assert.deepEqual(
         factories.map(factory => typeof factory === 'object' ? factory.name : ''),
-        role === 'partition'
-          ? [workspacePolicyName]
-          : role === 'merger'
-            ? [workspacePolicyName, simpleTimeoutName]
-            : [workspacePolicyName, webSearchExtension.name, simpleTimeoutName],
+        role === 'merger'
+          ? [workspacePolicyName, simpleTimeoutName]
+          : [workspacePolicyName, webSearchExtension.name, simpleTimeoutName],
       );
     }
     writeFileSync(join(f.global, 'settings.json'), '{}');
@@ -932,12 +918,11 @@ export default function (pi) {
 }`);
     const probe = (await extensionCatalog(f.own)).extensions.find(extension => !extension.bundled)!;
     await setExtensionEnabled(f.own, probe.id, true);
-    for (const role of ['planner', 'node', 'partition', 'merger']) {
+    for (const role of ['planner', 'node', 'merger']) {
       const result = join(f.base, `${role}.json`);
       const args = ['--mode', 'rpc', '--no-session', '--no-context-files'];
       if (role === 'node') args.push('--approve');
       if (role === 'planner') args.push('--exclude-tools', 'ls,find,grep');
-      if (role === 'partition') args.push('--no-extensions', '--no-skills');
       if (role === 'merger') args.push('--no-skills');
       const output = execFileSync(process.execPath, [join(root, 'engine/entrypoint.mjs'), ...args], {
         cwd: f.workspace, encoding: 'utf8', timeout: 20000,

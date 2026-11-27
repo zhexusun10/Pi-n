@@ -67,7 +67,7 @@ fn build_diff_context(state: &Snapshot, store_root: PathBuf) -> FileDiffContext 
     let has_store_db = store_root.join("events.sqlite").is_file();
     FileDiffContext {
         run_id: state.run_id.clone(),
-        base: state.base.clone(),
+        base: state.publication_base().to_string(),
         repository,
         publication,
         planning_id: state.planning_id.clone(),

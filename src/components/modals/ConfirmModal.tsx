@@ -1,9 +1,10 @@
 import { t } from "../../i18n";
 import React, { useId } from "react";
 import { createPortal } from "react-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { motion, useIsPresent, useReducedMotion } from "motion/react";
 import { AlertTriangle, Trash2 } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { dialogVeilMotion } from "./dialogMotion";
 
 export interface ConfirmModalState {
   title: string;
@@ -23,6 +24,7 @@ interface ConfirmModalProps {
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = React.memo(({ config, onClose }) => {
   const reduceMotion = useReducedMotion();
+  const isPresent = useIsPresent();
   const titleId = useId();
   const messageId = useId();
   const detailId = useId();
@@ -38,17 +40,18 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = React.memo(({ config, o
 
   if (!config) return null;
 
+  const veilMotion = dialogVeilMotion(reduceMotion);
+
   const content = (
-    <motion.div
-      className="modal-backdrop confirm-backdrop"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: reduceMotion ? 0 : 0.16, ease: "easeOut" }}
+    <div
+      className="modal-backdrop subtle-backdrop confirm-backdrop"
+      inert={!isPresent || undefined}
+      style={!isPresent ? { pointerEvents: "none" } : undefined}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) cancel();
+        if (event.target === event.currentTarget && isPresent) cancel();
       }}
     >
+      <motion.div className="modal-backdrop-tint" aria-hidden="true" {...veilMotion} />
       <motion.div
         className="confirm-dialog"
         ref={dialogRef}
@@ -95,7 +98,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = React.memo(({ config, o
           </button>
         </div>
       </motion.div>
-    </motion.div>
+    </div>
   );
   return typeof document !== "undefined" ? createPortal(content, document.body) : content;
 });

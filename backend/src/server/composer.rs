@@ -8,7 +8,7 @@ pub(super) fn models(body: &Value, service: &Arc<Service>) -> Result<Value, Stri
     let run: String = argument(body, "runId")?;
     let node: Option<String> = argument(body, "node")?;
     let role: String = argument(body, "role")?;
-    if !matches!(role.as_str(), "planner" | "nodeAgent" | "partitioner") {
+    if !matches!(role.as_str(), "planner" | "nodeAgent") {
         return Err("Invalid model role".into());
     }
     let patch: RoleModelConfig = argument(body, "settings")?;
@@ -37,7 +37,6 @@ pub(super) fn models(body: &Value, service: &Arc<Service>) -> Result<Value, Stri
         let selection = PiModelConfig::resolve(
             match role.as_str() {
                 "planner" => PiRole::Planner,
-                "partitioner" => PiRole::Partitioner,
                 _ => PiRole::NodeAgent,
             },
             &config,
@@ -54,7 +53,7 @@ pub(super) fn models(body: &Value, service: &Arc<Service>) -> Result<Value, Stri
         settings.thinking_level = patch.thinking_level;
     }
     // Match Settings' default inheritance, but never promote a per-node
-    // override into the conversation's fallback for Planner/Partitioner.
+    // override into the conversation's fallback for Planner.
     if node.is_none() && role == "nodeAgent" {
         config.model = settings.model.clone();
         if let Some(level) = &settings.thinking_level {
@@ -698,7 +697,7 @@ mod tests {
         let mut runtime = Runtime::open(temp.path()).unwrap();
         let config: Config = serde_json::from_value(json!({
             "repository":temp.path(), "model":"old/model", "thinkingLevel":"low",
-            "roleModels":{"partitioner":{"model":"explicit/partitioner","thinkingLevel":"minimal"}}
+            "roleModels":{"planner":{"model":"explicit/planner","thinkingLevel":"minimal"}}
         }))
         .unwrap();
         runtime.save_default_config(&config).unwrap();
@@ -738,15 +737,9 @@ mod tests {
                 );
                 assert_eq!(effective.thinking_level, "high");
                 assert_eq!(effective.node_agent_settings().model, effective.model);
-                assert!(!effective.role_models.contains_key("planner"));
+                assert_eq!(effective.role_models["planner"].model, "explicit/planner");
                 assert_eq!(
-                    effective.role_models["partitioner"].model,
-                    "explicit/partitioner"
-                );
-                assert_eq!(
-                    effective.role_models["partitioner"]
-                        .thinking_level
-                        .as_deref(),
+                    effective.role_models["planner"].thinking_level.as_deref(),
                     Some("minimal")
                 );
                 assert_eq!(

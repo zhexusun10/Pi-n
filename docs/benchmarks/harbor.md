@@ -64,7 +64,7 @@ Agent version is derived from the verified binary, not a user-supplied `version`
 
 ## Routing, approval, and terminal state
 
-Each trial starts a private loopback backend, runtime data directory, and Pi configuration directory. The original task instruction is passed to `plan_goal` **without a forced mode**; the Partitioner chooses Serial or Graph.
+Each trial starts a private loopback backend, runtime data directory, and Pi configuration directory. The original task instruction is passed to `plan_goal` in `graph` mode.
 
 Evaluation sets `autoApprove=true`, including compiler-validated Planner graphs. All roles use Harbor's selected model; hidden role-model overrides are not allowed. Serial must finish its task; Graph must finish valid nodes **and publish** to the task directory. Failures, stalls, cancellation, and timeouts do not become successful terminal states.
 

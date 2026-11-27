@@ -612,14 +612,6 @@ export function parseTranscriptChunkLines(
             source: state.source,
             makeId: contentIndex => `think_${state.source}_${rawRange ? rawRange[0] : lineOffset}_${contentIndex}`,
           });
-          message.content.forEach((part: any, contentIndex: number) => {
-            if (part?.type === "toolCall") {
-              addToolCall(part.id, part.name || "tool", part.arguments || {}, "running", !!part.argsTruncated, contentIndex, "pending", {
-                rawArgsRange: rawRange,
-                argsOmitted: Boolean(part.piNBodyOmitted),
-              });
-            }
-          });
           const fullText = message.content.filter((c: { type: string }) => c.type === "text")
             .map((c: { text?: string }) => c.text || "").join("");
           // A cold tail can show only the runtime fallback when a large
@@ -631,9 +623,36 @@ export function parseTranscriptChunkLines(
             .filter(item => item.type === "text" && item.role === "assistant" && !item.rawOutput)
             .map(item => item.content || "").join("");
           const missing = fullText.startsWith(captured) ? fullText.slice(captured.length) : "";
-          if (missing) currentItems.push({
-            id: rowId("text"),
-            type: "text", role: "assistant", content: missing, timestamp: Date.now(),
+          if (missing) {
+            // Append subsumed suffix deltas to the in-flight assistant text item
+            // (for example when a live collapsed-card `summary` poll transitions
+            // to `settled` and omits trailing `text_delta`s in favor of
+            // `message_end`), rather than splitting one Markdown reply across
+            // two separate bubbles.
+            const tailIndex = currentItems.length - 1;
+            const tailItem = tailIndex >= state.assistantStartIndex ? currentItems[tailIndex] : undefined;
+            if (
+              tailItem &&
+              tailItem.type === "text" &&
+              tailItem.role === "assistant" &&
+              !tailItem.rawOutput &&
+              !tailItem.finalResponseCopy
+            ) {
+              currentItems[tailIndex] = { ...tailItem, content: (tailItem.content || "") + missing };
+            } else {
+              currentItems.push({
+                id: rowId("text"),
+                type: "text", role: "assistant", content: missing, timestamp: Date.now(),
+              });
+            }
+          }
+          message.content.forEach((part: any, contentIndex: number) => {
+            if (part?.type === "toolCall") {
+              addToolCall(part.id, part.name || "tool", part.arguments || {}, "running", !!part.argsTruncated, contentIndex, "pending", {
+                rawArgsRange: rawRange,
+                argsOmitted: Boolean(part.piNBodyOmitted),
+              });
+            }
           });
         }
         if (message?.role === "assistant") {

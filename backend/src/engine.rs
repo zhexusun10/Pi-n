@@ -1,5 +1,5 @@
 use crate::{
-    model::{Config, Execution, Route},
+    model::{Config, Execution},
     process_control,
 };
 use serde_json::Value;
@@ -84,7 +84,7 @@ pub fn begin_planning_prewarm() -> u64 {
     PLANNING_PREWARM_SELECTION.begin()
 }
 
-/// Prepare all three source roles concurrently, without constructing a Run.
+/// Prepare both source roles concurrently, without constructing a Run.
 #[cfg(not(feature = "fixture"))]
 pub fn warm_planning_engines(config: Config) {
     let ticket = begin_planning_prewarm();
@@ -96,7 +96,7 @@ pub fn warm_planning_engines(config: Config) {
     }
     PLANNING_PREWARM_SELECTION.dispatch(ticket, || {
         crate::native::warm_graph_runtime(PathBuf::from(&config.repository));
-        for role in [PiRole::Partitioner, PiRole::Planner, PiRole::NodeAgent] {
+        for role in [PiRole::Planner, PiRole::NodeAgent] {
             process_prewarm::request(&config, role, false);
         }
     });
@@ -136,7 +136,7 @@ pub fn warm_planning_engines_staggered(
     if !sleep_unless_prewarm_stopping(initial_delay) {
         return;
     }
-    for (index, role) in [PiRole::Partitioner, PiRole::Planner, PiRole::NodeAgent]
+    for (index, role) in [PiRole::Planner, PiRole::NodeAgent]
         .into_iter()
         .enumerate()
     {
@@ -158,7 +158,7 @@ pub fn warm_planning_engines_staggered(
 }
 
 #[cfg(not(feature = "fixture"))]
-pub fn stop_partition_prewarm() {
+pub fn stop_prewarm() {
     PREWARM_SHUTTING_DOWN.store(true, Ordering::SeqCst);
     process_prewarm::shutdown();
     if let Some(pool) = WARM_NODE.get() {
@@ -677,7 +677,7 @@ pub fn terminate_node(run_id: &str, node: &str) {
     process_control::terminate_node(run_id, node);
 }
 
-/// Cancel only the active Planner/Partitioner turn. A stopped planning owner
+/// Cancel only the active Planner turn. A stopped planning owner
 /// also rejects a process that reaches registration after the request.
 pub fn stop_planning(run_id: &str) -> Result<(), String> {
     process_control::stop_owner(&process_control::planning_owner(run_id))
@@ -701,7 +701,6 @@ impl AgentKind {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PiRole {
-    Partitioner,
     Planner,
     NodeAgent,
     Merger,
@@ -710,7 +709,6 @@ pub enum PiRole {
 impl PiRole {
     pub fn name(&self) -> &'static str {
         match self {
-            PiRole::Partitioner => "Partitioner",
             PiRole::Planner => "Planner",
             PiRole::NodeAgent => "NodeAgent",
             PiRole::Merger => "Merger",
@@ -719,7 +717,6 @@ impl PiRole {
 
     pub fn model_env_var(&self) -> &'static str {
         match self {
-            PiRole::Partitioner => "PARTITIONER_MODEL",
             PiRole::Planner => "PLANNER_MODEL",
             PiRole::NodeAgent => "NODE_AGENT_MODEL",
             PiRole::Merger => "MERGER_MODEL",
@@ -728,7 +725,6 @@ impl PiRole {
 
     pub fn thinking_env_var(&self) -> &'static str {
         match self {
-            PiRole::Partitioner => "PARTITIONER_THINKING",
             PiRole::Planner => "PLANNER_THINKING",
             PiRole::NodeAgent => "NODE_AGENT_THINKING",
             PiRole::Merger => "MERGER_THINKING",
@@ -737,7 +733,6 @@ impl PiRole {
 
     pub fn from_mode(mode: Option<&str>) -> Self {
         match mode {
-            Some("partition") => PiRole::Partitioner,
             Some("planner") => PiRole::Planner,
             Some("merger") => PiRole::Merger,
             _ => PiRole::NodeAgent,
@@ -754,7 +749,6 @@ pub struct PiModelConfig {
 impl PiModelConfig {
     pub fn resolve(role: PiRole, base_config: &Config) -> Self {
         let key = match role {
-            PiRole::Partitioner => "partitioner",
             PiRole::Planner => "planner",
             // Merger follows the effective Node Agent profile, including its
             // environment overrides, unless MERGER_MODEL / MERGER_THINKING win.
@@ -789,13 +783,7 @@ impl PiModelConfig {
                 }
             })
             .or_else(|| settings.and_then(|value| value.thinking_level.clone()))
-            .unwrap_or_else(|| {
-                if role == PiRole::Partitioner {
-                    "low".into()
-                } else {
-                    base_config.thinking_level.clone()
-                }
-            });
+            .unwrap_or_else(|| base_config.thinking_level.clone());
         Self {
             model: model.trim().into(),
             thinking: Some(thinking),
@@ -806,164 +794,6 @@ impl PiModelConfig {
         let mut cfg = base_config.clone();
         cfg.model = self.model.clone();
         cfg
-    }
-}
-
-/// Parses the model text output to determine whether it chose "parallel" or "serial".
-/// Maps "parallel" to the internal "graph" execution mode.
-/// If ambiguous, missing, or model hallucinated, defaults safely to "serial".
-pub fn parse_route_decision(text: &str) -> Route {
-    let trimmed = text.trim();
-    let lower = trimmed.to_lowercase();
-
-    // 1. Direct single-word match (ignoring whitespace and surrounding punctuation)
-    let clean_single = lower.trim_matches(|c: char| !c.is_alphanumeric());
-    if clean_single == "parallel" {
-        return Route {
-            plan_type: "graph".into(),
-        };
-    }
-    if clean_single == "serial" {
-        return Route {
-            plan_type: "serial".into(),
-        };
-    }
-
-    // 2. Check each line in reverse order (bottom-up priority)
-    for line in lower.lines().rev() {
-        let line_clean = line.trim().trim_matches(|c: char| !c.is_alphanumeric());
-        if line_clean == "parallel" {
-            return Route {
-                plan_type: "graph".into(),
-            };
-        }
-        if line_clean == "serial" {
-            return Route {
-                plan_type: "serial".into(),
-            };
-        }
-
-        let tokens: Vec<&str> = line
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| !w.is_empty())
-            .collect();
-        let line_g = tokens.contains(&"parallel");
-        let line_s = tokens.contains(&"serial");
-        if line_g && !line_s {
-            return Route {
-                plan_type: "graph".into(),
-            };
-        }
-        if line_s && !line_g {
-            return Route {
-                plan_type: "serial".into(),
-            };
-        }
-    }
-
-    // 3. Check for explicit decision/choice markers if present
-    for marker in ["decision:", "choice:", "conclusion:", "result:"] {
-        if let Some(pos) = lower.rfind(marker) {
-            let after = &lower[pos..];
-            let after_tokens: Vec<&str> = after
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|w| !w.is_empty())
-                .collect();
-            let after_g = after_tokens.contains(&"parallel");
-            let after_s = after_tokens.contains(&"serial");
-            if after_g && !after_s {
-                return Route {
-                    plan_type: "graph".into(),
-                };
-            }
-            if after_s && !after_g {
-                return Route {
-                    plan_type: "serial".into(),
-                };
-            }
-        }
-    }
-
-    // 4. Token scan across entire text
-    let all_tokens: Vec<&str> = lower
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect();
-    let total_g = all_tokens.contains(&"parallel");
-    let total_s = all_tokens.contains(&"serial");
-
-    if total_g && !total_s {
-        return Route {
-            plan_type: "graph".into(),
-        };
-    }
-    if total_s && !total_g {
-        return Route {
-            plan_type: "serial".into(),
-        };
-    }
-
-    // 5. If both words are mentioned in prose, the later occurrence represents the conclusion
-    if total_g && total_s {
-        let last_g = lower
-            .match_indices("parallel")
-            .filter_map(|(idx, _)| {
-                let before = lower[..idx].chars().next_back();
-                let after = lower[idx + "parallel".len()..].chars().next();
-                let before_ok = before.is_none_or(|c| !c.is_alphanumeric());
-                let after_ok = after.is_none_or(|c| !c.is_alphanumeric());
-                if before_ok && after_ok {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .last();
-
-        let last_s = lower
-            .match_indices("serial")
-            .filter_map(|(idx, _)| {
-                let before = lower[..idx].chars().next_back();
-                let after = lower[idx + 6..].chars().next();
-                let before_ok = before.is_none_or(|c| !c.is_alphanumeric());
-                let after_ok = after.is_none_or(|c| !c.is_alphanumeric());
-                if before_ok && after_ok {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .last();
-
-        match (last_g, last_s) {
-            (Some(g), Some(s)) => {
-                if g > s {
-                    return Route {
-                        plan_type: "graph".into(),
-                    };
-                } else {
-                    return Route {
-                        plan_type: "serial".into(),
-                    };
-                }
-            }
-            (Some(_), None) => {
-                return Route {
-                    plan_type: "graph".into(),
-                }
-            }
-            (None, Some(_)) => {
-                return Route {
-                    plan_type: "serial".into(),
-                }
-            }
-            (None, None) => {}
-        }
-    }
-
-    // 6. Safe fallback for hallucination or completely unrelated output
-    Route {
-        plan_type: "serial".into(),
     }
 }
 
@@ -1266,15 +1096,11 @@ fn run_pi_with_timeout(
     // retain their original protocol.
     // RPC's stdin-EOF shutdown exits promptly after agent_settled. Print mode
     // can keep Node's provider handles alive for seconds after the route text.
-    let rpc_agent = (request.role == PiRole::NodeAgent
-        || request.role == PiRole::Planner
-        || request.role == PiRole::Partitioner
-        || request.role == PiRole::Merger)
-        && (!cfg!(feature = "fixture")
-            || request
-                .environment
-                .iter()
-                .any(|(key, value)| *key == "PI_N_TEST_NODE_RPC" && value == "1"));
+    let rpc_agent = !cfg!(feature = "fixture")
+        || request
+            .environment
+            .iter()
+            .any(|(key, value)| *key == "PI_N_TEST_NODE_RPC" && value == "1");
     command.args([
         "--mode",
         if rpc_agent { "rpc" } else { "json" },
@@ -1288,12 +1114,10 @@ fn run_pi_with_timeout(
         command.arg("--approve");
     } else if request.role == PiRole::Planner {
         command.arg("--no-approve");
-    } else if request.role == PiRole::Merger {
+    } else {
         // Continuity applies to Merger as an exception, so do not pass --no-extensions here.
         // User extensions/MCP/skills remain excluded at the host launcher boundary.
         command.args(["--no-skills", "--no-approve"]);
-    } else {
-        command.args(["--no-extensions", "--no-skills", "--no-approve"]);
     }
     // An allowlist would also hide tools contributed by user extensions/MCP.
     // Retain the Planner's base surface while allowing extension tools, and
@@ -1348,9 +1172,6 @@ fn run_pi_with_timeout(
     if !request.extra_args.is_empty() {
         command.args(&request.extra_args);
     }
-    if request.role == PiRole::Partitioner && !request.extra_args.contains(&"--thinking") {
-        command.args(["--thinking", "low"]);
-    }
     if let Some(system_prompt) = request.system_prompt {
         let prompt_path = if Path::new(system_prompt).is_file() {
             PathBuf::from(system_prompt)
@@ -1385,7 +1206,7 @@ fn run_pi_with_timeout(
     command.env_remove("PI_SESSION_FILE");
     crate::native::clear_git_environment(&mut command);
     // Only the current request may identify its agent. Never inherit a parent's
-    // Serial/Node selection into Planner, Partitioner or unrelated Node work.
+    // Serial/Node selection into Planner or unrelated Node work.
     command.env_remove("PI_N_AGENT_KIND");
     // Only an explicit per-turn binding may activate the feedback protocol.
     command.env_remove("PI_N_FEEDBACK_SOURCE");
@@ -1411,7 +1232,6 @@ fn run_pi_with_timeout(
     command.env(
         "PI_N_MODE",
         match request.role {
-            PiRole::Partitioner => "partition",
             PiRole::Planner => "planner",
             PiRole::NodeAgent => "node",
             PiRole::Merger => "merger",
@@ -1678,8 +1498,6 @@ fn run_pi_with_timeout(
                 .clone()
                 .unwrap_or_else(|| request.session_dir.to_string_lossy().into_owned());
             format!("planner:{identity}")
-        } else if request.role == PiRole::Partitioner {
-            format!("partition:{}", request.session_dir.display())
         } else {
             request
                 .environment
@@ -1935,7 +1753,7 @@ fn source_write_tracker(request: &PiRequest<'_>) -> Option<source_write_gate::So
 
 #[allow(clippy::too_many_arguments)]
 fn run_turn(
-    role: PiRole,
+    _role: PiRole,
     rpc_agent: bool,
     report_context: bool,
     resuming_existing_session: bool,
@@ -1974,13 +1792,8 @@ fn run_turn(
             }
         }
         output_buffer.flush_due(&mut *on_output)?;
-        // Planners/nodes need a steer handoff window. The Partitioner has no
-        // follow-up commands, so close RPC stdin as soon as its turn settles.
-        let handoff = if role == PiRole::Partitioner {
-            Duration::ZERO
-        } else {
-            Duration::from_millis(500)
-        };
+        // Planners and nodes need a brief steer handoff window after settling.
+        let handoff = Duration::from_millis(500);
         if rpc_agent && agent_ended.is_some_and(|t| t.elapsed() > handoff) {
             // Allow the final Pi projection to arrive, but never let an
             // unsupported or stalled stats request hold a settled process.
@@ -2074,8 +1887,8 @@ fn run_turn(
                         // Do not persist Pi's entire session stats/cost payload.
                         let Some(response) = response else { continue };
                         event = Some(response);
-                    } else if context_stats::ContextStats::advances(current) {
-                        context_stats.changed(channels.rpc_sender.as_ref());
+                    } else {
+                        context_stats.observe(current, channels.rpc_sender.as_ref());
                     }
                 }
                 if let Some(event) = event.as_ref() {
@@ -3449,7 +3262,7 @@ sys.stdin.read()
         let mut output = String::new();
         let result = run_pi(
             PiRequest {
-                role: PiRole::Partitioner,
+                role: PiRole::Planner,
                 config: &config,
                 cwd: temp.path(),
                 task: "test",
@@ -3900,7 +3713,7 @@ sys.exit(2) # No message_end/agent_settled: the partial text must still survive.
         let mut output = String::new();
         let result = run_pi_with_timeout(
             PiRequest {
-                role: PiRole::Partitioner,
+                role: PiRole::Planner,
                 config: &config,
                 cwd: temp.path(),
                 task: "test",
@@ -3969,7 +3782,7 @@ time.sleep(10)
         let mut output = String::new();
         let result = run_pi_with_timeout(
             PiRequest {
-                role: PiRole::Partitioner,
+                role: PiRole::Planner,
                 config: &config,
                 cwd: temp.path(),
                 task: "test",
@@ -3985,7 +3798,7 @@ time.sleep(10)
             |line| output.push_str(&line),
             Some(Duration::from_secs(1)),
         );
-        assert!(result.unwrap_err().contains("Partitioner timed out"));
+        assert!(result.unwrap_err().contains("Planner timed out"));
         let suffix = output.find("TIMED_OUT_SUFFIX").unwrap();
         let exited = output.find("pi_n_process_exited").unwrap();
         assert!(suffix < exited);
@@ -3996,15 +3809,15 @@ time.sleep(10)
 
     #[cfg(feature = "fixture")]
     #[test]
-    fn partitioner_rpc_closes_after_final_turn_without_waiting_for_print_mode() {
+    fn planner_rpc_closes_after_final_turn_without_waiting_for_print_mode() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("partition_rpc.py");
+        let script = temp.path().join("planner_close_rpc.py");
         fs::write(&script, r#"import json, sys
 assert '--mode' in sys.argv and sys.argv[sys.argv.index('--mode')+1] == 'rpc'
 request = json.loads(sys.stdin.readline())
 assert request['type'] == 'prompt'
 print(json.dumps({'type':'response','id':request['id'],'success':True}), flush=True)
-print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'parallel'}]}}), flush=True)
+print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'planned'}]}}), flush=True)
 print(json.dumps({'type':'agent_settled'}), flush=True)
 sys.stdin.read() # RPC shutdown is requested by closing stdin.
 "#).unwrap();
@@ -4028,11 +3841,11 @@ sys.stdin.read() # RPC shutdown is requested by closing stdin.
         let mut events = String::new();
         let result = run_pi(
             PiRequest {
-                role: PiRole::Partitioner,
+                role: PiRole::Planner,
                 config: &config,
                 cwd: temp.path(),
                 task: "test",
-                session_dir: &temp.path().join("partition-session"),
+                session_dir: &temp.path().join("planner-session"),
                 extension: None,
                 tools: Some(""),
                 session_id: None,
@@ -4043,20 +3856,20 @@ sys.stdin.read() # RPC shutdown is requested by closing stdin.
             },
             |line| events.push_str(&line),
         );
-        assert_eq!(result.unwrap(), "parallel");
+        assert_eq!(result.unwrap(), "planned");
         assert!(events.contains("pi_n_process_exited"));
     }
 
     #[cfg(feature = "fixture")]
     #[test]
-    fn settled_partition_keeps_its_route_when_the_runtime_crashes_during_shutdown() {
+    fn settled_planner_keeps_its_output_when_the_runtime_crashes_during_shutdown() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("partition_crash.py");
+        let script = temp.path().join("planner_crash.py");
         fs::write(&script, r#"import json, sys
 request = json.loads(sys.stdin.readline())
 assert request['type'] == 'prompt'
 print(json.dumps({'type':'response','id':request['id'],'success':True}), flush=True)
-print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'parallel'}]}}), flush=True)
+print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'planned'}]}}), flush=True)
 print(json.dumps({'type':'agent_settled'}), flush=True)
 sys.exit(3)  # Windows fail-fast teardown cannot be represented portably; any nonzero code must be tolerated after settle.
 "#).unwrap();
@@ -4080,11 +3893,11 @@ sys.exit(3)  # Windows fail-fast teardown cannot be represented portably; any no
         let mut events = String::new();
         let result = run_pi(
             PiRequest {
-                role: PiRole::Partitioner,
+                role: PiRole::Planner,
                 config: &config,
                 cwd: temp.path(),
                 task: "test",
-                session_dir: &temp.path().join("partition-session"),
+                session_dir: &temp.path().join("planner-session"),
                 extension: None,
                 tools: Some(""),
                 session_id: None,
@@ -4095,7 +3908,7 @@ sys.exit(3)  # Windows fail-fast teardown cannot be represented portably; any no
             },
             |line| events.push_str(&line),
         );
-        assert_eq!(result.unwrap(), "parallel");
+        assert_eq!(result.unwrap(), "planned");
         assert!(
             events.contains("after the turn settled"),
             "the abnormal exit stays visible in the log"
@@ -4629,7 +4442,7 @@ sys.stdin.read()
             auto_approve: false,
             role_models: Default::default(),
         };
-        for role in [PiRole::Partitioner, PiRole::Planner, PiRole::Merger] {
+        for role in [PiRole::Planner, PiRole::Merger] {
             let variable = role.model_env_var().replace("_MODEL", "_TIMEOUT_SECONDS");
             let original = std::env::var_os(&variable);
             std::env::set_var(&variable, "invalid");
@@ -4708,12 +4521,6 @@ sys.stdin.read()
                 .as_deref(),
             Some("low")
         );
-        assert_eq!(
-            PiModelConfig::resolve(PiRole::Partitioner, &config)
-                .thinking
-                .as_deref(),
-            Some("low")
-        );
         std::env::set_var("PLANNER_THINKING", "high");
         assert_eq!(
             PiModelConfig::resolve(PiRole::Planner, &config)
@@ -4725,118 +4532,6 @@ sys.stdin.read()
             Some(value) => std::env::set_var("PLANNER_THINKING", value),
             None => std::env::remove_var("PLANNER_THINKING"),
         }
-    }
-
-    #[test]
-    fn partitioner_model_follows_base_config_model_with_thinking_low() {
-        let _guard = lock_env();
-        std::env::remove_var("PARTITIONER_MODEL");
-        std::env::remove_var("PARTITIONER_THINKING");
-
-        let custom_config = Config {
-            feedback_enabled: false,
-            post_task_review: false,
-            planner_write_tools: true,
-            environment: None,
-            repository: "/tmp/fake".into(),
-            isolate_parallel_nodes: true,
-            model: "anthropic/claude-3-7-sonnet".into(),
-            thinking_level: "medium".into(),
-            max_parallel: 4,
-            max_feedback: 3,
-            auto_approve: false,
-            #[cfg(feature = "fixture")]
-            engine: "pi".into(),
-            #[cfg(feature = "fixture")]
-            pi_command: "node".into(),
-            #[cfg(feature = "fixture")]
-            pi_args: vec![],
-            role_models: Default::default(),
-        };
-
-        // Legacy Partitioner follows the base model and defaults to thinking low
-        let partitioner_cfg = PiModelConfig::resolve(PiRole::Partitioner, &custom_config);
-        assert_eq!(partitioner_cfg.model, "anthropic/claude-3-7-sonnet");
-        assert_eq!(partitioner_cfg.thinking, Some("low".to_string()));
-
-        // Planner and NodeAgent should also inherit custom base_config.model
-        let planner_cfg = PiModelConfig::resolve(PiRole::Planner, &custom_config);
-        assert_eq!(planner_cfg.model, "anthropic/claude-3-7-sonnet");
-
-        let node_cfg = PiModelConfig::resolve(PiRole::NodeAgent, &custom_config);
-        assert_eq!(node_cfg.model, "anthropic/claude-3-7-sonnet");
-    }
-
-    #[test]
-    fn partitioner_thinking_defaults_to_low() {
-        let _guard = lock_env();
-        std::env::remove_var("PARTITIONER_THINKING");
-
-        let config = Config {
-            feedback_enabled: false,
-            environment: None,
-            repository: "/tmp/fake".into(),
-            post_task_review: false,
-            planner_write_tools: true,
-            isolate_parallel_nodes: true,
-            model: String::new(),
-            role_models: Default::default(),
-            thinking_level: "medium".into(),
-            max_parallel: 4,
-            max_feedback: 3,
-            auto_approve: false,
-            #[cfg(feature = "fixture")]
-            engine: "pi".into(),
-            #[cfg(feature = "fixture")]
-            pi_command: "node".into(),
-            #[cfg(feature = "fixture")]
-            pi_args: vec![],
-        };
-
-        // When base_config.model is empty, model remains empty (no qwen3.8-flash fallback)
-        let cfg = PiModelConfig::resolve(PiRole::Partitioner, &config);
-        assert_eq!(cfg.model, "");
-        assert_eq!(cfg.thinking, Some("low".to_string()));
-    }
-
-    #[test]
-    fn partitioner_thinking_allows_explicit_levels() {
-        let _guard = lock_env();
-
-        let config = Config {
-            feedback_enabled: false,
-            environment: None,
-            repository: "/tmp/fake".into(),
-            post_task_review: false,
-            planner_write_tools: true,
-            isolate_parallel_nodes: true,
-            model: "some-model".into(),
-            thinking_level: "medium".into(),
-            max_parallel: 4,
-            max_feedback: 3,
-            auto_approve: false,
-            #[cfg(feature = "fixture")]
-            engine: "pi".into(),
-            #[cfg(feature = "fixture")]
-            pi_command: "node".into(),
-            #[cfg(feature = "fixture")]
-            pi_args: vec![],
-            role_models: Default::default(),
-        };
-
-        std::env::set_var("PARTITIONER_THINKING", "high");
-        let cfg = PiModelConfig::resolve(PiRole::Partitioner, &config);
-        assert_eq!(cfg.thinking, Some("high".to_string()));
-
-        std::env::set_var("PARTITIONER_THINKING", "minimal");
-        let cfg = PiModelConfig::resolve(PiRole::Partitioner, &config);
-        assert_eq!(cfg.thinking, Some("minimal".to_string()));
-
-        std::env::set_var("PARTITIONER_THINKING", "low");
-        let cfg = PiModelConfig::resolve(PiRole::Partitioner, &config);
-        assert_eq!(cfg.thinking, Some("low".to_string()));
-
-        std::env::remove_var("PARTITIONER_THINKING");
     }
 
     #[test]
@@ -4855,8 +4550,6 @@ sys.stdin.read()
         }
         let _restore = Restore(
             [
-                "PARTITIONER_MODEL",
-                "PARTITIONER_THINKING",
                 "PLANNER_MODEL",
                 "PLANNER_THINKING",
                 "NODE_AGENT_MODEL",
@@ -4881,8 +4574,11 @@ sys.stdin.read()
             }
         }))
         .unwrap();
+        assert!(
+            !config.role_models.contains_key("partitioner"),
+            "retired partitioner settings must be ignored on load"
+        );
         for (role, model, thinking) in [
-            (PiRole::Partitioner, "example/small", "off"),
             (PiRole::Planner, "example/large", "high"),
             (PiRole::NodeAgent, "example/coder", "low"),
             (PiRole::Merger, "example/coder", "low"),
@@ -4894,16 +4590,9 @@ sys.stdin.read()
         }
         let mut partial = config.clone();
         partial.role_models = serde_json::from_value(serde_json::json!({
-            "partitioner": {"model": "example/small"},
             "planner": {"thinkingLevel": "max"}
         }))
         .unwrap();
-        assert_eq!(
-            PiModelConfig::resolve(PiRole::Partitioner, &partial)
-                .thinking
-                .as_deref(),
-            Some("low")
-        );
         assert_eq!(
             PiModelConfig::resolve(PiRole::Planner, &partial).model,
             "legacy/default"
@@ -4922,16 +4611,9 @@ sys.stdin.read()
         );
 
         std::env::set_var("PLANNER_MODEL", "env/planner");
-        std::env::set_var("PARTITIONER_THINKING", "high");
         assert_eq!(
             PiModelConfig::resolve(PiRole::Planner, &config).model,
             "env/planner"
-        );
-        assert_eq!(
-            PiModelConfig::resolve(PiRole::Partitioner, &config)
-                .thinking
-                .as_deref(),
-            Some("high")
         );
         assert_eq!(
             PiModelConfig::resolve(PiRole::NodeAgent, &config).model,
@@ -4959,41 +4641,6 @@ sys.stdin.read()
                 assert_eq!(node.thinking.as_deref(), Some("off"));
             }
         }
-    }
-
-    #[test]
-    fn partitioner_model_env_override_works_independently() {
-        let _guard = lock_env();
-
-        let config = Config {
-            feedback_enabled: false,
-            environment: None,
-            repository: "/tmp/fake".into(),
-            post_task_review: false,
-            planner_write_tools: true,
-            isolate_parallel_nodes: true,
-            model: "claude-3-7-sonnet".into(),
-            thinking_level: "medium".into(),
-            max_parallel: 4,
-            max_feedback: 3,
-            auto_approve: false,
-            #[cfg(feature = "fixture")]
-            engine: "pi".into(),
-            #[cfg(feature = "fixture")]
-            pi_command: "node".into(),
-            #[cfg(feature = "fixture")]
-            pi_args: vec![],
-            role_models: Default::default(),
-        };
-
-        std::env::set_var("PARTITIONER_MODEL", "custom-partitioner-model");
-        let partitioner_cfg = PiModelConfig::resolve(PiRole::Partitioner, &config);
-        assert_eq!(partitioner_cfg.model, "custom-partitioner-model");
-
-        let planner_cfg = PiModelConfig::resolve(PiRole::Planner, &config);
-        assert_eq!(planner_cfg.model, "claude-3-7-sonnet");
-
-        std::env::remove_var("PARTITIONER_MODEL");
     }
 
     #[test]

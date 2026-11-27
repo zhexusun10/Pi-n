@@ -3,7 +3,6 @@ import { useSyncExternalStore } from "react";
 /** Browser-local UI preferences: never part of the Run snapshot or backend config. */
 export const AUTO_EXPAND_COT_KEY = "pi_n_auto_expand_cot_v1";
 export const EXECUTION_OVERVIEW_KEY = "pi_n_execution_overview_v1";
-export const HIDE_AUTO_MODE_KEY = "pi_n_hide_auto_mode_v1";
 export const LANDING_BACKGROUND_KEY = "pi_n_landing_background_v1";
 export const ACCENT_COLOR_KEY = "pi_n_accent_color_v1";
 export const COLLAPSE_CARDS_KEY = "pi_n_collapse_cards_v1";
@@ -107,42 +106,6 @@ function subscribeToExecutionOverview(listener: () => void): () => void {
 
 export function useExecutionOverview(): boolean {
   return useSyncExternalStore(subscribeToExecutionOverview, executionOverviewEnabled, executionOverviewEnabled);
-}
-
-/** Auto is hidden by default; an explicit opt-out restores it in Settings. */
-export function readHideAutoMode(storage?: ReadableStorage): boolean {
-  try {
-    const value = readableStorage(storage)?.getItem(HIDE_AUTO_MODE_KEY);
-    return value !== "0" && value !== "false";
-  } catch {
-    return true;
-  }
-}
-
-let hideAutoMode = readHideAutoMode();
-const autoModeListeners = new Set<() => void>();
-
-export function hideAutoModeEnabled(): boolean {
-  return hideAutoMode;
-}
-
-export function setHideAutoMode(hidden: boolean, storage?: WritableStorage): void {
-  hideAutoMode = hidden;
-  try {
-    writableStorage(storage)?.setItem(HIDE_AUTO_MODE_KEY, hidden ? "1" : "0");
-  } catch {
-    // Keep the choice for this session even if browser storage is blocked.
-  }
-  for (const listener of autoModeListeners) listener();
-}
-
-function subscribeToAutoMode(listener: () => void): () => void {
-  autoModeListeners.add(listener);
-  return () => { autoModeListeners.delete(listener); };
-}
-
-export function useHideAutoMode(): boolean {
-  return useSyncExternalStore(subscribeToAutoMode, hideAutoModeEnabled, hideAutoModeEnabled);
 }
 
 /** The tri-colour grid is the default for new or invalid preferences. */

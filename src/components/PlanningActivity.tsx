@@ -18,7 +18,7 @@ import { markTranscriptPrepend, markTranscriptPrependIfReading, olderPageFits, o
 import { INITIAL_TRANSCRIPT_BYTES, OLDER_TRANSCRIPT_BYTES, SUMMARY_INITIAL_TRANSCRIPT_BYTES, SUMMARY_OLDER_TRANSCRIPT_BYTES, transcriptAutoFillBudget, TRANSCRIPT_REVEAL_FALLBACK_MS } from "../services/transcriptPaging";
 import { utf8Bytes } from "../lib/BoundedLruCache";
 import { TranscriptHistoryStatus } from "./TranscriptHistoryStatus";
-import type { CardsTransitionPhase } from "./ActivitySummaryRow";
+import { registerLiveExpandPreparer, type CardsTransitionPhase } from "./ActivitySummaryRow";
 import { collectHydrationRanges, extractHydratedCardPatches, hydrationKeyForItem, isItemHydrated, type HydratedCardPatch } from "../services/cardHydration";
 export { planningTranscriptCache } from "../services/transcriptCache";
 export { activePlannerOutput } from "../lib/plannerOutput";
@@ -279,22 +279,86 @@ function PlanningHistory({ runId = "", planningIds, onReady, onOutputChange, onL
     return true;
   });
 
+  const liveExpandInFlightRef = useRef<{ planningId: string; abort: AbortController; promise: Promise<void> } | null>(null);
+  const upgradeLivePlanningSummaryToFull = useStableCallback((syncCommit: boolean): Promise<void> | undefined => {
+    if (!activeLiveId) return undefined;
+    const seg = segments.current.get(activeLiveId);
+    if (!seg || normalizeTranscriptProjection(seg) !== "summary") return undefined;
+    const commitWin = (id: string, win: TranscriptWindow) => {
+      if (syncCommit) {
+        try { flushSync(() => publish(id, win)); }
+        catch { publish(id, win); }
+      } else {
+        publish(id, win);
+      }
+    };
+    const cachedLive = transcriptFromCache(planningTranscriptCache.get(planningTranscriptKey(runId, activeLiveId, false)));
+    if (cachedLive && cachedLive.end >= seg.end) {
+      commitWin(activeLiveId, cachedLive);
+      return undefined;
+    }
+    if (liveExpandInFlightRef.current?.planningId === activeLiveId) {
+      return liveExpandInFlightRef.current.promise;
+    }
+    if (liveExpandInFlightRef.current) {
+      liveExpandInFlightRef.current.abort.abort();
+      liveExpandInFlightRef.current = null;
+    }
+    const targetId = activeLiveId;
+    const abort = new AbortController();
+    const signal = combineAbortSignals(abort.signal, lifetime.current);
+    const promise = runtimeService.getPlanningOutput(targetId, "planner", 0, signal, true, undefined, OLDER_TRANSCRIPT_BYTES, false)
+      .then(page => {
+        if (signal.aborted || page.planningId !== targetId || page.role !== "planner") return;
+        const win = windowFromPage(page, false);
+        if (normalizeTranscriptProjection(win) === undefined) {
+          commitWin(targetId, win);
+        }
+      })
+      .catch(() => { /* Best-effort live upgrade; normal polling runs on idle. */ })
+      .finally(() => {
+        if (liveExpandInFlightRef.current?.abort === abort) {
+          liveExpandInFlightRef.current = null;
+        }
+      });
+    liveExpandInFlightRef.current = { planningId: targetId, abort, promise };
+    return promise;
+  });
+
+  useEffect(() => {
+    if (cardsTransition === "collapsing" && liveExpandInFlightRef.current) {
+      liveExpandInFlightRef.current.abort.abort();
+      liveExpandInFlightRef.current = null;
+    }
+  }, [cardsTransition]);
+
+  useEffect(() => () => {
+    if (liveExpandInFlightRef.current) {
+      liveExpandInFlightRef.current.abort.abort();
+      liveExpandInFlightRef.current = null;
+    }
+  }, [runId, key]);
+
+  const activeLiveSummary = Boolean(
+    activeLiveId && normalizeTranscriptProjection(segments.current.get(activeLiveId)) === "summary",
+  );
+  useEffect(() => {
+    if (!activeLiveSummary) return;
+    return registerLiveExpandPreparer(() => upgradeLivePlanningSummaryToFull(true));
+  }, [activeLiveSummary, upgradeLivePlanningSummaryToFull]);
+
   // Prefetch expanded projections for loaded planning revisions during the
   // 260ms collapse→expand animation so switching lands warm with zero jump.
   useEffect(() => {
     if (cardsTransition !== "expanding") return;
+    if (activeLiveId) {
+      void upgradeLivePlanningSummaryToFull(false);
+    }
     const targets = planningIds.filter(id => {
+      if (id === activeLiveId) return false;
       const seg = segments.current.get(id);
       if (!seg || normalizeTranscriptProjection(seg) !== "summary") return false;
-      const proj: TranscriptProjectionMode | undefined = id !== activeLiveId && !cardsUnsupported ? "cards" : undefined;
-      if (id === activeLiveId) {
-        const cachedLive = transcriptFromCache(planningTranscriptCache.get(planningTranscriptKey(runId, id, false)));
-        if (cachedLive && cachedLive.end >= seg.end) {
-          publish(id, cachedLive);
-          return false;
-        }
-        return true;
-      }
+      const proj: TranscriptProjectionMode | undefined = !cardsUnsupported ? "cards" : undefined;
       return !planningTranscriptCache.get(planningTranscriptKey(runId, id, proj ?? false))
         && !planningTranscriptCache.get(planningTranscriptKey(runId, id, false));
     });
@@ -303,25 +367,20 @@ function PlanningHistory({ runId = "", planningIds, onReady, onOutputChange, onL
     const signal = combineAbortSignals(abort.signal, lifetime.current);
     for (const id of targets) {
       const seg = segments.current.get(id)!;
-      const isLive = id === activeLiveId;
-      const proj: TranscriptProjectionMode | undefined = !isLive && !cardsUnsupported ? "cards" : undefined;
+      const proj: TranscriptProjectionMode | undefined = !cardsUnsupported ? "cards" : undefined;
       const limit = proj === "cards" ? SUMMARY_OLDER_TRANSCRIPT_BYTES : OLDER_TRANSCRIPT_BYTES;
-      void runtimeService.getPlanningOutput(id, "planner", 0, signal, true, isLive ? undefined : seg.end, limit, proj ?? false)
+      void runtimeService.getPlanningOutput(id, "planner", 0, signal, true, seg.end, limit, proj ?? false)
         .then(page => {
           if (signal.aborted || page.planningId !== id || page.role !== "planner") return;
-          const win = windowFromPage(page, !page.running && !isLive);
+          const win = windowFromPage(page, !page.running);
           const actualProj = normalizeTranscriptProjection(win);
           if (proj === "cards" && actualProj !== "cards") setCardsUnsupported(true);
-          if (isLive && actualProj === undefined) {
-            publish(id, win);
-          } else {
-            planningTranscriptCache.set(planningTranscriptKey(runId, id, actualProj ?? false), cacheTranscriptWindow(win));
-          }
+          planningTranscriptCache.set(planningTranscriptKey(runId, id, actualProj ?? false), cacheTranscriptWindow(win));
         })
         .catch(() => { /* Best-effort transition prefetch. */ });
     }
     return () => abort.abort();
-  }, [cardsTransition, key, runId, activeLiveId, cardsUnsupported, lifetime, publish]);
+  }, [cardsTransition, key, runId, activeLiveId, cardsUnsupported, lifetime, upgradeLivePlanningSummaryToFull]);
 
   // Planner turns are separate logs. Without this, opening a reviewed Run
   // whose latest turn fills two viewports would mount only the review and hide

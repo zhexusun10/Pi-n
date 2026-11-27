@@ -347,7 +347,11 @@ export function repairStreamingMarkdown(text: string): string {
         fenceIndent = open[1];
       }
     } else {
-      const close = new RegExp(`^[ \\t]*\\${fenceChar}{${fenceLen},}[ \\t]*$`);
+      // CommonMark §4.5: a closing code fence for a top-level (0–3 space) fence
+      // may only be indented 0–3 spaces, so 4-space nested fences inside e.g. a
+      // ```markdown block stay literal content rather than prematurely closing it.
+      const closeIndent = !/\t/.test(fenceIndent) && fenceIndent.length <= 3 ? " {0,3}" : "[ \\t]*";
+      const close = new RegExp(`^${closeIndent}\\${fenceChar}{${fenceLen},}[ \\t]*$`);
       if (close.test(line)) {
         inside = false;
         fenceChar = "";
@@ -360,7 +364,8 @@ export function repairStreamingMarkdown(text: string): string {
     const chars = fenceChar.repeat(fenceLen);
     // Strip a partial closing fence at EOF (`\n` or `\n  ``) so the streaming
     // preview does not add a transient line and collapse when the fence closes.
-    const partialClose = new RegExp(`\\n[ \\t]*\\${fenceChar}{1,${fenceLen - 1}}[ \\t]*$`);
+    const partialIndent = !/\t/.test(fenceIndent) && fenceIndent.length <= 3 ? " {0,3}" : "[ \\t]*";
+    const partialClose = new RegExp(`\\n${partialIndent}\\${fenceChar}{1,${fenceLen - 1}}[ \\t]*$`);
     const trimmed = normalized.replace(partialClose, "\n");
     const closingLine = `${fenceIndent}${chars}\n`;
     return trimmed.endsWith("\n") ? `${trimmed}${closingLine}` : `${trimmed}\n${closingLine}`;

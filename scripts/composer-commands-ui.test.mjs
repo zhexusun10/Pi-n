@@ -110,7 +110,9 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
         assert.ok(listText.includes("/name"), "/name appears in main conversation slash suggestions");
       }
       const layout = await page.evaluate(() => {
-        const header = document.querySelector(".prompt-box-suggestions-header").getBoundingClientRect();
+        const headerEl = document.querySelector(".prompt-box-suggestions-header");
+        const listEl = document.querySelector(".prompt-box-suggestions-list");
+        const header = headerEl.getBoundingClientRect();
         const close = document.querySelector(".suggestions-header-close-btn").getBoundingClientRect();
         const kbds = [...document.querySelectorAll(".suggestions-header-hints .key-hint")].map(el => ({
           text: el.textContent.trim(),
@@ -118,9 +120,17 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
           fontSize: parseFloat(getComputedStyle(el).fontSize),
           height: parseFloat(getComputedStyle(el).height),
         }));
-        return { header, close, kbds };
+        return {
+          header,
+          close,
+          kbds,
+          headerZIndex: getComputedStyle(headerEl).zIndex,
+          listIsolation: getComputedStyle(listEl).isolation,
+        };
       });
       assert.ok(layout.close.right <= layout.header.right, "close button stays inside header");
+      assert.equal(layout.listIsolation, "isolate", "suggestions list isolates its stacking context from the animated header refresh icon");
+      assert.ok(Number(layout.headerZIndex) >= 1, "suggestions header stacks above the scroller");
       for (const kbd of layout.kbds) {
         if (kbd.text === "Tab" || kbd.text === "Esc") {
           assert.ok(kbd.fontSize <= 10, `${kbd.text} font size stays compact (${kbd.fontSize})`);
@@ -128,6 +138,7 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
         }
       }
       await composer.press("Escape");
+      await page.locator(".prompt-box-suggestions-popover").waitFor({ state: "detached" });
     }
     // Slash and @ ranking prefer exact/stem/prefix matches over substring matches.
     await composer.fill("/co");
@@ -852,6 +863,7 @@ test("inline composer model selector uses white rounded cards with a thinking-le
               models: [
                 { provider: "test", id: "one", name: "gemini-one-gyp", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off", "minimal", "low", "high"], thinkingLevelFallbacks: {} },
                 { provider: "test", id: "two", name: "claude-two", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off", "low", "medium", "high", "xhigh", "max"], thinkingLevelFallbacks: {} },
+                { provider: "test", id: "three", name: "o-three", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off", "low", "medium", "high", "xhigh", "max"], thinkingLevelFallbacks: {} },
                 { provider: "test", id: "plain", name: "plain-fast", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off"], thinkingLevelFallbacks: {} },
               ],
             },
@@ -944,15 +956,25 @@ test("inline composer model selector uses white rounded cards with a thinking-le
       settings: { model: "test/two", thinkingLevel: "medium" },
     });
 
-    // Switch to Direct (serial) mode: clicking a model directly without choosing a thinking level defaults to xhigh.
+    // Switch to Direct (serial) mode: clicking an unchosen model defaults to xhigh,
+    // while clicking a model with a remembered thinking level restores its last choice.
     await page.getByText("Switch mode").click();
     await trigger.click();
     await menu.waitFor();
-    await menu.locator('[data-model-key="test/two"]').click();
+    await menu.locator('[data-model-key="test/three"]').click();
     await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 3);
     assert.deepEqual((await output()).calls[2], {
       scope: { role: "nodeAgent" },
-      settings: { model: "test/two", thinkingLevel: "xhigh" },
+      settings: { model: "test/three", thinkingLevel: "xhigh" },
+    });
+
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/two"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 4);
+    assert.deepEqual((await output()).calls[3], {
+      scope: { role: "nodeAgent" },
+      settings: { model: "test/two", thinkingLevel: "medium" },
     });
 
     // Single-level model selects directly without submenu and clamps to its only supported level.
@@ -962,13 +984,14 @@ test("inline composer model selector uses white rounded cards with a thinking-le
     await plainItem.hover();
     assert.equal(await submenu.count(), 0, "model with only off thinking level has no submenu");
     await plainItem.click();
-    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 4);
-    assert.deepEqual((await output()).calls[3], {
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 5);
+    assert.deepEqual((await output()).calls[4], {
       scope: { role: "nodeAgent" },
       settings: { model: "test/plain", thinkingLevel: "off" },
     });
 
-    // Node dialog targets only that node via keyboard ArrowRight into Level-2 submenu.
+    // Node dialog targets only that node via keyboard ArrowRight into Level-2 submenu,
+    // and remembered per-model thinking levels persist across reloads independently per model.
     await page.goto(`${base}?run=1&node=a`);
     await trigger.waitFor();
     await trigger.click();
@@ -985,19 +1008,67 @@ test("inline composer model selector uses white rounded cards with a thinking-le
     assert.equal(nodeOut.nodes.a.modelConfig.thinkingLevel, "minimal");
     assert.equal(nodeOut.nodes.b.modelConfig, undefined);
 
-    // Hidden currently-selected model displays generic hidden label without leaking ID, still lets user change thinking level.
+    // Direct-clicking test/two after page navigation restores its remembered medium;
+    // switching back to test/one restores its own remembered minimal.
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/two"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 2);
+    assert.deepEqual((await output()).calls[1], {
+      scope: { runId: "run-a", node: "a", role: "nodeAgent" },
+      settings: { model: "test/two", thinkingLevel: "medium" },
+    });
+
+    // Updating thinking level via /thinking also updates the model's remembered level.
+    const composer = page.locator("textarea").first();
+    await composer.fill("/thinking high");
+    await composer.press("Escape");
+    await composer.press("Enter");
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 3);
+    assert.deepEqual((await output()).calls[2], {
+      scope: { runId: "run-a", node: "a", role: "nodeAgent" },
+      settings: { model: "test/two", thinkingLevel: "high" },
+    });
+
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/one"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 4);
+    assert.deepEqual((await output()).calls[3], {
+      scope: { runId: "run-a", node: "a", role: "nodeAgent" },
+      settings: { model: "test/one", thinkingLevel: "minimal" },
+    });
+
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/two"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 5);
+    assert.deepEqual((await output()).calls[4], {
+      scope: { runId: "run-a", node: "a", role: "nodeAgent" },
+      settings: { model: "test/two", thinkingLevel: "high" },
+    });
+
+    // Switch back to test/one before testing hidden currently-selected model behavior.
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/one"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 6);
+    assert.equal((await output()).calls[5].settings.thinkingLevel, "minimal");
+
+    // Hidden currently-selected model still displays its normal model name in the composer trigger and menu, and lets user change thinking level.
     hiddenModels = ["test/one"];
     await trigger.click();
     await menu.waitFor();
-    await expect(trigger).toContainText("当前已选模型已隐藏");
+    await expect(trigger).toContainText("gemini-one-gyp");
+    assert.ok(!(await trigger.innerText()).includes("当前已选模型已隐藏"), "trigger does not show hidden placeholder label");
     const hiddenRow = menu.locator(".composer-model-item").first();
-    await expect(hiddenRow).toContainText("当前已选模型已隐藏");
-    assert.ok(!(await menu.innerText()).includes("gemini-one-gyp"), "hidden model name is not revealed");
+    await expect(hiddenRow).toContainText("gemini-one-gyp");
+    assert.ok(!(await menu.innerText()).includes("当前已选模型已隐藏"), "menu does not show hidden placeholder label");
     await hiddenRow.click();
     await submenu.waitFor();
     await submenu.locator('[data-thinking-level="off"]').click();
-    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 2);
-    assert.equal((await output()).calls[1].settings.thinkingLevel, "off");
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 7);
+    assert.equal((await output()).calls[6].settings.thinkingLevel, "off");
 
     assert.deepEqual(errors, []);
   } finally {

@@ -1059,7 +1059,7 @@ for (const reducedMotion of ["no-preference"]) {
   });
 }
 
-test("continuing an older conversation moves its card to the first position without reordering on passive view", { timeout: 30_000 }, async () => {
+test("continuing an older conversation keeps its sidebar position for both serial and graph runs", { timeout: 30_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: "en-US", reducedMotion: "no-preference" });
   const errors = [];
   let releaseGraphFollowUp;
@@ -1102,6 +1102,7 @@ test("continuing an older conversation moves its card to the first position with
     { runId: "conv-2", repository, title: "Middle graph conversation", phase: "awaiting_approval", planType: "graph" },
     { runId: "conv-1", repository, title: "Oldest serial conversation", phase: "completed", planType: "serial" },
   ];
+  let graphFollowUpRequested = false;
   try {
     await context.addInitScript(({ repository, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
@@ -1113,6 +1114,7 @@ test("continuing an older conversation moves its card to the first position with
       const body = route.request().postDataJSON();
       if (command === "plan_goal_stream") {
         const targetId = body.revisionRunId || "conv-2";
+        graphFollowUpRequested = true;
         await graphFollowUpGate;
         await route.fulfill({
           contentType: "text/event-stream",
@@ -1165,49 +1167,34 @@ test("continuing an older conversation moves its card to the first position with
     await page.locator(".pane-bottom-chat textarea").waitFor();
     assert.deepEqual(await cardOrder(), ["conv-3", "conv-2", "conv-1"]);
 
-    // Sending a follow-up in conv-1 moves it smoothly to the first position without flashing scroll overflow.
+    // Sending a follow-up in conv-1 must keep its sidebar position.
     const conv1BeforeTop = await page.locator('.run-item[data-run-id="conv-1"]').evaluate(el => el.getBoundingClientRect().top);
-    await page.evaluate(() => {
-      window.__reorderSamples = [];
-      window.__samplingReorder = true;
-      const sample = () => {
-        const list = document.querySelector(".runs-list");
-        const conv1 = document.querySelector('.run-item[data-run-id="conv-1"]');
-        window.__reorderSamples.push({
-          scrollable: list ? list.scrollHeight > list.clientHeight : false,
-          conv1Top: conv1 ? conv1.getBoundingClientRect().top : null,
-        });
-        if (window.__samplingReorder) requestAnimationFrame(sample);
-      };
-      requestAnimationFrame(sample);
-    });
     await page.locator(".pane-bottom-chat textarea").fill("Follow up in oldest serial conversation");
-    await page.locator(".pane-bottom-chat textarea").press("Enter");
-    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "conv-1,conv-3,conv-2");
-    await page.waitForTimeout(300);
-    const reorderSamples = await page.evaluate(() => {
-      window.__samplingReorder = false;
-      return window.__reorderSamples;
-    });
+    await Promise.all([
+      page.waitForResponse(res => res.url().endsWith("/api/control") && res.status() === 200),
+      page.locator(".pane-bottom-chat textarea").press("Enter"),
+    ]);
+    await page.getByText("Follow up in oldest serial conversation").waitFor();
     const conv1AfterTop = await page.locator('.run-item[data-run-id="conv-1"]').evaluate(el => el.getBoundingClientRect().top);
-    assert.ok(conv1AfterTop < conv1BeforeTop - 20, `conv-1 should settle at the top (${conv1BeforeTop} -> ${conv1AfterTop})`);
-    assert.ok(reorderSamples.every(frame => !frame.scrollable), `reordering cards must not flash overflow: ${JSON.stringify(reorderSamples)}`);
-    assert.deepEqual(await cardOrder(), ["conv-1", "conv-3", "conv-2"]);
+    assert.ok(Math.abs(conv1AfterTop - conv1BeforeTop) < 1, `conv-1 must stay in place (${conv1BeforeTop} -> ${conv1AfterTop})`);
+    assert.deepEqual(await cardOrder(), ["conv-3", "conv-2", "conv-1"]);
     assert.deepEqual(
       await page.evaluate((repoKey) => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_workspace_runs"))[repoKey], repository),
-      ["conv-1", "conv-3", "conv-2"],
+      ["conv-3", "conv-2", "conv-1"],
     );
 
-    // Continuing an older Graph conversation moves it to the first position immediately while Planner is still streaming.
+    // Continuing an older Graph conversation must also keep its sidebar position while Planner streams and after it settles.
     await page.locator('.run-item[data-run-id="conv-2"]').click();
     await page.locator('.run-item[data-run-id="conv-2"].chosen').waitFor();
-    assert.deepEqual(await cardOrder(), ["conv-1", "conv-3", "conv-2"], "opening conv-2 does not reorder yet");
+    assert.deepEqual(await cardOrder(), ["conv-3", "conv-2", "conv-1"]);
     await page.locator(".pane-bottom-chat textarea").fill("Revise the graph plan");
     await page.locator(".pane-bottom-chat textarea").press("Enter");
-    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "conv-2,conv-1,conv-3");
+    await page.getByText("Revise the graph plan").waitFor();
+    assert.equal(graphFollowUpRequested, true);
+    assert.deepEqual(await cardOrder(), ["conv-3", "conv-2", "conv-1"]);
     releaseGraphFollowUp();
     await page.waitForTimeout(100);
-    assert.deepEqual(await cardOrder(), ["conv-2", "conv-1", "conv-3"]);
+    assert.deepEqual(await cardOrder(), ["conv-3", "conv-2", "conv-1"]);
     assert.deepEqual(errors, []);
   } finally {
     releaseGraphFollowUp();
@@ -1386,24 +1373,28 @@ test("conversations can be pinned with customizable dot colors, stay above new c
     await page.locator('.run-item[data-run-id="fresh-1"]').waitFor();
     assert.deepEqual(await cardOrder(), ["c2", "c1", "fresh-1", "c3"]);
 
-    // 5. Sending a follow-up in an unpinned conversation promotes it only to the top of unpinned cards.
+    // 5. Sending a follow-up in an existing conversation keeps its sidebar position instead of promoting it.
     await page.locator('.run-item[data-run-id="c3"]').click();
     await page.locator('.run-item[data-run-id="c3"].chosen').waitFor();
     await page.locator(".pane-bottom-chat textarea").fill("Follow up in c3");
-    await page.locator(".pane-bottom-chat textarea").press("Enter");
-    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c2,c1,c3,fresh-1");
+    await Promise.all([
+      page.waitForResponse(res => res.url().endsWith("/api/control") && res.status() === 200),
+      page.locator(".pane-bottom-chat textarea").press("Enter"),
+    ]);
+    await page.getByText("Follow up in c3").waitFor();
+    assert.deepEqual(await cardOrder(), ["c2", "c1", "fresh-1", "c3"]);
 
     // 6. Reload preserves pinned cards, dot colors, and pinned ordering.
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator('.run-item[data-run-id="c2"]').waitFor();
-    assert.deepEqual(await cardOrder(), ["c2", "c1", "c3", "fresh-1"]);
+    assert.deepEqual(await cardOrder(), ["c2", "c1", "fresh-1", "c3"]);
     assert.equal(await page.locator('.run-item[data-run-id="c2"] .run-pin-dot').getAttribute("data-pin-color"), "coral");
     assert.equal(await page.locator('.run-item[data-run-id="c1"] .run-pin-dot').getAttribute("data-pin-color"), "white");
 
     // 7. Unpinning c2 animates its dot away and places it below remaining pinned card c1.
     await page.locator('.run-item[data-run-id="c2"]').click({ button: "right" });
     await page.getByRole("menuitem", { name: "Unpin conversation", exact: true }).click();
-    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c1,c2,c3,fresh-1");
+    await page.waitForFunction(() => [...document.querySelectorAll(".runs-list .run-item")].map(el => el.dataset.runId).join(",") === "c1,c2,fresh-1,c3");
     await page.locator('.run-item[data-run-id="c2"] .run-pin-dot').waitFor({ state: "detached" });
     assert.deepEqual(errors, []);
   } finally {

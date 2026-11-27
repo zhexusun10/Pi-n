@@ -19,7 +19,7 @@ export function shouldShowRouteBadge({
   routeType,
 }: {
   initialPlanMode?: PlanMode;
-  plannerStream?: { initialPlanMode?: PlanMode; stage?: string; partitionerText?: string; partitionerThinking?: string };
+  plannerStream?: { initialPlanMode?: PlanMode; stage?: string };
   state?: {
     events?: Array<{ type: string; plan_type?: string }>;
     planning?: { planType?: string; roles?: { partition?: { durationSeconds?: number; usage?: { input?: number; output?: number } } } | null } | null;
@@ -28,19 +28,16 @@ export function shouldShowRouteBadge({
   routeType?: PlanRouteType;
 }): boolean {
   // 1. Explicitly recorded initial plan mode for this run
-  if (initialPlanMode) {
-    return initialPlanMode === "auto";
+  if (initialPlanMode === "serial" || initialPlanMode === "graph") {
+    return false;
   }
 
-  // 2. Active stream mode or streaming partitioner content
-  if (plannerStream?.initialPlanMode) {
-    return plannerStream.initialPlanMode === "auto";
-  }
-  if (plannerStream?.stage === "partitioning" || Boolean(plannerStream?.partitionerText || plannerStream?.partitionerThinking)) {
-    return true;
+  // 2. Active stream mode
+  if (plannerStream?.initialPlanMode === "serial" || plannerStream?.initialPlanMode === "graph") {
+    return false;
   }
 
-  // 3. Inspect planning_started event in snapshot events
+  // 3. Inspect planning_started event in snapshot events (retains legacy auto-routed history)
   const planningStarted = state?.events?.find((e) => e.type === "planning_started");
   if (planningStarted) {
     if (
@@ -52,7 +49,7 @@ export function shouldShowRouteBadge({
     return true;
   }
 
-  // 4. Inspect planning roles partition metrics
+  // 4. Inspect legacy planning roles metrics for historical runs
   const partitionRole = state?.planning?.roles?.partition;
   if (partitionRole) {
     if (
@@ -63,8 +60,8 @@ export function shouldShowRouteBadge({
     }
   }
 
-  // Missing metadata is not evidence of an active Partitioner. Only an
-  // explicitly pending route may display evaluation without other evidence.
+  // Missing metadata is not evidence of a pending route. Only an explicitly
+  // pending route may display evaluation without other evidence.
   return routeType === "undecided" &&
     (state?.planType === "undecided" || state?.planning?.planType === "undecided");
 }

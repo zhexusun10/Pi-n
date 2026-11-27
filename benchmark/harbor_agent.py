@@ -28,7 +28,7 @@ class PiNOptions(InstalledAgentOptions):
 
 
 class PiNAgent(BaseInstalledAgent):
-    """Use Pi^n's Partitioner/Planner/runtime, not Harbor's Pi agent."""
+    """Use Pi^n's Planner/runtime, not Harbor's Pi agent."""
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
     options_model = PiNOptions

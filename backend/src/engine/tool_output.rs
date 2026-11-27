@@ -10,10 +10,12 @@ const ELLIPSIS: &str = "\n...";
 #[derive(Default)]
 pub(super) struct ToolOutputProjection {
     progress_seen: HashSet<String>,
+    ended_tool_calls: HashSet<String>,
 }
 
 impl ToolOutputProjection {
-    /// False means a redundant progress event has no display-log payload.
+    /// False means a redundant progress or duplicate lifecycle event has no
+    /// display-log payload.
     pub(super) fn project(&mut self, event: &mut Value) -> bool {
         match event["type"].as_str().unwrap_or_default() {
             "message_update" => {
@@ -45,6 +47,7 @@ impl ToolOutputProjection {
             "tool_execution_start" => {
                 if let Some(id) = event["toolCallId"].as_str() {
                     self.progress_seen.remove(id);
+                    self.ended_tool_calls.remove(id);
                 }
             }
             "tool_execution_update" => {
@@ -62,29 +65,72 @@ impl ToolOutputProjection {
             "tool_execution_end" => {
                 if let Some(id) = event["toolCallId"].as_str() {
                     self.progress_seen.remove(id);
+                    self.ended_tool_calls.insert(id.to_owned());
                 }
                 if let Some(result) = event.get_mut("result") {
                     limit_result(result);
                 }
             }
-            _ => {}
-        }
-        // Pi repeats tool results in message and aggregate lifecycle records.
-        // Limit every copy, not just tool_execution_end, while retaining errors,
-        // assistant replies, exit status and timing for runtime consumers.
-        let is_aggregate_event = matches!(
-            event["type"].as_str(),
-            Some("agent_end" | "turn_end")
-        );
-        if let Some(message) = event.get_mut("message") {
-            limit_message(message, is_aggregate_event);
-        }
-        for key in ["messages", "toolResults"] {
-            if let Some(messages) = event.get_mut(key).and_then(Value::as_array_mut) {
-                for message in messages {
-                    limit_message(message, true);
+            "message_start" => {
+                // Tool results are already carried by `tool_execution_end`; no
+                // display, hydration, search or metrics consumer reads
+                // `message_start` for `role: "toolResult"`.
+                if event["message"]["role"] == "toolResult" {
+                    return false;
                 }
             }
+            "message_end" => {
+                if event["message"]["role"] == "toolResult" {
+                    let already_recorded = event["message"]["toolCallId"]
+                        .as_str()
+                        .is_some_and(|id| self.ended_tool_calls.contains(id));
+                    if already_recorded {
+                        if let Some(msg) = event.get_mut("message").and_then(Value::as_object_mut) {
+                            // Keep `role`, `toolCallId`, `toolName`, `isError`,
+                            // `details.exitCode`, `timestamp` for metadata/file-change
+                            // readers, but omit the duplicate `content` payload already
+                            // persisted on `tool_execution_end`.
+                            msg.remove("content");
+                            msg.remove("structuredContent");
+                            if let Some(truncation) = msg
+                                .get_mut("details")
+                                .and_then(|d| d.get_mut("truncation"))
+                                .and_then(Value::as_object_mut)
+                            {
+                                truncation.remove("content");
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }
+            "turn_end" => {
+                // Runtime error/context checks already read the original event
+                // before projection; every assistant message and tool result
+                // was already persisted individually.
+                if let Some(object) = event.as_object_mut() {
+                    object.remove("message");
+                    object.remove("toolResults");
+                }
+                return true;
+            }
+            "agent_end" => {
+                // Runtime error/source-write checks already read the original
+                // event before projection; omitting `messages` avoids repeating
+                // the entire conversation history (often >1 MB per retry/end).
+                if let Some(object) = event.as_object_mut() {
+                    object.remove("messages");
+                    object.remove("message");
+                    object.remove("toolResults");
+                }
+                return true;
+            }
+            _ => {}
+        }
+        // Limit any remaining standalone tool result copies while retaining
+        // errors, assistant replies, exit status and timing for runtime consumers.
+        if let Some(message) = event.get_mut("message") {
+            limit_message(message, false);
         }
         // `write`/`edit` arguments carry whole file bodies; the browser only
         // needs a preview and would otherwise hold megabytes per card.
@@ -379,23 +425,67 @@ mod tests {
     }
 
     #[test]
-    fn tool_output_projection_limits_aggregate_copies_but_not_assistant_messages() {
+    fn tool_output_projection_strips_aggregate_and_duplicate_tool_result_copies() {
+        let mut projection = ToolOutputProjection::default();
+        let tool_content = json!([{ "type": "text", "text": "x".repeat(PREVIEW_BYTES + 1) }]);
+        let mut tool_end = json!({
+            "type": "tool_execution_end",
+            "toolCallId": "one",
+            "toolName": "bash",
+            "result": { "content": tool_content, "details": { "exitCode": 0 } }
+        });
+        assert!(projection.project(&mut tool_end));
+        let preview = tool_end["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(preview.len(), PREVIEW_BYTES);
+        assert!(preview.ends_with("\n..."));
+        assert_eq!(tool_end["result"]["details"]["displayTruncated"], true);
+
+        // `message_start` for `toolResult` is dropped completely.
+        let mut msg_start = json!({
+            "type": "message_start",
+            "message": { "role": "toolResult", "toolCallId": "one", "content": tool_content }
+        });
+        assert!(!projection.project(&mut msg_start));
+
+        // `message_end` for an already-ended `toolCallId` keeps status metadata
+        // but strips the duplicate `content` payload.
+        let mut msg_end = json!({
+            "type": "message_end",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "one",
+                "toolName": "bash",
+                "isError": false,
+                "details": { "exitCode": 0 },
+                "content": tool_content
+            }
+        });
+        assert!(projection.project(&mut msg_end));
+        assert!(msg_end["message"].get("content").is_none());
+        assert_eq!(msg_end["message"]["toolCallId"], "one");
+        assert_eq!(msg_end["message"]["details"]["exitCode"], 0);
+
+        // `turn_end` and `agent_end` strip repeated message/toolResult histories
+        // while keeping lifecycle metadata.
         let tool = json!({ "role": "toolResult", "toolCallId": "one", "content": "x".repeat(PREVIEW_BYTES + 1), "isError": true });
         let assistant = json!({ "role": "assistant", "content": [{ "type": "text", "text": "a".repeat(PREVIEW_BYTES + 1) }] });
-        let mut event = json!({ "type": "agent_end", "message": tool.clone(), "toolResults": [tool.clone()], "messages": [tool, assistant.clone()] });
-        assert!(ToolOutputProjection::default().project(&mut event));
-        for message in [
-            &event["message"],
-            &event["toolResults"][0],
-            &event["messages"][0],
-        ] {
-            let text = message["content"].as_str().unwrap();
-            assert_eq!(text.len(), PREVIEW_BYTES);
-            assert!(text.ends_with("\n..."));
-            assert_eq!(message["details"]["displayTruncated"], true);
-            assert_eq!(message["isError"], true);
-        }
-        assert_eq!(event["messages"][1], assistant);
+        let mut turn_end = json!({ "type": "turn_end", "message": assistant.clone(), "toolResults": [tool.clone()] });
+        assert!(projection.project(&mut turn_end));
+        assert!(turn_end.get("message").is_none());
+        assert!(turn_end.get("toolResults").is_none());
+
+        let mut agent_end = json!({
+            "type": "agent_end",
+            "willRetry": false,
+            "message": tool.clone(),
+            "toolResults": [tool.clone()],
+            "messages": [tool, assistant]
+        });
+        assert!(projection.project(&mut agent_end));
+        assert_eq!(agent_end["willRetry"], false);
+        assert!(agent_end.get("messages").is_none());
+        assert!(agent_end.get("message").is_none());
+        assert!(agent_end.get("toolResults").is_none());
     }
 
     #[test]
@@ -467,9 +557,10 @@ mod tests {
         assert!(ToolOutputProjection::default().project(&mut user_msg));
         assert_eq!(user_msg["message"]["content"][1]["data"], huge_b64);
 
-        // Aggregate agent_end strips duplicated base64 from both user and toolResult messages.
+        // Aggregate `agent_end` strips the entire redundant `messages` array.
         let mut agent_end = json!({
             "type": "agent_end",
+            "willRetry": false,
             "messages": [
                 {
                     "role": "user",
@@ -489,10 +580,8 @@ mod tests {
             ]
         });
         assert!(ToolOutputProjection::default().project(&mut agent_end));
-        assert!(agent_end["messages"][0]["content"][1].get("data").is_none());
-        assert_eq!(agent_end["messages"][0]["content"][1]["omitted"], true);
-        assert!(agent_end["messages"][1]["content"][1].get("data").is_none());
-        assert_eq!(agent_end["messages"][1]["content"][1]["omitted"], true);
-        assert!(agent_end.to_string().len() < 1024);
+        assert!(agent_end.get("messages").is_none());
+        assert_eq!(agent_end["willRetry"], false);
+        assert!(agent_end.to_string().len() < 128);
     }
 }

@@ -32,7 +32,6 @@ const LazyScopedModelsModal = lazy(() =>
 );
 import { ImageContextMenu } from "./ImageContextMenu";
 import type { ContextMenuAnchor } from "./context-menu";
-import { useHideAutoMode } from "../../services/displayPreferences";
 import { formatFileSize, getFileIcon } from "../../utils/attachmentUtils";
 import { extractDroppedFiles, hasDraggedFiles } from "../../utils/fileDrop";
 import {
@@ -47,7 +46,7 @@ import {
   resolveOriginalImagePath,
 } from "../../services/originalImagePreview";
 import { createUuid } from "../../lib/uuid";
-import type { SkillItem, ImageAttachment } from "../../types";
+import type { SkillItem, ImageAttachment, PlanMode } from "../../types";
 
 const MAX_EXTERNAL_ATTACHMENT_BYTES = 22 * 1024 * 1024;
 const MAX_VISION_IMAGE_INPUT_BYTES = 100 * 1024 * 1024;
@@ -145,8 +144,8 @@ interface PromptBoxProps
   draftStore?: ComposerDrafts;
   draftKey?: string;
   onContinue?: () => boolean | void | Promise<boolean | void>;
-  planMode?: "auto" | "serial" | "graph";
-  onPlanModeChange?: (mode: "auto" | "serial" | "graph") => void;
+  planMode?: PlanMode;
+  onPlanModeChange?: (mode: PlanMode) => void;
   onCancel?: () => void;
   layoutId?: string;
   expandDelay?: number;
@@ -227,8 +226,7 @@ function measureComposerSnapshot(
 const SEND_GRACE_MS = 500;
 const SEND_GRACE_FALLBACK_MS = 1500;
 
-const MODE_OPTIONS: Array<{ id: "auto" | "serial" | "graph"; label: string }> = [
-  { id: "auto", label: "Auto" },
+const MODE_OPTIONS: Array<{ id: PlanMode; label: string }> = [
   { id: "serial", label: "Direct" },
   { id: "graph", label: "Compile" },
 ];
@@ -240,39 +238,19 @@ function PromptModeOption({ item, selected, onSelect, pillLayoutId, reduceMotion
   pillLayoutId: string;
   reduceMotion: boolean | null;
 }) {
-  const isPresent = useIsPresent();
-  const [animating, setAnimating] = useState(false);
-  const active = selected && isPresent;
-  const collapsed = { width: 0, opacity: 0, "--mode-gap-progress": 0 };
   return (
-    <motion.div
-      className="prompt-box-mode-option"
-      inert={!isPresent}
-      initial={reduceMotion ? false : collapsed}
-      animate={{ width: "auto", opacity: 1, "--mode-gap-progress": 1 }}
-      exit={collapsed}
-      transition={{ duration: reduceMotion ? 0 : 0.22, ease: COMPOSER_EASE }}
-      onAnimationStart={() => setAnimating(true)}
-      onAnimationComplete={() => setAnimating(false)}
-      style={{
-        // Clip only during the reveal. The selected pill must paint outside
-        // its button while sliding between settled options.
-        overflow: animating || !isPresent ? "hidden" : "visible",
-        marginRight: "calc((var(--mode-gap-progress, 1) - 1) * var(--prompt-mode-gap))",
-      }}
-    >
+    <div className="prompt-box-mode-option">
       <button
         type="button"
-        className={`prompt-box-mode-btn ${active ? "active" : ""}`}
-        aria-pressed={active}
+        className={`prompt-box-mode-btn ${selected ? "active" : ""}`}
+        aria-pressed={selected}
         data-label={item.label}
-        disabled={!isPresent}
         onClick={(event) => {
           event.stopPropagation();
-          if (isPresent) onSelect(item.id);
+          onSelect(item.id);
         }}
       >
-        {active && (
+        {selected && (
           <motion.div
             layoutId={`mode-pill-indicator-${pillLayoutId}`}
             layoutCrossfade={false}
@@ -289,7 +267,7 @@ function PromptModeOption({ item, selected, onSelect, pillLayoutId, reduceMotion
         )}
         <span className="prompt-box-mode-text">{item.label}</span>
       </button>
-    </motion.div>
+    </div>
   );
 }
 
@@ -341,9 +319,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     };
     const isBusy = busyProp || recall.pending;
     const reduceMotion = useReducedMotion();
-    const hideAutoMode = useHideAutoMode();
     const workspaceTerminal = useWorkspaceTerminalControl();
-    const visiblePlanMode = hideAutoMode && planMode === "auto" ? "serial" : planMode;
     const isPresent = useIsPresent();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const flowRef = useRef<HTMLDivElement | null>(null);
@@ -509,7 +485,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const [workspaceSkills, setWorkspaceSkills] = useState<SkillItem[]>([]);
     const [cursorPos, setCursorPos] = useState<number>(0);
     const [activeIndex, setActiveIndex] = useState<number>(0);
-    const [dismissedTrigger, setDismissedTrigger] = useState<{ start: number; query: string } | null>(null);
+    const [dismissedTrigger, setDismissedTrigger] = useState<{ mode: "@" | "/"; start: number; query: string } | null>(null);
     const activeItemRef = useRef<HTMLDivElement | null>(null);
     const suggestionsListRef = useRef<HTMLDivElement | null>(null);
     // Arrow keys move the selection past the visible rows, so only they may
@@ -585,7 +561,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
         internalTextareaRef.current?.setSelectionRange(text.length, text.length);
       });
     };
-    const commands = useComposerCommands({ text: currentText, repository, runId, node, planMode: visiblePlanMode,
+    const commands = useComposerCommands({ text: currentText, repository, runId, node, planMode,
       conversationModel, setText: setCommandText });
 
     // 分析光标左侧文本中是否存在 @ 或 /
@@ -615,19 +591,20 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
 
     const isDismissed =
       dismissedTrigger !== null &&
+      dismissedTrigger.mode === triggerMode &&
       dismissedTrigger.start === triggerStart &&
       dismissedTrigger.query === triggerQuery;
     const showSuggestions = triggerMode !== null && !isDismissed && !disabled && !isBusy && !commandError && !commands.notice && !commands.ui;
 
-    // 当触发词位置变动或查询内容变化时，重置 dismissedTrigger
+    // 当触发词模式、位置变动或查询内容变化时，重置 dismissedTrigger
     useEffect(() => {
       if (
         dismissedTrigger !== null &&
-        (triggerStart !== dismissedTrigger.start || triggerQuery !== dismissedTrigger.query)
+        (triggerMode !== dismissedTrigger.mode || triggerStart !== dismissedTrigger.start || triggerQuery !== dismissedTrigger.query)
       ) {
         setDismissedTrigger(null);
       }
-    }, [triggerStart, triggerQuery, dismissedTrigger]);
+    }, [triggerMode, triggerStart, triggerQuery, dismissedTrigger]);
 
     // Failed metadata is retryable, not an empty completion catalog. Keep the
     // retry bounded and stop it when the menu closes or the scope changes.
@@ -805,8 +782,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           onChange({ target: { value: nextText } } as any);
         }
         setDismissedTrigger(item.type === "command" && commands.argumentMode
-          ? { start: 0, query: nextText.slice(1) }
-          : triggerStart !== -1 ? { start: triggerStart, query: triggerQuery } : null);
+          ? { mode: "/", start: 0, query: nextText.slice(1) }
+          : triggerMode !== null && triggerStart !== -1 ? { mode: triggerMode, start: triggerStart, query: triggerQuery } : null);
 
         requestAnimationFrame(() => {
           const textarea = internalTextareaRef.current;
@@ -1165,6 +1142,11 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       const textBefore = nextVal.slice(0, nextPos);
       const nextAt = textBefore.match(/(?:^|\s)@([^\s@]*)$/);
       const nextSlash = textBefore.match(/(?:^|\s)\/([^\s@/]*)$/);
+      const nextTriggerMode: "@" | "/" | null = nextAt && nextAt.index !== undefined
+        ? "@"
+        : nextSlash && nextSlash.index !== undefined
+        ? "/"
+        : null;
       const nextTriggerStart = nextAt && nextAt.index !== undefined
         ? nextAt.index + (nextAt[0].startsWith("@") ? 0 : 1)
         : nextSlash && nextSlash.index !== undefined
@@ -1173,7 +1155,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       const nextTriggerQuery = nextAt ? nextAt[1] : nextSlash ? nextSlash[1] : "";
       if (
         dismissedTrigger !== null &&
-        (nextTriggerStart !== dismissedTrigger.start || nextTriggerQuery !== dismissedTrigger.query)
+        (nextTriggerMode !== dismissedTrigger.mode || nextTriggerStart !== dismissedTrigger.start || nextTriggerQuery !== dismissedTrigger.query)
       ) {
         setDismissedTrigger(null);
       }
@@ -1699,7 +1681,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
-          setDismissedTrigger({ start: triggerStart, query: triggerQuery });
+          if (triggerMode) setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerQuery });
           return;
         }
         if (suggestions.length > 0) {
@@ -1841,7 +1823,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setDismissedTrigger({ start: triggerStart, query: triggerQuery });
+                      if (triggerMode) setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerQuery });
                     }}
                     aria-label={t("关闭 (Esc)")}
                   >
@@ -2065,7 +2047,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             onBlur={(e) => {
               followInputEndRef.current = false;
               if (triggerMode !== null) {
-                setDismissedTrigger({ start: triggerStart, query: triggerQuery });
+                setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerQuery });
               }
               restProps.onBlur?.(e);
             }}
@@ -2158,7 +2140,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             <ComposerModelSelector
               runId={runId}
               node={node}
-              planMode={visiblePlanMode}
+              planMode={planMode}
               conversationModel={conversationModel}
               isMerger={isMerger}
               compact={compact}
@@ -2177,18 +2159,16 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                 role="group"
                 aria-label={t("执行规划模式")}
               >
-                <AnimatePresence initial={false}>
-                  {MODE_OPTIONS.filter(item => !hideAutoMode || item.id !== "auto").map(item => (
-                    <PromptModeOption
-                      key={item.id}
-                      item={item}
-                      selected={visiblePlanMode === item.id}
-                      onSelect={onPlanModeChange}
-                      pillLayoutId={pillLayoutId}
-                      reduceMotion={reduceMotion}
-                    />
-                  ))}
-                </AnimatePresence>
+                {MODE_OPTIONS.map(item => (
+                  <PromptModeOption
+                    key={item.id}
+                    item={item}
+                    selected={planMode === item.id}
+                    onSelect={onPlanModeChange}
+                    pillLayoutId={pillLayoutId}
+                    reduceMotion={reduceMotion}
+                  />
+                ))}
               </div>
             )}
 

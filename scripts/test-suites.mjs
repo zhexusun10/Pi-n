@@ -24,7 +24,7 @@ export const suites = {
     description: 'Frontend state, graph projection and transcript logic; no browser or production build.',
     steps: [
       sourceTests(
-        'display-preferences.test.ts', 'app-storage.test.ts', 'landing-draft.test.ts', 'graph-elements.test.ts',
+        'display-preferences.test.ts', 'app-storage.test.ts', 'landing-draft.test.ts', 'model-thinking-memory.test.ts', 'graph-elements.test.ts',
         'file-changes.test.ts', 'planner-user-turns.test.ts', 'planner-graph-edits.test.ts',
         'conversation-branch.test.ts', 'conversation-scroll.test.ts', 'transcript-window.test.ts',
         'tool-output.test.ts', 'pi-tree-branch.test.ts', 'planner-branch.test.ts',

@@ -1496,25 +1496,22 @@ test("model-specific thinking levels update global defaults when Settings is out
   });
   try {
     await page.locator('[data-run-id="fast"]').waitFor(); await openSettings(page);
-    await page.getByRole("checkbox", { name: "Hide Auto mode", exact: true }).uncheck();
     const cards = page.locator(".role-model-group");
     const model = i => cards.nth(i).locator("select").first();
     const thinking = i => cards.nth(i).locator("select").nth(1);
     const levels = i => thinking(i).locator("option").evaluateAll(options => options.map(option => option.value));
     assert.deepEqual(await levels(0), ["off", "low", "high"]);
     await nodeModel(page).selectOption("test/new");
-    for (const i of [0, 1, 2]) {
+    for (const i of [0, 1]) {
       assert.deepEqual(await levels(i), ["low", "high", "max"], "inherited model capabilities follow Node Agent");
       assert.equal(await thinking(i).inputValue(), "low", "Pi clamps unsupported off to low");
     }
     await thinking(0).selectOption("max");
     await model(1).selectOption("test/old"); await thinking(1).selectOption("high");
     await nodeModel(page).selectOption("test/plain");
-    for (const i of [0, 2]) {
-      assert.deepEqual(await levels(i), ["off"]);
-      assert.equal(await thinking(i).isDisabled(), true);
-      assert.equal(await thinking(i).inputValue(), "off");
-    }
+    assert.deepEqual(await levels(0), ["off"]);
+    assert.equal(await thinking(0).isDisabled(), true);
+    assert.equal(await thinking(0).inputValue(), "off");
     assert.deepEqual(await levels(1), ["off", "low", "high"]);
     assert.equal(await thinking(1).inputValue(), "high", "an explicitly selected Planner model stays independent");
     assert.equal(await nodeModel(page).locator('option[value="other/old"]').count(), 1, "models from all configured providers appear in the unified picker");
@@ -1524,11 +1521,9 @@ test("model-specific thinking levels update global defaults when Settings is out
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     assert.equal(saved.model, "test/plain"); assert.equal(saved.thinkingLevel, "off");
     assert.equal(saved.roleModels.planner.model, "test/old"); assert.equal(saved.roleModels.planner.thinkingLevel, "high");
-    assert.equal(saved.roleModels.partitioner.thinkingLevel, "off");
     await openSettings(page);
     assert.equal(await model(0).inputValue(), "test/plain"); assert.equal(await thinking(0).inputValue(), "off");
     assert.equal(await model(1).inputValue(), "test/old"); assert.equal(await thinking(1).inputValue(), "high");
-    assert.equal(await thinking(2).inputValue(), "off");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -1719,7 +1714,11 @@ test("slash model menu matches all Settings choices and tracks catalog refresh w
   let models = [...catalog.models, ...Array.from({ length: 65 }, (_, index) => ({
     ...catalog.models[0], id: `model-${index + 1}`, name: `Model ${index + 1}`,
   })), { ...catalog.models[0], id: "unavailable", available: false }];
-  const { context, page, errors } = await app(async (route, command) => {
+  const { context, page, errors } = await app(async (route, command, body) => {
+    if (command === "save_config") {
+      await route.fulfill({ json: { result: { ...bootstrap, config: body.config } } });
+      return true;
+    }
     if (command !== "provider_auth") return false;
     await route.fulfill({ json: { result: { ...catalog, models } } });
     return true;
@@ -1773,12 +1772,20 @@ test("slash model menu matches all Settings choices and tracks catalog refresh w
   } finally { await context.close(); }
 });
 
-test("home slash model changes are reflected in Settings without writing global defaults", { timeout: 30_000 }, async () => {
-  const { context, page, errors, calls } = await app(async () => false);
+test("home slash model changes are reflected in Settings and persist as global defaults", { timeout: 30_000 }, async () => {
+  let savedConfig = config;
+  const { context, page, errors, calls } = await app(async (route, command, body) => {
+    if (command === "save_config") {
+      savedConfig = body.config;
+      await route.fulfill({ json: { result: { ...bootstrap, config: savedConfig } } });
+      return true;
+    }
+    return false;
+  });
   try {
     await page.locator('[data-run-id="fast"]').waitFor();
     const input = page.locator("textarea").first();
-    // Home defaults to Direct (`serial`), so `/model` updates Node Agent without writing global defaults.
+    // Home defaults to Direct (`serial`), so `/model` updates and persists Node Agent defaults.
     await input.fill("/model test/new"); await input.press("Escape"); await input.press("Enter");
     await page.waitForFunction(() => document.querySelector("textarea")?.value === "");
     await openSettings(page);
@@ -1793,8 +1800,10 @@ test("home slash model changes are reflected in Settings without writing global 
     await openSettings(page);
     assert.equal(await page.locator(".role-model-group").nth(1).locator("select").first().inputValue(), "test/plain");
     assert.equal(await nodeModel(page).inputValue(), "test/new");
-    assert.equal(calls.filter(call => call.command === "save_config").length, 0);
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/old");
+    assert.equal(calls.filter(call => call.command === "save_config").length, 2);
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")));
+    assert.equal(stored.model, "test/new");
+    assert.equal(stored.roleModels?.planner?.model, "test/plain");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

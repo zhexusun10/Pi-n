@@ -188,3 +188,28 @@ test("dragging from confirmation text onto the backdrop does not cancel", { time
   await page.mouse.click(4, 4);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
 });
+
+test("confirmation backdrop scrim and modal shadow match Settings", { timeout: 30_000 }, async t => {
+  const page = await fixture(t);
+  const readSurface = async (openLabel, dialogSelector) => {
+    await page.getByRole("button", { name: openLabel, exact: true }).click();
+    await page.locator(dialogSelector).waitFor({ state: "visible" });
+    const styles = await page.evaluate((selector) => {
+      const backdrop = document.querySelector(".modal-backdrop");
+      const tint = backdrop?.querySelector(".modal-backdrop-tint");
+      const dialog = document.querySelector(selector);
+      return {
+        backdropBg: backdrop ? getComputedStyle(backdrop).backgroundColor : null,
+        tintBg: tint ? getComputedStyle(tint).backgroundColor : null,
+        shadow: dialog ? getComputedStyle(dialog).boxShadow : null,
+      };
+    }, dialogSelector);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(dialogSelector)).toHaveCount(0);
+    return styles;
+  };
+  const settings = await readSurface("Open settings", ".settings-modal");
+  const confirm = await readSurface("Open confirm", ".confirm-dialog");
+  assert.deepEqual(confirm, settings);
+  assert.equal(confirm.tintBg, "rgba(15, 23, 42, 0.12)");
+});

@@ -7,20 +7,19 @@
 ## Component boundaries
 
 ```text
-Goal -> Partitioner --serial--> Pi agent in source
-             |
-             '--graph--> Planner -> Graph IR -> Compiler -> Approval
-                                                             |
-                                                        Rust runtime
-                                                             |
-                                                   Pi task executions
-                                                             |
-                                                     Git publication
+Goal --serial--> Pi agent in source
+  |
+  '--graph--> Planner -> Graph IR -> Compiler -> Approval
+                                                    |
+                                               Rust runtime
+                                                    |
+                                          Pi task executions
+                                                    |
+                                            Git publication
 ```
 
 | Component | Owns | Does not own |
 | --- | --- | --- |
-| Partitioner | Tool-free route classification | Planning or execution recovery |
 | Planner | Candidate task/edge mutations and explicit revisions | Dependency scheduling or completion authority |
 | Compiler | Graph validation and topology | Model calls or workspace allocation |
 | Runtime | Dispatch, execution transitions, feedback and recovery | Coding decisions inside a task |
@@ -29,7 +28,7 @@ Goal -> Partitioner --serial--> Pi agent in source
 | Pi | Model calls, tools and provider authentication | Run state transitions |
 | React UI | Backend projections and user commands | Persisted execution truth |
 
-Ordinary scheduling has no persistent LLM coordinator. Planner turns are explicit lifecycle operations, not scheduler ticks. Prompts beside the implementation are production inputs: [Planner](../../backend/resources/prompts/planner.md), [Partitioner](../../backend/resources/prompts/partitioner.md).
+Ordinary scheduling has no persistent LLM coordinator. Planner turns are explicit lifecycle operations, not scheduler ticks. The prompt beside the implementation is a production input: [Planner](../../backend/resources/prompts/planner.md).
 
 ## Graph compilation
 

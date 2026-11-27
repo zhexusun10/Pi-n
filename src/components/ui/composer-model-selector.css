@@ -64,8 +64,7 @@
   color: var(--text-primary);
 }
 
-.prompt-box-model-trigger.is-placeholder .prompt-box-model-trigger-name,
-.prompt-box-model-trigger.is-hidden-model .prompt-box-model-trigger-name {
+.prompt-box-model-trigger.is-placeholder .prompt-box-model-trigger-name {
   color: var(--text-secondary);
 }
 

@@ -74,7 +74,6 @@ for (const language of ["en", "zh-CN"]) {
       await context.addInitScript(({ repository, language }) => {
         localStorage.setItem("pi_n_language_v1", language);
         localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Interface project", lastOpened: 1 }]));
-        localStorage.setItem("pi_n_hide_auto_mode_v1", "false");
       }, { repository, language });
       await context.route("**/api/*", async route => {
         const command = new URL(route.request().url()).pathname.slice(5);

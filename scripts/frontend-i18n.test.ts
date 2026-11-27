@@ -144,12 +144,12 @@ test("application errors are localized without changing the Chinese version", ()
 });
 
 test("provider errors include actionable hints and role localization", () => {
-  const errZh = localizeError("Partitioner failed: 402: Insufficient Balance (request_id: 123)", "zh-CN");
-  assert.ok(errZh.includes("任务分片器 (Partitioner) 失败: 402: Insufficient Balance"));
+  const errZh = localizeError("Planner failed: 402: Insufficient Balance (request_id: 123)", "zh-CN");
+  assert.ok(errZh.includes("任务规划器 (Planner) 失败: 402: Insufficient Balance"));
   assert.ok(errZh.includes("余额不足或额度耗尽"));
 
-  const errEn = localizeError("Partitioner failed: 402: Insufficient Balance (request_id: 123)", "en");
-  assert.ok(errEn.includes("Partitioner failed: 402: Insufficient Balance"));
+  const errEn = localizeError("Planner failed: 402: Insufficient Balance (request_id: 123)", "en");
+  assert.ok(errEn.includes("Planner failed: 402: Insufficient Balance"));
   assert.ok(errEn.includes("Insufficient Balance"));
   assert.ok(errEn.includes("Tip:"));
 
@@ -163,7 +163,7 @@ test("provider errors include actionable hints and role localization", () => {
   assert.ok(oauthZh.includes("重新登录"));
   assert.ok(!oauthZh.includes("API Key 无效"), "OAuth failures should not be presented as API-key-only issues");
 
-  const abortZh = localizeError("Partitioner failed: Pi exited with exit code: 0xc0000409", "zh-CN");
+  const abortZh = localizeError("Planner failed: Pi exited with exit code: 0xc0000409", "zh-CN");
   assert.ok(abortZh.includes("子进程异常退出 (0xc0000409)"));
 });
 

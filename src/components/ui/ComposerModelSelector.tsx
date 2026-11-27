@@ -8,7 +8,7 @@ import {
 } from "../../modelConfig";
 import { ComposerModels } from "../../services/composerCommands";
 import { providerAuth } from "../../services/providerAuth";
-import type { ModelRole, RoleModelConfig, ThinkingLevel } from "../../types";
+import type { ModelRole, PlanMode, RoleModelConfig, ThinkingLevel } from "../../types";
 import "./composer-model-selector.css";
 
 const loadComposerModelMenu = () => import("./ComposerModelMenu");
@@ -17,7 +17,7 @@ const LazyComposerModelMenu = lazy(loadComposerModelMenu);
 interface ComposerModelSelectorProps {
   runId?: string;
   node?: string;
-  planMode?: "auto" | "serial" | "graph";
+  planMode?: PlanMode;
   conversationModel?: boolean;
   isMerger?: boolean;
   compact?: boolean;
@@ -138,7 +138,6 @@ export function ComposerModelSelector({
   if (!context) return null;
 
   const displayName = (() => {
-    if (isCurrentHidden) return t("当前已选模型已隐藏");
     if (currentCatalogModel) return currentCatalogModel.name || currentCatalogModel.id;
     if (settings.model) {
       const providerId = providerIdForModel(settings.model, catalog?.providers ?? []);
@@ -170,7 +169,7 @@ export function ComposerModelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className={`prompt-box-model-trigger${!settings.model ? " is-placeholder" : ""}${isCurrentHidden ? " is-hidden-model" : ""}`}
+        className={`prompt-box-model-trigger${!settings.model ? " is-placeholder" : ""}`}
         data-testid="composer-model-selector"
         data-model-role={role}
         data-model-node={modelNode || undefined}
@@ -222,6 +221,7 @@ export function ComposerModelSelector({
             isMerger={isMerger}
             baseConfig={baseConfig}
             currentModel={settings.model}
+            currentDisplayName={displayName}
             currentThinkingLevel={settings.thinkingLevel}
             currentModelThinkingLevels={currentLevels}
             isCurrentHidden={isCurrentHidden}

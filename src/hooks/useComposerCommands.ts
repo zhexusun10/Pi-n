@@ -8,6 +8,7 @@ import { runtimeService } from "../services/runtime";
 import { copyTextToClipboard } from "../services/externalLink";
 import { createUuid } from "../lib/uuid";
 import { blockedCommands, ComposerModels, mergeCommands, parseSlashCommand, type ExtensionUIRequest, type PiCommandCatalog } from "../services/composerCommands";
+import { rememberModelThinkingLevel, resolveRememberedThinkingLevel } from "../services/modelThinkingMemory";
 
 function scoreMatch(candidate: string, query: string): number {
   if (!query) return 1;
@@ -147,7 +148,7 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
           .filter(item => item.score > 0);
         if (query) ranked.sort((a, b) => b.score - a.score || a.level.length - b.level.length);
         return ranked.map(({ level, score }) => ({
-          title: level, subtitle: settings.thinkingLevel === level ? t("当前") : model?.hidden ? t("当前已选模型已隐藏") : settings.model,
+          title: level, subtitle: settings.thinkingLevel === level ? t("当前") : settings.model,
           value: `/thinking ${level}`, score,
         }));
       }
@@ -245,8 +246,15 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
         const matches = availableCatalogModels(fresh).filter(model => `${model.provider}/${model.id}` === command.args || model.id === command.args);
         if (matches.length !== 1) throw new Error(t("请选择唯一且可用的 provider/model。"));
         const selected = matches[0];
-        const next = normalizeModelThinkingLevels(updateRoleModelConfig(context.config, role, { ...settings,
-          model: `${selected.provider}/${selected.id}` }), fresh);
+        const modelKey = `${selected.provider}/${selected.id}`;
+        const remembered = !context.envOverrides[`${role}Thinking`]
+          ? resolveRememberedThinkingLevel(selected)
+          : null;
+        const next = normalizeModelThinkingLevels(updateRoleModelConfig(context.config, role, {
+          ...settings,
+          model: modelKey,
+          ...(remembered ? { thinkingLevel: remembered } : {}),
+        }), fresh);
         patch = roleModelConfig(next, role);
       } else {
         const supported = fresh.models.find(model => `${model.provider}/${model.id}` === settings.model)?.thinkingLevels;
@@ -255,6 +263,9 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
         patch = { ...settings, thinkingLevel: command.args as ThinkingLevel };
       }
       await context.save({ runId, node: modelNode, role }, patch);
+      if (command.name === "thinking" && settings.model && patch.thinkingLevel) {
+        rememberModelThinkingLevel(settings.model, patch.thinkingLevel);
+      }
       if (isCurrent()) showNotice(t("已更新当前会话配置；正在执行的调用保持不变，后续调用使用新配置。"), AUTO_DISMISS_NOTICE_MS);
       return isCurrent() ? "handled" : "menu";
     }

@@ -22,7 +22,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useTranscriptReader } from "../hooks/useTranscriptReader";
 import { useAutoTranscriptHistory } from "../hooks/useAutoTranscriptHistory";
 import type { InlineSteerAttachment, LiveSteerMarker } from "../lib/pendingSteers";
-import type { CardsTransitionPhase } from "./ActivitySummaryRow";
+import { registerLiveExpandPreparer, type CardsTransitionPhase } from "./ActivitySummaryRow";
 export { executionTranscriptCache } from "../services/transcriptCache";
 
 type Props = {
@@ -364,20 +364,88 @@ function ExecutionHistory({ runId, execution, endOffset, deferredReveal = false,
     }
   });
 
+  const liveExpandInFlightRef = useRef<{ abort: AbortController; promise: Promise<void> } | null>(null);
+  const upgradeLiveSummaryToFull = useStableCallback((syncCommit: boolean): Promise<void> | undefined => {
+    if (settled) return undefined;
+    const currentWin = windowRef.current;
+    if (!currentWin || normalizeTranscriptProjection(currentWin) !== "summary") return undefined;
+    const commitWin = (win: TranscriptWindow) => {
+      if (syncCommit) {
+        try { flushSync(() => publish(win)); }
+        catch { publish(win); }
+      } else {
+        publish(win);
+      }
+    };
+    const cachedFull = transcriptFromCache(executionTranscriptCache.get(fullCacheKey));
+    if (cachedFull && cachedFull.end >= currentWin.end) {
+      commitWin(cachedFull);
+      return undefined;
+    }
+    if (liveExpandInFlightRef.current) return liveExpandInFlightRef.current.promise;
+    const abort = new AbortController();
+    const signal = combineAbortSignals(abort.signal, lifetime.current);
+    const promise = runtimeService.getExecutionOutput(
+      runId,
+      execution.id,
+      0,
+      signal,
+      false,
+      true,
+      undefined,
+      OLDER_TRANSCRIPT_BYTES,
+      endOffset,
+      false,
+    ).then(page => {
+      if (signal.aborted) return;
+      if (page.runId !== runId || page.executionId !== execution.id) return;
+      const win = windowFromPage(page, page.status !== "running");
+      if (normalizeTranscriptProjection(win) === undefined) {
+        commitWin(win);
+      }
+    }).catch(() => { /* Best-effort live upgrade; normal polling runs on idle. */ })
+      .finally(() => {
+        if (liveExpandInFlightRef.current?.abort === abort) {
+          liveExpandInFlightRef.current = null;
+        }
+      });
+    liveExpandInFlightRef.current = { abort, promise };
+    return promise;
+  });
+
+  useEffect(() => {
+    if (cardsTransition === "collapsing" && liveExpandInFlightRef.current) {
+      liveExpandInFlightRef.current.abort.abort();
+      liveExpandInFlightRef.current = null;
+    }
+  }, [cardsTransition]);
+
+  useEffect(() => () => {
+    if (liveExpandInFlightRef.current) {
+      liveExpandInFlightRef.current.abort.abort();
+      liveExpandInFlightRef.current = null;
+    }
+  }, [fullCacheKey]);
+
+  useEffect(() => {
+    if (settled || currentProjection !== "summary") return;
+    return registerLiveExpandPreparer(() => upgradeLiveSummaryToFull(true));
+  }, [settled, currentProjection, upgradeLiveSummaryToFull]);
+
   // Prefetch the expanded projection during the 260ms collapse→expand animation
   // so switching to expanded cards lands warm without losing scrollback span.
   useEffect(() => {
     if (cardsTransition !== "expanding") return;
     const currentWin = windowRef.current;
     if (!currentWin || normalizeTranscriptProjection(currentWin) !== "summary") return;
-    const prefetchProj: TranscriptProjectionMode | undefined = settled && !cardsUnsupported ? "cards" : undefined;
-    const prefetchKey = executionTranscriptKey(fullCacheKey, prefetchProj);
-    const cachedFull = transcriptFromCache(executionTranscriptCache.get(fullCacheKey));
-    if (!settled && cachedFull && cachedFull.end >= currentWin.end) {
-      publish(cachedFull);
+    if (!settled) {
+      void upgradeLiveSummaryToFull(false);
       return;
     }
-    if (settled && (executionTranscriptCache.get(prefetchKey) || cachedFull)) return;
+    const prefetchProj: TranscriptProjectionMode | undefined = !cardsUnsupported ? "cards" : undefined;
+    const prefetchKey = executionTranscriptKey(fullCacheKey, prefetchProj);
+    const cachedFull = transcriptFromCache(executionTranscriptCache.get(fullCacheKey));
+    if (executionTranscriptCache.get(prefetchKey) || cachedFull) return;
     const abort = new AbortController();
     const signal = combineAbortSignals(abort.signal, lifetime.current);
     const prefetchLimit = prefetchProj === "cards"
@@ -390,27 +458,20 @@ function ExecutionHistory({ runId, execution, endOffset, deferredReveal = false,
       signal,
       false,
       true,
-      settled ? currentWin.end : undefined,
+      currentWin.end,
       prefetchLimit,
       endOffset,
       prefetchProj ?? false,
     ).then(page => {
       if (signal.aborted) return;
       if (page.runId !== runId || page.executionId !== execution.id) return;
-      const win = windowFromPage(page, settled || page.status !== "running");
+      const win = windowFromPage(page, true);
       const actualProj = normalizeTranscriptProjection(win);
       if (prefetchProj === "cards" && actualProj !== "cards") setCardsUnsupported(true);
-      if (!settled && actualProj === undefined) {
-        // Publish live full output immediately while expanding so auto-expanded
-        // running thinking cards grow smoothly to their real height during the
-        // 260ms animation instead of expanding an empty shimmer and snapping at idle.
-        publish(win);
-      } else {
-        executionTranscriptCache.set(executionTranscriptKey(fullCacheKey, actualProj), cacheTranscriptWindow(win));
-      }
+      executionTranscriptCache.set(executionTranscriptKey(fullCacheKey, actualProj), cacheTranscriptWindow(win));
     }).catch(() => { /* Best-effort transition prefetch; normal fetch runs on idle. */ });
     return () => abort.abort();
-  }, [cardsTransition, settled, cardsUnsupported, fullCacheKey, runId, execution.id, endOffset, lifetime, publish]);
+  }, [cardsTransition, settled, cardsUnsupported, fullCacheKey, runId, execution.id, endOffset, lifetime, upgradeLiveSummaryToFull]);
 
   const initialReady = useAutoTranscriptHistory(wrapperRef, hasOlder, loadingOlder, error, window,
     preserveReading => { void loadOlder(preserveReading, false); }, ready, window ? window.end - window.start : 0, holdingOlder,

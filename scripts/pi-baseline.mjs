@@ -369,7 +369,7 @@ const sleepSync = ms => { try { Atomics.wait(waitBuffer, 0, 0, ms); } catch {} }
 
 // Verify baseline and Pi dependencies once per explicit backend lifecycle
 // context (`PI_N_BASELINE_CONTEXT`), reusing the verified stamp across
-// Provider/Auth, Partitioner, Planner, and NodeAgent prewarm workers while
+// Provider/Auth, Planner, and NodeAgent prewarm workers while
 // installing the cached source-runtime resolver. Standalone CLI runs without an
 // explicit backend context always perform full verification.
 export function verifyRuntimeBaseline({ installationRoot = root, baseline = lock } = {}) {

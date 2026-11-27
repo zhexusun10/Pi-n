@@ -7,7 +7,6 @@ import {
   normalizeWorkspaceRuns,
   orderProjects,
   pinRunInWorkspace,
-  promoteRunInWorkspace,
   reconcileWorkspaceRuns,
   reorderRunsInWorkspace,
   reorderSubset,
@@ -128,24 +127,7 @@ test("opening a card validates snapshot ownership independently of the selected 
   assert.equal(snapshotBelongsToWorkspace(emptySnapshot, ""), false);
 });
 
-test("promoting a conversation moves it to the first position and enforces exclusive ownership", () => {
-  const original = { "c:/projects/app": ["newest", "middle", "older"], "/other": ["older", "foreign"] };
-  const promoted = promoteRunInWorkspace(original, "older", "\\\\?\\C:\\Projects\\App\\");
-  assert.deepEqual(promoted, {
-    "c:/projects/app": ["older", "newest", "middle"],
-    "/other": ["foreign"],
-  });
-  assert.deepEqual(original, { "c:/projects/app": ["newest", "middle", "older"], "/other": ["older", "foreign"] }, "must not mutate React state");
-  assert.equal(promoteRunInWorkspace(promoted, "older", "c:/projects/app"), promoted, "already-first unique card is stable");
-  assert.deepEqual(promoteRunInWorkspace(promoted, "fresh", "c:/projects/app"), {
-    "c:/projects/app": ["fresh", "older", "newest", "middle"],
-    "/other": ["foreign"],
-  });
-  assert.equal(promoteRunInWorkspace(promoted, "", "c:/projects/app"), promoted);
-  assert.equal(promoteRunInWorkspace(promoted, "older", ""), promoted);
-});
-
-test("pinned conversations stay at the top and are never pushed down by new or promoted conversations", () => {
+test("pinned conversations stay at the top and are never pushed down by new conversations", () => {
   const initial = { "/a": ["c3", "c2", "c1"] };
   const pinned1 = new Set(["c1"]);
   const afterPin1 = pinRunInWorkspace(initial, "c1", "/a", pinned1);
@@ -161,17 +143,14 @@ test("pinned conversations stay at the top and are never pushed down by new or p
   const withDurable = bindRunToWorkspace(withPending, "c4", "/a", "pending-1", pinned2);
   assert.deepEqual(withDurable, { "/a": ["c2", "c1", "c4", "c3"] });
 
-  // Promoting an unpinned conversation moves it to the top of unpinned (below pinned).
-  const promotedUnpinned = promoteRunInWorkspace(withDurable, "c3", "/a", pinned2);
-  assert.deepEqual(promotedUnpinned, { "/a": ["c2", "c1", "c3", "c4"] });
-
-  // Promoting an already pinned conversation keeps pinned cards in their order.
-  assert.equal(promoteRunInWorkspace(promotedUnpinned, "c1", "/a", pinned2), promotedUnpinned);
+  // Observing an existing conversation again keeps its position instead of moving it to the top.
+  assert.equal(bindRunToWorkspace(withDurable, "c3", "/a", undefined, pinned2), withDurable);
+  assert.equal(bindRunToWorkspace(withDurable, "c1", "/a", undefined, pinned2), withDurable);
 
   // Unpinning c2 moves it below remaining pinned card c1.
   const remainingPinned = new Set(["c1"]);
-  const afterUnpin = unpinRunInWorkspace(promotedUnpinned, "c2", "/a", remainingPinned);
-  assert.deepEqual(afterUnpin, { "/a": ["c1", "c2", "c3", "c4"] });
+  const afterUnpin = unpinRunInWorkspace(withDurable, "c2", "/a", remainingPinned);
+  assert.deepEqual(afterUnpin, { "/a": ["c1", "c2", "c4", "c3"] });
 });
 
 test("reordering and reload reconciliation preserve custom order and pinned conversations", () => {

@@ -51,30 +51,25 @@ test("conversation selections replace each other without changing non-model sett
   assert.equal(base.model, "example/default", "projection never mutates the input");
 });
 
-test("legacy settings inherit models but Partitioner defaults to thinking low", () => {
-  assert.deepEqual(roleModelConfig(legacy, "partitioner"), { model: "example/default", thinkingLevel: "low" });
+test("legacy settings inherit models and default thinking level", () => {
   assert.deepEqual(roleModelConfig(legacy, "planner"), { model: "example/default", thinkingLevel: "high" });
   assert.deepEqual(roleModelConfig(legacy, "nodeAgent"), { model: "example/default", thinkingLevel: "high" });
 });
 
 test("role selections and thinking levels update independently and round-trip", () => {
-  let config = updateRoleModelConfig(legacy, "partitioner", { model: "example/small", thinkingLevel: "off" });
-  config = updateRoleModelConfig(config, "planner", { model: "example/large", thinkingLevel: "max" });
+  let config = updateRoleModelConfig(legacy, "planner", { model: "example/large", thinkingLevel: "max" });
   config = updateRoleModelConfig(config, "nodeAgent", { model: "example/coder", thinkingLevel: "low" });
   config = JSON.parse(JSON.stringify(config));
   assert.equal(config.model, "example/coder");
   assert.equal(config.thinkingLevel, "low");
-  assert.deepEqual(roleModelConfig(config, "partitioner"), { model: "example/small", thinkingLevel: "off" });
   assert.deepEqual(roleModelConfig(config, "planner"), { model: "example/large", thinkingLevel: "max" });
   assert.deepEqual(roleModelConfig(config, "nodeAgent"), { model: "example/coder", thinkingLevel: "low" });
   assert.equal(legacy.roleModels, undefined);
 });
 
 test("thinking-only customization keeps model inheritance; environment has precedence", () => {
-  let config = updateRoleModelConfig(legacy, "planner", { thinkingLevel: "medium" });
+  const config = updateRoleModelConfig(legacy, "planner", { thinkingLevel: "medium" });
   assert.deepEqual(roleModelConfig(config, "planner"), { model: "example/default", thinkingLevel: "medium" });
-  config = updateRoleModelConfig(config, "partitioner", { thinkingLevel: "high" });
-  assert.equal(roleModelConfig(config, "partitioner").thinkingLevel, "high");
   assert.deepEqual(roleModelConfig(config, "planner", { planner: "env/model", plannerThinking: "off" }), { model: "env/model", thinkingLevel: "off" });
 });
 
@@ -92,12 +87,11 @@ test("global visibility hides model choices without erasing saved selections, in
 test("preflight uses only the roles required for the selected mode", () => {
   assert.deepEqual(planningModelRoles("serial"), ["nodeAgent"]);
   assert.deepEqual(planningModelRoles("graph"), ["planner", "nodeAgent"]);
-  assert.deepEqual(planningModelRoles("auto"), ["partitioner", "planner", "nodeAgent"]);
 });
 
 test("role selectors offer only available models and their providers, without free-text entry", () => {
   const markup = renderToStaticMarkup(React.createElement(RoleModelSettings, { config: legacy, setConfig: () => {}, catalog, busy: false }));
-  assert.equal((markup.match(/value="example\/default"/g) ?? []).length, 3);
+  assert.equal((markup.match(/value="example\/default"/g) ?? []).length, 2);
   assert.ok(!markup.includes("example/hidden"));
   assert.ok(!markup.includes("closed/old"));
   assert.ok(!markup.includes("Unavailable Provider"));
@@ -120,22 +114,8 @@ test("model selectors order version numbers descending within alphabetical famil
     const values = [...select.matchAll(/<option[^>]*value="example\/([^"]*)"/g)].map(match => match[1]);
     assert.deepEqual(values, ["Claude 10", "Claude 3", "GPT-10", "GPT-6.1", "GPT-6", "GPT-5.10", "GPT-5.3", "GPT-5.2", "GPT-5.1", "GPT-4"]);
   }
-  assert.equal(sections.length, 3);
+  assert.equal(sections.length, 2);
   assert.deepEqual(versions.models.map(model => model.name), names, "sorting must not mutate the catalog");
-});
-
-test("hiding Partitioner omits only its controls and preserves its saved model settings", () => {
-  const config = updateRoleModelConfig(legacy, "partitioner", { model: "example/restricted", thinkingLevel: "max" });
-  const original = JSON.stringify(config);
-  const render = (hidePartitioner: boolean) => renderToStaticMarkup(React.createElement(RoleModelSettings, {
-    config, setConfig: () => {}, catalog, busy: false, hidePartitioner,
-  }));
-  const hidden = render(true);
-  assert.ok(hidden.includes(`aria-label="${t("{0} 模型配置", "Node")}"`));
-  assert.ok(hidden.includes(`aria-label="${t("{0} 模型配置", "Planner")}"`));
-  assert.ok(!hidden.includes(`aria-label="${t("{0} 模型配置", "Partitioner")}"`));
-  assert.ok(render(false).includes(`aria-label="${t("{0} 模型配置", "Partitioner")}"`));
-  assert.equal(JSON.stringify(config), original);
 });
 
 test("role sections do not repeat agent names in field labels", () => {
@@ -146,8 +126,6 @@ test("role sections do not repeat agent names in field labels", () => {
   assert.ok(!markup.includes("<span>Node 思维等级</span>"));
   assert.ok(!markup.includes("<span>Planner 模型</span>"));
   assert.ok(!markup.includes("<span>Planner 思维等级</span>"));
-  assert.ok(!markup.includes("<span>Partitioner 模型</span>"));
-  assert.ok(!markup.includes("<span>Partitioner 思维等级</span>"));
 });
 
 test("role settings omit the after-saving summary but retain missing-model and override warnings", () => {
@@ -206,15 +184,14 @@ function renderRoles(config: Config, models: ProviderCatalog | undefined, envOve
   });
 }
 
-test("thinking selectors use per-model Pi capabilities, including inherited models and Partitioner without off", () => {
-  const [node, planner, partitioner] = renderRoles(legacy, catalog);
-  for (const field of [node, planner, partitioner]) assert.deepEqual(field.values, ["off", "low", "high"]);
+test("thinking selectors use per-model Pi capabilities, including inherited models", () => {
+  const [node, planner] = renderRoles(legacy, catalog);
+  for (const field of [node, planner]) assert.deepEqual(field.values, ["off", "low", "high"]);
   const config = updateRoleModelConfig(legacy, "nodeAgent", { model: "example/restricted", thinkingLevel: "xhigh" });
   const roles = renderRoles(config, catalog);
   for (const field of roles) assert.deepEqual(field.values, ["low", "high", "max"]);
   assert.match(roles[0].select, /value="max" selected=""/);
   assert.match(roles[1].select, /value="max" selected=""/);
-  assert.match(roles[2].select, /value="low" selected=""/);
   assert.equal(config.thinkingLevel, "xhigh", "rendering must not mutate persisted settings");
 });
 
@@ -228,12 +205,10 @@ test("single-level models have a disabled selector and preserve the intent of se
   assert.equal(config.thinkingLevel, "high");
   assert.equal(config.roleModels?.planner?.thinkingLevel, "high");
   assert.equal(normalizeModelThinkingLevels(normalized, catalog), normalized, "normalization is idempotent");
-  const [node, planner, partitioner] = renderRoles(config, catalog);
-  for (const field of [partitioner, node]) {
-    assert.deepEqual(field.values, ["off"]);
-    assert.match(field.select, /<select[^>]*disabled=""/);
-    assert.match(field.select, /value="off" selected=""/);
-  }
+  const [node, planner] = renderRoles(config, catalog);
+  assert.deepEqual(node.values, ["off"]);
+  assert.match(node.select, /<select[^>]*disabled=""/);
+  assert.match(node.select, /value="off" selected=""/);
   assert.doesNotMatch(planner.select, /<select[^>]*disabled=""/);
 });
 
@@ -272,35 +247,27 @@ test("unknown capabilities disable controls and never invent seven choices or ov
   assert.equal(normalizeModelThinkingLevels(unavailable, catalog), unavailable);
 });
 
-test("defaultRoleThinkingLevel defaults planner to highest, node agent to one tier below highest, partitioner to low", () => {
+test("defaultRoleThinkingLevel defaults planner to highest and node agent to one tier below highest", () => {
   // Model with ["off", "low", "high"]
   assert.equal(defaultRoleThinkingLevel("planner", ["off", "low", "high"]), "high");
   assert.equal(defaultRoleThinkingLevel("nodeAgent", ["off", "low", "high"]), "low");
-  assert.equal(defaultRoleThinkingLevel("partitioner", ["off", "low", "high"]), "low");
 
   // Model with ["low", "high", "max"]
   assert.equal(defaultRoleThinkingLevel("planner", ["low", "high", "max"]), "max");
   assert.equal(defaultRoleThinkingLevel("nodeAgent", ["low", "high", "max"]), "high");
-  assert.equal(defaultRoleThinkingLevel("partitioner", ["low", "high", "max"]), "low");
 
   // Model with full 7 levels
   const allLevels: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
   assert.equal(defaultRoleThinkingLevel("planner", allLevels), "max");
   assert.equal(defaultRoleThinkingLevel("nodeAgent", allLevels), "xhigh");
-  assert.equal(defaultRoleThinkingLevel("partitioner", allLevels), "low");
 
   // Single-level model ["off"]
   assert.equal(defaultRoleThinkingLevel("planner", ["off"]), "off");
   assert.equal(defaultRoleThinkingLevel("nodeAgent", ["off"]), "off");
-  assert.equal(defaultRoleThinkingLevel("partitioner", ["off"]), "off");
 
   // Single-level model ["high"]
   assert.equal(defaultRoleThinkingLevel("planner", ["high"]), "high");
   assert.equal(defaultRoleThinkingLevel("nodeAgent", ["high"]), "high");
-  assert.equal(defaultRoleThinkingLevel("partitioner", ["high"]), "high");
-
-  // Fallback for partitioner when "low" is not in options
-  assert.equal(defaultRoleThinkingLevel("partitioner", ["minimal", "max"], { low: "max" }), "max");
 });
 
 test("when no providers are available or no model is set, neither missing thinking levels nor unconfigured model reasoning levels are displayed", () => {
@@ -322,24 +289,22 @@ test("normalizing without explicit role thinking levels applies role defaults ba
   const normalized = normalizeModelThinkingLevels(config, catalog);
   assert.equal(roleModelConfig(normalized, "planner").thinkingLevel, "max", "planner defaults to highest level");
   assert.equal(roleModelConfig(normalized, "nodeAgent").thinkingLevel, "high", "nodeAgent defaults to one tier lower than highest");
-  assert.equal(roleModelConfig(normalized, "partitioner").thinkingLevel, "low", "partitioner defaults to low");
 });
 
 test("capability refreshes and model switches use backend fallbacks rather than a frontend level heuristic", () => {
   const refreshed: ProviderCatalog = { ...catalog, models: catalog.models.map(model => model.id === "default"
     ? { ...model, thinkingLevels: ["minimal", "max"], thinkingLevelFallbacks: { low: "max", off: "max", high: "max" } } : model) };
   const normalized = normalizeModelThinkingLevels(legacy, refreshed);
-  assert.equal(roleModelConfig(normalized, "partitioner").thinkingLevel, "max", "the backend fallback is authoritative even if minimal is first");
   assert.equal(roleModelConfig(normalized, "planner").thinkingLevel, "max");
   assert.equal(normalized.thinkingLevel, "max");
   const switched = normalizeModelThinkingLevels(updateRoleModelConfig(normalized, "nodeAgent", { model: "example/plain" }), catalog);
-  for (const role of ["partitioner", "planner", "nodeAgent"] as const) assert.equal(roleModelConfig(switched, role).thinkingLevel, "off");
+  for (const role of ["planner", "nodeAgent"] as const) assert.equal(roleModelConfig(switched, role).thinkingLevel, "off");
 });
 
 test("environment overrides stay visible without changing the saved model's supported choices", () => {
-  const [, , partitioner] = renderRoles(legacy, catalog, { partitioner: "example/plain", partitionerThinking: "off" });
-  assert.deepEqual(partitioner.values, ["off", "low", "high"]);
-  assert.ok(partitioner.card.includes(`${t("环境变量覆盖：")}example/plain · off`));
+  const [, planner] = renderRoles(legacy, catalog, { planner: "example/plain", plannerThinking: "off" });
+  assert.deepEqual(planner.values, ["off", "low", "high"]);
+  assert.ok(planner.card.includes(`${t("环境变量覆盖：")}example/plain · off`));
   for (const field of renderRoles(legacy, catalog, {}, true)) assert.match(field.select, /<select[^>]*disabled=""/);
 });
 
@@ -542,23 +507,16 @@ test('Harness settings preserve defaults and explicit selections, with feedback 
     }
     const uiCard = markup.match(/<section\b[^>]*aria-labelledby="ui-settings-title"[^>]*>([\s\S]*?)<\/section>/)?.[1];
     assert.ok(uiCard, 'the UI settings card is present');
-    assert.ok(uiCard.includes(`aria-label="${t('隐藏 Auto 模式')}"`), 'Hide Auto mode is inside UI settings');
-    assert.match(checkbox(defaultConfig, '隐藏 Auto 模式'), /checked=""/, 'Hide Auto mode is checked by default');
-    try {
-      prefs.setHideAutoMode(false);
-      assert.doesNotMatch(checkbox(defaultConfig, '隐藏 Auto 模式'), /checked=""/, 'the stored Auto visibility opt-out is preserved');
-    } finally {
-      prefs.setHideAutoMode(true);
-    }
+    assert.ok(!uiCard.includes(`aria-label="${t('隐藏 Auto 模式')}"`), 'Hide Auto mode has been removed from UI settings');
     const overviewToggle = uiCard.match(/<input\b[^>]*>/g)
       ?.find(input => input.includes(`aria-label="${t('显示执行拓扑概览')}"`));
     assert.ok(overviewToggle, 'execution graph overview checkbox is inside UI settings');
     assert.doesNotMatch(overviewToggle ?? '', /checked=""/, 'execution graph overview is off by default');
-    const uiOrder = [t('隐藏 Auto 模式'), t('执行时自动展开思维链'), t('显示执行拓扑概览'), t('首页背景')]
+    const uiOrder = [t('执行时自动展开思维链'), t('显示执行拓扑概览'), t('首页背景')]
       .map(label => uiCard.indexOf(label));
     assert.ok(uiOrder.every(index => index >= 0), 'all UI settings items are present');
     assert.deepEqual([...uiOrder].sort((a, b) => a - b), uiOrder,
-      'Hide Auto mode sits above reasoning auto-expand and execution graph overview sits between reasoning auto-expand and home background');
+      'execution graph overview sits between reasoning auto-expand and home background');
     try {
       prefs.setExecutionOverview(true);
       const enabled = renderToStaticMarkup(React.createElement(SettingsModal, {

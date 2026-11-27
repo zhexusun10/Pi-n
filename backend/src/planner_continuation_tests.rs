@@ -101,7 +101,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &current,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap_err()
     .1
@@ -143,7 +142,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         |_| {
             started = true;
         },
-        |_| {},
         |_| {},
         |_| {},
     );
@@ -271,7 +269,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
             &current,
             |_| {},
             |_| {},
-            |_| {},
         )
         .unwrap_err()
         .1
@@ -292,7 +289,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
                 &current,
                 false,
                 Some(&failed.planning_id),
-                |_| {},
                 |_| {},
                 |_| {},
                 |_| {},
@@ -415,7 +411,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
                 }
             },
             |_| {},
-            |_| {},
             |text| {
                 if drain_at == "during-turn" && text.contains("\"type\":\"message_end\"") {
                     drain_workers();
@@ -520,7 +515,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &current,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap_err()
     .1
@@ -537,7 +531,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
             false,
             Some(&failed.planning_id),
             |_| panic!("simulated crash before revision launch"),
-            |_| {},
             |_| {},
             |_| {},
         );
@@ -566,7 +559,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &current,
         false,
         Some(&interrupted.planning_id),
-        |_| {},
         |_| {},
         |_| {},
         |_| {},
@@ -643,7 +635,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &first,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap_err()
     .1
@@ -667,7 +658,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         |_| {},
         |_| {},
         |_| {},
-        |_| {},
     );
     assert!(stale.is_err());
     assert_eq!(resumed.runtime.lock().unwrap().state.events.len(), before);
@@ -686,7 +676,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &resumed,
         false,
         Some(&failed.planning_id),
-        |_| {},
         |_| {},
         |_| {},
         |_| {},
@@ -722,7 +711,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         |_| {},
         |_| {},
         |_| {},
-        |_| {},
     );
     assert!(header_only.is_err());
     assert_eq!(resumed.runtime.lock().unwrap().state.events.len(), before);
@@ -740,7 +728,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
             false,
             Some(&failed.planning_id),
             |_| panic!("simulated crash before Planner launch"),
-            |_| {},
             |_| {},
             |_| {},
         );
@@ -772,7 +759,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         |_| {},
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap_err()
     .1
@@ -791,7 +777,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &resumed,
         false,
         Some(&failed_again.planning_id),
-        |_| {},
         |_| {},
         |_| {},
         |_| {},
@@ -818,7 +803,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &resumed,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap_err()
     .1
@@ -837,7 +821,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &resumed,
         false,
         Some(&failed_revision.planning_id),
-        |_| {},
         |_| {},
         |_| {},
         |_| {},
@@ -868,7 +851,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &resumed,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap_err()
     .1
@@ -889,7 +871,6 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content
         &resumed,
         false,
         Some(&stale_revision.planning_id),
-        |_| {},
         |_| {},
         |_| {},
         |_| {},

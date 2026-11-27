@@ -4,16 +4,12 @@ import {
   LANDING_BACKGROUND_KEY,
   ACCENT_COLOR_KEY,
   EXECUTION_OVERVIEW_KEY,
-  HIDE_AUTO_MODE_KEY,
   COLLAPSE_CARDS_KEY,
   COMPLETION_NOTIFICATIONS_KEY,
   COMPLETION_NOTIFICATION_SOUND_KEY,
   executionOverviewEnabled,
   readExecutionOverview,
   setExecutionOverview,
-  hideAutoModeEnabled,
-  readHideAutoMode,
-  setHideAutoMode,
   currentLandingBackground,
   readLandingBackground,
   setLandingBackground,
@@ -56,34 +52,6 @@ test("Execution graph overview persists locally and remains usable when storage 
     assert.equal(executionOverviewEnabled(), true);
   } finally {
     setExecutionOverview(original, storage);
-  }
-});
-
-test("Auto mode is hidden by default and explicit opt-outs keep it visible", () => {
-  for (const value of [null, "1", "true", "unknown", ""]) {
-    assert.equal(readHideAutoMode({ getItem: key => key === HIDE_AUTO_MODE_KEY ? value : null }), true);
-  }
-  for (const value of ["0", "false"]) {
-    assert.equal(readHideAutoMode({ getItem: () => value }), false);
-  }
-  assert.equal(readHideAutoMode(), true, "unavailable storage uses the default");
-  assert.equal(readHideAutoMode({ getItem: () => { throw new Error("blocked"); } }), true);
-});
-
-test("Auto visibility persists locally and remains usable when storage writes fail", () => {
-  const original = hideAutoModeEnabled();
-  const writes: string[][] = [];
-  const storage = { setItem: (key: string, value: string) => { writes.push([key, value]); }, removeItem: () => {} };
-  try {
-    setHideAutoMode(true, storage);
-    assert.equal(hideAutoModeEnabled(), true);
-    setHideAutoMode(false, storage);
-    assert.equal(hideAutoModeEnabled(), false);
-    assert.deepEqual(writes, [[HIDE_AUTO_MODE_KEY, "1"], [HIDE_AUTO_MODE_KEY, "0"]]);
-    setHideAutoMode(true, { setItem: () => { throw new Error("blocked"); }, removeItem: () => {} });
-    assert.equal(hideAutoModeEnabled(), true);
-  } finally {
-    setHideAutoMode(original, storage);
   }
 });
 

@@ -20,7 +20,8 @@ pub(crate) use runtime_inputs::verify_native_inputs;
 
 pub(crate) use snapshot_recovery::recover_snapshot_readiness;
 
-const VIEW_SCHEMA: u32 = 6;
+const VIEW_SCHEMA: u32 = 7;
+const LEGACY_VIEW_SCHEMA: u32 = 6;
 
 #[cfg(test)]
 #[path = "workspace_view/scan_bench.rs"]
@@ -94,7 +95,7 @@ fn strip_entry_system_managed(entry: &mut Entry) {
 
 impl View {
     fn validate_schema(&self) -> Result<(), String> {
-        if self.schema != VIEW_SCHEMA {
+        if !matches!(self.schema, LEGACY_VIEW_SCHEMA | VIEW_SCHEMA) {
             return Err("Unsupported project-view schema".into());
         }
         for repository in self.repositories.values() {
@@ -105,6 +106,8 @@ impl View {
 
     /// Host-managed metadata never becomes portable project ownership.
     fn strip_system_managed(&mut self) {
+        // Upgrade only after checksum validation; immutable legacy files stay untouched.
+        self.schema = VIEW_SCHEMA;
         self.root_extra.strip_system_managed();
         if let Some(entries) = self.git_entries.as_mut() {
             entries.retain(|path, _| !workspace::is_host_metadata_path(Path::new(path)));
@@ -346,9 +349,33 @@ fn scan_with_stats(
     record_cutoff: Option<(i64, i64)>,
     out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
 ) -> Result<(), String> {
-    // Git metadata is scanned verbatim (apart from volatile lock files and
-    // macOS host metadata), not through project collection rules. Its walk
-    // never consults tracked paths.
+    scan_with_stats_and_git_exclusions(
+        root,
+        relative,
+        entries,
+        git,
+        &[],
+        reuse,
+        record_cutoff,
+        out_stats,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_with_stats_and_git_exclusions(
+    root: &Path,
+    relative: &Path,
+    entries: &mut BTreeMap<String, Entry>,
+    git: bool,
+    git_exclusions: &[String],
+    reuse: Option<(&BTreeMap<String, Entry>, &BTreeMap<String, FileStatKey>)>,
+    record_cutoff: Option<(i64, i64)>,
+    out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
+) -> Result<(), String> {
+    // Git metadata is scanned verbatim (apart from volatile lock files,
+    // macOS host metadata, and submodule gitdirs already captured as nested
+    // repositories), not through project collection rules. Its walk never
+    // consults tracked paths.
     let tracked = if git {
         Default::default()
     } else {
@@ -360,7 +387,7 @@ fn scan_with_stats(
         entries,
         git,
         root,
-        &[],
+        if git { git_exclusions } else { &[] },
         &tracked,
         reuse,
         record_cutoff,
@@ -722,11 +749,13 @@ fn walk_scoped_with_nested(
         if !git && workspace::collection_excluded_with_index(root, &path, tracked, exclusions) {
             continue;
         }
-        // Lock files and macOS host metadata are volatile storage, not the
-        // source's repository view. Captured HEAD/refs/index/config must still
-        // match after copying.
+        // Lock files, macOS host metadata, and nested submodule gitdirs already
+        // owned by `view.repositories` are excluded from the parent `.git` copy.
         if git
             && (git_ignored_entry(&path)
+                || exclusions
+                    .iter()
+                    .any(|scope| workspace::scope_contains_at(root, &path, Path::new(scope)))
                 || relative.as_os_str().is_empty()
                     && matches!(
                         item.file_name().to_str(),
@@ -1073,6 +1102,8 @@ fn inspect_scoped_with_stats(
             stats.repositories.insert(relative, child_stats);
         }
     }
+    let excluded_git_dirs =
+        nested_git_exclusions(&source, repositories.keys().map(String::as_str))?;
     let git_reuse = reuse.and_then(|(view, saved)| {
         view.git_entries
             .as_ref()
@@ -1081,6 +1112,7 @@ fn inspect_scoped_with_stats(
     let (git_entries, git_file, git_link, git_config, git_files, git_global) =
         inspect_git_with_stats(
             &source,
+            &excluded_git_dirs,
             git_reuse,
             record_cutoff,
             record_cutoff.is_some().then_some(&mut stats.git_entries),
@@ -1197,12 +1229,44 @@ type InspectedGit = (
     Vec<u8>,
 );
 
+/// Return relative paths inside `project`'s common Git directory (such as
+/// `modules/pi`) that belong to checked-out nested repositories already
+/// recorded under `view.repositories`, preventing double copies of submodule
+/// Git databases in both `agent-views/` and private worktrees.
+fn nested_git_exclusions<'a>(
+    project: &Path,
+    nested: impl Iterator<Item = &'a str>,
+) -> Result<Vec<String>, String> {
+    let Some((parent_common, _, _, _)) = git_roots(project)? else {
+        return Ok(Vec::new());
+    };
+    let parent_common = host_canonical(&parent_common)?;
+    let mut excluded = Vec::new();
+    for relative in nested {
+        let child_root = project.join(relative);
+        let Some((child_common, _, _, _)) = git_roots(&child_root)? else {
+            continue;
+        };
+        let child_common = host_canonical(&child_common)?;
+        if let Ok(inner) = child_common.strip_prefix(&parent_common) {
+            if !inner.as_os_str().is_empty() {
+                let portable = inner.to_string_lossy().replace('\\', "/");
+                if !excluded.contains(&portable) {
+                    excluded.push(portable);
+                }
+            }
+        }
+    }
+    Ok(excluded)
+}
+
 fn inspect_git(project: &Path) -> Result<InspectedGit, String> {
-    inspect_git_with_stats(project, None, None, None)
+    inspect_git_with_stats(project, &[], None, None, None)
 }
 
 fn inspect_git_with_stats(
     project: &Path,
+    excluded_git_dirs: &[String],
     reuse: Option<(&BTreeMap<String, Entry>, &BTreeMap<String, FileStatKey>)>,
     record_cutoff: Option<(i64, i64)>,
     out_stats: Option<&mut BTreeMap<String, FileStatKey>>,
@@ -1214,11 +1278,12 @@ fn inspect_git_with_stats(
     // Only reuse/record `.git` stat signatures for standard single-dir `.git`
     // layouts; linked worktrees overlay `current` onto `common` and are re-scanned directly.
     let single_git_dir = common == current;
-    scan_with_stats(
+    scan_with_stats_and_git_exclusions(
         &common,
         Path::new(""),
         &mut entries,
         true,
+        excluded_git_dirs,
         if single_git_dir { reuse } else { None },
         if single_git_dir { record_cutoff } else { None },
         if single_git_dir { out_stats } else { None },
@@ -1233,7 +1298,16 @@ fn inspect_git_with_stats(
     );
     if !single_git_dir {
         let mut local = BTreeMap::new();
-        scan(&current, Path::new(""), &mut local, true)?;
+        scan_with_stats_and_git_exclusions(
+            &current,
+            Path::new(""),
+            &mut local,
+            true,
+            excluded_git_dirs,
+            None,
+            None,
+            None,
+        )?;
         entries.extend(local);
     }
     // Conditional includes cannot be rebound by copying alone. Refuse only
@@ -1447,11 +1521,18 @@ fn copy_project_git(
     project: &Path,
     target: &Path,
     git_entries: &BTreeMap<String, Entry>,
+    excluded_git_dirs: &[String],
 ) -> Result<(), String> {
     let (common, current, _, _) = git_roots(project)?.ok_or("Missing project Git")?;
+    let is_excluded_git_dir = |base: &Path, relative: &Path| {
+        excluded_git_dirs
+            .iter()
+            .any(|scope| workspace::scope_contains_at(base, relative, Path::new(scope)))
+    };
     fs::create_dir(target).map_err(|e| e.to_string())?;
     native_copy::copy_tree(&common, target, |relative| {
         git_ignored_entry(relative)
+            || is_excluded_git_dir(&common, relative)
             || relative
                 .components()
                 .next()
@@ -1465,6 +1546,7 @@ fn copy_project_git(
             let name = item.file_name();
             if matches!(name.to_str(), Some("gitdir" | "commondir"))
                 || git_ignored_entry(Path::new(&name))
+                || is_excluded_git_dir(&current, Path::new(&name))
             {
                 continue;
             }
@@ -1493,7 +1575,8 @@ fn copy_project_git(
                 let prefix = PathBuf::from(&name);
                 clear_git_overlays(&item.path(), &destination, &prefix)?;
                 native_copy::copy_tree(&item.path(), &destination, |relative| {
-                    git_ignored_entry(&prefix.join(relative))
+                    let joined = prefix.join(relative);
+                    git_ignored_entry(&joined) || is_excluded_git_dir(&current, &joined)
                 })?;
             } else {
                 if let Ok(meta) = fs::symlink_metadata(&destination) {
@@ -1594,7 +1677,14 @@ fn nested_record(record: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 fn copy_project_repositories(project: &Path, record: &Path, view: &View) -> Result<(), String> {
     if let Some(git_entries) = &view.git_entries {
-        copy_project_git(project, &record.join("git"), git_entries)?;
+        let excluded_git_dirs =
+            nested_git_exclusions(project, view.repositories.keys().map(String::as_str))?;
+        copy_project_git(
+            project,
+            &record.join("git"),
+            git_entries,
+            &excluded_git_dirs,
+        )?;
     }
     for (relative, child) in &view.repositories {
         let destination = nested_record(record, relative)?;
@@ -1737,19 +1827,24 @@ fn legacy_normalized_bytes(view: &View) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 fn encode_normalized_value(mut value: serde_json::Value) -> Result<Vec<u8>, String> {
-    fn remove_git_index(value: &mut serde_json::Value) {
+    fn remove_git_volatile(value: &mut serde_json::Value) {
         if let serde_json::Value::Object(map) = value {
+            let schema = map.get("schema").and_then(serde_json::Value::as_u64);
             if let Some(entries) = map.get_mut("git_entries").and_then(|v| v.as_object_mut()) {
                 entries.remove("index");
+                if schema >= Some(VIEW_SCHEMA as u64) {
+                    entries.remove("config");
+                    entries.remove("config.worktree");
+                }
             }
             if let Some(repos) = map.get_mut("repositories").and_then(|v| v.as_object_mut()) {
                 for repo in repos.values_mut() {
-                    remove_git_index(repo);
+                    remove_git_volatile(repo);
                 }
             }
         }
     }
-    remove_git_index(&mut value);
+    remove_git_volatile(&mut value);
     serde_json::to_vec(&value).map_err(|e| e.to_string())
 }
 
@@ -3574,7 +3669,8 @@ fn view_unobservable(
         let child = relative.join(item.file_name());
         let child_name = name(&child)?;
         let reserved_or_generated = workspace::is_generated_artifact(&child)
-            || workspace::is_reserved_pi_n_runtime_path(&child);
+            || workspace::is_reserved_pi_n_runtime_path(&child)
+            || tracked.is_ignored_target(&child, None);
         let host_meta = workspace::is_host_metadata(&child_name);
         if (reserved_or_generated || host_meta)
             && !tracked.matches(&child_name)
@@ -3751,7 +3847,14 @@ fn prepare_fresh_base_checkout(
     let tracked = workspace::project_tracked_paths(path);
     let tracked_index = workspace::TrackedPathIndex::new(path, &tracked);
     for (name, entry) in view.entries.iter().rev() {
-        if workspace::collection_excluded_with_index(path, Path::new(name), &tracked_index, exclusions) {
+        let is_dir = matches!(entry, Entry::Directory { .. });
+        if workspace::collection_excluded_with_index_hint(
+            path,
+            Path::new(name),
+            &tracked_index,
+            exclusions,
+            Some(is_dir),
+        ) {
             let target = path.join(name);
             if fs::symlink_metadata(&target).is_ok() {
                 remove_entry(path, &tracked, entry, &target)?;
@@ -3761,8 +3864,14 @@ fn prepare_fresh_base_checkout(
     let expected: BTreeMap<_, _> = view
         .entries
         .iter()
-        .filter(|(name, _)| {
-            !workspace::collection_excluded_with_index(path, Path::new(name), &tracked_index, exclusions)
+        .filter(|(name, entry)| {
+            !workspace::collection_excluded_with_index_hint(
+                path,
+                Path::new(name),
+                &tracked_index,
+                exclusions,
+                Some(matches!(entry, Entry::Directory { .. })),
+            )
         })
         .map(|(name, entry)| (name.clone(), entry.clone()))
         .collect();
@@ -3823,11 +3932,15 @@ fn prepare_fresh_base_checkout(
     };
     restore_entry(path, &root)?;
     prepare_repositories(path, path, record, view, &[])?;
-    let observed = if view.repositories.is_empty() {
-        assemble_view(path, source, &expected, &topology).ok()
-    } else {
-        None
-    };
+    let observed = assemble_view_with_repositories(
+        path,
+        source,
+        &expected,
+        &topology,
+        &view.repositories,
+        exclusions,
+    )
+    .ok();
     save_ready_exclusions(path, exclusions)?;
     mark_ready(path)?;
     Ok(observed)
@@ -4110,11 +4223,12 @@ pub(crate) fn prepare(
         // A recorded view may still carry generated-artifact directories from
         // before an exclusion-policy update; skip them here so `expected`
         // matches `scan_scoped_with_links`.
-        if workspace::collection_excluded_with_index(
+        if workspace::collection_excluded_with_index_hint(
             path,
             Path::new(name),
             &tracked_index,
             exclusions,
+            Some(true),
         ) {
             continue;
         }
@@ -4125,11 +4239,12 @@ pub(crate) fn prepare(
             choose_directory_entry_indexed(&base_index, &input_indices, name)?
         {
             let resolved_name = resolve_parent_alias_prefix_indexed(&chosen_name, &canonical_dirs);
-            if workspace::collection_excluded_with_index(
+            if workspace::collection_excluded_with_index_hint(
                 path,
                 Path::new(&resolved_name),
                 &tracked_index,
                 exclusions,
+                Some(true),
             ) {
                 continue;
             }
@@ -4431,15 +4546,73 @@ pub(crate) fn prepare(
 }
 
 /// Build a project view from an observation the caller just verified instead of
-/// immediately rescanning the same unchanged workspace. Nested repositories are
-/// excluded by the caller because each needs its own recursive inspection.
+/// immediately rescanning the same unchanged workspace.
 fn assemble_view(
     path: &Path,
     source: &Path,
     entries: &BTreeMap<String, Entry>,
     hardlinks: &crate::workspace_links::Topology,
 ) -> Result<View, String> {
-    let (git_entries, git_file, git_link, git_config, git_files, git_global) = inspect_git(path)?;
+    assemble_view_with_repositories(path, source, entries, hardlinks, &BTreeMap::new(), &[])
+}
+
+fn assemble_view_with_repositories(
+    path: &Path,
+    source: &Path,
+    entries: &BTreeMap<String, Entry>,
+    hardlinks: &crate::workspace_links::Topology,
+    nested_templates: &BTreeMap<String, View>,
+    exclusions: &[String],
+) -> Result<View, String> {
+    let mut repositories = BTreeMap::new();
+    for (relative, child_template) in nested_templates {
+        if !child_template.hardlinks.is_empty() {
+            return Err("Nested hardlinks require full inspection".into());
+        }
+        let child_path = path.join(relative);
+        let prefix = format!("{relative}/");
+        let child_tracked = workspace::project_tracked_paths(&child_path);
+        let child_tracked_index = workspace::TrackedPathIndex::new(&child_path, &child_tracked);
+        let mut child_entries = BTreeMap::new();
+        for (key, entry) in entries {
+            let Some(stripped) = key.strip_prefix(&prefix) else {
+                continue;
+            };
+            if workspace::collection_excluded_with_index_hint(
+                &child_path,
+                Path::new(stripped),
+                &child_tracked_index,
+                exclusions,
+                Some(matches!(entry, Entry::Directory { .. })),
+            ) {
+                continue;
+            }
+            child_entries.insert(stripped.to_string(), entry.clone());
+        }
+        // Parent and child repositories have independent `.gitignore` and
+        // tracked-path sets (for example a parent ignoring `target/` while a
+        // submodule tracks or keeps files under `sub/target/`). Fall back to
+        // full inspection whenever slicing the parent's entries diverges from
+        // the recorded nested repository entries.
+        if child_entries.len() != child_template.entries.len()
+            || !child_entries.keys().eq(child_template.entries.keys())
+        {
+            return Err("Nested repository entries require full inspection".into());
+        }
+        let child_view = assemble_view_with_repositories(
+            &child_path,
+            &source.join(relative),
+            &child_entries,
+            &crate::workspace_links::Topology::default(),
+            &child_template.repositories,
+            exclusions,
+        )?;
+        repositories.insert(relative.clone(), child_view);
+    }
+    let excluded_git_dirs =
+        nested_git_exclusions(path, repositories.keys().map(String::as_str))?;
+    let (git_entries, git_file, git_link, git_config, git_files, git_global) =
+        inspect_git_with_stats(path, &excluded_git_dirs, None, None, None)?;
     let root = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     let git_file_metadata = if git_file {
         let file = path.join(".git");
@@ -4468,7 +4641,7 @@ fn assemble_view(
         root_extra: crate::workspace_metadata::capture(path, &root)?,
         entries: entries.clone(),
         hardlinks: hardlinks.clone(),
-        repositories: BTreeMap::new(),
+        repositories,
         git_entries,
         git_file,
         git_file_metadata,
@@ -4900,11 +5073,12 @@ pub(crate) fn seal_composed_view(
         }) {
             return Err("Unsafe graph project path".into());
         }
-        if workspace::collection_excluded_with_index(
+        if workspace::collection_excluded_with_index_hint(
             path,
             Path::new(name),
             &tracked_index,
             exclusions,
+            Some(false),
         ) {
             continue;
         }
@@ -4986,11 +5160,12 @@ pub(crate) fn seal_composed_view(
     }
     let mut recorded_directories = std::collections::BTreeSet::new();
     for name in sorted_candidate_names(&base_view, &inputs, Some(1)) {
-        if workspace::collection_excluded_with_index(
+        if workspace::collection_excluded_with_index_hint(
             path,
             Path::new(name),
             &tracked_index,
             exclusions,
+            Some(true),
         ) {
             continue;
         }
@@ -4998,11 +5173,12 @@ pub(crate) fn seal_composed_view(
             let chosen_name =
                 choose_alias_spelling_indexed(&base_index, &input_indices, name, Some(1))?;
             let resolved_name = resolve_parent_alias_prefix_indexed(&chosen_name, &canonical_dirs);
-            if workspace::collection_excluded_with_index(
+            if workspace::collection_excluded_with_index_hint(
                 path,
                 Path::new(&resolved_name),
                 &tracked_index,
                 exclusions,
+                Some(true),
             ) {
                 continue;
             }
@@ -5116,8 +5292,12 @@ fn strip_generated_at(
     root: Option<&Path>,
 ) {
     let tracked_index = root.map(|r| workspace::TrackedPathIndex::new(r, tracked));
-    let keep = |name: &str| {
-        if !crate::workspace::is_generated_artifact(Path::new(name)) {
+    let keep = |name: &str, is_dir_hint: Option<bool>| {
+        let path = Path::new(name);
+        let ignored_target = tracked_index
+            .as_ref()
+            .is_some_and(|index| index.is_ignored_target(path, is_dir_hint));
+        if !crate::workspace::is_generated_artifact(path) && !ignored_target {
             return true;
         }
         if let Some(index) = &tracked_index {
@@ -5126,10 +5306,11 @@ fn strip_generated_at(
             crate::workspace::tracked_path_matches(root, tracked, name)
         }
     };
-    view.entries.retain(|name, _| keep(name));
-    view.hardlinks.retain(keep);
+    view.entries
+        .retain(|name, entry| keep(name, Some(matches!(entry, Entry::Directory { .. }))));
+    view.hardlinks.retain(|name| keep(name, Some(false)));
     view.repositories.retain(|name, nested| {
-        if !keep(name) {
+        if !keep(name, Some(true)) {
             return false;
         }
         strip_generated_at(nested, tracked, root);

@@ -5,7 +5,7 @@ import { preparePiCli } from './pi-compat.ts';
 import { samePath } from './path-identity.mjs';
 import { flushRuntimeCompileCache } from '../scripts/pi-baseline.mjs';
 
-const roles = new Set(['partition', 'planner', 'node']);
+const roles = new Set(['planner', 'node']);
 const bindingEnvironment = new Set([
   'PI_N_MODE', 'PI_N_AGENT_KIND', 'PI_N_EXECUTION_KIND', 'PI_N_SOURCE_ALIAS', 'PI_N_SOURCE_CASE_INSENSITIVE',
   'PI_N_WORKSPACE_ROOT', 'PI_N_ORIGINAL_ROOT', 'PI_N_GRAPH_PATH', 'PI_N_UNREMOVABLE_NODES',

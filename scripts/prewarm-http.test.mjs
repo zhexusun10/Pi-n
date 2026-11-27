@@ -11,15 +11,15 @@ import { root } from './pi-baseline.mjs';
 
 const delay = ms => new Promise(completed => setTimeout(completed, ms));
 
-test('Auto refills during routing and older completions cannot revert a newly configured ready worker', { timeout: 180000 }, async () => {
+test('NodeAgent refills during execution and model changes retain the unbound ready worker', { timeout: 180000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-n-prewarm-http-'));
   let backend;
   let diagnostics = '';
   let executionSummary;
-  let releaseRoute;
-  const routeRelease = new Promise(completed => { releaseRoute = completed; });
-  let enteredRoute;
-  const routeEntered = new Promise(completed => { enteredRoute = completed; });
+  let releaseTurn;
+  const turnRelease = new Promise(completed => { releaseTurn = completed; });
+  let enteredTurn;
+  const turnEntered = new Promise(completed => { enteredTurn = completed; });
   const errors = [];
   const requests = [];
   const modelServer = createServer(async (request, response) => {
@@ -28,16 +28,16 @@ test('Auto refills during routing and older completions cannot revert a newly co
       for await (const chunk of request) body += chunk;
       const value = JSON.parse(body);
       requests.push(value.model);
-      if (value.model === 'router') {
-        enteredRoute();
-        await routeRelease;
+      if (value.model === 'node') {
+        enteredTurn();
+        await turnRelease;
       }
       const chunk = (delta, finish_reason) => ({ id: 'prewarm-test', object: 'chat.completion.chunk', created: 1,
         model: value.model, choices: [{ index: 0, delta, finish_reason }] });
       const createGraph = value.model === 'planner' && !value.messages.some(message => message.role === 'tool');
       const delta = createGraph ? { role: 'assistant', tool_calls: [{ index: 0, id: 'create-node', type: 'function',
         function: { name: 'edit_graph', arguments: JSON.stringify({ nodes: [{ id: 'A', task: 'Return completed' }] }) } }] }
-        : { role: 'assistant', content: value.model.startsWith('router') ? 'serial' : 'Completed' };
+        : { role: 'assistant', content: 'Completed' };
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end(`data: ${JSON.stringify(chunk(delta, null))}\n\ndata: ${JSON.stringify(chunk({}, createGraph ? 'tool_calls' : 'stop'))}\n\ndata: [DONE]\n\n`);
     } catch (error) {
@@ -67,7 +67,7 @@ test('Auto refills during routing and older completions cannot revert a newly co
     } } }));
     await writeFile(join(directory, '.pi', 'agent', 'models.json'), JSON.stringify({ providers: { 'prewarm-test': {
       baseUrl: `http://127.0.0.1:${modelPort}/v1`, api: 'openai-completions', apiKey: 'loopback-only',
-      models: [model('router'), model('router-next'), model('node'), model('planner')],
+      models: [model('node'), model('node-next'), model('planner')],
     } } }));
     const listener = createServer();
     await new Promise(completed => listener.listen(0, '127.0.0.1', completed));
@@ -77,9 +77,9 @@ test('Auto refills during routing and older completions cannot revert a newly co
     const env = { ...process.env, HOME: directory, USERPROFILE: directory,
       PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
       PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), PI_N_ISOLATED_PI_MODELS: '0',
-      PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'), PARTITIONER_MODEL: undefined,
-      NODE_AGENT_MODEL: 'prewarm-test/node', PLANNER_MODEL: 'prewarm-test/planner', MERGER_MODEL: 'prewarm-test/node',
-      PARTITIONER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PLANNER_THINKING: 'off', MERGER_THINKING: 'off' };
+      PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
+      NODE_AGENT_MODEL: undefined, PLANNER_MODEL: 'prewarm-test/planner', MERGER_MODEL: 'prewarm-test/node',
+      NODE_AGENT_THINKING: 'off', PLANNER_THINKING: 'off', MERGER_THINKING: 'off' };
     backend = spawn(join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`), [], {
       cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -121,69 +121,60 @@ test('Auto refills during routing and older completions cannot revert a newly co
     await until(() => diagnostics.includes('Provider/Auth prewarm ready in '), 'Provider/Auth host not prepared');
     assert.deepEqual(requests, []);
     const config = { repository: source, model: 'prewarm-test/node', thinkingLevel: 'off', maxParallel: 1, maxFeedback: 0,
-      autoApprove: false, postTaskReview: false,
-      roleModels: { partitioner: { model: 'prewarm-test/router', thinkingLevel: 'off' } } };
+      autoApprove: false, postTaskReview: false };
     await api('save_config', { config });
-    const readyCount = () => (diagnostics.match(/Partitioner prewarm ready in /g) || []).length;
-    await until(() => readyCount() >= 1 && diagnostics.includes('Planner prewarm ready in ') && diagnostics.includes('NodeAgent prewarm ready in '),
-      'All three source roles did not become process-ready');
+    const readyCount = () => (diagnostics.match(/NodeAgent prewarm ready in /g) || []).length;
+    await until(() => readyCount() >= 1 && diagnostics.includes('Planner prewarm ready in '),
+      'Both source roles did not become process-ready');
     assert.deepEqual(requests, [], 'preloading must not make model calls');
     const catalog = await api('provider_auth', { version: 1, operation: 'catalog', refresh: false });
     assert.ok(catalog.providers.some(provider => provider.id === 'prewarm-test' && provider.configured));
     assert.equal((diagnostics.match(/Provider\/Auth prewarm ready in /g) || []).length, 1, 'the claimed credential host must not be replenished/duplicated');
     assert.deepEqual(requests, []);
-    const planned = api('plan_goal', { goal: 'Return Completed without tools', config });
-    // Attach a rejection handler immediately; readiness polling may precede await.
-    planned.catch(() => {});
-    await Promise.race([routeEntered, planned.then(() => { throw new Error('Router did not enter the held model call'); })]);
-    await until(() => readyCount() >= 2, 'Replacement was not prepared during the held route');
-    assert.deepEqual(requests, ['router'], 'the replacement must remain idle');
-    const nextConfig = { ...config, roleModels: { partitioner: { model: 'prewarm-test/router-next', thinkingLevel: 'off' } } };
+    const state = await api('plan_goal', { goal: 'Return Completed without tools', config, mode: 'serial' });
+    await turnEntered;
+    await until(() => readyCount() >= 2, 'Replacement was not prepared during the held Serial turn');
+    assert.deepEqual(requests, ['node'], 'the replacement must remain idle');
+    const nextConfig = { ...config, model: 'prewarm-test/node-next' };
     await api('save_config', { config: nextConfig });
     assert.equal(readyCount(), 2, 'model changes must retain the unbound replacement; no model is loaded yet');
-    assert.deepEqual(requests, ['router'], 'configuration warming must also remain idle');
-    releaseRoute();
-    const state = await planned;
-    const assertReused = async (state, role = 'partition') => {
-      const log = await readFile(join(data, 'planning', state.planningId, `${role}.jsonl`), 'utf8');
-      const started = log.split(/\r?\n/).filter(line => line.startsWith('{')).map(line => JSON.parse(line))
-        .find(event => event.type === 'pi_n_process_started');
-      assert.equal(started.prewarmed, true);
-      assert.equal(started.prewarmStage, 'process');
-      assert.equal(typeof started.taskBindingMs, 'number');
-      assert.ok(started.taskBindingMs >= 0);
-      assert.ok(started.prewarmReadyMs >= 0);
-      assert.ok(started.launchPreparationMs >= 0);
+    assert.deepEqual(requests, ['node'], 'configuration warming must also remain idle');
+    releaseTurn();
+    const waitSerial = async runId => {
+      await until(async () => {
+        const snapshot = await api('snapshot', { runId });
+        executionSummary = `executions: ${snapshot.executions.map(value => `${value.node}:${value.status}${value.error ? ` error=${value.error}` : ''}`).join(', ') || '(none)'}`;
+        const execution = snapshot.executions.find(value => value.node === 'task' && value.status === 'completed');
+        if (!execution) return false;
+        const output = await api('get_execution_output', { runId, executionId: execution.id, full: true });
+        const started = output.content.split(/\r?\n/).filter(line => line.startsWith('{')).map(JSON.parse)
+          .find(event => event.type === 'pi_n_process_started');
+        assert.equal(started.prewarmed, true, 'Serial first turn must claim its independent prepared process');
+        assert.equal(started.prewarmStage, 'process');
+        assert.equal(started.sessionId, execution.sessionId);
+        assert.equal(typeof started.taskBindingMs, 'number');
+        return true;
+      }, 'Serial turn did not complete');
     };
-    await assertReused(state);
-    await until(async () => {
-      const snapshot = await api('snapshot', { runId: state.runId });
-      executionSummary = `executions: ${snapshot.executions.map(value => `${value.node}:${value.status}${value.error ? ` error=${value.error}` : ''}`).join(', ') || '(none)'}`;
-      const execution = snapshot.executions.find(value => value.node === 'task' && value.status === 'completed');
-      if (!execution) return false;
-      const output = await api('get_execution_output', { runId: state.runId, executionId: execution.id, full: true });
-      const started = output.content.split(/\r?\n/).filter(line => line.startsWith('{')).map(JSON.parse)
-        .find(event => event.type === 'pi_n_process_started');
-      assert.equal(started.prewarmed, true, 'Serial first turn must claim its independent prepared process');
-      assert.equal(started.prewarmStage, 'process');
-      assert.equal(started.sessionId, execution.sessionId);
-      assert.equal(typeof started.taskBindingMs, 'number');
-      return true;
-    }, 'First Serial turn did not complete');
-    const nextState = await api('plan_goal', { goal: 'Return Completed without tools', config: nextConfig });
-    await assertReused(nextState);
-    assert.ok(requests.includes('router-next'), 'the retained host must use the newly bound model, not the older model');
+    await waitSerial(state.runId);
+    const nextState = await api('plan_goal', { goal: 'Return Completed without tools', config: nextConfig, mode: 'serial' });
+    await waitSerial(nextState.runId);
+    assert.ok(requests.includes('node-next'), 'the retained host must use the newly bound model, not the older model');
     // Windows has no Graph sandbox prerequisite. The direct source-role
     // contract tests Planner on every host without depending on bubblewrap.
     if (process.platform === 'win32') {
       const graphState = await api('plan_goal', { goal: 'Create one node A without approving execution', config: nextConfig, mode: 'graph' });
-      await assertReused(graphState, 'planner');
+      const log = await readFile(join(data, 'planning', graphState.planningId, 'planner.jsonl'), 'utf8');
+      const started = log.split(/\r?\n/).filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+        .find(event => event.type === 'pi_n_process_started');
+      assert.equal(started.prewarmed, true);
+      assert.equal(started.prewarmStage, 'process');
       assert.equal(graphState.graph.nodes[0].id, 'A');
       assert.equal(graphState.approved, false);
     }
     assert.equal(await readFile(join(source, 'base.txt'), 'utf8'), 'keep');
   } finally {
-    releaseRoute();
+    releaseTurn();
     if (backend?.pid && backend.exitCode === null && backend.signalCode === null) {
       const exited = once(backend, 'exit');
       if (process.platform === 'win32') {

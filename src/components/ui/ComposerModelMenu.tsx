@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { Check, ChevronRight } from "lucide-react";
 import { t } from "../../i18n";
 import {
-  THINKING_LEVEL_SCALE,
   availableCatalogModels,
   normalizeModelThinkingLevels,
   roleModelConfig,
@@ -11,6 +10,11 @@ import {
   updateRoleModelConfig,
 } from "../../modelConfig";
 import { ComposerModels } from "../../services/composerCommands";
+import {
+  readRememberedModelThinkingLevel,
+  rememberModelThinkingLevel,
+  resolveComposerModelThinkingLevel,
+} from "../../services/modelThinkingMemory";
 import { providerAuth, type ProviderCatalog } from "../../services/providerAuth";
 import { getDesktopTitlebarInset } from "../../services/apiBase";
 import type { Config, ModelRole, RoleModelConfig, ThinkingLevel } from "../../types";
@@ -25,6 +29,7 @@ export interface ComposerModelMenuProps {
   isMerger: boolean;
   baseConfig?: Config;
   currentModel: string;
+  currentDisplayName: string;
   currentThinkingLevel: ThinkingLevel;
   currentModelThinkingLevels: ThinkingLevel[];
   isCurrentHidden: boolean;
@@ -66,22 +71,6 @@ function pointInTriangle(
 const HOVER_INTENT_DELAY_MS = 160;
 const SUBMENU_CLOSE_DELAY_MS = 220;
 
-function defaultUnchosenThinkingLevel(
-  model: ProviderCatalog["models"][number],
-): ThinkingLevel {
-  const levels = model.thinkingLevels ?? [];
-  if (levels.length === 0) return "xhigh";
-  if (levels.includes("xhigh")) return "xhigh";
-  const fallback = model.thinkingLevelFallbacks?.xhigh;
-  if (fallback && levels.includes(fallback)) return fallback;
-  const xhighIndex = THINKING_LEVEL_SCALE.indexOf("xhigh");
-  for (let index = xhighIndex - 1; index >= 0; index--) {
-    const candidate = THINKING_LEVEL_SCALE[index];
-    if (levels.includes(candidate)) return candidate;
-  }
-  return levels[levels.length - 1];
-}
-
 export default function ComposerModelMenu({
   triggerRef,
   menuId,
@@ -92,6 +81,7 @@ export default function ComposerModelMenu({
   isMerger,
   baseConfig,
   currentModel,
+  currentDisplayName,
   currentThinkingLevel,
   currentModelThinkingLevels,
   isCurrentHidden,
@@ -190,7 +180,7 @@ export default function ComposerModelMenu({
     if (isCurrentHidden && currentModel) {
       list.push({
         key: currentModel,
-        displayName: t("当前已选模型已隐藏"),
+        displayName: currentDisplayName,
         thinkingLevels: currentModelThinkingLevels,
         hiddenCurrent: true,
       });
@@ -212,7 +202,7 @@ export default function ComposerModelMenu({
       });
     }
     return list;
-  }, [availableModels, isCurrentHidden, currentModel, currentModelThinkingLevels]);
+  }, [availableModels, isCurrentHidden, currentModel, currentDisplayName, currentModelThinkingLevels]);
 
   const submenuEntry = useMemo(
     () => (submenuKey ? entries.find(item => item.key === submenuKey) ?? null : null),
@@ -327,14 +317,20 @@ export default function ComposerModelMenu({
     if (!submenu) return;
     if (focusSubmenuOnOpenRef.current) {
       focusSubmenuOnOpenRef.current = false;
+      const remembered = submenuEntry.key !== currentModel
+        ? readRememberedModelThinkingLevel(submenuEntry.key)
+        : null;
       const activeOption = submenu.querySelector<HTMLButtonElement>(".composer-thinking-item.is-selected:not(:disabled)")
+        ?? (remembered
+          ? submenu.querySelector<HTMLButtonElement>(`.composer-thinking-item[data-thinking-level="${remembered}"]:not(:disabled)`)
+          : null)
         ?? submenu.querySelector<HTMLButtonElement>(".composer-thinking-item:not(:disabled)");
       activeOption?.focus({ preventScroll: true });
     }
     const observer = new ResizeObserver(placeSubmenu);
     observer.observe(submenu);
     return () => observer.disconnect();
-  }, [submenuKey, submenuEntry, placeSubmenu]);
+  }, [submenuKey, submenuEntry, currentModel, placeSubmenu]);
 
   useEffect(() => {
     const containsTarget = (target: EventTarget | null) => {
@@ -415,7 +411,12 @@ export default function ComposerModelMenu({
 
     const switchingModel = modelKey !== currentModel;
     const switchingThinking = explicitThinkingLevel !== undefined && explicitThinkingLevel !== currentThinkingLevel;
-    if (!switchingModel && !switchingThinking) return;
+    if (!switchingModel && !switchingThinking) {
+      if (explicitThinkingLevel !== undefined && !thinkingEnvOverride) {
+        rememberModelThinkingLevel(modelKey, explicitThinkingLevel);
+      }
+      return;
+    }
 
     if ((switchingModel && modelEnvOverride) || (switchingThinking && thinkingEnvOverride)) {
       onError?.(t("此配置由环境变量覆盖，请先移除环境变量。"));
@@ -424,8 +425,10 @@ export default function ComposerModelMenu({
 
     const previewModel = catalog?.models.find(item => `${item.provider}/${item.id}` === modelKey);
     const optimisticThinking: ThinkingLevel = explicitThinkingLevel
-      ?? (switchingModel && previewModel && !thinkingEnvOverride
-        ? defaultUnchosenThinkingLevel(previewModel)
+      ?? (switchingModel && !thinkingEnvOverride
+        ? (previewModel
+          ? resolveComposerModelThinkingLevel(previewModel)
+          : readRememberedModelThinkingLevel(modelKey) ?? currentThinkingLevel)
         : currentThinkingLevel);
 
     const saveGen = ++saveGenerationRef.current;
@@ -472,12 +475,15 @@ export default function ComposerModelMenu({
         } else {
           patch = {
             model: modelKey,
-            thinkingLevel: defaultUnchosenThinkingLevel(selected),
+            thinkingLevel: resolveComposerModelThinkingLevel(selected),
           };
         }
       }
 
       await context.save({ runId, node: modelNode, role }, patch);
+      if (explicitThinkingLevel !== undefined && !thinkingEnvOverride && patch.thinkingLevel) {
+        rememberModelThinkingLevel(modelKey, patch.thinkingLevel);
+      }
     } catch (error) {
       if (selectorMountedRef.current && saveGen === saveGenerationRef.current && scopeIdentityRef.current === startedScope) {
         onError?.(error instanceof Error ? error.message : String(error));

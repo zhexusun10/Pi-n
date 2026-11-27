@@ -195,7 +195,15 @@ export function stabilizeActivitySummaryIds(
       }
       return tied ? null : matched;
     };
-    const matchedId = overlaps(byTool, true) ?? overlaps(byItem, false);
+    let matchedId = overlaps(byTool, true) ?? overlaps(byItem, false);
+    if (!matchedId && (row.summaryOpen || row.status === "running")) {
+      const liveCandidates = prevList.filter(entry =>
+        (entry.item.summaryOpen || entry.item.status === "running") && !isIdTakenElsewhere(entry.item.id),
+      );
+      if (liveCandidates.length === 1) {
+        matchedId = liveCandidates[0].item.id;
+      }
+    }
 
     if (matchedId && matchedId !== row.id) {
       claimedPrevIds.add(matchedId);

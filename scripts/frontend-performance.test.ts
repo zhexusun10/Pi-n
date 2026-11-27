@@ -488,6 +488,25 @@ test("streaming Markdown repair prevents transient setext headings and partial c
   assert.equal(cache.render("```ts\nconst x = 1;\n`", true), openFence);
   assert.equal(cache.render("```ts\nconst x = 1;\n``", true), openFence);
   assert.equal(cache.render("```ts\nconst x = 1;\n```", true), openFence);
+
+  // CommonMark §4.5: 4-space indented fences inside a top-level fenced block do
+  // not close the outer fence, so streaming repair must not emit an extra empty
+  // code block when the outer fence closes.
+  const nestedMarkdownFence = [
+    "```markdown",
+    "- Example:",
+    "    ```json",
+    '    {"a":1}',
+    "    ```",
+    "| A | B |",
+    "| --- | --- |",
+    "| 1 | 2 |",
+    "```",
+  ].join("\n");
+  assert.equal(repairStreamingMarkdown(nestedMarkdownFence), nestedMarkdownFence);
+  const streamedNested = cache.render(nestedMarkdownFence, true);
+  assert.equal(streamedNested, cache.render(nestedMarkdownFence, false));
+  assert.equal((streamedNested.match(/<pre>/g) || []).length, 1);
 });
 
 test("SSE runtimeEvents ignores malformed output_available frames and detaches visibility listener when idle", async () => {

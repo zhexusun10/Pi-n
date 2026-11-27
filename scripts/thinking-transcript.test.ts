@@ -12,7 +12,7 @@ import { VirtualizedTranscript } from "../src/components/VirtualizedTranscript.t
 import { PlannerTranscript } from "../src/components/PlannerTranscript.tsx";
 import { TranscriptErrorCard } from "../src/components/TranscriptErrorCard.tsx";
 import { closeThinkingItems, finalizeThinkingItems, splitThinkingTagDelta, updateThinkingItems } from "../src/services/thinkingTranscript.ts";
-import { appendPlannerError, applyPartitionerDelta, applyPlannerTextDelta, applyPlannerThinkingUpdate, applyPlannerToolCallUpdate, applyPlannerExtensionError, initialPlannerStream } from "../src/services/plannerStream.ts";
+import { appendPlannerError, applyPlannerTextDelta, applyPlannerThinkingUpdate, applyPlannerToolCallUpdate, applyPlannerExtensionError, initialPlannerStream } from "../src/services/plannerStream.ts";
 import { setAutoExpandCot, readAutoExpandCot, autoExpandCotEnabled, AUTO_EXPAND_COT_KEY } from "../src/services/displayPreferences.ts";
 import type { TranscriptItem } from "../src/types.ts";
 import { t } from "../src/i18n/index.ts";
@@ -780,13 +780,13 @@ test("splitThinkingTagDelta and plannerStream reducers handle interleaved <think
   const second = splitThinkingTagDelta("more</think> after <thought>second</thought>!", first.inTag);
   assert.deepEqual(second, { textChunk: " after !", thinkChunk: "moresecond", inTag: false });
 
-  let state = applyPartitionerDelta(initialPlannerStream, first.thinkChunk, first.textChunk, first.inTag);
-  state = applyPartitionerDelta(state, second.thinkChunk, second.textChunk, second.inTag);
-  assert.equal(state.partitionerThinking, "inside moresecond");
-  assert.equal(state.partitionerText, "Before  after !");
-  assert.equal(state.partitionerThinkingActive, false);
+  let plannerState = applyPlannerTextDelta(initialPlannerStream, first.thinkChunk, first.textChunk, first.inTag);
+  plannerState = applyPlannerTextDelta(plannerState, second.thinkChunk, second.textChunk, second.inTag);
+  assert.equal(plannerState.plannerThinking, "inside moresecond");
+  assert.equal(plannerState.plannerText, "Before  after !");
+  assert.equal(plannerState.plannerThinkingActive, false);
 
-  let plannerState = applyPlannerTextDelta(initialPlannerStream, "step 1", "", true);
+  plannerState = applyPlannerTextDelta(initialPlannerStream, "step 1", "", true);
   assert.equal(plannerState.plannerThinkingActive, true);
   plannerState = applyPlannerTextDelta(plannerState, "", "final answer", false);
   assert.equal(plannerState.plannerThinkingActive, false);

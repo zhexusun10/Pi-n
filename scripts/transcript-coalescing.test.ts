@@ -98,3 +98,67 @@ test("omitting tool argument fragments preserves the complete tool card and resu
   assert.equal(tool.result, "ok");
   assert.equal(tool.status, "success");
 });
+
+test("message_end backfills subsumed tail deltas onto the existing assistant text item without splitting Markdown", () => {
+  const fullMarkdown = [
+    "Intro:",
+    "",
+    "```markdown",
+    "# Report",
+    "",
+    "    ```json",
+    '    {"ok":true}',
+    "    ```",
+    "",
+    "| Col | Val |",
+    "| --- | --- |",
+    "| **P0** | item |",
+    "```",
+  ].join("\n");
+  const prefix = fullMarkdown.slice(0, fullMarkdown.indexOf("| Col |"));
+
+  // Simulate live collapsed-card polling: chunk 1 streams text_deltas while running,
+  // then chunk 2 arrives settled so compact_transcript drops the remaining tail
+  // text_deltas and emits only message_end (preserving the same item ID & bubble).
+  const state: ParseTranscriptChunkState = {
+    source: "output", byteOffset: 0, leadingFragment: false, inTagThinking: false,
+    inFinalResponse: false, finalResponseSuppressed: false, seenFirstUser: false,
+    pendingUserStart: false, assistantStartIndex: 0, userMessageStarts: new Set(), compacting: false,
+  };
+  const pending = new Map<string, TranscriptItem>();
+  const chunk1 = parseTranscriptChunkLines(
+    [start(), update("thinking_start", 0), update("text_delta", 1, { delta: prefix })].map(e => JSON.stringify(e)),
+    [],
+    pending,
+    state,
+    { showUserTurns: false, skipFirstUser: false },
+  );
+  const previousText = chunk1.currentItems.find(item => item.type === "text")!;
+  Object.freeze(previousText);
+  const chunk2 = parseTranscriptChunkLines(
+    [
+      update("thinking_end", 0, { content: "" }),
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "plan" },
+            { type: "text", text: fullMarkdown },
+            { type: "toolCall", id: "tc-1", name: "bash", arguments: { command: "ls" } },
+          ],
+        },
+      },
+    ].map(e => JSON.stringify(e)),
+    chunk1.currentItems.slice(),
+    pending,
+    state,
+    { showUserTurns: false, skipFirstUser: false },
+  );
+
+  const textItems = chunk2.currentItems.filter(item => item.type === "text");
+  assert.equal(textItems.length, 1, "message_end suffix must extend the existing text item instead of splitting it");
+  assert.equal(textItems[0].id, previousText.id);
+  assert.equal(textItems[0].content, fullMarkdown);
+  assert.deepEqual(chunk2.currentItems.map(item => item.type), ["thinking", "text", "tool_call"]);
+});

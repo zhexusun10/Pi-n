@@ -42,27 +42,9 @@ test('shouldShowRouteBadge suppresses badges when user explicitly selects serial
     false,
     'graph badge must not be shown when user selects graph mode'
   );
-
-  // When user explicitly selects auto mode in the frontend, the badge is shown
-  assert.equal(
-    shouldShowRouteBadge({ initialPlanMode: 'auto', routeType: 'undecided' }),
-    true,
-    'evaluating badge must be shown in auto mode'
-  );
-  assert.equal(
-    shouldShowRouteBadge({ initialPlanMode: 'auto', routeType: 'serial' }),
-    true,
-    'serial decision badge must be shown when decided in auto mode'
-  );
-  assert.equal(
-    shouldShowRouteBadge({ initialPlanMode: 'auto', routeType: 'graph' }),
-    true,
-    'graph decision badge must be shown when decided in auto mode'
-  );
 });
 
-test('shouldShowRouteBadge respects plannerStream mode and partitioner indicators', () => {
-  // Planner stream with explicit initialPlanMode
+test('shouldShowRouteBadge suppresses badges for explicit plannerStream modes', () => {
   assert.equal(
     shouldShowRouteBadge({ plannerStream: { initialPlanMode: 'serial' }, routeType: 'serial' }),
     false
@@ -70,20 +52,6 @@ test('shouldShowRouteBadge respects plannerStream mode and partitioner indicator
   assert.equal(
     shouldShowRouteBadge({ plannerStream: { initialPlanMode: 'graph' }, routeType: 'graph' }),
     false
-  );
-  assert.equal(
-    shouldShowRouteBadge({ plannerStream: { initialPlanMode: 'auto' }, routeType: 'serial' }),
-    true
-  );
-
-  // Streaming partitioner content indicates auto route
-  assert.equal(
-    shouldShowRouteBadge({ plannerStream: { stage: 'partitioning' }, routeType: 'undecided' }),
-    true
-  );
-  assert.equal(
-    shouldShowRouteBadge({ plannerStream: { partitionerText: 'Evaluating...' }, routeType: 'undecided' }),
-    true
   );
 });
 
@@ -122,7 +90,7 @@ test('shouldShowRouteBadge deduces mode from snapshot events and partition metri
 
 test('resolveRunRouteType prefers active route, then cached snapshot, then persisted run mode', () => {
   assert.equal(
-    resolveRunRouteType({ runId: 'run-1', activeRunId: 'run-1', activeRouteType: 'serial', runMode: 'auto' }),
+    resolveRunRouteType({ runId: 'run-1', activeRunId: 'run-1', activeRouteType: 'serial', runMode: 'graph' }),
     'serial'
   );
   assert.equal(
@@ -131,7 +99,7 @@ test('resolveRunRouteType prefers active route, then cached snapshot, then persi
       activeRunId: 'run-1',
       activeRouteType: 'serial',
       cachedSnapshot: { planType: 'graph', events: [] },
-      runMode: 'auto',
+      runMode: 'serial',
     }),
     'graph'
   );
@@ -140,7 +108,7 @@ test('resolveRunRouteType prefers active route, then cached snapshot, then persi
     'serial'
   );
   assert.equal(
-    resolveRunRouteType({ runId: 'run-4', activeRunId: 'run-1', activeRouteType: 'graph', runMode: 'auto' }),
+    resolveRunRouteType({ runId: 'run-4', activeRunId: 'run-1', activeRouteType: 'graph' }),
     'undecided'
   );
 });

@@ -12,7 +12,7 @@ import { ExtensionSettings } from "../ExtensionSettings";
 import { AutostartSettings } from "../AutostartSettings";
 import { UpdateSettings } from "../UpdateSettings";
 import { normalizeWorkspacePath } from "../../services/workspaceConversations";
-import { autoExpandCotEnabled, setAutoExpandCot, executionOverviewEnabled, setExecutionOverview, currentLandingBackground, setLandingBackground, currentAccentColor, setAccentColor, hideAutoModeEnabled, setHideAutoMode, completionNotificationsEnabled, setCompletionNotifications, completionNotificationSoundEnabled, setCompletionNotificationSound } from "../../services/displayPreferences";
+import { autoExpandCotEnabled, setAutoExpandCot, executionOverviewEnabled, setExecutionOverview, currentLandingBackground, setLandingBackground, currentAccentColor, setAccentColor, completionNotificationsEnabled, setCompletionNotifications, completionNotificationSoundEnabled, setCompletionNotificationSound } from "../../services/displayPreferences";
 import {
   getNotificationPermissionStatus,
   openDesktopNotificationSettings,
@@ -63,7 +63,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
   const [executionOverview, setExecutionOverviewDraft] = useState(() => executionOverviewEnabled());
   const [landingBackground, setLandingBackgroundDraft] = useState(() => currentLandingBackground());
   const [accentColor, setAccentColorDraft] = useState(() => currentAccentColor());
-  const [hideAutoMode, setHideAutoModeDraft] = useState(() => hideAutoModeEnabled());
   const [completionNotifications, setCompletionNotificationsDraft] = useState(() => completionNotificationsEnabled());
   const [completionNotificationSound, setCompletionNotificationSoundDraft] = useState(() => completionNotificationSoundEnabled());
   const [desktopNotificationPermission, setDesktopNotificationPermission] = useState<NotificationPermissionState | null>(
@@ -118,7 +117,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
       setExecutionOverview(executionOverview);
       setLandingBackground(landingBackground);
       setAccentColor(accentColor);
-      setHideAutoMode(hideAutoMode);
       setCompletionNotifications(completionNotifications);
       setCompletionNotificationSound(completionNotificationSound);
       if (completionNotifications) void requestBrowserNotificationPermission();
@@ -184,7 +182,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
       setExecutionOverviewDraft(executionOverviewEnabled());
       setLandingBackgroundDraft(currentLandingBackground());
       setAccentColorDraft(currentAccentColor());
-      setHideAutoModeDraft(hideAutoModeEnabled());
       setCompletionNotificationsDraft(completionNotificationsEnabled());
       setCompletionNotificationSoundDraft(completionNotificationSoundEnabled());
       setSaveError("");
@@ -251,7 +248,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                     : t("配置新对话的默认模型，不影响已有对话。")}</span>
                 </div>
               </div>
-              <RoleModelSettings config={draftConfig} setConfig={updateDraftConfig} catalog={catalog} envOverrides={envOverrides} busy={catalogBusy || saving} hidePartitioner={hideAutoMode} />
+              <RoleModelSettings config={draftConfig} setConfig={updateDraftConfig} catalog={catalog} envOverrides={envOverrides} busy={catalogBusy || saving} />
             </section>
 
             <ExtensionSettings disabled={saving} />
@@ -379,19 +376,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                 <Wallpaper size={16} />
                 <h4 id="ui-settings-title">{t("UI设置")}</h4>
               </div>
-              <label className="settings-toggle-row">
-                <span>
-                  <strong>{t("隐藏 Auto 模式")}</strong>
-                  <small>{t("隐藏输入框中的 Auto 模式与 Partitioner 模型选项，让界面更简洁。")}</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={hideAutoMode}
-                  disabled={saving}
-                  onChange={(event) => setHideAutoModeDraft(event.target.checked)}
-                  aria-label={t("隐藏 Auto 模式")}
-                />
-              </label>
               <label className="settings-toggle-row">
                 <span>
                   <strong>{t("执行时自动展开思维链")}</strong>

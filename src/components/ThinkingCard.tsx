@@ -56,6 +56,7 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
     // upgrading a running summary projection to full output) so the card never
     // shrinks from shimmer to one line and grows across seconds while expanding.
     const smoothContent = useSmoothStreamText(rawContent, isStreaming, isExpanded, 160, item?.id);
+    const hasRenderedContent = Boolean(smoothContent.trim());
     // Sync continuous pulse keyframes to wall-clock phase on mount so remounting
     // across collapse/expand card transitions never flashes the icon back to 0%.
     const [pulsePhase] = useState(() => {
@@ -356,7 +357,7 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
               onKeyDown={handleKeyDown}
               onPointerDown={handlePointerDown}
             >
-              {hasVisibleContent ? (
+              {hasRenderedContent ? (
                 <div ref={contentRef} className="thinking-content-container">
                   <MarkdownRenderer
                     content={smoothContent}
@@ -365,11 +366,11 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
                     className="thinking-markdown"
                   />
                 </div>
-              ) : isStreaming || item?.hydrating ? (
+              ) : isStreaming || item?.hydrating || hasVisibleContent ? (
                 <div className="thinking-shimmer">
                   <span className="shimmer-line" />
                   <span className="thinking-shimmer-text">
-                    {isStreaming ? t("模型正在生成分析与推演逻辑...") : t("正在加载历史记录…")}
+                    {isStreaming || hasVisibleContent ? t("模型正在生成分析与推演逻辑...") : t("正在加载历史记录…")}
                   </span>
                 </div>
               ) : (

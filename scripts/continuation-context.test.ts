@@ -15,7 +15,7 @@ function project(messages: unknown[], continuation = true) {
   const previousContinuation = process.env.PI_N_CONTINUE_INTERRUPTED;
   const previousKind = process.env.PI_N_EXECUTION_KIND;
   try {
-    process.env.PI_N_MODE = continuation ? 'partition' : 'node';
+    process.env.PI_N_MODE = continuation ? 'merger' : 'node';
     process.env.PI_N_CONTINUE_INTERRUPTED = continuation ? 'true' : 'false';
     delete process.env.PI_N_EXECUTION_KIND;
     const hooks = new Map<string, (event: any) => any>();

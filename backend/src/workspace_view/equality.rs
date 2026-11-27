@@ -25,17 +25,17 @@ pub(super) fn equal(left: &View, right: &View) -> bool {
         git_files,
         git_global,
     } = left;
-    *schema == super::VIEW_SCHEMA
+    matches!(*schema, super::LEGACY_VIEW_SCHEMA | super::VIEW_SCHEMA)
         && *schema == right.schema
         && source == &right.source
         && *root_mode == right.root_mode
         && root_extra.eq_for_view_identity(&right.root_extra)
-        && map_equal(entries, &right.entries, false, entry_equal)
+        && map_equal(entries, &right.entries, None, entry_equal)
         && hardlinks == &right.hardlinks
-        && map_equal(repositories, &right.repositories, false, equal)
+        && map_equal(repositories, &right.repositories, None, equal)
         && match (git_entries, &right.git_entries) {
             (None, None) => true,
-            (Some(a), Some(b)) => map_equal(a, b, true, entry_equal),
+            (Some(a), Some(b)) => map_equal(a, b, Some(*schema), entry_equal),
             _ => false,
         }
         && *git_file == right.git_file
@@ -43,17 +43,22 @@ pub(super) fn equal(left: &View, right: &View) -> bool {
         && *git_link == right.git_link
         && metadata_equal(git_link_metadata, &right.git_link_metadata)
         && git_config == &right.git_config
-        && map_equal(git_files, &right.git_files, false, |a, b| a == b)
+        && map_equal(git_files, &right.git_files, None, |a, b| a == b)
         && git_global == &right.git_global
+}
+
+fn skip_git_entry(schema: u32, name: &str) -> bool {
+    name == "index"
+        || (schema >= super::VIEW_SCHEMA && matches!(name, "config" | "config.worktree"))
 }
 
 fn map_equal<T>(
     left: &BTreeMap<String, T>,
     right: &BTreeMap<String, T>,
-    git_index: bool,
+    git_schema: Option<u32>,
     equal: impl Fn(&T, &T) -> bool,
 ) -> bool {
-    let keep = |name: &str| !(git_index && name == "index");
+    let keep = |name: &str| !git_schema.is_some_and(|schema| skip_git_entry(schema, name));
     let mut left = left.iter().filter(|(name, _)| keep(name));
     let mut right = right.iter().filter(|(name, _)| keep(name));
     loop {
@@ -109,9 +114,9 @@ fn first_map_diff(
     prefix: &str,
     left: &BTreeMap<String, Entry>,
     right: &BTreeMap<String, Entry>,
-    skip_git_index: bool,
+    git_schema: Option<u32>,
 ) -> Option<String> {
-    let keep = |name: &str| !(skip_git_index && name == "index");
+    let keep = |name: &str| !git_schema.is_some_and(|schema| skip_git_entry(schema, name));
     let mut left_iter = left.iter().filter(|(name, _)| keep(name)).peekable();
     let mut right_iter = right.iter().filter(|(name, _)| keep(name)).peekable();
     while let (Some(&(lk, lv)), Some(&(rk, rv))) = (left_iter.peek(), right_iter.peek()) {
@@ -139,12 +144,12 @@ fn first_map_diff(
 /// Summarize the first observable difference between two `View` snapshots so
 /// concurrent-change diagnostics point to the exact file or metadata that moved.
 pub(super) fn first_diff_detail(left: &View, right: &View) -> Option<String> {
-    if let Some(diff) = first_map_diff("", &left.entries, &right.entries, false) {
+    if let Some(diff) = first_map_diff("", &left.entries, &right.entries, None) {
         return Some(diff);
     }
     match (&left.git_entries, &right.git_entries) {
         (Some(a), Some(b)) => {
-            if let Some(diff) = first_map_diff(".git/", a, b, true) {
+            if let Some(diff) = first_map_diff(".git/", a, b, Some(left.schema)) {
                 return Some(diff);
             }
         }
@@ -152,7 +157,7 @@ pub(super) fn first_diff_detail(left: &View, right: &View) -> Option<String> {
         (None, Some(_)) => return Some(".git added".into()),
         (None, None) => {}
     }
-    if !map_equal(&left.repositories, &right.repositories, false, equal) {
+    if !map_equal(&left.repositories, &right.repositories, None, equal) {
         for (path, left_repo) in &left.repositories {
             match right.repositories.get(path) {
                 None => return Some(format!("{path} repository removed")),

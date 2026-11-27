@@ -19,11 +19,8 @@ pnpm-debug.log*
 .tmp/
 
 # Local notes and generated release artifacts
-MYLOG.md
 /release/
-
-# Promotional video project
-/my-motion/
+/promo/
 
 # Local environment and credentials; only the placeholder is publishable
 .env*

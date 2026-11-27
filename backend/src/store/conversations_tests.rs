@@ -118,6 +118,55 @@ fn sidebar_summaries_never_materialize_current_logs() {
 }
 
 #[test]
+fn sidebar_order_stays_at_creation_order_when_appending_to_older_conversation() {
+    let fixture = Fixture::new();
+    let mut first = fixture.create("first", "/repo", "First");
+    let config = first.config.clone().unwrap();
+    let graph: Graph = serde_json::from_value(serde_json::json!({
+        "originalGoal": "First", "nodes": [{"id":"task", "task":"Work"}], "edges":[]
+    }))
+    .unwrap();
+    fixture
+        .store
+        .append(&mut first, EventKind::DraftEdited { graph, config })
+        .unwrap();
+    let _second = fixture.create("second", "/repo", "Second");
+    assert_eq!(
+        fixture
+            .summaries()
+            .iter()
+            .map(|s| s.run_id.as_str())
+            .collect::<Vec<_>>(),
+        ["second", "first"]
+    );
+    fixture
+        .store
+        .append(
+            &mut first,
+            EventKind::Invalidated {
+                nodes: vec!["task".into()],
+                target: "task".into(),
+                instruction: "Follow-up".into(),
+                human: true,
+                request_id: None,
+                images: None,
+                workspace: None,
+                shared_workspace: false,
+                source_direct: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        fixture
+            .summaries()
+            .iter()
+            .map(|s| s.run_id.as_str())
+            .collect::<Vec<_>>(),
+        ["second", "first"]
+    );
+}
+
+#[test]
 fn sidebar_cache_refreshes_after_commits_from_another_store_and_deletion() {
     let fixture = Fixture::new();
     let mut state = fixture.create("one", "/old", "Old goal");

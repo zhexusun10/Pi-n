@@ -8,7 +8,6 @@ Scope: Pi^n-side integration, not an upstream Pi implementation guide. [CONTRIBU
 
 | Role | Pi^n loading policy |
 | --- | --- |
-| Partitioner | No tools, context files, user extensions, MCP, or skills; bundled `pi-trim` only. |
 | Planner | `edit_graph`, `read_graph`, `read`, `bash`, selected extensions/MCP/skills; `write`/`edit` only when `plannerWriteTools` is enabled (default true; explicit opt-outs are preserved). Eligible [follow-ups](../architecture/execution-model.md#planner-follow-up-workspaces) expose `switch_workspace`. No automatic project context files. |
 | Serial Agent | Pi's native file/shell tools, selected extensions/MCP/skills, trusted source resources and the ordinary source-project prompt. |
 | Graph Node Agent | Pi^n's path-adapted tools, selected extensions/MCP/skills and trusted workspace resources; private Graph nodes receive the relative-path convention. |
@@ -136,7 +135,7 @@ The built-in `edit` boundary accepts `{path, edits}` and rejects top-level `oldT
 
 ## Prewarming and prepared runtime
 
-Source Partitioner/Planner/Node roles prepare unbound processes without sessions, user extensions, project writes, or model calls. A matching request binds its execution agent kind, project and session before extension factories and tools are initialized; the role-neutral source prewarm can therefore become either a Serial Agent or a source-direct Graph Node Agent. Pending preparation is a cold-path miss, not a request-path wait. Claimed processes are not recycled across Runs. Serial may separately retain a verified continuation session.
+Source Planner and Node roles prepare unbound processes without sessions, user extensions, project writes, or model calls. A matching request binds its execution agent kind, project and session before extension factories and tools are initialized; the role-neutral source prewarm can therefore become either a Serial Agent or a source-direct Graph Node Agent. Pending preparation is a cold-path miss, not a request-path wait. Claimed processes are not recycled across Runs. Serial may separately retain a verified continuation session.
 
 Provider/Auth readiness loads code without constructing a credential runtime, checking credentials, or initiating login. A parked Serial shell must match the next turn's model and thinking settings; see [Process lifecycle](../architecture/filesystem-isolation.md#parked-serial-shells-and-held-planner-services). Private Graph nodes, private Planner turns, and Mergers cold-start through their platform launcher; an already-started source process cannot acquire that private sandbox later.
 
@@ -152,7 +151,7 @@ Baseline upgrades are separate, explicitly requested maintenance, not part of ro
 
 1. Agree the reviewed exact target and authorize affected restarts. [pi-baseline.mjs](../../scripts/pi-baseline.mjs) owns adoption/setup/build; [pi-dependencies.mjs](../../scripts/pi-dependencies.mjs) owns the reviewed dependency profile. Review generated gitlink, manifest, catalog, and dependency changes together; do not hand-edit frozen inputs.
 2. Adoption requires a clean target and valid model data. After updating the root Pi package pins and lockfile, run `npm run pi:verify`: it checks the source commit, tracked and untracked checkout changes, source package version and lock hash, reviewed model-data hashes, and root Pi peer pins. Runtime startup also checks the source baseline; its dependency-profile check is separate. Ignored build artifacts and the optional local model-data overlay are intentionally allowed and are not proven pristine by this check.
-3. Select affected adapter, bundled-extension, and platform checks from [Testing](testing.md). Existing processes keep loaded code, so stop the backend, provider host, and every prewarmed Partition/Planner/Node worker before accepting the upgraded runtime; restart the whole application rather than only retrying planning. A process that survives the upgrade can mix an old cached module with new source and fail with a missing-export error such as `ownedSlice`.
+3. Select affected adapter, bundled-extension, and platform checks from [Testing](testing.md). Existing processes keep loaded code, so stop the backend, provider host, and every prewarmed Planner/Node worker before accepting the upgraded runtime; restart the whole application rather than only retrying planning. A process that survives the upgrade can mix an old cached module with new source and fail with a missing-export error such as `ownedSlice`.
 
 Bundled extensions can be updated independently using exact project dependency pins and matching lockfile changes, validated against the current baseline's [SDK contracts](../../scripts/pi-compat.test.ts). A global Pi/package update does not replace Pi^n's bundled copy.
 

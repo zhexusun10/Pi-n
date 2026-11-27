@@ -2,8 +2,8 @@
 #![cfg(feature = "fixture")]
 
 use pi_n::{
-    engine::{parse_route_decision, run_pi, PiRequest, PiRole},
-    model::{Config, Route},
+    engine::{run_pi, PiRequest, PiRole},
+    model::Config,
 };
 use std::fs;
 use tempfile::TempDir;
@@ -54,177 +54,6 @@ fn execute_script_in_mode(script: &str, mode: Option<&str>) -> (Result<String, S
         |text| output.push_str(&text),
     );
     (result, output)
-}
-
-#[test]
-fn parse_route_decision_recognizes_exact_single_words_and_formatting() {
-    assert_eq!(
-        parse_route_decision("parallel"),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("serial"),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("Parallel"),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("SERIAL\n"),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("  parallel  "),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("**parallel**"),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("`serial`"),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("\"parallel\"."),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-}
-
-#[test]
-fn parse_route_decision_recognizes_keywords_in_discursive_sentences() {
-    assert_eq!(
-        parse_route_decision("I recommend parallel for this task."),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("This is a simple bug fix, please use serial."),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("Analysis:\n- Independent modules\n- Independent work\nTherefore, parallel execution is required."),
-        Route { plan_type: "graph".into() }
-    );
-    assert_eq!(
-        parse_route_decision("Analysis:\n- Single file edit\nProceed with serial."),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-}
-
-#[test]
-fn parse_route_decision_resolves_comparison_of_both_keywords() {
-    // The last keyword wins.
-    assert_eq!(
-        parse_route_decision("Serial execution was considered, but we should use parallel."),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("While parallel is possible, serial is safer here."),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-}
-
-#[test]
-fn parse_route_decision_recognizes_explicit_decision_marker() {
-    assert_eq!(
-        parse_route_decision("Some reasoning here...\nDECISION: parallel"),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("Some reasoning here...\nDECISION: serial"),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("Reasoning: independent work.\n**DECISION: PARALLEL**"),
-        Route {
-            plan_type: "graph".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("Reasoning: single step.\n**decision:** serial."),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-}
-
-#[test]
-fn parse_route_decision_safe_fallback_on_ambiguity_or_gibberish() {
-    assert_eq!(
-        parse_route_decision(""),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("I am not sure what to do here. Hello world!"),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-    assert_eq!(
-        parse_route_decision("42 is the answer to everything."),
-        Route {
-            plan_type: "serial".into()
-        }
-    );
-}
-
-#[test]
-fn parse_route_decision_does_not_recognize_graph_or_partial_keywords() {
-    for text in [
-        "graph",
-        "grap",
-        "seral",
-        "paragraph",
-        "parallelism",
-        "nonparallel",
-    ] {
-        assert_eq!(parse_route_decision(text).plan_type, "serial", "{text}");
-    }
-    assert_eq!(
-        parse_route_decision("graph execution: parallel").plan_type,
-        "graph"
-    );
-}
-
-#[test]
-fn partitioner_prompt_requests_the_labels_the_parser_recognizes() {
-    let prompt = include_str!("../resources/prompts/partitioner.md").replace("\r\n", "\n");
-    assert!(prompt.contains("parallel"));
-    assert!(prompt.contains("serial"));
-    assert!(prompt.to_lowercase().contains("output only"));
 }
 
 #[test]
@@ -307,12 +136,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
         feedback_enabled: false,
         planner_write_tools: true,
     };
-    for role in [
-        PiRole::Merger,
-        PiRole::NodeAgent,
-        PiRole::Planner,
-        PiRole::Partitioner,
-    ] {
+    for role in [PiRole::Merger, PiRole::NodeAgent, PiRole::Planner] {
         let mut output = String::new();
         let result = run_pi(
             PiRequest {
@@ -342,7 +166,7 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
 }
 
 #[test]
-fn planner_and_node_allow_resources_while_partitioner_disables_them() {
+fn planner_and_node_allow_resources_while_merger_disables_skills() {
     let temp = TempDir::new().unwrap();
     let script_path = temp.path().join("fake-pi.sh");
     let script = r#"cat >/dev/null
@@ -450,28 +274,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
             && !read_only_planner_out.contains("--tools")
     );
     assert!(read_only_planner_out.contains("PLANNER_WRITE_TOOLS: false"));
-    let mut partitioner_out = String::new();
-    let _ = run_pi(
-        PiRequest {
-            role: PiRole::Partitioner,
-            config: &config,
-            cwd: temp.path(),
-            task: "task",
-            session_dir: &temp.path().join("session-part"),
-            extension: None,
-            tools: Some(""),
-            session_id: None,
-            extra_args: vec!["--no-tools", "--no-context-files"],
-            environment: Vec::new(),
-            system_prompt: None,
-            images: None,
-        },
-        |text| partitioner_out.push_str(&text),
-    );
-    assert!(partitioner_out.contains("--no-skills"));
-    assert!(partitioner_out.contains("--no-extensions"));
-    assert!(partitioner_out.contains("--no-approve"));
-    assert!(partitioner_out.contains("--no-tools"));
     let mut merger_out = String::new();
     let _ = run_pi(
         PiRequest {
@@ -523,7 +325,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
         role_models: Default::default(),
     };
     for (role, name) in [
-        (PiRole::Partitioner, "partition"),
         (PiRole::Planner, "planner"),
         (PiRole::NodeAgent, "node"),
         (PiRole::Merger, "merger"),
@@ -676,25 +477,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
     let resolved = PiModelConfig::resolve(PiRole::NodeAgent, &base_config);
     assert_eq!(resolved.model, "internal-pi-n-model");
     assert_eq!(resolved.thinking.as_deref(), Some("medium"));
-    let saved_thinking = std::env::var("PARTITIONER_THINKING").ok();
-    std::env::remove_var("PARTITIONER_THINKING");
-    assert_eq!(
-        PiModelConfig::resolve(PiRole::Partitioner, &base_config)
-            .thinking
-            .as_deref(),
-        Some("low")
-    );
-    std::env::set_var("PARTITIONER_THINKING", "medium");
-    assert_eq!(
-        PiModelConfig::resolve(PiRole::Partitioner, &base_config)
-            .thinking
-            .as_deref(),
-        Some("medium")
-    );
-    match saved_thinking {
-        Some(value) => std::env::set_var("PARTITIONER_THINKING", value),
-        None => std::env::remove_var("PARTITIONER_THINKING"),
-    }
 
     std::env::set_var("NODE_AGENT_MODEL", "override-node-model");
     let resolved_override = PiModelConfig::resolve(PiRole::NodeAgent, &base_config);

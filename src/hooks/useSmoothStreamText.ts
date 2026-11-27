@@ -225,6 +225,14 @@ export function useSmoothStreamText(
       // for...of 按码点迭代，避免大块内容用展开运算符 push 时超出调用栈上限。
       for (const char of target.slice(enqueuedRef.current.length)) queueRef.current.push(char);
       enqueuedRef.current = target;
+      if (
+        streamingRef.current &&
+        streamKeyRef.current &&
+        displayedRef.current.length > 0 &&
+        displayedRef.current.length < target.length
+      ) {
+        saveSmoothStreamProgress(streamKeyRef.current, displayedRef.current);
+      }
       ensureLoop();
     }
   }, [targetText, ensureLoop, snapToTarget, initialBackfillSnapChars]);
@@ -290,8 +298,14 @@ export function useSmoothStreamText(
 
   const isSettledBackfill =
     initialBackfillSnapChars > 0 && !isStreaming && !everStreamedRef.current;
+  const isLargeInitialBackfill =
+    initialBackfillSnapChars > 0 &&
+    enqueuedRef.current.length === 0 &&
+    targetText.length >= initialBackfillSnapChars;
 
-  return reduceMotion || !enabled || isSettledBackfill ? targetText : displayedText;
+  return reduceMotion || !enabled || isSettledBackfill || isLargeInitialBackfill
+    ? targetText
+    : displayedText;
 }
 
 export default useSmoothStreamText;

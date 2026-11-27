@@ -331,8 +331,6 @@ export const runtimeService = {
             onEvent({ type: "run_started", runId: dataObj.runId });
           } else if (eventType === "route_decision") {
             onEvent({ type: "route_decision", planType: dataObj.planType });
-          } else if (eventType === "partitioner") {
-            onEvent({ type: "partitioner", raw: dataObj.raw, event: dataObj.event });
           } else if (eventType === "planner") {
             onEvent({ type: "planner", raw: dataObj.raw, event: dataObj.event });
           } else if (eventType === "error") {
@@ -432,7 +430,7 @@ export const runtimeService = {
   },
   getPlanningSnapshot: (planningId: string, repository: string, signal?: AbortSignal) =>
     request<Snapshot>("get_planning_snapshot", { planningId, repository }, signal),
-  getPlanningOutput: (planningId: string, role: "partition" | "planner", offset = 0, signal?: AbortSignal, tail = false, before?: number, limit?: number, summaryOnlyOrProjection: boolean | "summary" | "cards" = false) => {
+  getPlanningOutput: (planningId: string, role: "planner", offset = 0, signal?: AbortSignal, tail = false, before?: number, limit?: number, summaryOnlyOrProjection: boolean | "summary" | "cards" = false) => {
     const projection = summaryOnlyOrProjection === true ? "summary" : summaryOnlyOrProjection || undefined;
     return request<PlanningOutputPage>(
       "get_planning_output", {
@@ -442,7 +440,7 @@ export const runtimeService = {
         ...(tail ? { tail: true, ...(before !== undefined ? { before } : {}) } : {}),
       }, signal);
   },
-  hydratePlanningRanges: (planningId: string, role: "partition" | "planner", ranges: ReadonlyArray<readonly [number, number]>, signal?: AbortSignal) =>
+  hydratePlanningRanges: (planningId: string, role: "planner", ranges: ReadonlyArray<readonly [number, number]>, signal?: AbortSignal) =>
     request<PlanningOutputPage>(
       "get_planning_output", { planningId, role, ranges }, signal),
   getPlanning: (planningId: string, signal?: AbortSignal) => request<PlanningSummary>("get_planning", { planningId }, signal),

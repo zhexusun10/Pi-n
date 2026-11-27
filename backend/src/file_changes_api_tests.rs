@@ -1254,17 +1254,22 @@ fn file_changes_api_hides_untracked_gitignored_build_outputs_while_keeping_sourc
     .unwrap();
     let after = crate::workspace::snapshot_node(&worktree, &repo, "worker").unwrap();
 
-    // Snapshot contract: runnable binary stays in the node snapshot, while
-    // Cargo deps intermediate does not.
+    // Snapshot contract: untracked `.gitignore`-matched Cargo `target/` outputs
+    // (including debug binaries) are excluded at snapshot time, while other
+    // `.gitignore`-matched outputs such as `src-tauri/gen/` stay in the
+    // snapshot and are filtered only in UI file-changes display.
     let tree_files = crate::workspace::repository_git(
         &repo,
         &["ls-tree", "-r", "--name-only", "-z", &after],
     )
     .unwrap();
-    assert!(tree_files.split('\0').any(|p| p == "backend/target/debug/pi-n"));
+    assert!(!tree_files.split('\0').any(|p| p == "backend/target/debug/pi-n"));
     assert!(!tree_files
         .split('\0')
         .any(|p| p == "backend/target/debug/deps/libfoo.rmeta"));
+    assert!(tree_files
+        .split('\0')
+        .any(|p| p == "src-tauri/gen/schemas/desktop-schema.json"));
 
     let mut runtime = Runtime::open(temp.path()).unwrap();
     runtime.state.run_id = run.clone();
@@ -1334,5 +1339,205 @@ fn file_changes_api_hides_untracked_gitignored_build_outputs_while_keeping_sourc
         .collect();
     assert_eq!(paths, vec!["src/app.rs"]);
     assert_eq!(value["summary"]["totalFiles"].as_u64(), Some(1));
+    crate::file_changes::invalidate_run(&run);
+}
+
+#[test]
+fn lazy_snapshot_run_hydrates_publication_file_changes_when_state_base_is_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join("src")).unwrap();
+    crate::workspace::git(&repo, &["init", "-q"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.email", "test@example.com"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.name", "Tester"]).unwrap();
+    fs::write(repo.join("src/lib.rs"), "pub fn v1() {}\n").unwrap();
+    crate::workspace::git(&repo, &["add", "."]).unwrap();
+    crate::workspace::git(&repo, &["commit", "-qm", "base"]).unwrap();
+
+    let source_head = crate::workspace::snapshot_repository(&repo).unwrap();
+    let run = Uuid::new_v4().to_string();
+    let worktree = temp.path().join(".pi-n-worktrees").join(&run).join("worker");
+    crate::workspace::prepare(&repo, &worktree, &source_head, &[]).unwrap();
+    fs::write(worktree.join("src/lib.rs"), "pub fn v2() {}\n").unwrap();
+    let node_head = crate::workspace::snapshot_node(&worktree, &repo, "worker").unwrap();
+    let published_head =
+        crate::graph_merge::merge_graph(&repo, &[node_head], || panic!("no conflict")).unwrap();
+
+    let mut runtime = Runtime::open(temp.path()).unwrap();
+    runtime.state.run_id = run.clone();
+    runtime
+        .emit(EventKind::Created {
+            graph: Graph {
+                original_goal: "lazy snapshot pub".into(),
+                nodes: vec![Node {
+                    id: "worker".into(),
+                    task: "edit".into(),
+                }],
+                edges: vec![],
+            },
+            config: serde_json::from_value(serde_json::json!({
+                "repository": repo, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+    // Adaptive batch approval leaves `base` empty; lazy `SourceSnapshotted`
+    // records `latest_source_base`.
+    runtime
+        .emit(EventKind::Approved {
+            base: String::new(),
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::SourceSnapshotted {
+            head: source_head.clone(),
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::PublicationStarted {
+            repository: repo.to_string_lossy().into_owned(),
+            heads: vec![published_head.clone()],
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::PublicationCompleted {
+            head: published_head.clone(),
+        })
+        .unwrap();
+
+    assert_eq!(runtime.state.base, "");
+    assert_eq!(runtime.state.publication_base(), source_head);
+
+    crate::file_changes::invalidate_run(&run);
+    let service = Arc::new(Service {
+        runtime: Mutex::new(runtime),
+        driving: AtomicBool::new(false),
+        drive_signal: (Mutex::new(0), Condvar::new()),
+        planning: AtomicBool::new(false),
+        extension: PathBuf::new(),
+    });
+    let value = read_changes(|| get_file_changes(&serde_json::json!({ "runId": run }), &service));
+    let paths: Vec<&str> = value["summary"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["src/lib.rs"]);
+    crate::file_changes::invalidate_run(&run);
+}
+
+#[test]
+fn merger_file_changes_attribute_only_conflict_resolutions_not_clean_incoming_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    crate::workspace::git(&repo, &["init", "-q"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.email", "test@example.com"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.name", "Tester"]).unwrap();
+    fs::write(repo.join("shared.txt"), "base\n").unwrap();
+    fs::write(repo.join("incoming_only.txt"), "base\n").unwrap();
+    crate::workspace::git(&repo, &["add", "."]).unwrap();
+    crate::workspace::git(&repo, &["commit", "-qm", "base"]).unwrap();
+    let base_sha = crate::workspace::git(&repo, &["rev-parse", "HEAD"]).unwrap();
+
+    // Branch A modifies `shared.txt`.
+    fs::write(repo.join("shared.txt"), "left\n").unwrap();
+    crate::workspace::git(&repo, &["commit", "-qam", "left"]).unwrap();
+    let left_sha = crate::workspace::git(&repo, &["rev-parse", "HEAD"]).unwrap();
+
+    // Branch B modifies both `shared.txt` (conflict) and `incoming_only.txt` (clean).
+    crate::workspace::git(&repo, &["checkout", "-q", "-b", "incoming", &base_sha]).unwrap();
+    fs::write(repo.join("shared.txt"), "right\n").unwrap();
+    fs::write(repo.join("incoming_only.txt"), "right-clean\n").unwrap();
+    crate::workspace::git(&repo, &["commit", "-qam", "right"]).unwrap();
+    let right_sha = crate::workspace::git(&repo, &["rev-parse", "HEAD"]).unwrap();
+
+    // Merge incoming into left, resolving `shared.txt` and leaving `incoming_only.txt` untouched.
+    crate::workspace::git(&repo, &["checkout", "-q", &left_sha]).unwrap();
+    assert!(crate::workspace::git(&repo, &["merge", "--no-commit", &right_sha]).is_err());
+    fs::write(repo.join("shared.txt"), "merged\n").unwrap();
+    crate::workspace::git(&repo, &["add", "shared.txt"]).unwrap();
+    crate::workspace::git(&repo, &["commit", "-qm", "resolve merge"]).unwrap();
+    let merged_sha = crate::workspace::git(&repo, &["rev-parse", "HEAD"]).unwrap();
+
+    let run = Uuid::new_v4().to_string();
+    let merger_id = Uuid::new_v4().to_string();
+    let mut runtime = Runtime::open(temp.path()).unwrap();
+    runtime.state.run_id = run.clone();
+    runtime
+        .emit(EventKind::Created {
+            graph: Graph {
+                original_goal: "merger attribution".into(),
+                nodes: vec![Node {
+                    id: "worker".into(),
+                    task: "edit".into(),
+                }],
+                edges: vec![],
+            },
+            config: serde_json::from_value(serde_json::json!({
+                "repository": repo, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::MergerStarted {
+            execution: Execution {
+                id: merger_id.clone(),
+                node: "merger".into(),
+                revision: 1,
+                attempt: 1,
+                session_id: merger_id.clone(),
+                worktree: repo.to_string_lossy().into_owned(),
+                before: left_sha,
+                workspace_lineage: vec![],
+                after: None,
+                input: None,
+                result: None,
+                status: "running".into(),
+                output: String::new(),
+                output_bytes: 0,
+                pid: None,
+                started_at: now(),
+                completed_at: None,
+                metrics: None,
+            },
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::MergerFinished {
+            execution_id: merger_id.clone(),
+            head: merged_sha,
+            output_bytes: 0,
+            metrics: None,
+        })
+        .unwrap();
+
+    crate::file_changes::invalidate_run(&run);
+    let service = Arc::new(Service {
+        runtime: Mutex::new(runtime),
+        driving: AtomicBool::new(false),
+        drive_signal: (Mutex::new(0), Condvar::new()),
+        planning: AtomicBool::new(false),
+        extension: PathBuf::new(),
+    });
+    let value = read_changes(|| {
+        get_file_changes(
+            &serde_json::json!({ "runId": run, "executionIds": [merger_id] }),
+            &service,
+        )
+    });
+    let paths: Vec<&str> = value["summary"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["shared.txt"]);
     crate::file_changes::invalidate_run(&run);
 }

@@ -393,7 +393,6 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
                 None,
                 &service,
                 |_| {},
-                |_| {},
                 |line| {
                     let _ = tx.send(line.to_string());
                 },

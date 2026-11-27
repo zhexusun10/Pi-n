@@ -506,7 +506,7 @@ fn deleting_a_run_cleans_recorded_planner_workspaces_and_preserves_unrecorded_si
     .unwrap();
     runtime
         .emit(EventKind::GraphRevised {
-            graph: single(),
+            graph: Some(single()),
             planning_id: latest.clone(),
             planning: PlanningSummary {
                 planning_id: latest.clone(),
@@ -4662,7 +4662,7 @@ fn plain_directory_post_review_publication_delivers_only_undelivered_heads() {
     };
     runtime
         .emit(EventKind::GraphRevised {
-            graph,
+            graph: Some(graph),
             planning_id: Uuid::new_v4().to_string(),
             planning: Default::default(),
             invalidated: Vec::new(),
@@ -5884,4 +5884,68 @@ fn record_job_source_preserves_history_edit_base_and_clears_materialize_source()
     assert_eq!(source_job.execution.before, refreshed_head);
     assert_eq!(source_job.expected_source_head, refreshed_head);
     assert!(!source_job.materialize_source);
+}
+
+#[test]
+fn set_route_skips_duplicate_routed_and_unchanged_revise_graph_omits_graph_payload() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    workspace::git(&repo, &["init", "-q"]).unwrap();
+    workspace::git(&repo, &["config", "user.email", "test@example.com"]).unwrap();
+    workspace::git(&repo, &["config", "user.name", "Tester"]).unwrap();
+    fs::write(repo.join("a.txt"), "hello\n").unwrap();
+    workspace::git(&repo, &["add", "."]).unwrap();
+    workspace::git(&repo, &["commit", "-qm", "init"]).unwrap();
+    let mut runtime = Runtime::open(temp.path()).unwrap();
+    runtime.state.run_id = Uuid::new_v4().to_string();
+    runtime
+        .emit(EventKind::Routed {
+            plan_type: "graph".into(),
+            images: None,
+        })
+        .unwrap();
+    let cfg: Config = serde_json::from_value(serde_json::json!({
+        "repository": repo,
+        "model": "test",
+        "maxParallel": 1,
+    }))
+    .unwrap();
+    runtime
+        .create_with_planning(single(), cfg, None, None)
+        .unwrap();
+    // Already routed to "graph" with no images: second set_route is a no-op.
+    runtime.set_route("graph").unwrap();
+    let routed_count = runtime
+        .state
+        .events
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::Routed { .. }))
+        .count();
+    assert_eq!(routed_count, 1, "must not persist duplicate routed events");
+
+    runtime.approve().unwrap();
+    runtime
+        .revise_graph(
+            runtime.state.graph.clone(),
+            PlanningSummary {
+                planning_id: "review-turn".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let revised = runtime
+        .state
+        .events
+        .iter()
+        .rev()
+        .find_map(|e| match &e.kind {
+            EventKind::GraphRevised { graph, .. } => Some(graph),
+            _ => None,
+        })
+        .expect("graph_revised emitted");
+    assert!(
+        revised.is_none(),
+        "unchanged revise_graph must omit full graph JSON"
+    );
 }

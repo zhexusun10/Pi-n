@@ -159,6 +159,9 @@ console.log(JSON.stringify({node:probe(process.execPath,['-p','JSON.stringify(pr
     for (key, path) in native::host_rust_toolchain_variables(Some(&source)) {
         variables.insert(key.into(), path.to_string_lossy().into_owned());
     }
+    if let Some((key, path)) = native::host_playwright_browsers_variable(Some(&source)) {
+        variables.insert(key.into(), path.to_string_lossy().into_owned());
+    }
     let config = EnvironmentConfig {
         mode: "native-workspace".into(),
         platform: environment::platform().into(),
@@ -182,6 +185,7 @@ console.log(JSON.stringify({node:probe(process.execPath,['-p','JSON.stringify(pr
                 "CONDA_SHLVL".into(),
                 "RUSTUP_HOME".into(),
                 "CARGO_HOME".into(),
+                "PLAYWRIGHT_BROWSERS_PATH".into(),
             ],
             inherit_ambient: true,
             managed_scopes: vec![],
@@ -528,8 +532,20 @@ mod tests {
         let policy = resolve(source.path(), false).unwrap().0.unwrap();
         assert!(policy.launch.inherit.iter().any(|key| key == "RUSTUP_HOME"));
         assert!(policy.launch.inherit.iter().any(|key| key == "CARGO_HOME"));
+        assert!(policy
+            .launch
+            .inherit
+            .iter()
+            .any(|key| key == "PLAYWRIGHT_BROWSERS_PATH"));
         let expected = native::host_rust_toolchain_variables(Some(source.path()));
         for (key, path) in expected {
+            assert_eq!(
+                policy.launch.variables.get(key).map(String::as_str),
+                Some(path.to_string_lossy().as_ref()),
+                "missing or mismatched {key}"
+            );
+        }
+        if let Some((key, path)) = native::host_playwright_browsers_variable(Some(source.path())) {
             assert_eq!(
                 policy.launch.variables.get(key).map(String::as_str),
                 Some(path.to_string_lossy().as_ref()),

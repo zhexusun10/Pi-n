@@ -2188,6 +2188,8 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         ("backend/target/debug/.cargo-lock", "\n"),
         ("backend/target/debug/pi-n", "binary\n"),
         ("backend/target/doc/index.html", "<html/>\n"),
+        ("backend/target/tracked-tool", "tracked-bin\n"),
+        ("tools/target/debug/custom", "non-ignored-bin\n"),
         ("src/deps/mod.rs", "pub fn d() {}\n"),
         ("src/build/mod.rs", "pub fn b() {}\n"),
         ("src/incremental/mod.rs", "pub fn x() {}\n"),
@@ -2200,8 +2202,17 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         }
         fs::write(&full, body).unwrap();
     }
-    workspace::project_git(&repo, &["add", "-f", ".gitignore", "node_modules/.cache/tracked.txt"])
-        .unwrap();
+    workspace::project_git(
+        &repo,
+        &[
+            "add",
+            "-f",
+            ".gitignore",
+            "node_modules/.cache/tracked.txt",
+            "backend/target/tracked-tool",
+        ],
+    )
+    .unwrap();
     workspace::project_git(&repo, &["commit", "-qm", "init"]).unwrap();
 
     let snap = workspace::snapshot_repository(&repo).unwrap();
@@ -2224,8 +2235,8 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         ".build/debug/SwiftApp",
         "bin/Debug/App.dll",
         "obj/Debug/project.assets.json",
-        "backend/target/debug/pi-n",
-        "backend/target/doc/index.html",
+        "backend/target/tracked-tool",
+        "tools/target/debug/custom",
         "src/deps/mod.rs",
         "src/build/mod.rs",
         "src/incremental/mod.rs",
@@ -2266,6 +2277,8 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         "backend/target/debug/examples/export_api-abc.d",
         "backend/target/debug/examples/libexport_api-abc.rmeta",
         "backend/target/debug/.cargo-lock",
+        "backend/target/debug/pi-n",
+        "backend/target/doc/index.html",
     ];
     for dropped in dropped_paths {
         assert!(!tree_files.contains(dropped), "unexpected {dropped} in {tree_files:?}");
@@ -2282,6 +2295,7 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
         ".".into(),
     ];
     args.extend(workspace::generated_artifact_pathspecs());
+    args.extend(workspace::ignored_target_pathspecs(&repo));
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let ignored_listed: std::collections::BTreeSet<String> =
         workspace::project_git(&repo, &arg_refs)
@@ -2297,13 +2311,57 @@ fn scoped_tool_caches_are_excluded_from_snapshots_and_git_pathspecs_while_preser
     assert!(ignored_listed.contains(".build/debug/SwiftApp"));
     assert!(ignored_listed.contains("bin/Debug/App.dll"));
     assert!(ignored_listed.contains("obj/Debug/project.assets.json"));
-    assert!(ignored_listed.contains("backend/target/debug/pi-n"));
+    assert!(!ignored_listed.contains("backend/target/debug/pi-n"));
     for dropped in dropped_paths {
         assert!(
             !ignored_listed.contains(dropped),
             "pathspec failed to exclude {dropped}: {ignored_listed:?}"
         );
     }
+}
+
+#[test]
+fn tracked_path_index_handles_subdir_ignored_and_non_ignored_target_trees_without_per_file_git() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    workspace::project_git(&repo, &["init", "-q"]).unwrap();
+    workspace::project_git(&repo, &["config", "user.name", "Tester"]).unwrap();
+    workspace::project_git(&repo, &["config", "user.email", "tester@example.com"]).unwrap();
+    // Only `backend/target/debug/` and `*.tmp` are ignored; `backend/target/` and
+    // `backend/target/doc/` remain unignored.
+    fs::write(repo.join(".gitignore"), "backend/target/debug/\n*.tmp\n").unwrap();
+    workspace::project_git(&repo, &["add", ".gitignore"]).unwrap();
+    workspace::project_git(&repo, &["commit", "-qm", "init"]).unwrap();
+
+    fs::create_dir_all(repo.join("backend/target/debug/examples")).unwrap();
+    fs::write(repo.join("backend/target/debug/pi-n"), b"bin").unwrap();
+    fs::write(repo.join("backend/target/debug/examples/demo"), b"ex").unwrap();
+    fs::create_dir_all(repo.join("backend/target/doc")).unwrap();
+    for i in 0..20 {
+        fs::write(repo.join(format!("backend/target/doc/page-{i}.html")), "<html/>").unwrap();
+    }
+    fs::write(repo.join("backend/target/doc/scratch.tmp"), "tmp").unwrap();
+
+    let tracked = workspace::project_tracked_paths(&repo);
+    let index = workspace::TrackedPathIndex::new(&repo, &tracked);
+    assert!(!index.is_ignored_target(Path::new("backend/target"), Some(true)));
+    assert!(index.is_ignored_target(Path::new("backend/target/debug"), Some(true)));
+    assert!(index.is_ignored_target(Path::new("backend/target/debug/pi-n"), Some(false)));
+    assert!(index.is_ignored_target(Path::new("backend/target/debug/examples"), Some(true)));
+    assert!(index.is_ignored_target(Path::new("backend/target/debug/examples/demo"), Some(false)));
+    assert!(index.is_ignored_target(Path::new("backend/target/doc/scratch.tmp"), Some(false)));
+    for i in 0..20 {
+        let rel = format!("backend/target/doc/page-{i}.html");
+        assert!(
+            !index.is_ignored_target(Path::new(&rel), Some(false)),
+            "non-ignored {rel} must stay collected"
+        );
+    }
+    // Non-existent historical paths under `backend/target/debug/` still short-circuit
+    // via cached parent directory checks.
+    assert!(index.is_ignored_target(Path::new("backend/target/debug/deleted-bin"), Some(false)));
+    assert!(!index.is_ignored_target(Path::new("backend/target/doc/missing.html"), Some(false)));
 }
 
 #[test]

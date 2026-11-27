@@ -36,7 +36,7 @@ def state(phase, route="graph", approved=True):
 
 
 class AdapterTests(unittest.TestCase):
-    def test_single_model_auto_mode_and_approval(self):
+    def test_single_model_graph_mode_and_approval(self):
         with tempfile.TemporaryDirectory() as repo:
             config = config_for(repo, "anthropic/sonnet", "low", 2)
             self.assertTrue(config["autoApprove"])
@@ -44,7 +44,7 @@ class AdapterTests(unittest.TestCase):
             client = FakeClient(state("running"), [state("completed")])
             finished = run_goal(client, "Build the feature", config, 2, 0)
             self.assertEqual(finished["phase"], "completed")
-            self.assertEqual(client.calls[0], ("plan_goal", {"goal": "Build the feature", "config": config}))
+            self.assertEqual(client.calls[0], ("plan_goal", {"goal": "Build the feature", "config": config, "mode": "graph"}))
             self.assertEqual(client.calls[1][0], "snapshot")
             with self.assertRaisesRegex(RuntimeError, "awaiting_approval"):
                 run_goal(FakeClient(state("awaiting_approval", approved=False)), "Build the feature", config, 2, 0)
@@ -170,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
   global repo
   body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
   if self.path.endswith('plan_goal'):
-   assert 'mode' not in body and body['config']['autoApprove'] is True
+   assert body.get('mode') == 'graph' and body['config']['autoApprove'] is True
    assert os.environ['PLANNER_MODEL'] == os.environ['NODE_AGENT_MODEL'] == body['config']['model']
    repo = Path(body['config']['repository'])
    result = {'runId':'graph-run','phase':'running','approved':True,'planType':'graph'}
@@ -320,11 +320,11 @@ class Handler(BaseHTTPRequestHandler):
  def do_POST(self):
   body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
   if self.path.endswith('plan_goal'):
-   assert 'mode' not in body
+   assert body.get('mode') == 'graph'
    assert body['config']['autoApprove'] is True
    assert os.getcwd() != body['config']['repository']
-   assert all(os.environ[k] == body['config']['model'] for k in ('PLANNER_MODEL','PARTITIONER_MODEL','NODE_AGENT_MODEL','MERGER_MODEL'))
-   assert all(k not in os.environ for k in ('PLANNER_THINKING','PARTITIONER_THINKING','NODE_AGENT_THINKING','MERGER_THINKING'))
+   assert all(os.environ[k] == body['config']['model'] for k in ('PLANNER_MODEL','NODE_AGENT_MODEL','MERGER_MODEL'))
+   assert all(k not in os.environ for k in ('PLANNER_THINKING','NODE_AGENT_THINKING','MERGER_THINKING'))
    result = {'runId':'trial', 'approved':True, 'phase':'running', 'planType':'serial'}
   elif self.path.endswith('snapshot'):
    result = {'runId':'trial', 'approved':True, 'phase':'completed', 'planType':'serial', 'nodes':{'task':{'status':'completed'}}}

@@ -1047,7 +1047,8 @@ pub(crate) fn prune_shadow_run_refs(
     prune_shadow_run_refs_for_source(shadow, None, run_id, protected, reclaim_objects)
 }
 
-/// Strict lock hierarchy: `shadow_use_lock` (write when GC runs) -> `host_ref_lock`.
+/// Strict lock hierarchy: `shadow_use_lock` (write when GC/view pruning runs) -> `host_ref_lock`.
+#[cfg(test)]
 pub(crate) fn prune_shadow_run_refs_for_source(
     shadow: &Path,
     source: Option<&Path>,
@@ -1055,14 +1056,66 @@ pub(crate) fn prune_shadow_run_refs_for_source(
     protected: &std::collections::BTreeSet<String>,
     reclaim_objects: bool,
 ) -> Result<(), String> {
+    prune_shadow_run_refs_for_source_with_views(
+        shadow,
+        source,
+        run_id,
+        protected,
+        None,
+        reclaim_objects,
+    )
+}
+
+/// Strict lock hierarchy: `shadow_use_lock` (write when GC/view pruning runs) -> `host_ref_lock`.
+#[cfg(test)]
+pub(crate) fn prune_shadow_run_refs_for_source_with_views(
+    shadow: &Path,
+    source: Option<&Path>,
+    run_id: &str,
+    protected: &std::collections::BTreeSet<String>,
+    retained_views: Option<&std::collections::BTreeSet<String>>,
+    reclaim_objects: bool,
+) -> Result<(), String> {
+    prune_shadow_run_refs_for_source_with_retention(
+        shadow,
+        source,
+        run_id,
+        reclaim_objects,
+        retained_views.is_some(),
+        || Ok((protected.clone(), retained_views.cloned())),
+    )
+}
+
+/// Strict lock hierarchy: `shadow_use_lock` (write when GC/view pruning runs) -> `host_ref_lock`.
+/// Resolves `protected` and optional `retained_views` *after* acquiring
+/// `shadow_use_lock` so concurrent Runs cannot have freshly created commits or
+/// views pruned against a stale SQLite snapshot.
+pub(crate) fn prune_shadow_run_refs_for_source_with_retention<F>(
+    shadow: &Path,
+    source: Option<&Path>,
+    run_id: &str,
+    reclaim_objects: bool,
+    prune_views: bool,
+    resolve_retention: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<
+        (
+            std::collections::BTreeSet<String>,
+            Option<std::collections::BTreeSet<String>>,
+        ),
+        String,
+    >,
+{
     uuid::Uuid::parse_str(run_id).map_err(|_| "Invalid Run ID for shadow cleanup")?;
     let shadow_lock = shadow_use_lock(shadow)?;
-    let _write_guard = if reclaim_objects {
+    let exclusive = reclaim_objects || prune_views;
+    let _write_guard = if exclusive {
         Some(shadow_lock.write().map_err(|e| e.to_string())?)
     } else {
         None
     };
-    let _read_guard = if !reclaim_objects {
+    let _read_guard = if !exclusive {
         Some(shadow_lock.read().map_err(|e| e.to_string())?)
     } else {
         None
@@ -1072,6 +1125,9 @@ pub(crate) fn prune_shadow_run_refs_for_source(
         .as_ref()
         .map(|lock| lock.lock().map_err(|e| e.to_string()))
         .transpose()?;
+    let (protected, retained_views) = resolve_retention()?;
+    let protected = &protected;
+    let retained_views = retained_views.as_ref();
     let metadata = match fs::symlink_metadata(shadow) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1189,8 +1245,33 @@ pub(crate) fn prune_shadow_run_refs_for_source(
                 shadow,
                 &["--git-dir", shadow_text, "gc", "--prune=now", "--quiet"],
             )?;
-            prune_dead_agent_views(shadow, shadow_text);
+            let view_policy = match retained_views {
+                Some(retained) => AgentViewPrunePolicy::RecordedCompleted {
+                    protected,
+                    retained_views: retained,
+                },
+                None => AgentViewPrunePolicy::DeadCommitsOnly,
+            };
+            prune_dead_agent_views(shadow, shadow_text, view_policy);
+        } else if let Some(retained) = retained_views {
+            prune_dead_agent_views(
+                shadow,
+                shadow_text,
+                AgentViewPrunePolicy::RecordedCompleted {
+                    protected,
+                    retained_views: retained,
+                },
+            );
         }
+    } else if let Some(retained) = retained_views {
+        prune_dead_agent_views(
+            shadow,
+            shadow_text,
+            AgentViewPrunePolicy::RecordedCompleted {
+                protected,
+                retained_views: retained,
+            },
+        );
     }
     Ok(())
 }
@@ -1208,11 +1289,46 @@ pub(crate) fn prune_shadow_unreachable(
 }
 
 /// Strict lock hierarchy: `shadow_use_lock.write()` -> `host_ref_lock`.
+#[cfg(test)]
 pub(crate) fn prune_shadow_unreachable_for_source(
     shadow: &Path,
     source: Option<&Path>,
     protected: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
+    prune_shadow_unreachable_for_source_with_views(shadow, source, protected, None)
+}
+
+/// Strict lock hierarchy: `shadow_use_lock.write()` -> `host_ref_lock`.
+#[cfg(test)]
+pub(crate) fn prune_shadow_unreachable_for_source_with_views(
+    shadow: &Path,
+    source: Option<&Path>,
+    protected: &std::collections::BTreeSet<String>,
+    retained_views: Option<&std::collections::BTreeSet<String>>,
+) -> Result<(), String> {
+    prune_shadow_unreachable_for_source_with_retention(shadow, source, || {
+        Ok(Some((protected.clone(), retained_views.cloned())))
+    })
+}
+
+/// Strict lock hierarchy: `shadow_use_lock.write()` -> `host_ref_lock`.
+/// Resolves `protected` and optional `retained_views` *after* acquiring
+/// `shadow_use_lock.write()` (returning `Ok(None)` to skip when another Run now
+/// requires the shadow repository).
+pub(crate) fn prune_shadow_unreachable_for_source_with_retention<F>(
+    shadow: &Path,
+    source: Option<&Path>,
+    resolve_retention: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<
+        Option<(
+            std::collections::BTreeSet<String>,
+            Option<std::collections::BTreeSet<String>>,
+        )>,
+        String,
+    >,
+{
     let shadow_lock = shadow_use_lock(shadow)?;
     let _shadow_guard = shadow_lock.write().map_err(|e| e.to_string())?;
     let ref_lock = source.map(host_ref_lock).transpose()?;
@@ -1220,6 +1336,11 @@ pub(crate) fn prune_shadow_unreachable_for_source(
         .as_ref()
         .map(|lock| lock.lock().map_err(|e| e.to_string()))
         .transpose()?;
+    let Some((protected, retained_views)) = resolve_retention()? else {
+        return Ok(());
+    };
+    let protected = &protected;
+    let retained_views = retained_views.as_ref();
     let metadata = match fs::symlink_metadata(shadow) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1308,17 +1429,83 @@ pub(crate) fn prune_shadow_unreachable_for_source(
                 &["--git-dir", shadow_text, "gc", "--auto", "--quiet"],
             );
         }
-        prune_dead_agent_views(shadow, shadow_text);
+        let view_policy = match retained_views {
+            Some(retained) => AgentViewPrunePolicy::RecordedCompleted {
+                protected,
+                retained_views: retained,
+            },
+            None => AgentViewPrunePolicy::DeadCommitsOnly,
+        };
+        prune_dead_agent_views(shadow, shadow_text, view_policy);
     }
     Ok(())
 }
 
-fn prune_dead_agent_views(shadow: &Path, shadow_text: &str) {
+#[derive(Copy, Clone)]
+enum AgentViewPrunePolicy<'a> {
+    /// Only remove `agent-views/<sha>` whose Git commit no longer exists.
+    DeadCommitsOnly,
+    /// Remove dead commits plus views known to belong to recorded completed
+    /// Runs (`protected` minus `retained_views`), never touching uncommitted
+    /// in-flight views from a concurrent active Run.
+    RecordedCompleted {
+        protected: &'a std::collections::BTreeSet<String>,
+        retained_views: &'a std::collections::BTreeSet<String>,
+    },
+    /// Caller holds `shadow_use_lock.write()` with no active Graph/Planner
+    /// workers and resolved `retained_views` under the lock: reclaim every
+    /// view not in `retained_views` or shadow `HEAD`/published refs.
+    IdleRetained {
+        retained_views: &'a std::collections::BTreeSet<String>,
+    },
+}
+
+/// Prune obsolete `agent-views/` directories inside `shadow` while the caller
+/// already holds `shadow_use_lock(shadow)?.write()` (and no active Graph or
+/// Planner work can reference unretained views). Keeps `HEAD`, published refs,
+/// and every commit in `retained_views`.
+pub(crate) fn prune_shadow_agent_views_locked(
+    shadow: &Path,
+    retained_views: &std::collections::BTreeSet<String>,
+) -> usize {
+    let Some(shadow_text) = shadow.to_str() else {
+        return 0;
+    };
+    prune_dead_agent_views(
+        shadow,
+        shadow_text,
+        AgentViewPrunePolicy::IdleRetained { retained_views },
+    )
+}
+
+fn prune_dead_agent_views(
+    shadow: &Path,
+    shadow_text: &str,
+    policy: AgentViewPrunePolicy<'_>,
+) -> usize {
     let views = shadow.join("agent-views");
     let Ok(entries) = fs::read_dir(&views) else {
-        return;
+        return 0;
     };
+    let mut keep_heads = std::collections::BTreeSet::new();
+    if !matches!(policy, AgentViewPrunePolicy::DeadCommitsOnly) {
+        for reference in [
+            "HEAD",
+            "refs/pi-n/published/source",
+            "refs/pi-n/published/composed",
+        ] {
+            if let Ok(head) = git(
+                shadow,
+                &["--git-dir", shadow_text, "rev-parse", "--verify", reference],
+            ) {
+                if !head.is_empty() {
+                    keep_heads.insert(head);
+                }
+            }
+        }
+    }
     let stale_cutoff = std::time::Duration::from_secs(3600);
+    let mut removed = 0usize;
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(meta) = fs::symlink_metadata(&path) else {
@@ -1340,27 +1527,45 @@ fn prune_dead_agent_views(shadow: &Path, shadow_text: &str) {
                 .and_then(|mtime| mtime.elapsed().ok())
                 .is_some_and(|age| age > stale_cutoff)
             {
-                let _ = crate::workspace_cleanup::remove_tree(&path);
+                if crate::workspace_cleanup::remove_tree(&path).is_ok() {
+                    removed += 1;
+                }
             }
             continue;
         }
         if matches!(name.len(), 40 | 64) && name.bytes().all(|b| b.is_ascii_hexdigit()) {
-            let exists = git(
-                shadow,
-                &[
-                    "--git-dir",
-                    shadow_text,
-                    "cat-file",
-                    "-e",
-                    &format!("{name}^{{commit}}"),
-                ],
-            )
-            .is_ok();
-            if !exists {
-                let _ = crate::workspace_cleanup::remove_tree(&path);
+            let unneeded = match policy {
+                AgentViewPrunePolicy::DeadCommitsOnly => false,
+                AgentViewPrunePolicy::RecordedCompleted {
+                    protected,
+                    retained_views,
+                } => {
+                    protected.contains(name)
+                        && !retained_views.contains(name)
+                        && !keep_heads.contains(name)
+                }
+                AgentViewPrunePolicy::IdleRetained { retained_views } => {
+                    !retained_views.contains(name) && !keep_heads.contains(name)
+                }
+            };
+            let remove = unneeded
+                || git(
+                    shadow,
+                    &[
+                        "--git-dir",
+                        shadow_text,
+                        "cat-file",
+                        "-e",
+                        &format!("{name}^{{commit}}"),
+                    ],
+                )
+                .is_err();
+            if remove && crate::workspace_cleanup::remove_tree(&path).is_ok() {
+                removed += 1;
             }
         }
     }
+    removed
 }
 pub(crate) struct MergerGitView {
     path: PathBuf,
@@ -3838,6 +4043,44 @@ const CARGO_TARGET_CACHE_SUFFIXES: &[&str] = &[".d", ".rmeta", ".rlib", ".rcgu.o
 /// module distribution; only bytecode beneath __pycache__ is a disposable cache.
 pub(crate) const GENERATED_ARTIFACT_SUFFIXES: &[&str] = &[".tsbuildinfo"];
 
+/// True when any path component names a Cargo `target` directory
+/// (case-insensitive). Used to gate `.gitignore` consultation to `target/`
+/// subtrees without touching ordinary project directories.
+pub(crate) fn is_under_target_dir(relative: &Path) -> bool {
+    relative.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::Normal(raw) if raw.to_string_lossy().eq_ignore_ascii_case("target")
+        )
+    })
+}
+
+/// If `relative` lies at or beneath a `target` directory component, return
+/// `(target_prefix_portable, has_descendant)`.
+fn target_dir_prefix(relative: &Path) -> Option<(String, bool)> {
+    let mut prefix = Vec::new();
+    let mut found = false;
+    let mut has_descendant = false;
+    for part in relative.components() {
+        let std::path::Component::Normal(raw) = part else {
+            continue;
+        };
+        if found {
+            has_descendant = true;
+            break;
+        }
+        let name = raw.to_string_lossy();
+        prefix.push(name.into_owned());
+        if prefix
+            .last()
+            .is_some_and(|segment| segment.eq_ignore_ascii_case("target"))
+        {
+            found = true;
+        }
+    }
+    found.then(|| (prefix.join("/"), has_descendant))
+}
+
 /// True when a path names a rebuildable cache, not a dependency/runtime artifact.
 pub(crate) fn is_generated_artifact(relative: &Path) -> bool {
     let mut prev_normal: Option<std::borrow::Cow<'_, str>> = None;
@@ -4075,6 +4318,8 @@ pub(crate) fn collection_excluded(
 }
 
 pub(crate) struct TrackedPathIndex<'a> {
+    root: &'a Path,
+    has_project_git: bool,
     exact: &'a std::collections::BTreeSet<String>,
     #[cfg(target_os = "macos")]
     case_insensitive: bool,
@@ -4083,12 +4328,16 @@ pub(crate) struct TrackedPathIndex<'a> {
     generated_dirs: std::cell::OnceCell<std::collections::HashSet<String>>,
     #[cfg(target_os = "macos")]
     folded_generated_dirs: std::cell::OnceCell<std::collections::HashSet<String>>,
+    ignored_target_cache: std::cell::RefCell<std::collections::HashMap<String, bool>>,
+    nested_git_prefix_cache: std::cell::RefCell<std::collections::HashMap<String, bool>>,
+    disk_ignored_targets: std::cell::OnceCell<std::collections::HashSet<String>>,
 }
 
 impl<'a> TrackedPathIndex<'a> {
-    pub(crate) fn new(root: &Path, exact: &'a std::collections::BTreeSet<String>) -> Self {
-        let _ = root;
+    pub(crate) fn new(root: &'a Path, exact: &'a std::collections::BTreeSet<String>) -> Self {
         Self {
+            root,
+            has_project_git: fs::symlink_metadata(root.join(".git")).is_ok(),
             exact,
             #[cfg(target_os = "macos")]
             case_insensitive: crate::path_identity::case_insensitive_volume(root),
@@ -4097,7 +4346,166 @@ impl<'a> TrackedPathIndex<'a> {
             generated_dirs: std::cell::OnceCell::new(),
             #[cfg(target_os = "macos")]
             folded_generated_dirs: std::cell::OnceCell::new(),
+            ignored_target_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            nested_git_prefix_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            disk_ignored_targets: std::cell::OnceCell::new(),
         }
+    }
+
+    fn has_nested_git_ancestor(&self, target_prefix: &str) -> bool {
+        if let Some(&cached) = self.nested_git_prefix_cache.borrow().get(target_prefix) {
+            return cached;
+        }
+        let mut nested = false;
+        let mut cursor = 0;
+        while let Some(slash) = target_prefix[cursor..].find('/') {
+            let ancestor = &target_prefix[..cursor + slash];
+            // A proper directory prefix present in `git ls-files --cached` is
+            // a submodule gitlink; an untracked nested repo has its own `.git`.
+            if self.matches(ancestor)
+                || fs::symlink_metadata(self.root.join(ancestor).join(".git")).is_ok()
+            {
+                nested = true;
+                break;
+            }
+            cursor += slash + 1;
+        }
+        self.nested_git_prefix_cache
+            .borrow_mut()
+            .insert(target_prefix.to_string(), nested);
+        nested
+    }
+
+    fn check_project_ignored(&self, query: &str) -> bool {
+        if let Some(&cached) = self.ignored_target_cache.borrow().get(query) {
+            return cached;
+        }
+        let ignored = project_ignored_paths_raw(self.root, &[query]).contains(query);
+        self.ignored_target_cache
+            .borrow_mut()
+            .insert(query.to_string(), ignored);
+        ignored
+    }
+
+    fn disk_ignored_target_matches(&self, portable: &str) -> bool {
+        let entries = self.disk_ignored_targets.get_or_init(|| {
+            ignored_target_entries(self.root)
+                .into_iter()
+                .map(|entry| {
+                    #[cfg(target_os = "macos")]
+                    if self.case_insensitive || !entry.is_ascii() {
+                        return crate::path_identity::fold_relative_path(
+                            &entry,
+                            self.case_insensitive,
+                        );
+                    }
+                    entry
+                })
+                .collect()
+        });
+        if entries.is_empty() {
+            return false;
+        }
+        #[cfg(target_os = "macos")]
+        let normalized = if self.case_insensitive || !portable.is_ascii() {
+            std::borrow::Cow::Owned(crate::path_identity::fold_relative_path(
+                portable,
+                self.case_insensitive,
+            ))
+        } else {
+            std::borrow::Cow::Borrowed(portable)
+        };
+        #[cfg(not(target_os = "macos"))]
+        let normalized = std::borrow::Cow::Borrowed(portable);
+        let mut candidate: &str = normalized.as_ref();
+        loop {
+            if entries.contains(candidate) {
+                return true;
+            }
+            let Some((parent, _)) = candidate.rsplit_once('/') else {
+                return false;
+            };
+            candidate = parent;
+        }
+    }
+
+    /// True when `relative` lives under a `target/` directory that matches the
+    /// project's own Git ignore rules (`.gitignore`, `.git/info/exclude`, etc.).
+    /// Fast-returns `false` for all paths outside `target/` and plain folders
+    /// without `.git`. Callers check `self.matches(...)` separately so
+    /// project-tracked files always remain collected.
+    pub(crate) fn is_ignored_target(&self, relative: &Path, is_dir_hint: Option<bool>) -> bool {
+        if !self.has_project_git {
+            return false;
+        }
+        let Some((target_prefix, has_descendant)) = target_dir_prefix(relative) else {
+            return false;
+        };
+        // Parent `.gitignore` rules never apply inside a submodule or nested
+        // Git repository (`git check-ignore --no-index` does not stop at
+        // nested `.git` boundaries).
+        if self.has_nested_git_ancestor(&target_prefix) {
+            return false;
+        }
+        if has_descendant {
+            let portable = relative
+                .components()
+                .filter_map(|part| match part {
+                    std::path::Component::Normal(raw) => Some(raw.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            // Check enclosing directories progressively from `target/` down to
+            // the immediate parent, caching each directory once so rules like
+            // `target/` or `target/debug/` short-circuit every descendant with
+            // zero per-file subprocesses.
+            let mut cursor = target_prefix.len();
+            loop {
+                let dir_query = format!("{}/", &portable[..cursor]);
+                if self.check_project_ignored(&dir_query) {
+                    return true;
+                }
+                let rest = &portable[cursor..];
+                let Some(next_rel) = rest.strip_prefix('/') else {
+                    break;
+                };
+                let Some(slash) = next_rel.find('/') else {
+                    break;
+                };
+                cursor += 1 + slash;
+            }
+            let disk_meta = fs::symlink_metadata(self.root.join(relative)).ok();
+            let is_dir = is_dir_hint.unwrap_or_else(|| {
+                disk_meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.is_dir() && !crate::workspace_symlinks::is_link(meta))
+            });
+            // For untracked non-directory files present on disk when no
+            // enclosing directory is ignored (for example a non-ignored
+            // `target/doc/` tree), consult one cached `git ls-files --others
+            // --ignored --exclude-standard --directory` index instead of
+            // spawning one `git check-ignore` subprocess per file.
+            if !is_dir && disk_meta.is_some() && !self.matches(&portable) {
+                return self.disk_ignored_target_matches(&portable);
+            }
+            let query = if is_dir {
+                format!("{portable}/")
+            } else {
+                portable
+            };
+            return self.check_project_ignored(&query);
+        }
+        let is_dir = is_dir_hint.unwrap_or_else(|| {
+            fs::symlink_metadata(self.root.join(relative))
+                .is_ok_and(|meta| meta.is_dir() && !crate::workspace_symlinks::is_link(&meta))
+        });
+        let query = if is_dir {
+            format!("{target_prefix}/")
+        } else {
+            target_prefix
+        };
+        self.check_project_ignored(&query)
     }
 
     pub(crate) fn matches(&self, relative: &str) -> bool {
@@ -4136,7 +4544,10 @@ impl<'a> TrackedPathIndex<'a> {
             let mut set = std::collections::HashSet::new();
             for entry in self.exact {
                 let path = Path::new(entry);
-                if is_generated_artifact(path) || is_reserved_pi_n_runtime_path(path) {
+                if is_generated_artifact(path)
+                    || is_reserved_pi_n_runtime_path(path)
+                    || is_under_target_dir(path)
+                {
                     let mut parent = path.parent();
                     while let Some(dir) = parent.filter(|p| !p.as_os_str().is_empty()) {
                         set.insert(dir.to_string_lossy().replace('\\', "/"));
@@ -4213,6 +4624,16 @@ pub(crate) fn collection_excluded_with_index(
     tracked: &TrackedPathIndex<'_>,
     exclusions: &[String],
 ) -> bool {
+    collection_excluded_with_index_hint(root, relative, tracked, exclusions, None)
+}
+
+pub(crate) fn collection_excluded_with_index_hint(
+    root: &Path,
+    relative: &Path,
+    tracked: &TrackedPathIndex<'_>,
+    exclusions: &[String],
+    is_dir_hint: Option<bool>,
+) -> bool {
     if exclusions
         .iter()
         .any(|scope| scope_contains_at(root, relative, Path::new(scope)))
@@ -4223,7 +4644,9 @@ pub(crate) fn collection_excluded_with_index(
     // before allocating a normalized path and querying the tracked set.
     let reserved = is_reserved_pi_n_runtime_path(relative);
     let host_meta = is_host_metadata_path(relative);
-    let generated = !reserved && !host_meta && is_generated_artifact(relative);
+    let generated = !reserved
+        && !host_meta
+        && (is_generated_artifact(relative) || tracked.is_ignored_target(relative, is_dir_hint));
     if !reserved && !host_meta && !generated {
         return false;
     }
@@ -4337,6 +4760,45 @@ pub(crate) fn generated_artifact_pathspecs() -> Vec<String> {
     specs
 }
 
+/// Return untracked paths/directories under `target/` that match the project's
+/// `.gitignore` rules, using a single `--directory`-collapsed `git ls-files`
+/// query so Cargo build outputs are excluded from forced `git add` and status
+/// scans without traversing into large `node_modules/` or `target/` trees.
+pub(crate) fn ignored_target_entries(path: &Path) -> Vec<String> {
+    if fs::symlink_metadata(path.join(".git")).is_err() {
+        return Vec::new();
+    }
+    let Ok(bytes) = project_git_bytes(
+        path,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ],
+        None,
+    ) else {
+        return Vec::new();
+    };
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| std::str::from_utf8(entry).ok())
+        .map(|entry| entry.trim_end_matches('/'))
+        .filter(|entry| !entry.is_empty() && is_under_target_dir(Path::new(entry)))
+        .map(str::to_owned)
+        .collect()
+}
+
+pub(crate) fn ignored_target_pathspecs(path: &Path) -> Vec<String> {
+    ignored_target_entries(path)
+        .into_iter()
+        .map(|entry| format!(":(exclude,literal){entry}"))
+        .collect()
+}
+
 pub(crate) fn scoped_args_at(path: &Path, base: &[&str], exclusions: &[String]) -> Vec<String> {
     let mut args: Vec<String> = base.iter().map(|s| s.to_string()).collect();
     if !exclusions.is_empty() {
@@ -4367,12 +4829,17 @@ pub(crate) fn repository_status(path: &Path, exclusions: &[String]) -> Result<St
             ".".to_string(),
         ];
         ignored_args.extend(generated_artifact_pathspecs());
+        ignored_args.extend(ignored_target_pathspecs(path));
         let ignored_args = ignored_args.iter().map(String::as_str).collect::<Vec<_>>();
         let ignored = git(path, &ignored_args)?;
         let tracked = project_tracked_paths(path);
+        let tracked_index = TrackedPathIndex::new(path, &tracked);
         let mut status = raw;
         for name in ignored.split('\0').filter(|s| !s.is_empty()) {
-            if status_path_excluded(name, Some(path), None, exclusions, &tracked) {
+            if status_path_excluded(name, Some(path), None, exclusions, &tracked)
+                || (tracked_index.is_ignored_target(Path::new(name), None)
+                    && !tracked_index.matches(&name.replace('\\', "/")))
+            {
                 continue;
             }
             status.push_str(&format!("!! {name}\0"));
@@ -4397,6 +4864,7 @@ pub(crate) fn repository_status(path: &Path, exclusions: &[String]) -> Result<St
             args.extend(["--".to_string(), ".".to_string()]);
         }
         args.extend(generated_artifact_pathspecs());
+        args.extend(ignored_target_pathspecs(path));
         let ignored = repository_git(path, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
         let ignored = ignored_host_metadata(&ignored, path, exclusions);
         if !ignored.is_empty() {
@@ -4423,7 +4891,7 @@ fn restore_tracked_generated(
         .filter(|name| {
             // A tracked artifact inside a managed scope stays excluded: the
             // managed scope is runtime-owned even when the user committed it.
-            is_generated_artifact(Path::new(name))
+            (is_generated_artifact(Path::new(name)) || is_under_target_dir(Path::new(name)))
                 && !exclusions
                     .iter()
                     .any(|scope| scope_contains_at(path, Path::new(name), Path::new(scope)))
@@ -4518,6 +4986,7 @@ fn filtered_status_for(raw: String, root: &Path, exclusions: &[String], macos: b
         return raw;
     }
     let tracked = project_tracked_paths(root);
+    let tracked_index = TrackedPathIndex::new(root, &tracked);
     let root = resolved_existing_path(root);
     let data = resolved_existing_path(&data_root());
     let mut lines = Vec::new();
@@ -4528,9 +4997,13 @@ fn filtered_status_for(raw: String, root: &Path, exclusions: &[String], macos: b
         }
         let code = &entry[..2];
         let path = &entry[3..];
-        // Generated artifacts are not collected, so an untracked one is not a
-        // collection-relevant change and must not fail a cleanliness check.
-        if (code == "??" || code == "!!") && is_generated_artifact(Path::new(path)) {
+        // Generated artifacts and untracked gitignored Cargo `target/` outputs
+        // are not collected, so an untracked one is not a collection-relevant
+        // change and must not fail a cleanliness check.
+        if (code == "??" || code == "!!")
+            && (is_generated_artifact(Path::new(path))
+                || tracked_index.is_ignored_target(Path::new(path), None))
+        {
             continue;
         }
         let renamed = code.contains('R') || code.contains('C');
@@ -4883,10 +5356,17 @@ fn stage_scoped_impl(path: &Path, exclusions: &[String], local: bool) -> Result<
     for scope in exclusions {
         push_exclude_scope_specs(path, scope, &mut pathspecs);
     }
-    // Generated dependency/bytecode artifacts are not collected unless the
-    // project's own Git tracks them (re-added after the add below).
+    // Generated dependency/bytecode artifacts and untracked `.gitignore`-matched
+    // Cargo `target/` outputs are not collected unless the project's own Git
+    // tracks them (re-added after the add below).
     let tracked = project_tracked_paths(path);
     pathspecs.extend(generated_artifact_pathspecs());
+    let ignored_targets = ignored_target_entries(path);
+    pathspecs.extend(
+        ignored_targets
+            .iter()
+            .map(|entry| format!(":(exclude,literal){entry}")),
+    );
     let mut args = vec![
         "add".to_string(),
         "-f".to_string(),
@@ -4904,6 +5384,9 @@ fn stage_scoped_impl(path: &Path, exclusions: &[String], local: bool) -> Result<
             // Even when an agent staged a managed scope itself, a node snapshot
             // must not carry it. Keep the live files and stage only their removal.
             unstage_scoped(path, exclusions)?;
+        }
+        if !ignored_targets.is_empty() {
+            unstage_scoped(path, &ignored_targets)?;
         }
     } else {
         #[cfg(target_os = "macos")]
@@ -4929,6 +5412,7 @@ pub(crate) fn copy_ordinary_files(
     let source_tracked = tracked_paths(&source)?;
     let destination_tracked = tracked_paths(&destination)?;
     let project_tracked = project_tracked_paths(&source);
+    let project_tracked_index = TrackedPathIndex::new(&source, &project_tracked);
     let runtime_data = resolved_existing_path(runtime_data);
     // Pre-index destination tracked paths and their ancestors so the filter
     // checks overlap in O(depth) instead of O(N_files * N_tracked).
@@ -4988,8 +5472,9 @@ pub(crate) fn copy_ordinary_files(
                 .any(|ancestor| !ancestor.as_os_str().is_empty() && dest_tracked_exact.contains(ancestor));
         crate::path_identity::is_runtime_metadata_path(relative)
             || tracked_path_matches(Some(&source), &source_tracked, &name)
-            || (is_generated_artifact(relative)
-                && !tracked_path_matches(Some(&source), &project_tracked, &name))
+            || ((is_generated_artifact(relative)
+                || project_tracked_index.is_ignored_target(relative, None))
+                && !project_tracked_index.matches(&name))
             || is_host_metadata(&name)
             || overlaps_dest_tracked
             || exclusions

@@ -461,13 +461,21 @@ pub(crate) fn validate(root: &Path, run_id: &str, manifest: &Manifest) -> Result
 /// Commits that another live Run may still resolve while its node results are
 /// prepared. They keep their `refs/pi-n/heads/*` pins during a deleted Run's
 /// object reclamation even if no current ref points at them yet.
-pub(crate) fn protected_shadow_objects_for_repository(
+/// Return `(protected_commits, retained_agent_views)` for `repository`:
+/// - `protected_commits` retains Git commit objects for every non-deleted Run
+///   so historical file-change diffs keep working after completion.
+/// - `retained_agent_views` retains bulky `agent-views/<commit>/` directories
+///   only for non-completed Runs and published managed result descriptors
+///   (`verify_native_inputs`), allowing completed Runs' intermediate views to
+///   be reclaimed promptly.
+pub(crate) fn shadow_retention_for_repository(
     store: &Store,
     excluded: &str,
     repository: Option<&Path>,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
     let target_shadow = repository.and_then(|repo| crate::workspace::shadow_repo_dir(repo).ok());
     let mut protected = BTreeSet::new();
+    let mut retained_views = BTreeSet::new();
     for id in store.runs()? {
         if id == excluded {
             continue;
@@ -494,9 +502,13 @@ pub(crate) fn protected_shadow_objects_for_repository(
                 continue;
             }
         }
+        let keep_all_views = state.phase != "completed";
         let mut add = |head: &str| {
             if !head.is_empty() {
                 protected.insert(head.to_string());
+                if keep_all_views {
+                    retained_views.insert(head.to_string());
+                }
             }
         };
         add(&state.base);
@@ -540,8 +552,32 @@ pub(crate) fn protected_shadow_objects_for_repository(
                 _ => {}
             }
         }
+        if let Some(descriptor) = &state.published_result {
+            if !descriptor.result.code_ref.is_empty() {
+                protected.insert(descriptor.result.code_ref.clone());
+                retained_views.insert(descriptor.result.code_ref.clone());
+            }
+            for entry in &descriptor.entries {
+                if !entry.result.code_ref.is_empty() {
+                    protected.insert(entry.result.code_ref.clone());
+                    retained_views.insert(entry.result.code_ref.clone());
+                }
+            }
+        }
+        if let Some(exec) = &state.result_execution {
+            if !exec.input.code_ref.is_empty() {
+                protected.insert(exec.input.code_ref.clone());
+                retained_views.insert(exec.input.code_ref.clone());
+            }
+            if let Some(res) = &exec.result {
+                if !res.code_ref.is_empty() {
+                    protected.insert(res.code_ref.clone());
+                    retained_views.insert(res.code_ref.clone());
+                }
+            }
+        }
     }
-    Ok(protected)
+    Ok((protected, retained_views))
 }
 fn latest_batch_result_is_current(state: &Snapshot) -> bool {
     if state.plan_type.as_deref() == Some("serial") {
@@ -700,27 +736,28 @@ fn execute_inner(root: &Path, store: &Store, task: &Task, detach: bool) -> Resul
     manifest.protected_sources.extend(store.cleanup_sources()?);
     let deleting = task.manifest.sequence.is_none();
     let mut paths = Vec::new();
+    let mut shadow_targets = Vec::new();
     let mut detached_targets = Vec::new();
     for target in &manifest.targets {
-        let shared = store.cleanup_target_is_shared(&task.run_id, target)?;
-        if shared && deleting {
-            if let Target::Shadow { source, .. } = target {
-                if let Some(path) = target.resolve(root, &task.run_id)? {
-                    let protected = protected_shadow_objects_for_repository(
-                        store,
-                        &task.run_id,
-                        source.as_deref(),
-                    )?;
-                    crate::workspace::prune_shadow_run_refs_for_source(
-                        &path,
-                        source.as_deref(),
-                        &task.run_id,
-                        &protected,
-                        source.is_some(),
-                    )?;
+        if let Target::Shadow { source, .. } = target {
+            if detach {
+                if !store.cleanup_target_is_shared(&task.run_id, target)? {
+                    return Err("Detached cleanup cannot remove non-workspace resources".into());
+                }
+                continue;
+            }
+            if let Some(path) = target.resolve(root, &task.run_id)? {
+                if !manifest
+                    .protected_sources
+                    .iter()
+                    .any(|protected| crate::workspace::scope_contains(protected, &path))
+                {
+                    shadow_targets.push((target, source.as_deref(), path));
                 }
             }
+            continue;
         }
+        let shared = store.cleanup_target_is_shared(&task.run_id, target)?;
         if shared {
             continue;
         }
@@ -753,11 +790,105 @@ fn execute_inner(root: &Path, store: &Store, task: &Task, detach: bool) -> Resul
         }
     } else {
         crate::workspace_cleanup::remove_paths(paths)?;
+        for (target, source, path) in shadow_targets {
+            remove_or_prune_shadow_target(store, &task.run_id, target, source, &path, deleting)?;
+        }
     }
     if let Some(repository) = &manifest.unresolved_repository {
         return Err(format!("Workspace ownership predates this version and the binding is missing: {repository}. Restore it or explicitly inspect its project parent with cleanup:workspaces."));
     }
     store.finish_cleanup(&task.run_id)
+}
+
+fn remove_or_prune_shadow_target(
+    store: &Store,
+    run_id: &str,
+    target: &Target,
+    source: Option<&Path>,
+    path: &Path,
+    deleting: bool,
+) -> Result<(), String> {
+    if store.cleanup_target_is_shared(run_id, target)? {
+        if deleting {
+            crate::workspace::prune_shadow_run_refs_for_source_with_retention(
+                path,
+                source,
+                run_id,
+                source.is_some(),
+                true,
+                || {
+                    let (protected, retained_views) =
+                        shadow_retention_for_repository(store, run_id, source)?;
+                    Ok((protected, Some(retained_views)))
+                },
+            )?;
+        }
+        return Ok(());
+    }
+    // Acquire locks in the strict hierarchy: shadow_use_lock (write) ->
+    // host_index_lock -> host_ref_lock, then re-verify sharing so a newly
+    // started Compile Run cannot lose its live shadow repository while a large
+    // deleted workspace was being removed in the background.
+    let shadow_lock = crate::workspace::shadow_use_lock(path)?;
+    let shadow_guard = match shadow_lock.try_write() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            return Err(format!(
+                "Shadow repository {} is currently in use; cleanup is deferred",
+                path.display()
+            ));
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let canonical_source = source.map(|repo| {
+        repo.canonicalize()
+            .map(|resolved| crate::path_identity::actual_path(&resolved).unwrap_or(resolved))
+            .unwrap_or_else(|_| repo.to_path_buf())
+    });
+    let index_lock = canonical_source
+        .as_deref()
+        .map(crate::workspace::host_index_lock)
+        .transpose()?;
+    let index_guard = index_lock
+        .as_ref()
+        .map(|lock| lock.lock().map_err(|error| error.to_string()))
+        .transpose()?;
+    let ref_lock = canonical_source
+        .as_deref()
+        .map(crate::workspace::host_ref_lock)
+        .transpose()?;
+    let ref_guard = ref_lock
+        .as_ref()
+        .map(|lock| lock.lock().map_err(|error| error.to_string()))
+        .transpose()?;
+    if store.cleanup_target_is_shared(run_id, target)? {
+        drop(ref_guard);
+        drop(index_guard);
+        drop(shadow_guard);
+        if deleting {
+            crate::workspace::prune_shadow_run_refs_for_source_with_retention(
+                path,
+                source,
+                run_id,
+                source.is_some(),
+                true,
+                || {
+                    let (protected, retained_views) =
+                        shadow_retention_for_repository(store, run_id, source)?;
+                    Ok((protected, Some(retained_views)))
+                },
+            )?;
+        }
+        return Ok(());
+    }
+    match crate::workspace_cleanup::remove_tree(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Cannot remove owned directory {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 pub(crate) fn attempt(root: &Path, store: &Store, task: &Task) -> Result<(), String> {
@@ -1040,6 +1171,61 @@ pub(crate) fn prune_orphaned_shadow_repos_with_guard(
         }
         crate::workspace_cleanup::remove_tree(&path).map_err(|error| error.to_string())?;
         removed += 1;
+    }
+    Ok(removed)
+}
+
+/// Reclaim obsolete `agent-views/` directories inside retained shadow
+/// repositories during startup/periodic background GC while preserving Git
+/// commits (for diffs), shadow `HEAD`/published refs, and every view belonging
+/// to non-completed Runs or published managed result descriptors.
+pub(crate) fn prune_retained_shadow_views_with_guard(
+    root: &Path,
+    store: &Store,
+    should_abort: impl Fn() -> bool,
+) -> Result<usize, String> {
+    if should_abort() {
+        return Ok(0);
+    }
+    let Some(shadow_root) = real_child_path(root, &root.join("shadow_repos"), false)? else {
+        return Ok(0);
+    };
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(&shadow_root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let target = Target::Shadow {
+            root: root.to_path_buf(),
+            name,
+            source: None,
+        };
+        let Ok(Some(path)) = target.resolve(root, "background-gc") else {
+            continue;
+        };
+        if path.join("agent-views").is_dir() {
+            candidates.push(path);
+        }
+    }
+    if candidates.is_empty() || should_abort() {
+        return Ok(0);
+    }
+    let mut removed = 0usize;
+    for path in candidates {
+        if should_abort() {
+            break;
+        }
+        let shadow_lock = crate::workspace::shadow_use_lock(&path)?;
+        let Ok(_shadow_guard) = shadow_lock.try_write() else {
+            continue;
+        };
+        if should_abort() {
+            break;
+        }
+        // Resolve retention under the exclusive shadow lock after verifying
+        // no Graph/Planner worker is active so a Run that started or paused
+        // during the sweep never loses its views against a stale snapshot.
+        let (_, retained_views) = shadow_retention_for_repository(store, "", None)?;
+        removed += crate::workspace::prune_shadow_agent_views_locked(&path, &retained_views);
     }
     Ok(removed)
 }

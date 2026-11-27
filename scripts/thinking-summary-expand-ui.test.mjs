@@ -13,12 +13,23 @@ before(async () => {
       name: "thinking-summary-expand-fixture",
       configureServer(viteServer) {
         viteServer.middlewares.use(async (req, res, next) => {
-          if (!req.url?.startsWith("/__audit")) return next();
-          res.setHeader("Content-Type", "text/html");
-          res.end(await viteServer.transformIndexHtml(
-            req.url,
-            '<html><body><div id="root" style="padding:160px 32px"></div><script type="module" src="/scripts/fixtures/frontend-audit.tsx"></script></body></html>',
-          ));
+          if (req.url?.startsWith("/__audit")) {
+            res.setHeader("Content-Type", "text/html");
+            res.end(await viteServer.transformIndexHtml(
+              req.url,
+              '<html><body><div id="root" style="padding:160px 32px"></div><script type="module" src="/scripts/fixtures/frontend-audit.tsx"></script></body></html>',
+            ));
+            return;
+          }
+          if (req.url?.startsWith("/__changes")) {
+            res.setHeader("Content-Type", "text/html");
+            res.end(await viteServer.transformIndexHtml(
+              req.url,
+              '<html><body style="margin:0"><div id="root"></div><script type="module" src="/scripts/fixtures/workspace-changes.tsx"></script></body></html>',
+            ));
+            return;
+          }
+          return next();
         });
       },
     }],
@@ -185,4 +196,130 @@ test("expanding a folded ThinkingCard or hydrating a short settled thinking bloc
   } finally {
     await context.close();
   }
+});
+
+test("clicking bottom Expand cards while a live CoT card is streaming in summary mode reveals content cleanly without shimmer or blank flicker", { timeout: 30_000 }, async () => {
+  const fullLog = [
+    JSON.stringify({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "echo " + "x".repeat(300) } }),
+    JSON.stringify({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash", isError: false, result: { content: [{ type: "text", text: "output ".repeat(150) }] } }),
+    JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Finished step 1." }] } }),
+    JSON.stringify({ type: "message_start", message: { role: "assistant", content: [] } }),
+    JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } }),
+    ...Array.from({ length: 16 }, (_, i) => JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: `Step ${i + 1}: Analyzing live reasoning smoothly.\n\n` },
+    })),
+  ].join("\n") + "\n";
+  const summaryLog = [
+    JSON.stringify({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "echo short" } }),
+    JSON.stringify({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash", isError: false, result: { content: [{ type: "text", text: "" }], piNBodyOmitted: true } }),
+    JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Finished step 1." }] } }),
+    JSON.stringify({ type: "message_start", message: { role: "assistant", content: [] } }),
+    JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } }),
+  ].join("\n") + "\n";
+  const fullBuf = Buffer.from(fullLog);
+
+  const runCase = async (fullDelayMs) => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      locale: "en-US",
+      reducedMotion: "no-preference",
+    });
+    await context.addInitScript(() => {
+      localStorage.setItem("pi_n_language_v1", "en");
+      localStorage.setItem("pi_n_collapse_cards_v1", "1");
+      localStorage.setItem("pi_n_auto_expand_cot_v1", "1");
+    });
+    const errors = [];
+    let fullFetches = 0;
+    await context.route("**/api/*", async route => {
+      const command = new URL(route.request().url()).pathname.slice(5);
+      const body = route.request().postDataJSON() ?? {};
+      if (command === "get_execution_output") {
+        if (body.projection === "summary" || body.summaryOnly === true) {
+          await route.fulfill({ json: { result: {
+            runId: body.runId, executionId: body.executionId,
+            content: body.offset ? "" : summaryLog,
+            startOffset: 0, nextOffset: fullBuf.length, totalBytes: fullBuf.length,
+            complete: true, status: "running", projection: "summary", summaryOnly: true,
+          } } });
+          return;
+        }
+        if (!body.offset) {
+          fullFetches += 1;
+          if (fullDelayMs > 0) await new Promise(resolve => setTimeout(resolve, fullDelayMs));
+        }
+        const offset = body.offset ?? 0;
+        await route.fulfill({ json: { result: {
+          runId: body.runId, executionId: body.executionId,
+          content: fullBuf.subarray(offset).toString("utf8"),
+          startOffset: offset, nextOffset: fullBuf.length, totalBytes: fullBuf.length,
+          complete: true, status: "running",
+        } } });
+        return;
+      }
+      await route.fulfill({ json: { result: {} } });
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(8_000);
+    page.on("pageerror", error => errors.push(String(error)));
+    try {
+      await page.goto(`${origin}/__changes?mode=serial&settled=0&bytes=${fullBuf.length}`, { waitUntil: "domcontentloaded" });
+      await page.locator(".initial-query-scroll.conversation-ready").waitFor();
+      await page.getByTestId("activity-summary-row").last().waitFor();
+
+      await page.evaluate(() => {
+        window.__liveExpandFrames = [];
+        const start = performance.now();
+        function tick(now) {
+          const rows = [...document.querySelectorAll('[data-testid="activity-summary-row"]')];
+          const lastRow = rows.at(-1);
+          const card = document.querySelector(".thinking-card");
+          const track = lastRow?.querySelector(".activity-summary-body-track");
+          const shimmer = Boolean(card?.querySelector(".thinking-shimmer"));
+          const md = card?.querySelector(".thinking-markdown");
+          window.__liveExpandFrames.push({
+            rowDomId: lastRow?.parentElement?.getAttribute("data-transcript-id") ?? null,
+            hasCard: Boolean(card),
+            trackH: track ? Math.round(track.getBoundingClientRect().height) : null,
+            shimmer,
+            textLen: md ? md.textContent.length : 0,
+          });
+          if (now - start < 720) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      });
+
+      await page.getByTestId("collapse-cards-trigger").click();
+      await page.waitForTimeout(760);
+      const frames = await page.evaluate(() => window.__liveExpandFrames);
+      const finalText = await page.locator(".thinking-card .thinking-markdown").first().textContent();
+      return { frames, finalText: finalText ?? "", fullFetches, errors };
+    } finally {
+      await context.close();
+    }
+  };
+
+  // Normal local latency: pre-warm upgrades summary -> full before animation starts (zero shimmer, zero blank frames, monotonic track growth).
+  const warm = await runCase(40);
+  const warmBlank = warm.frames.filter(f => f.hasCard && !f.shimmer && f.textLen === 0);
+  const warmShimmer = warm.frames.filter(f => f.shimmer);
+  const warmRowIds = new Set(warm.frames.map(f => f.rowDomId).filter(Boolean));
+  const warmTrackHeights = warm.frames.map(f => f.trackH).filter(h => h !== null);
+  const warmTrackDrops = warmTrackHeights.slice(1).filter((h, i) => h < warmTrackHeights[i]);
+  assert.equal(warm.fullFetches, 1, `expected single full upgrade fetch, got ${warm.fullFetches}`);
+  assert.equal(warmBlank.length, 0, `expected zero blank CoT frames: ${JSON.stringify(warmBlank)}`);
+  assert.equal(warmShimmer.length, 0, `expected zero shimmer frames when full output lands within pre-warm window: ${JSON.stringify(warmShimmer)}`);
+  assert.equal(warmRowIds.size, 1, `running summary row ID must stay stable across summary->full upgrade: ${JSON.stringify([...warmRowIds])}`);
+  assert.equal(warmTrackDrops.length, 0, `expand track height must never shrink mid-flight: ${JSON.stringify(warmTrackHeights)}`);
+  assert.match(warm.finalText, /Step 16: Analyzing live reasoning smoothly\./);
+  assert.deepEqual(warm.errors, []);
+
+  // Slow backend (> pre-warm cap & > animation duration): in-flight upgrade is never aborted and never flashes blank.
+  const slow = await runCase(320);
+  const slowBlank = slow.frames.filter(f => f.hasCard && !f.shimmer && f.textLen === 0);
+  assert.equal(slow.fullFetches, 1, `in-flight live upgrade must not be aborted and re-fetched at idle handoff (fetches=${slow.fullFetches})`);
+  assert.equal(slowBlank.length, 0, `expected zero blank CoT frames on slow upgrade: ${JSON.stringify(slowBlank)}`);
+  assert.match(slow.finalText, /Step 16: Analyzing live reasoning smoothly\./);
+  assert.deepEqual(slow.errors, []);
 });

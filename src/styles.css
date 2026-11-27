@@ -1050,13 +1050,15 @@ h3 {
 /* 应用内确认弹窗 */
 .modal-backdrop.confirm-backdrop {
   z-index: 1600;
-  background: var(--bg-overlay, rgba(15, 23, 42, 0.45));
+  background: var(--bg-scrim, rgba(15, 23, 42, 0.12));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   padding: max(24px, calc(var(--desktop-titlebar-inset, 0px) + 16px)) 24px 24px;
 }
 
 .confirm-dialog {
+  position: relative;
+  z-index: 1;
   will-change: transform, opacity;
   transform: translateZ(0);
   width: 480px;
@@ -1067,7 +1069,7 @@ h3 {
   background: var(--bg-canvas);
   border: 1px solid var(--border-default);
   border-radius: 12px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-modal);
   padding: 24px 26px 22px;
   display: flex;
   flex-direction: column;
@@ -2717,7 +2719,7 @@ h3 {
   gap: 6px;
 }
 
-/* 发送按钮左侧模式选择器 (auto / serial / graph) - 高度与发送按钮严格一致 (32px / compact 26px) */
+/* 发送按钮左侧模式选择器 (serial / graph) - 高度与发送按钮严格一致 (32px / compact 26px) */
 .prompt-box-mode-selector {
   --prompt-mode-gap: 3px;
   display: inline-flex;

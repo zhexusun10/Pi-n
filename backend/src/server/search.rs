@@ -2753,11 +2753,11 @@ mod tests {
             .append(
                 &mut s1,
                 EventKind::GraphRevised {
-                    graph: Graph {
+                    graph: Some(Graph {
                         original_goal: "编辑后的规划目标".into(),
                         nodes: vec![],
                         edges: vec![],
-                    },
+                    }),
                     planning_id: pid_new.clone(),
                     planning: PlanningSummary {
                         planning_id: pid_new.clone(),
@@ -3027,11 +3027,11 @@ mod tests {
             .append(
                 &mut s1,
                 EventKind::GraphRevised {
-                    graph: Graph {
+                    graph: Some(Graph {
                         original_goal: "共同关键词 第一轮目标".into(),
                         nodes: vec![],
                         edges: vec![],
-                    },
+                    }),
                     planning_id: pid2_old.clone(),
                     planning: PlanningSummary {
                         planning_id: pid2_old.clone(),
@@ -3058,11 +3058,11 @@ mod tests {
             .append(
                 &mut s1,
                 EventKind::GraphRevised {
-                    graph: Graph {
+                    graph: Some(Graph {
                         original_goal: "共同关键词 第一轮目标".into(),
                         nodes: vec![],
                         edges: vec![],
-                    },
+                    }),
                     planning_id: pid2_new.clone(),
                     planning: PlanningSummary {
                         planning_id: pid2_new.clone(),

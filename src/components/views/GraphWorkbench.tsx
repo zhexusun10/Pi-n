@@ -37,7 +37,7 @@ import { resolveGraphPhase } from "../../lib/graphPhase";
 import { ComposerDrafts, type RecalledMessage } from "../../services/composerDrafts";
 import { projectLiveSteerWithdrawals, projectWithdrawnSteers, inlineSteerKey, isUncommittedSteer, liveSteerConsumed, nodeInstructionText, numberSteers, steerFallbackPosition, steerRollbackKey, type InlineSteerAttachment, type InlineUserTurnWindow, type LiveSteerMarker } from "../../lib/pendingSteers";
 import { ThinkingCard } from "../ThinkingCard";
-import { ActivitySummaryRow, beginCardsTransitionAnchor, cancelCardsTransitionAnchor, finishCardsTransitionAnchor, CARDS_TRANSITION_MAX_DURATION_MS, type CardsTransitionPhase } from "../ActivitySummaryRow";
+import { ActivitySummaryRow, beginCardsTransitionAnchor, cancelCardsTransitionAnchor, finishCardsTransitionAnchor, prepareLiveCardsExpand, CARDS_TRANSITION_MAX_DURATION_MS, type CardsTransitionPhase } from "../ActivitySummaryRow";
 import { useCollapseCards, setCollapseCards } from "../../services/displayPreferences";
 import { ExecutionTiming } from "../ExecutionTiming";
 import { ExecutionTimeTookText, PlannerTimeTookText, formatSessionStartTime } from "../ExecutionTimeTook";
@@ -1015,12 +1015,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   // inspected. Keeping `selected` in its key made node selection capture the
   // serial scroll offset and restore it later, leaving the conversation stuck
   // mid-history after switching views or history pages.
-  // The pane is also independent of how exactly the route was resolved: an
-  // auto-routed conversation renders the Planner pane for both `undecided` and
-  // the resolved `graph`. Folding the raw route into the key turned that
-  // resolution into a view switch, which discarded the reader's position and
-  // follow state, so a Planner conversation reading its history snapped back to
-  // the newest row as soon as the Partitioner answered.
+  // The pane is also independent of pending vs resolved graph routing: a
+  // conversation renders the Planner pane for both `undecided` and `graph`.
+  // Folding the raw route into the key would turn route resolution into a view
+  // switch, discarding the reader's scroll position and follow state.
   const conversationPaneKey = routeType === "serial" ? "main" : routeType === "graph" && selected ? selected : "planner";
   // A selected publication Merger can precede its first execution. When that
   // execution arrives, the Planner branch is replaced by a Node scroller even
@@ -1237,8 +1235,6 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     initialPlanMode,
     plannerStream?.initialPlanMode,
     plannerStream?.stage,
-    plannerStream?.partitionerText,
-    plannerStream?.partitionerThinking,
     state.events,
     state.planning?.roles?.partition,
     routeType,
@@ -3163,6 +3159,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
 
   const [cardsTransition, setCardsTransition] = useState<CardsTransitionPhase>("idle");
   const cardsTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingCardsExpandSeqRef = useRef(0);
   const cardsSuppressingScrollRef = useRef(false);
   const releaseCardsScrollSuppression = useCallback((syncScrollState = true) => {
     if (!cardsSuppressingScrollRef.current) return;
@@ -3175,6 +3172,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     }
   }, [handleChatScroll]);
   const clearCardsTransition = useCallback(() => {
+    pendingCardsExpandSeqRef.current += 1;
     if (cardsTransitionTimerRef.current !== null) {
       clearTimeout(cardsTransitionTimerRef.current);
       cardsTransitionTimerRef.current = null;
@@ -3186,6 +3184,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   useEffect(() => {
     clearCardsTransition();
     return () => {
+      pendingCardsExpandSeqRef.current += 1;
       if (cardsTransitionTimerRef.current !== null) {
         clearTimeout(cardsTransitionTimerRef.current);
         cardsTransitionTimerRef.current = null;
@@ -3205,45 +3204,61 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   }, [cardsTransition, releaseCardsScrollSuppression]);
   const effectiveCardsCollapsed = cardsCollapsed || cardsTransition === "expanding";
   const toggleCardsCollapsed = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
-    const el = chatScrollRef.current;
-    const triggerEl = event?.currentTarget ?? el?.querySelector<HTMLElement>('[data-testid="collapse-cards-trigger"]') ?? null;
-    const distanceFromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
-    const pinToBottom = distanceFromBottom <= 4
-      || (shouldFollowOutput() && !userScrolledAwayRef.current && !historyReadingRef.current);
-    if (el) {
-      if (pinToBottom) {
-        setUserScrolledUp(false);
+    const clickedTrigger = event?.currentTarget ?? null;
+    const nextCollapsed = !cardsCollapsed;
+    const seq = ++pendingCardsExpandSeqRef.current;
+
+    const commitToggle = () => {
+      if (pendingCardsExpandSeqRef.current !== seq) return;
+      const el = chatScrollRef.current;
+      const triggerEl = (clickedTrigger && clickedTrigger.isConnected ? clickedTrigger : null)
+        ?? el?.querySelector<HTMLElement>('[data-testid="collapse-cards-trigger"]') ?? null;
+      const distanceFromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
+      const pinToBottom = distanceFromBottom <= 4
+        || (shouldFollowOutput() && !userScrolledAwayRef.current && !historyReadingRef.current);
+      if (el) {
+        if (pinToBottom) {
+          setUserScrolledUp(false);
+        } else {
+          userScrolledAwayRef.current = true;
+          setUserScrolledUp(true);
+        }
+      }
+      if (cardsTransitionTimerRef.current !== null) {
+        clearTimeout(cardsTransitionTimerRef.current);
+        cardsTransitionTimerRef.current = null;
+      }
+      if (!reduceMotion) {
+        suppressAutoScrollRef.current = true;
+        cardsSuppressingScrollRef.current = true;
+        const finish = () => {
+          if (cardsTransitionTimerRef.current !== null) {
+            clearTimeout(cardsTransitionTimerRef.current);
+            cardsTransitionTimerRef.current = null;
+          }
+          setCardsTransition("idle");
+        };
+        beginCardsTransitionAnchor(el, triggerEl, pinToBottom, finish, () => {
+          releaseCardsScrollSuppression(true);
+        });
+        setCardsTransition(nextCollapsed ? "collapsing" : "expanding");
+        cardsTransitionTimerRef.current = setTimeout(finish, CARDS_TRANSITION_MAX_DURATION_MS + 400);
       } else {
-        userScrolledAwayRef.current = true;
-        setUserScrolledUp(true);
+        cancelCardsTransitionAnchor();
+        releaseCardsScrollSuppression(true);
+        setCardsTransition("idle");
+      }
+      setCollapseCards(nextCollapsed);
+    };
+
+    if (!nextCollapsed) {
+      const prepare = prepareLiveCardsExpand();
+      if (prepare) {
+        void prepare.then(commitToggle);
+        return;
       }
     }
-    const nextCollapsed = !cardsCollapsed;
-    if (cardsTransitionTimerRef.current !== null) {
-      clearTimeout(cardsTransitionTimerRef.current);
-      cardsTransitionTimerRef.current = null;
-    }
-    if (!reduceMotion) {
-      suppressAutoScrollRef.current = true;
-      cardsSuppressingScrollRef.current = true;
-      const finish = () => {
-        if (cardsTransitionTimerRef.current !== null) {
-          clearTimeout(cardsTransitionTimerRef.current);
-          cardsTransitionTimerRef.current = null;
-        }
-        setCardsTransition("idle");
-      };
-      beginCardsTransitionAnchor(el, triggerEl, pinToBottom, finish, () => {
-        releaseCardsScrollSuppression(true);
-      });
-      setCardsTransition(nextCollapsed ? "collapsing" : "expanding");
-      cardsTransitionTimerRef.current = setTimeout(finish, CARDS_TRANSITION_MAX_DURATION_MS + 400);
-    } else {
-      cancelCardsTransitionAnchor();
-      releaseCardsScrollSuppression(true);
-      setCardsTransition("idle");
-    }
-    setCollapseCards(nextCollapsed);
+    commitToggle();
   }, [cardsCollapsed, reduceMotion, releaseCardsScrollSuppression, setUserScrolledUp, shouldFollowOutput]);
 
   const scopedAttemptIdsKey = useMemo(
@@ -4058,7 +4073,13 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                               />
                             ) : (
                               <ThinkingCard
-                                content={plannerStream.plannerThinking}
+                                item={{
+                                  id: "live_planner_thinking",
+                                  type: "thinking",
+                                  role: "assistant",
+                                  content: plannerStream.plannerThinking,
+                                  status: isPlanning && plannerStream.plannerThinkingActive ? "running" : "success",
+                                }}
                                 isStreaming={isPlanning && plannerStream.plannerThinkingActive}
                                 title="Chain of Thought"
                                 defaultExpanded={true}

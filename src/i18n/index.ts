@@ -64,7 +64,6 @@ function annotateProviderError(message: string, language: Locale): string {
   let text = message;
   if (language === "zh-CN") {
     text = text
-      .replace(/^Partitioner failed:\s*/i, "任务分片器 (Partitioner) 失败: ")
       .replace(/^Planner failed:\s*/i, "任务规划器 (Planner) 失败: ")
       .replace(
         /OAuth callback port \(1455\) is in use or restricted\. Check that port 1455 is free, or switch to API Key authentication\./i,

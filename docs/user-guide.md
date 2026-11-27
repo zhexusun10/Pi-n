@@ -9,11 +9,10 @@
 
 - **Direct** *(default)*: one agent works directly in your project. Prefer it for small, linear or tightly coupled changes.
 - **Compile**: review a compiled task graph, then run independent nodes. Each small execution batch shares your source directory; larger parallel batches use private workspaces by default. Nodes keep separate conversations. A Compile graph can have just one node.
-- **Auto**: let the Partitioner choose Direct or Compile from your goal.
 
 More agents help only when work can progress independently. Repeatedly splitting edits to the same files can add conflicts instead of useful parallelism.
 
-In **Settings → Compile mode settings**, **Enable Feedback** defaults off; the other toggles default on. Saved choices are preserved. In **Settings → UI settings**, **Hide Auto mode** defaults on, keeps only Direct and Compile in the composer, and hides Partitioner configuration without deleting its saved settings. If Auto is selected, it switches to Direct; an explicit Direct or Compile choice stays unchanged. This visibility preference applies only in this browser; turn it off and save to show Auto and Partitioner again.
+In **Settings → Compile mode settings**, **Enable Feedback** defaults off; the other toggles default on. Saved choices are preserved.
 
 ## Bundled Pi plugins
 

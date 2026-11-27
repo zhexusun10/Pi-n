@@ -207,6 +207,22 @@ pub struct RoleModelConfig {
 
 /// Conversation-scoped model selection. New Runs inherit the saved settings;
 /// a settings save inside an existing Run records an override here instead.
+fn deserialize_role_models<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, RoleModelConfig>, D::Error> {
+    let mut raw = BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    // Ignore retired legacy Partitioner entries (including null/legacy shapes)
+    // in persisted configs and event logs.
+    raw.remove("partitioner");
+    raw.into_iter()
+        .map(|(role, value)| {
+            serde_json::from_value::<RoleModelConfig>(value)
+                .map(|settings| (role, settings))
+                .map_err(serde::de::Error::custom)
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunModelConfig {
@@ -214,7 +230,11 @@ pub struct RunModelConfig {
     pub model: String,
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_role_models"
+    )]
     pub role_models: BTreeMap<String, RoleModelConfig>,
 }
 
@@ -260,7 +280,11 @@ pub struct Config {
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String,
     // Optional role fields inherit the shared model/thinking defaults.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_role_models"
+    )]
     pub role_models: BTreeMap<String, RoleModelConfig>,
     #[serde(default = "default_max_parallel")]
     pub max_parallel: usize,
@@ -336,7 +360,7 @@ impl Config {
             ));
         }
         for (role, settings) in &self.role_models {
-            if !matches!(role.as_str(), "partitioner" | "planner" | "nodeAgent") {
+            if !matches!(role.as_str(), "planner" | "nodeAgent") {
                 return Err(format!("Unknown model role: {role}"));
             }
             if let Some(level) = &settings.thinking_level {
@@ -551,13 +575,19 @@ pub(crate) fn record_context_usage(
             .and_then(|v| v.as_u64())
             .and_then(|v| usize::try_from(v).ok())
     };
-    *tokens = count("tokens").unwrap_or(0);
-    *peak = (*peak).max(*tokens);
-    *snapshot = Some(SessionContext {
-        tokens: *tokens,
-        peak: *peak,
+    let next_tokens = count("tokens").unwrap_or(0);
+    let next_peak = (*peak).max(next_tokens);
+    let next_snapshot = Some(SessionContext {
+        tokens: next_tokens,
+        peak: next_peak,
         window: count("window").filter(|window| *window > 0),
     });
+    if *tokens == next_tokens && *peak == next_peak && *snapshot == next_snapshot {
+        return false;
+    }
+    *tokens = next_tokens;
+    *peak = next_peak;
+    *snapshot = next_snapshot;
     true
 }
 
@@ -1082,7 +1112,11 @@ pub enum EventKind {
         error: String,
     },
     GraphRevised {
-        graph: Graph,
+        /// Omitted when a review or follow-up Planner turn leaves the compiled
+        /// graph unchanged, avoiding repeated multi-kilobyte graph copies in
+        /// `events.sqlite`. Older events always carry `Some(graph)`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        graph: Option<Graph>,
         planning_id: String,
         planning: PlanningSummary,
         invalidated: Vec<String>,
@@ -1482,6 +1516,11 @@ pub struct Snapshot {
     pub execution_stop_requests: Vec<String>,
     pub phase: String,
     pub base: String,
+    /// Most recent lazy/adaptive source snapshot commit (recorded by
+    /// `SourceSnapshotted` or `GraphRevised.source_head`) while `base` keeps
+    /// the immutable approval-time commit (empty on adaptive batch Runs).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub latest_source_base: String,
     /// Last delivered internal Git result, not the user's source HEAD. Files-only
     /// publication leaves the user's branch/index unchanged.
     #[serde(default)]
@@ -1725,6 +1764,27 @@ fn merge_recorded_model(metrics: &mut ExecutionMetrics, previous: Option<&Execut
 }
 
 impl Snapshot {
+    /// Effective source baseline commit for publication-level file changes and
+    /// diffs: prefers the immutable approval `base`, then `latest_source_base`
+    /// from lazy `SourceSnapshotted`, then the earliest active execution's
+    /// `before` commit (for checkpoints saved before `latest_source_base`).
+    pub fn publication_base(&self) -> &str {
+        if !self.base.is_empty() {
+            return &self.base;
+        }
+        if !self.latest_source_base.is_empty() {
+            return &self.latest_source_base;
+        }
+        self.executions
+            .iter()
+            .filter(|exec| {
+                !exec.before.is_empty() && !self.superseded_execution_ids.contains(&exec.id)
+            })
+            .min_by_key(|exec| exec.started_at)
+            .map(|exec| exec.before.as_str())
+            .unwrap_or("")
+    }
+
     /// Passive additions do not change the recovery mode of their node. Use
     /// durable event identity so legacy checkpoints need no new queue field.
     pub(crate) fn node_has_pending_followup(&self, name: &str) -> bool {
@@ -2629,36 +2689,44 @@ pub fn apply_without_metrics(state: &mut Snapshot, event: &Event) -> bool {
         EventKind::Approved { base } => {
             state.approved = true;
             state.base = base.clone();
+            if !base.is_empty() {
+                state.latest_source_base = base.clone();
+            }
             state.phase = "running".into();
         }
         EventKind::GraphRevised {
-            graph, invalidated, ..
-        }
-        | EventKind::ManualGraphRevised {
-            graph, invalidated, ..
+            graph,
+            planning_id,
+            planning,
+            invalidated,
+            source_head,
         } => {
-            if let EventKind::GraphRevised {
-                planning_id,
-                planning,
-                ..
-            } = &event.kind
-            {
-                state.stop_requested = false;
-                state.planning_id = Some(planning_id.clone());
-                state.planning = Some(planning.clone());
+            state.stop_requested = false;
+            state.planning_id = Some(planning_id.clone());
+            state.planning = Some(planning.clone());
+            if let Some(head) = source_head.as_deref().filter(|head| !head.is_empty()) {
+                state.latest_source_base = head.to_string();
             }
-            let changed = state.graph != *graph;
-            // Undelivered batch membership is not a disposable graph preview.
-            // Keep the barrier across edits; Runtime reconciles surviving
-            // members, new peers and prerequisites against the revised graph.
-            state.graph = graph.clone();
+            let changed = graph.as_ref().is_some_and(|next| state.graph != *next);
             state.preview_graph = None;
-            state.plan = crate::compiler::compile(graph, true).ok();
-            state
-                .nodes
-                .retain(|name, _| graph.nodes.iter().any(|node| node.id == *name));
-            for node in &graph.nodes {
-                state.nodes.entry(node.id.clone()).or_default();
+            if let Some(graph) = graph {
+                // Undelivered batch membership is not a disposable graph preview.
+                // Keep the barrier across edits; Runtime reconciles surviving
+                // members, new peers and prerequisites against the revised graph.
+                state.graph = graph.clone();
+                state.plan = crate::compiler::compile(graph, true).ok();
+                state
+                    .nodes
+                    .retain(|name, _| graph.nodes.iter().any(|node| node.id == *name));
+                for node in &graph.nodes {
+                    state.nodes.entry(node.id.clone()).or_default();
+                }
+                state.feedback_counts.retain(|key, _| {
+                    graph
+                        .edges
+                        .iter()
+                        .any(|edge| edge.feedback && key == &format!("{}->{}", edge.from, edge.to))
+                });
             }
             for name in invalidated {
                 // A reworked node starts a fresh session: its prior executions stay
@@ -2695,6 +2763,60 @@ pub fn apply_without_metrics(state: &mut Snapshot, event: &Event) -> bool {
                     node.revision += 1;
                 }
             }
+            if !state.approved {
+                // Draft revisions must stay approvable, including after Reject.
+                // No Approved event means there can be no execution.
+                state.phase = "awaiting_approval".into();
+            } else if changed {
+                state.publication = None;
+                state.phase = if state.paused { "paused" } else { "running" }.into();
+            }
+        }
+        EventKind::ManualGraphRevised {
+            graph,
+            invalidated,
+            source_head,
+        } => {
+            if let Some(head) = source_head.as_deref().filter(|head| !head.is_empty()) {
+                state.latest_source_base = head.to_string();
+            }
+            let changed = state.graph != *graph;
+            state.graph = graph.clone();
+            state.preview_graph = None;
+            state.plan = crate::compiler::compile(graph, true).ok();
+            state
+                .nodes
+                .retain(|name, _| graph.nodes.iter().any(|node| node.id == *name));
+            for node in &graph.nodes {
+                state.nodes.entry(node.id.clone()).or_default();
+            }
+            for name in invalidated {
+                for execution in &state.executions {
+                    if execution.node == *name
+                        && !state.superseded_execution_ids.contains(&execution.id)
+                    {
+                        state.superseded_execution_ids.push(execution.id.clone());
+                    }
+                }
+                let node = state.nodes.get_mut(name).unwrap();
+                node.status = if matches!(node.status.as_str(), "waiting" | "failed" | "blocked") {
+                    "waiting"
+                } else {
+                    "dirty"
+                }
+                .into();
+                node.head = None;
+                node.error = None;
+                node.clear_turn_directive();
+                node.feedback_workspace = None;
+                node.baseline_head = None;
+                node.continuation = false;
+                node.source_direct_recovery = false;
+                node.shared_workspace = false;
+                if node.status == "dirty" {
+                    node.revision += 1;
+                }
+            }
             state.feedback_counts.retain(|key, _| {
                 graph
                     .edges
@@ -2702,8 +2824,6 @@ pub fn apply_without_metrics(state: &mut Snapshot, event: &Event) -> bool {
                     .any(|edge| edge.feedback && key == &format!("{}->{}", edge.from, edge.to))
             });
             if !state.approved {
-                // Draft revisions must stay approvable, including after Reject.
-                // No Approved event means there can be no execution.
                 state.phase = "awaiting_approval".into();
             } else if changed {
                 state.publication = None;
@@ -2912,9 +3032,13 @@ pub fn apply_without_metrics(state: &mut Snapshot, event: &Event) -> bool {
                 }
             }
         }
+        EventKind::SourceSnapshotted { head } => {
+            if !head.is_empty() {
+                state.latest_source_base = head.clone();
+            }
+        }
         EventKind::WorkspaceIsolationRequested
         | EventKind::SharedWorkspaceReviewRequested { .. }
-        | EventKind::SourceSnapshotted { .. }
         | EventKind::NodeInputBound { .. }
         | EventKind::SteersWithdrawn { .. }
         | EventKind::QueueWithdrawalRecorded { .. } => {}
@@ -3995,7 +4119,7 @@ mod metrics_tests {
             (
                 2,
                 EventKind::GraphRevised {
-                    graph: Graph::default(),
+                    graph: Some(Graph::default()),
                     planning_id: "initial".into(),
                     planning: planning_turn("initial", 100, 2),
                     invalidated: Vec::new(),
@@ -4244,5 +4368,90 @@ mod metrics_tests {
                 .consumed_tokens,
             160
         );
+    }
+
+    #[test]
+    fn record_context_usage_returns_false_when_values_are_unchanged() {
+        let mut tokens = 0;
+        let mut peak = 0;
+        let mut snapshot = None;
+        let sample = serde_json::json!({
+            "type": "pi_n_context_usage",
+            "tokens": 1000,
+            "window": 512000,
+        });
+        assert!(record_context_usage(
+            &sample,
+            &mut tokens,
+            &mut peak,
+            &mut snapshot
+        ));
+        assert!(
+            !record_context_usage(&sample, &mut tokens, &mut peak, &mut snapshot),
+            "identical context usage must not trigger duplicate progress events"
+        );
+        let next = serde_json::json!({
+            "type": "pi_n_context_usage",
+            "tokens": 1500,
+            "window": 512000,
+        });
+        assert!(record_context_usage(
+            &next,
+            &mut tokens,
+            &mut peak,
+            &mut snapshot
+        ));
+        assert_eq!(tokens, 1500);
+        assert_eq!(peak, 1500);
+    }
+
+    #[test]
+    fn graph_revised_omits_unchanged_graph_and_preserves_state_on_replay() {
+        let event = EventKind::GraphRevised {
+            graph: None,
+            planning_id: "review-1".into(),
+            planning: planning_turn("review-1", 50, 1),
+            invalidated: vec![],
+            source_head: None,
+        };
+        let encoded = serde_json::to_value(&event).unwrap();
+        assert!(
+            encoded.get("graph").is_none(),
+            "unchanged graph_revised must omit graph JSON: {encoded}"
+        );
+        let decoded: EventKind = serde_json::from_value(encoded).unwrap();
+
+        let original_graph = Graph {
+            original_goal: "keep graph".into(),
+            nodes: vec![Node {
+                id: "worker".into(),
+                task: "do work".into(),
+            }],
+            edges: vec![],
+        };
+        let mut state = Snapshot {
+            graph: original_graph.clone(),
+            approved: true,
+            phase: "completed".into(),
+            ..Snapshot::default()
+        };
+        state.nodes.insert(
+            "worker".into(),
+            NodeState {
+                status: "completed".into(),
+                ..NodeState::default()
+            },
+        );
+        apply(
+            &mut state,
+            &Event {
+                sequence: 10,
+                timestamp: 100,
+                kind: decoded,
+            },
+        );
+        assert_eq!(state.graph, original_graph);
+        assert_eq!(state.phase, "completed");
+        assert_eq!(state.planning_id.as_deref(), Some("review-1"));
     }
 }

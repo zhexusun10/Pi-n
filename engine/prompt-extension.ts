@@ -30,7 +30,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
   const continuation = process.env.PI_N_CONTINUE_INTERRUPTED === 'true';
   const cwd = process.cwd();
   // This is Pi^n's workspace policy: a Pi^n role always carries PI_N_MODE
-  // (node/planner/partition/merger/result) and/or PI_N_EXECUTION_KIND. Capture
+  // (node/planner/merger/result) and/or PI_N_EXECUTION_KIND. Capture
   // that once at factory time so the shell scrub still applies after any tool-time
   // env restoration, while the unmanaged compatibility process stays a no-op.
   const managedShell = !!process.env.PI_N_MODE || !!process.env.PI_N_EXECUTION_KIND;
@@ -89,7 +89,6 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
   // but must not change the prompt sent to the model on this or later turns.
   if (planner) pi.on('context', event => ({ messages: plannerSteerContext(event.messages) }));
   const plannerWriteTools = process.env.PI_N_PLANNER_WRITE_TOOLS === 'true';
-  const partition = process.env.PI_N_MODE === 'partition';
   const graph = process.env.PI_N_EXECUTION_KIND === 'graph';
   const project = process.env.PI_N_ORIGINAL_ROOT || (planner && !graph ? cwd : undefined);
   const plannerTargetsRaw = planner && process.env.PI_N_PLANNER_FOLLOWUP === 'true'
@@ -106,7 +105,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
     configurePlannerWorkspace(cwd, project, process.env.PI_N_SOURCE_ALIAS || project);
     activePaths = plannerWorkspaceState().paths;
     onPlannerWorkspaceChanged(next => { activePaths = next.paths; });
-  } else if (!partition && (graph || planner) && project) {
+  } else if ((graph || planner) && project) {
     activePaths = createWorkspacePaths(cwd, project, process.env.PI_N_SOURCE_ALIAS || project);
   }
   const view = (value: any): any => activePaths ? activePaths.view(value) : value;
@@ -153,7 +152,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
       },
     } as any);
   }
-  if (!partition && (activePaths || !planner)) {
+  if (activePaths || !planner) {
     pi.on('before_agent_start', async event => {
       // Returning systemPrompt here would overwrite pi-trim's request-time edits.
       // Keep ordinary prompts structured so the upstream extension can trim them.
@@ -214,10 +213,9 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
       }
     });
   }
-  // Partitioner has no tools. Planner shares the execution path adapter but
-  // retains its read/bash surface; write/edit are mounted only when enabled by
-  // settings, and edit_graph/read_graph belong to the Planner extension.
-  if (partition) return;
+  // Planner shares the execution path adapter and retains its read/bash
+  // surface; write/edit are mounted only when enabled by settings, and
+  // edit_graph/read_graph belong to the Planner extension.
   if (graph && !project) throw new Error('Graph execution is missing its host-owned project binding');
   if (activePaths && project) {
     registerWorkspaceTools(pi, activePaths?.root || cwd, project, process.env.PI_N_SOURCE_ALIAS || project, view,

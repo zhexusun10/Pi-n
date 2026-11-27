@@ -53,17 +53,13 @@ after(async () => {
 
 async function fixture(name, handler = async () => false, reducedMotion = "reduce", autoExpandCot = undefined, clockTime = undefined, browserInstance = browser) {
   const context = await browserInstance.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion });
-  await context.addInitScript(({ enabled, showAuto }) => {
+  await context.addInitScript(({ enabled }) => {
     localStorage.setItem("pi_n_language_v1", "en");
-    // Mode-transition fixtures explicitly restore Auto; preserve later choices on reload.
-    if (showAuto && localStorage.getItem("pi_n_hide_auto_mode_v1") === null) {
-      localStorage.setItem("pi_n_hide_auto_mode_v1", "0");
-    }
     // COT cards auto-expand by default; "0" disables, "1" enables.
     if (enabled === true) localStorage.setItem("pi_n_auto_expand_cot_v1", "1");
     else if (enabled === false) localStorage.setItem("pi_n_auto_expand_cot_v1", "0");
     else localStorage.removeItem("pi_n_auto_expand_cot_v1");
-  }, { enabled: autoExpandCot, showAuto: ["landingPrompt", "compactModePrompt"].includes(name) });
+  }, { enabled: autoExpandCot });
   const errors = [];
   await context.route("**/api/*", async route => {
     const command = new URL(route.request().url()).pathname.slice(5);
@@ -3366,127 +3362,14 @@ test("Planner and Node Agent tool history both render cards in headless browser"
 
 
 for (const fixtureName of ["landingPrompt"]) {
-  test(`${fixtureName} hides Auto live and retains the visible mode selection`, { timeout: 30_000 }, async () => {
-    const { context, page, errors } = await fixture(fixtureName);
-    try {
-      const modes = page.locator(".prompt-box-mode-btn");
-      await modes.filter({ hasText: "Auto" }).waitFor();
-      await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(true));
-      await page.waitForFunction(() => document.querySelectorAll(".prompt-box-mode-btn").length === 2);
-      assert.deepEqual(await modes.allTextContents(), ["Direct", "Compile"]);
-      assert.equal(await modes.filter({ hasText: "Direct" }).getAttribute("aria-pressed"), "true");
-      await modes.filter({ hasText: "Compile" }).click();
-      await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(false));
-      await modes.filter({ hasText: "Auto" }).waitFor();
-      assert.equal(await modes.filter({ hasText: "Compile" }).getAttribute("aria-pressed"), "true");
-      await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(true));
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await modes.filter({ hasText: "Direct" }).waitFor();
-      assert.deepEqual(await modes.allTextContents(), ["Direct", "Compile"]);
-      assert.equal(await modes.filter({ hasText: "Direct" }).getAttribute("aria-pressed"), "true", "a hidden controlled Auto selection projects to Direct on mount");
-      assert.deepEqual(errors, []);
-    } finally { await context.close(); }
-  });
-
-  test(`${fixtureName} fades and shrinks Auto without leaving a gap or an active exit control`, { timeout: 30_000 }, async () => {
-    const { context, page, errors } = await fixture(fixtureName, undefined, "no-preference");
-    try {
-      for (const selected of ["Auto", "Compile"]) {
-        await page.setViewportSize({ width: selected === "Auto" ? 1280 : 350, height: 900 });
-        await page.getByRole("button", { name: selected, exact: true }).click();
-        await page.waitForTimeout(300);
-        const frames = await page.evaluate(async () => {
-          const { setHideAutoMode } = await import("/src/services/displayPreferences.ts");
-          const selector = document.querySelector(".prompt-box-mode-selector");
-          const sample = () => {
-            const auto = selector.querySelector('[data-label="Auto"]');
-            const option = auto?.closest(".prompt-box-mode-option");
-            return { width: option?.getBoundingClientRect().width ?? null,
-              opacity: option ? Number(getComputedStyle(option).opacity) : null,
-              inert: option?.inert, disabled: auto?.disabled,
-              active: [...selector.querySelectorAll('[aria-pressed="true"]')].map(button => button.textContent),
-              track: selector.getBoundingClientRect().width };
-          };
-          const frames = [sample()];
-          setHideAutoMode(true);
-          return new Promise(resolve => {
-            const started = performance.now();
-            const record = () => {
-              frames.push(sample());
-              if (performance.now() - started >= 400) resolve(frames);
-              else requestAnimationFrame(record);
-            };
-            requestAnimationFrame(record);
-          });
-        });
-        const first = frames[0], final = frames.at(-1);
-        assert.ok(frames.some(frame => frame.width > 1 && frame.width < first.width - 1 && frame.opacity > 0 && frame.opacity < 1),
-          `Auto must visibly shrink and fade before removal: ${JSON.stringify(frames)}`);
-        assert.ok(frames.some(frame => frame.width !== null && frame.inert && frame.disabled && !frame.active.includes("Auto")),
-          "the disappearing option cannot be selected or retain its selected pill");
-        assert.equal(final.width, null);
-        assert.deepEqual(final.active, [selected === "Auto" ? "Direct" : "Compile"]);
-        assert.ok(final.track < first.track - 10);
-        const gapError = await page.locator(".prompt-box-mode-selector").evaluate(selector => {
-          const style = getComputedStyle(selector);
-          const buttons = [...selector.querySelectorAll("button")];
-          const expected = buttons.reduce((sum, button) => sum + button.getBoundingClientRect().width, 0) +
-            (buttons.length - 1) * parseFloat(style.columnGap) + parseFloat(style.paddingLeft) +
-            parseFloat(style.paddingRight) + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-          return selector.getBoundingClientRect().width - expected;
-        });
-        assert.ok(Math.abs(gapError) < 0.2, "removing Auto leaves no extra flex gap, including on narrow composers");
-        await page.evaluate(async () => (await import("/src/services/displayPreferences.ts")).setHideAutoMode(false));
-        await page.waitForFunction(() => {
-          const option = document.querySelector('[data-label="Auto"]')?.closest(".prompt-box-mode-option");
-          return option && getComputedStyle(option).opacity === "1" && option.style.overflow === "visible";
-        });
-      }
-      assert.deepEqual(errors, []);
-    } finally { await context.close(); }
-  });
-
-  test(`${fixtureName} reverses an unfinished Auto reveal without leaving clipped or duplicate controls`, { timeout: 30_000 }, async () => {
-    const { context, page, errors } = await fixture(fixtureName, undefined, "no-preference");
-    try {
-      const selector = page.locator(".prompt-box-mode-selector");
-      await selector.waitFor();
-      const initial = await selector.evaluate(element => element.getBoundingClientRect().width);
-      await page.evaluate(async () => {
-        const { setHideAutoMode } = await import("/src/services/displayPreferences.ts");
-        const changes = [true, false, true, false, true, false];
-        const started = performance.now();
-        let next = 0;
-        await new Promise(resolve => {
-          const step = () => {
-            const elapsed = performance.now() - started;
-            while (next < changes.length && elapsed >= next * 40) setHideAutoMode(changes[next++]);
-            if (elapsed >= 650) resolve(undefined);
-            else requestAnimationFrame(step);
-          };
-          requestAnimationFrame(step);
-        });
-      });
-      assert.deepEqual(await selector.locator("button").allTextContents(), ["Auto", "Direct", "Compile"]);
-      const final = await selector.evaluate(element => ({ width: element.getBoundingClientRect().width,
-        clipped: [...element.querySelectorAll(".prompt-box-mode-option")].some(option => getComputedStyle(option).overflow !== "visible"),
-        inert: [...element.querySelectorAll(".prompt-box-mode-option")].some(option => option.inert),
-        disabled: [...element.querySelectorAll("button")].some(button => button.disabled),
-        selected: [...element.querySelectorAll('[aria-pressed="true"]')].map(button => button.textContent),
-      }));
-      assert.ok(Math.abs(final.width - initial) < 0.2, "the restored control reclaims exactly its original width and gap");
-      assert.deepEqual({ ...final, width: undefined }, { width: undefined, clipped: false, inert: false, disabled: false, selected: ["Auto"] });
-      assert.deepEqual(errors, []);
-    } finally { await context.close(); }
-  });
-
   for (const reducedMotion of ["no-preference"]) {
     test(`${fixtureName} mode switching keeps the selector fixed with inertia (${reducedMotion})`, { timeout: 30_000 }, async () => {
       const { context, page, errors } = await fixture(fixtureName, undefined, reducedMotion);
       try {
         const selector = page.locator(".prompt-box-mode-selector");
         await selector.waitFor();
-        for (const mode of ["Compile", "Direct", "Auto"]) {
+        assert.deepEqual(await selector.locator("button").allTextContents(), ["Direct", "Compile"]);
+        for (const mode of ["Compile", "Direct"]) {
           const frames = await selector.evaluate((selector, mode) => new Promise(resolve => {
             const rect = element => {
               const { x, y, width, height } = element.getBoundingClientRect();
@@ -3529,7 +3412,7 @@ for (const fixtureName of ["landingPrompt"]) {
         // Repeated reversals arrive before the spring settles, not only after
         // completed animations. The track and labels must not accumulate drift.
         const rapidFrames = await selector.evaluate(selector => new Promise(resolve => {
-          const modes = ["Compile", "Auto", "Direct", "Compile", "Auto", "Compile", "Direct", "Auto"];
+          const modes = ["Compile", "Direct", "Compile", "Direct", "Compile", "Direct"];
           const frames = [];
           const started = performance.now();
           let next = 0;
@@ -3550,7 +3433,7 @@ for (const fixtureName of ["landingPrompt"]) {
         }));
         assert.ok(rapidFrames.every(frame => frame.every((value, index) => Math.abs(value - rapidFrames[0][index]) < 0.1)),
           "rapid inertial reversals do not move or resize the control or its labels");
-        assert.equal(await selector.locator(".prompt-box-mode-btn.active").innerText(), "Auto");
+        assert.equal(await selector.locator(".prompt-box-mode-btn.active").innerText(), "Direct");
         const alignment = await selector.evaluate(element => {
           const pill = element.querySelector(".prompt-box-mode-pill-indicator").getBoundingClientRect();
           const active = element.querySelector(".prompt-box-mode-btn.active").getBoundingClientRect();

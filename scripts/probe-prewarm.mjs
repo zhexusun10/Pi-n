@@ -28,7 +28,7 @@ async function sample(kind, index) {
   const prompt = join(own, 'system-prompt.md');
   await writeFile(prompt, 'Select serial or parallel.');
   const serial = ['cold', 'process', 'session'].includes(kind);
-  const role = serial ? 'node' : 'partition';
+  const role = serial ? 'node' : 'planner';
   const taskArgs = serial ? ['--mode', 'rpc', '--no-prompt-templates', '--no-themes', '--approve',
     '--model', 'openai-codex/gpt-6-sol', '--thinking', 'off', '--session-id', randomUUID(), '--session-dir', sessions]
     : [];

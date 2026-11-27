@@ -13,7 +13,7 @@ export interface ManualNodeRequest {
 }
 export interface Plan { executionBatches: string[][]; rootNodes: string[]; terminals: string[]; warnings: string[] }
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-export type ModelRole = "partitioner" | "planner" | "nodeAgent";
+export type ModelRole = "planner" | "nodeAgent";
 export interface RoleModelConfig { model: string; thinkingLevel?: ThinkingLevel }
 export interface Config { repository: string; model: string; thinkingLevel: ThinkingLevel; roleModels?: Partial<Record<ModelRole, RoleModelConfig>>; maxParallel: number; isolateParallelNodes?: boolean; maxFeedback: number; feedbackEnabled?: boolean; autoApprove: boolean; postTaskReview?: boolean; plannerWriteTools?: boolean }
 export interface ConversationModelConfig { model: string; thinkingLevel: ThinkingLevel; roleModels?: Partial<Record<ModelRole, RoleModelConfig>> }
@@ -286,7 +286,7 @@ export const example: Graph = {
 };
 
 export type PlanRouteType = "undecided" | "serial" | "graph";
-export type PlanMode = "auto" | "serial" | "graph";
+export type PlanMode = "serial" | "graph";
 
 export interface ImageAttachment {
   type: "image";
@@ -348,7 +348,7 @@ export interface ChatMessage {
 }
 
 export interface PlanStreamEvent {
-  type: "run_started" | "partitioner" | "route_decision" | "planner" | "complete" | "error";
+  type: "run_started" | "route_decision" | "planner" | "complete" | "error";
   runId?: string;
   raw?: string;
   event?: any;

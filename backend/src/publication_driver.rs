@@ -251,7 +251,16 @@ pub(super) fn publish_batch(
         return Err("Stale publication worker cannot commit to this Run".into());
     }
     eprintln!("[Pi^n] [Publication] Files delivered; internal result: {head}");
-    let base_commit = runtime.state.base.clone();
+    let base_commit = if !runtime.state.base.is_empty() {
+        runtime.state.base.clone()
+    } else {
+        let latest = runtime.latest_source_head();
+        if !latest.is_empty() {
+            latest.to_string()
+        } else {
+            runtime.state.publication_base().to_string()
+        }
+    };
     let published_commit = head.clone();
     let mut events = Vec::new();
     if let Some(descriptor) = descriptor {

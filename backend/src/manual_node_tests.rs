@@ -52,7 +52,7 @@ fn completed_chain() -> (tempfile::TempDir, PathBuf, Runtime) {
     let (temp, source, mut runtime) = setup(true, chain());
     runtime
         .emit(EventKind::GraphRevised {
-            graph: chain(),
+            graph: Some(chain()),
             planning_id: "existing-planner".into(),
             planning: PlanningSummary {
                 planning_id: "existing-planner".into(),

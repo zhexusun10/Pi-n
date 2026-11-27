@@ -148,45 +148,6 @@ export function bindRunToWorkspace(
   return next;
 }
 
-/**
- * Move a conversation to the first unpinned position of its workspace list (and
- * enforce exclusive ownership) when a new turn starts in that conversation.
- * Pinned conversations keep their pinned position so new turns never push them down.
- */
-export function promoteRunInWorkspace(
-  index: WorkspaceRuns,
-  runId: string,
-  repository: string,
-  pinnedRunIds?: ReadonlySet<string>,
-): WorkspaceRuns {
-  const owner = workspaceKey(repository);
-  if (!runId || !owner) return index;
-  const existing = index[owner] ?? [];
-  const exclusive = !Object.entries(index).some(([key, ids]) => key !== owner && ids.includes(runId));
-  const isPinned = Boolean(pinnedRunIds?.has(runId));
-
-  if (isPinned && existing.includes(runId) && exclusive) {
-    const partitioned = partitionRunsByPinned(existing, pinnedRunIds);
-    if (partitioned.every((id, idx) => id === existing[idx])) return index;
-    return { ...index, [owner]: partitioned };
-  }
-
-  if (!isPinned && exclusive) {
-    const firstUnpinnedIndex = existing.findIndex(id => !pinnedRunIds?.has(id));
-    if (firstUnpinnedIndex !== -1 && existing[firstUnpinnedIndex] === runId) {
-      return index;
-    }
-  }
-
-  const next: WorkspaceRuns = {};
-  for (const [key, ids] of Object.entries(index)) {
-    next[key] = ids.filter(id => id !== runId);
-  }
-  const targetList = partitionRunsByPinned(next[owner] ?? [], pinnedRunIds);
-  next[owner] = insertAfterPinned(targetList, runId, pinnedRunIds);
-  return next;
-}
-
 /** Pin a conversation to the very top of its workspace list. */
 export function pinRunInWorkspace(
   index: WorkspaceRuns,

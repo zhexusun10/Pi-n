@@ -1367,6 +1367,208 @@ fn prune_shadow_unreachable_cleans_stale_cache_refs_and_dead_views_while_keeping
 }
 
 #[test]
+fn prune_shadow_unreachable_with_views_reclaims_completed_run_views_while_keeping_commits() {
+    let (_temp, source, mut runtime) = setup();
+    crate::workspace::git(&source, &["init", "-q"]).unwrap();
+    crate::workspace::git(&source, &["config", "user.name", "Pi^n"]).unwrap();
+    crate::workspace::git(&source, &["config", "user.email", "pi-n@example.com"]).unwrap();
+    fs::write(source.join("main.txt"), "v1").unwrap();
+    crate::workspace::git(&source, &["add", "main.txt"]).unwrap();
+    crate::workspace::git(&source, &["commit", "-q", "-m", "v1"]).unwrap();
+
+    let completed_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    fs::write(source.join("main.txt"), "v2").unwrap();
+    let latest_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    assert_ne!(completed_head, latest_head);
+
+    // Mark the current Run completed referencing `completed_head`.
+    runtime.state.phase = "completed".into();
+    runtime.state.base = completed_head.clone();
+    runtime
+        .emit(EventKind::PublicationCompleted {
+            head: completed_head.clone(),
+        })
+        .unwrap();
+
+    let shadow = crate::workspace::shadow_repo_dir(&source).unwrap();
+    let shadow_text = shadow.to_str().unwrap();
+    let completed_view = shadow.join("agent-views").join(&completed_head);
+    let latest_view = shadow.join("agent-views").join(&latest_head);
+    assert!(completed_view.is_dir());
+    assert!(latest_view.is_dir());
+
+    let reader = crate::store::Store::open_reader(&runtime.root.join("events.sqlite")).unwrap();
+    let (protected, retained_views) =
+        crate::cleanup::shadow_retention_for_repository(&reader, "", Some(&source)).unwrap();
+    assert!(protected.contains(&completed_head));
+    assert!(!retained_views.contains(&completed_head));
+
+    crate::workspace::prune_shadow_unreachable_for_source_with_views(
+        &shadow,
+        Some(&source),
+        &protected,
+        Some(&retained_views),
+    )
+    .unwrap();
+
+    // Historical Git commit remains reachable for diffs, while its bulky
+    // `agent-views` directory is reclaimed; shadow HEAD view stays warm.
+    assert!(crate::workspace::git(
+        &shadow,
+        &[
+            "--git-dir",
+            shadow_text,
+            "cat-file",
+            "-e",
+            &format!("{completed_head}^{{commit}}"),
+        ],
+    )
+    .is_ok());
+    assert!(!completed_view.exists());
+    assert!(latest_view.is_dir());
+}
+
+#[test]
+fn periodic_gc_and_run_deletion_prune_completed_run_agent_views_while_keeping_active_views() {
+    let (_temp, source, mut runtime) = setup();
+    crate::workspace::git(&source, &["init", "-q"]).unwrap();
+    crate::workspace::git(&source, &["config", "user.name", "Pi^n"]).unwrap();
+    crate::workspace::git(&source, &["config", "user.email", "pi-n@example.com"]).unwrap();
+    fs::write(source.join("main.txt"), "v1").unwrap();
+    crate::workspace::git(&source, &["add", "main.txt"]).unwrap();
+    crate::workspace::git(&source, &["commit", "-q", "-m", "v1"]).unwrap();
+
+    let completed_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    fs::write(source.join("main.txt"), "v2").unwrap();
+    let active_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    fs::write(source.join("main.txt"), "v3").unwrap();
+    let latest_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+
+    // Completed Run references `completed_head`; active Run references `active_head`.
+    let root = runtime.root.clone();
+    runtime.state.phase = "completed".into();
+    runtime.state.base = completed_head.clone();
+    runtime
+        .emit(EventKind::PublicationCompleted {
+            head: completed_head.clone(),
+        })
+        .unwrap();
+    drop(runtime);
+
+    let mut active_runtime = crate::runtime::Runtime::open(&root).unwrap();
+    active_runtime.state.run_id = Uuid::new_v4().to_string();
+    active_runtime
+        .emit(EventKind::Created {
+            graph: graph(),
+            config: serde_json::from_value(serde_json::json!({
+                "repository": source, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+    active_runtime
+        .emit(EventKind::Approved {
+            base: active_head.clone(),
+        })
+        .unwrap();
+
+    let created_shadow = crate::workspace::shadow_repo_dir(&source).unwrap();
+    let shadow_dir = root.join("shadow_repos");
+    fs::create_dir_all(&shadow_dir).unwrap();
+    let shadow = shadow_dir.join(created_shadow.file_name().unwrap());
+    fs::rename(&created_shadow, &shadow).unwrap();
+    let completed_view = shadow.join("agent-views").join(&completed_head);
+    let active_view = shadow.join("agent-views").join(&active_head);
+    let latest_view = shadow.join("agent-views").join(&latest_head);
+    assert!(completed_view.is_dir());
+    assert!(active_view.is_dir());
+    assert!(latest_view.is_dir());
+
+    let reader = crate::store::Store::open_reader(&root.join("events.sqlite")).unwrap();
+    // Guarded abort skips pruning when Graph/Planner work is active.
+    assert_eq!(
+        crate::cleanup::prune_retained_shadow_views_with_guard(&root, &reader, || true)
+            .unwrap(),
+        0
+    );
+    assert!(completed_view.is_dir());
+
+    // Normal GC sweep reclaims completed Run's view while keeping active Run's view
+    // and shadow HEAD view.
+    let removed =
+        crate::cleanup::prune_retained_shadow_views_with_guard(&root, &reader, || false)
+            .unwrap();
+    assert_eq!(removed, 1);
+    assert!(!completed_view.exists());
+    assert!(active_view.is_dir());
+    assert!(latest_view.is_dir());
+
+    // Deleting a sibling Run via `prune_shadow_run_refs_for_source_with_views` also
+    // prunes recorded completed views without deleting active, HEAD, or in-flight
+    // uncommitted views that have not yet been written to SQLite.
+    fs::create_dir_all(&completed_view).unwrap();
+    fs::write(source.join("main.txt"), "v4-inflight").unwrap();
+    let inflight_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    fs::write(source.join("main.txt"), "v5-head").unwrap();
+    let newest_head = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    let created_shadow_after = crate::workspace::shadow_repo_dir(&source).unwrap();
+    let shadow_text = shadow.to_str().unwrap();
+    // Copy the uncommitted commit + view into the relocated test shadow and pin
+    // it under a live Run ref without recording it in SQLite yet.
+    crate::workspace::git(
+        &shadow,
+        &[
+            "--git-dir",
+            shadow_text,
+            "fetch",
+            "-q",
+            created_shadow_after.to_str().unwrap(),
+            &format!("{inflight_head}:refs/pi-n/runs/{}/node-a", Uuid::new_v4()),
+            &format!("{newest_head}:refs/heads/inflight-head"),
+        ],
+    )
+    .unwrap();
+    let inflight_view = shadow.join("agent-views").join(&inflight_head);
+    fs::create_dir_all(&inflight_view).unwrap();
+    let deleted_run = Uuid::new_v4().to_string();
+    let (protected, retained_views) =
+        crate::cleanup::shadow_retention_for_repository(&reader, &deleted_run, Some(&source))
+            .unwrap();
+    assert!(!protected.contains(&inflight_head));
+    assert!(!retained_views.contains(&inflight_head));
+    crate::workspace::prune_shadow_run_refs_for_source_with_views(
+        &shadow,
+        Some(&source),
+        &deleted_run,
+        &protected,
+        Some(&retained_views),
+        true,
+    )
+    .unwrap();
+    assert!(!completed_view.exists());
+    assert!(active_view.is_dir());
+    assert!(latest_view.is_dir());
+    assert!(
+        inflight_view.is_dir(),
+        "uncommitted in-flight view must survive sibling Run deletion"
+    );
+
+    crate::workspace::prune_shadow_unreachable_for_source_with_views(
+        &shadow,
+        Some(&source),
+        &protected,
+        Some(&retained_views),
+    )
+    .unwrap();
+    assert!(
+        inflight_view.is_dir(),
+        "uncommitted in-flight view must survive unreachable pruning"
+    );
+}
+
+#[test]
 fn intermediate_publication_retires_installed_publication_dirs_and_keeps_incomplete_journals() {
     let (_temp, source, mut runtime) = setup();
     let fan_in = Graph {

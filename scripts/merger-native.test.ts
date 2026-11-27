@@ -184,9 +184,8 @@ test('production Planner writes source directly; legacy private Runs retain node
     await new Promise<void>(completed => listener.close(() => completed()));
     const env = { ...process.env, PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
       PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
-      PLANNER_MODEL: 'merger-test/native', NODE_AGENT_MODEL: 'merger-test/native',
-      PARTITIONER_MODEL: 'merger-test/native', MERGER_MODEL: 'merger-test/native',
-      PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PARTITIONER_THINKING: 'off', MERGER_THINKING: 'off' };
+      PLANNER_MODEL: 'merger-test/native', NODE_AGENT_MODEL: 'merger-test/native', MERGER_MODEL: 'merger-test/native',
+      PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', MERGER_THINKING: 'off' };
     const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
     backend = spawn(join(target, `debug/pi-n${process.platform === 'win32' ? '.exe' : ''}`), [],
       { env, stdio: ['ignore', 'ignore', 'pipe'] });

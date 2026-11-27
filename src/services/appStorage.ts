@@ -65,7 +65,7 @@ function config(value: unknown): Partial<Config> | null {
   }
   if (record(value.roleModels)) {
     const roles: NonNullable<Config["roleModels"]> = {};
-    for (const role of ["partitioner", "planner", "nodeAgent"] as const) {
+    for (const role of ["planner", "nodeAgent"] as const) {
       const model = value.roleModels[role];
       if (!record(model) || typeof model.model !== "string") continue;
       const settings: RoleModelConfig = { model: model.model };
@@ -97,7 +97,7 @@ const decoders: { [K in keyof StoredJson]: (value: unknown) => StoredJson[K] | n
   pi_n_run_labels: value => record(value) ? Object.fromEntries(Object.entries(value)
     .filter((entry): entry is [string, string] => typeof entry[1] === "string")) : null,
   pi_n_run_modes: value => record(value) ? Object.fromEntries(Object.entries(value)
-    .filter((entry): entry is [string, PlanMode] => ["auto", "serial", "graph"].includes(entry[1] as string))) : null,
+    .filter((entry): entry is [string, PlanMode] => ["serial", "graph"].includes(entry[1] as string))) : null,
 };
 
 export function readStorageString(key: string): string | null {

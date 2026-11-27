@@ -19,7 +19,12 @@ pub(super) fn buffered_bytes(view: &View) -> Result<Vec<u8>, String> {
 struct Identity<'a, T>(&'a T);
 struct Entries<'a, T> {
     values: &'a BTreeMap<String, T>,
-    git_index: bool,
+    git_schema: Option<u32>,
+}
+
+fn skip_git_entry(schema: u32, name: &str) -> bool {
+    name == "index"
+        || (schema >= super::VIEW_SCHEMA && matches!(name, "config" | "config.worktree"))
 }
 
 impl<T> Serialize for Entries<'_, T>
@@ -29,7 +34,10 @@ where
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         for (name, value) in self.values {
-            if self.git_index && name == "index" {
+            if self
+                .git_schema
+                .is_some_and(|schema| skip_git_entry(schema, name))
+            {
                 continue;
             }
             map.serialize_entry(name, &Identity(value))?;
@@ -62,7 +70,7 @@ impl Serialize for Identity<'_, View> {
             "entries",
             &Entries {
                 values: entries,
-                git_index: false,
+                git_schema: None,
             },
         )?;
         map.serialize_entry("git_config", git_config)?;
@@ -70,7 +78,7 @@ impl Serialize for Identity<'_, View> {
             "git_entries",
             &git_entries.as_ref().map(|entries| Entries {
                 values: entries,
-                git_index: true,
+                git_schema: Some(*schema),
             }),
         )?;
         map.serialize_entry("git_file", git_file)?;
@@ -84,7 +92,7 @@ impl Serialize for Identity<'_, View> {
             "git_files",
             &Entries {
                 values: git_files,
-                git_index: false,
+                git_schema: None,
             },
         )?;
         map.serialize_entry("git_global", git_global)?;
@@ -100,7 +108,7 @@ impl Serialize for Identity<'_, View> {
             "repositories",
             &Entries {
                 values: repositories,
-                git_index: false,
+                git_schema: None,
             },
         )?;
         map.serialize_entry("root_extra", &ForViewIdentity(root_extra))?;

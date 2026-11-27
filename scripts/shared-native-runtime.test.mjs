@@ -72,7 +72,7 @@ test('Windows projects/backends share a persistent engine and default workspaces
         LOCALAPPDATA: local, PI_N_CACHE_DIR: undefined, PI_N_NATIVE_RUNTIME_PARENT: engines,
         PI_N_NATIVE_RUNTIME_DIR: undefined, PI_N_WORKSPACE_PARENT: undefined,
         PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global-agent'), PI_N_ISOLATED_PI_MODELS: '1' };
-      for (const role of ['PARTITIONER', 'PLANNER', 'NODE_AGENT', 'MERGER']) {
+      for (const role of ['PLANNER', 'NODE_AGENT', 'MERGER']) {
         env[`${role}_MODEL`] = 'cache-test/node';
         env[`${role}_THINKING`] = 'off';
       }

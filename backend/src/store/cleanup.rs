@@ -124,7 +124,7 @@ impl Store {
 
     pub fn enqueue_cleanup(&self, run_id: &str, manifest: &Manifest) -> Result<(), String> {
         let _guard = store_write_guard()?;
-        self.insert_cleanup(&self.connection, run_id, manifest)
+        self.insert_cleanup(&self.connection, run_id, manifest, false)
     }
 
     pub(super) fn insert_cleanup(
@@ -132,14 +132,18 @@ impl Store {
         db: &rusqlite::Connection,
         run_id: &str,
         manifest: &Manifest,
+        reset_attempts: bool,
     ) -> Result<(), String> {
         let payload = serde_json::to_string(manifest).map_err(|error| error.to_string())?;
-        db.execute(
+        let sql = if reset_attempts {
             "INSERT INTO cleanup_tasks(run_id,payload,attempts,last_error) VALUES(?1,?2,0,NULL)
-            ON CONFLICT(run_id) DO UPDATE SET payload=excluded.payload",
-            params![run_id, payload],
-        )
-        .map_err(|error| error.to_string())?;
+            ON CONFLICT(run_id) DO UPDATE SET payload=excluded.payload,attempts=0,last_error=NULL"
+        } else {
+            "INSERT INTO cleanup_tasks(run_id,payload,attempts,last_error) VALUES(?1,?2,0,NULL)
+            ON CONFLICT(run_id) DO UPDATE SET payload=excluded.payload"
+        };
+        db.execute(sql, params![run_id, payload])
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 

@@ -116,8 +116,8 @@ test('production Windows Planner/Graph: concurrent shared-source runs, dependenc
     await new Promise<void>(completed => listener.close(() => completed()));
     const env = { ...process.env, PI_N_DATA_DIR: data, PI_N_PORT: String(port), PI_CODING_AGENT_DIR: agent,
       PI_N_ISOLATED_PI_MODELS: '1', PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
-      PLANNER_MODEL: 'windows-test/native', NODE_AGENT_MODEL: 'windows-test/native', PARTITIONER_MODEL: 'windows-test/native', MERGER_MODEL: 'windows-test/native',
-      PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PARTITIONER_THINKING: 'off', MERGER_THINKING: 'off' };
+      PLANNER_MODEL: 'windows-test/native', NODE_AGENT_MODEL: 'windows-test/native', MERGER_MODEL: 'windows-test/native',
+      PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', MERGER_THINKING: 'off' };
     const startBackend = () => {
       const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
       backend = spawn(join(target, 'debug/pi-n.exe'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] });

@@ -1224,11 +1224,11 @@ mod tests {
             sequence: 2,
             timestamp: 2,
             kind: EventKind::GraphRevised {
-                graph: Graph {
+                graph: Some(Graph {
                     original_goal: "goal".into(),
                     nodes: vec![],
                     edges: vec![],
-                },
+                }),
                 planning_id: "plan".into(),
                 planning: PlanningSummary::default(),
                 invalidated: vec![],

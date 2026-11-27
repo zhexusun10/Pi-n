@@ -122,15 +122,31 @@ function mergeToolResultPatch(
   isError: boolean,
   durationMs?: number,
 ) {
-  const preview = toolOutputPreview(result?.content);
+  const hasContent = result?.content !== undefined;
   const rawExitCode = result?.details?.exitCode;
   const exitCode = typeof rawExitCode === "number" ? rawExitCode : null;
-  const failed = isError || result?.isError || (exitCode !== null && exitCode !== 0);
   const prev = patches.get(key) ?? {};
+  const effectiveExitCode = exitCode !== null ? exitCode : (prev.exitCode ?? null);
+  const failed = isError || result?.isError || prev.isError || (effectiveExitCode !== null && effectiveExitCode !== 0);
+  if (!hasContent) {
+    // `ToolOutputProjection` strips duplicate `content` from `message_end`
+    // (`role: "toolResult"`) after `tool_execution_end`. Keep any already-
+    // hydrated result body and do not mark an omitted result as hydrated.
+    const next: HydratedCardPatch = {
+      ...prev,
+      exitCode: effectiveExitCode,
+      isError: !!failed,
+      durationMs: typeof durationMs === "number" ? durationMs : prev.durationMs,
+    };
+    next.bodyOmitted = Boolean(next.argsOmitted || next.resultOmitted);
+    patches.set(key, next);
+    return;
+  }
+  const preview = toolOutputPreview(result.content);
   const next: HydratedCardPatch = {
     ...prev,
     result: preview.text,
-    exitCode,
+    exitCode: effectiveExitCode,
     truncated: !!(result?.details?.truncation?.truncated ||
       preview.text.includes("[Showing lines") || preview.text.includes("Full output:")),
     isError: !!failed,

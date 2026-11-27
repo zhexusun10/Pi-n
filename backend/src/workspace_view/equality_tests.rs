@@ -11,7 +11,7 @@ fn fixture(nested: bool) -> View {
     let file = json!({"kind":"file", "mode":420, "blob":"a".repeat(40), "extra":extra});
     let directory = json!({"kind":"directory", "mode":493, "extra":extra});
     let mut value = json!({
-        "schema":6, "source":"fixture/项目", "root_mode":493, "root_extra":extra,
+        "schema": super::super::VIEW_SCHEMA, "source":"fixture/项目", "root_mode":493, "root_extra":extra,
         "entries": {
             "file":file, "alias":file, "index":file, "security":file,
             "nested/security":file, "securitY":file, "directory":directory,
@@ -23,7 +23,7 @@ fn fixture(nested: bool) -> View {
             "outside":{"file":u64::MAX, "security":3}
         },
         "repositories":{},
-        "git_entries":{"":directory, "HEAD":file, "index":file, "nested/index":file, "security":file},
+        "git_entries":{"":directory, "HEAD":file, "index":file, "config":file, "config.worktree":file, "nested/index":file, "security":file},
         "git_file":true, "git_file_metadata":[1, extra],
         "git_link":false, "git_link_metadata":[0, extra],
         "git_config":[["core.worktree","{workspace}"], ["security","retained value"]],
@@ -86,7 +86,7 @@ fn scalar_changes(value: &Value, path: &str, changes: &mut Vec<(String, Value)>)
 
 #[test]
 fn every_serialized_scalar_matches_versioned_normalized_equality() {
-    for schema in [super::super::VIEW_SCHEMA] {
+    for schema in [super::super::LEGACY_VIEW_SCHEMA, super::super::VIEW_SCHEMA] {
         let mut original = fixture(true);
         original.schema = schema;
         for child in original.repositories.values_mut() {
@@ -133,10 +133,13 @@ fn ignored_keys_optional_fields_and_entry_variants_keep_legacy_equality() {
         ("/entries", "file"),
         ("/git_entries", "security"),
         ("/git_entries", "index"),
+        ("/git_entries", "config"),
+        ("/git_entries", "config.worktree"),
         ("/git_entries", "nested/index"),
         ("/repositories", "security"),
         ("/repositories", "child"),
         ("/repositories/child/git_entries", "index"),
+        ("/repositories/child/git_entries", "config"),
         ("/hardlinks/aliases", "security"),
         ("/hardlinks/aliases", "to-security"),
         ("/hardlinks/outside", "security"),

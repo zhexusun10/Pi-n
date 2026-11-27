@@ -607,7 +607,6 @@ fn run_started_is_published_after_persistence_and_commit_reuses_its_id() {
         },
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     assert_eq!(published.as_deref(), Some(id.as_str()));

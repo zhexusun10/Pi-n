@@ -76,7 +76,7 @@
   /* 遮罩与画布专用令牌 */
   --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 1px 3px rgba(15, 23, 42, 0.02);
   --bg-overlay: rgba(15, 23, 42, 0.45);
-  /* 大型弹窗（Settings / Graph IR 编辑）的轻型遮罩 */
+  /* 轻型弹窗遮罩（Settings / Graph IR 编辑 / 确认弹窗） */
   --bg-scrim: rgba(15, 23, 42, 0.12);
   /* 弹窗表面阴影：所有对话框共用同一层投影 */
   --shadow-modal: 0 16px 36px -4px rgba(15, 23, 42, 0.16), 0 4px 12px -2px rgba(15, 23, 42, 0.06);

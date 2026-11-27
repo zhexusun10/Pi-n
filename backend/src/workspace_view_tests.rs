@@ -3997,3 +3997,158 @@ fn prepare_and_virtual_publication_skip_legacy_recorded_excluded_directories() {
     assert!(pub_view.entries.contains_key("backend/target/debug/pi-n"));
     assert_eq!(bytes(&repo.join("result.txt")), b"ok\n");
 }
+
+#[test]
+fn submodules_omit_duplicate_parent_git_modules_and_reuse_base_prepared_view() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    let seed = temp.path().join("dependency");
+    fs::create_dir(&seed).unwrap();
+    workspace::project_git(&seed, &["init", "-q"]).unwrap();
+    configure_author(&seed);
+    fs::write(seed.join("business"), "dependency").unwrap();
+    workspace::project_git(&seed, &["add", "business"]).unwrap();
+    workspace::project_git(&seed, &["commit", "-qm", "dependency history"]).unwrap();
+    workspace::project_git(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            seed.to_str().unwrap(),
+            "modules/dependency",
+        ],
+    )
+    .unwrap();
+    workspace::project_git(&repo, &["commit", "-qam", "add submodule"]).unwrap();
+
+    let base = workspace::snapshot_repository(&repo).unwrap();
+    let base_record = record_path(&repo, &base).unwrap();
+    // Submodule Git database lives once under `repositories/<hash>/git` and is
+    // not duplicated under parent `git/modules/modules/dependency`.
+    assert!(
+        !base_record
+            .join("git/modules/modules/dependency")
+            .exists(),
+        "parent git record must not duplicate checked-out submodule gitdir"
+    );
+    assert!(nested_record(&base_record, "modules/dependency")
+        .unwrap()
+        .join("git/HEAD")
+        .is_file());
+
+    // Two fresh prepared slots from `base` must reuse `base` directly without
+    // creating redundant empty commits or duplicate `agent-views` directories.
+    let views_dir = base_record.parent().unwrap();
+    let slot_a = slot(&temp, "submod-a");
+    let slot_b = slot(&temp, "submod-b");
+    let head_a = workspace::prepare(&repo, &slot_a, &base, &[]).unwrap();
+    let head_b = workspace::prepare(&repo, &slot_b, &base, &[]).unwrap();
+    assert_eq!(head_a, base, "fresh prepared slot A should reuse base commit");
+    assert_eq!(head_b, base, "fresh prepared slot B should reuse base commit");
+    let view_dirs: Vec<String> = fs::read_dir(views_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(view_dirs, vec![base]);
+}
+
+#[test]
+fn parent_target_gitignore_preserves_submodule_target_files_and_reuses_base_view() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+    workspace::project_git(&repo, &["add", ".gitignore"]).unwrap();
+    workspace::project_git(&repo, &["commit", "-qm", "ignore target in parent"]).unwrap();
+
+    let seed = temp.path().join("dependency");
+    fs::create_dir_all(seed.join("target")).unwrap();
+    workspace::project_git(&seed, &["init", "-q"]).unwrap();
+    configure_author(&seed);
+    fs::write(seed.join("target/keep.txt"), "tracked in submodule\n").unwrap();
+    workspace::project_git(&seed, &["add", "target/keep.txt"]).unwrap();
+    workspace::project_git(&seed, &["commit", "-qm", "track target file in submodule"]).unwrap();
+    workspace::project_git(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            seed.to_str().unwrap(),
+            "modules/dependency",
+        ],
+    )
+    .unwrap();
+    workspace::project_git(&repo, &["commit", "-qam", "add submodule"]).unwrap();
+
+    let base = workspace::snapshot_repository(&repo).unwrap();
+    let base_view = load(&record_path(&repo, &base).unwrap()).unwrap();
+    assert!(
+        base_view
+            .entries
+            .contains_key("modules/dependency/target/keep.txt"),
+        "parent `.gitignore` `target/` must not drop submodule files"
+    );
+    assert!(base_view.repositories["modules/dependency"]
+        .entries
+        .contains_key("target/keep.txt"));
+
+    let slot_dir = slot(&temp, "submod-target");
+    let head = workspace::prepare(&repo, &slot_dir, &base, &[]).unwrap();
+    assert_eq!(
+        head, base,
+        "fresh prepared slot must match recorded submodule view without creating a spurious commit"
+    );
+    assert_eq!(
+        bytes(&slot_dir.join("modules/dependency/target/keep.txt")),
+        b"tracked in submodule\n"
+    );
+}
+
+#[test]
+fn parallel_nodes_building_gitignored_cargo_target_binaries_merge_without_conflict() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    fs::write(repo.join(".gitignore"), "backend/target/\nsrc-tauri/target/\n").unwrap();
+    workspace::project_git(&repo, &["add", ".gitignore"]).unwrap();
+    workspace::project_git(&repo, &["commit", "-qm", "ignore cargo target"]).unwrap();
+
+    let base = workspace::snapshot_repository(&repo).unwrap();
+    let left = slot(&temp, "cargo-left");
+    let right = slot(&temp, "cargo-right");
+    workspace::prepare(&repo, &left, &base, &[]).unwrap();
+    workspace::prepare(&repo, &right, &base, &[]).unwrap();
+
+    fs::write(left.join("left.txt"), "left\n").unwrap();
+    fs::create_dir_all(left.join("backend/target/debug")).unwrap();
+    fs::write(left.join("backend/target/debug/pi-n"), b"left-binary").unwrap();
+
+    fs::write(right.join("right.txt"), "right\n").unwrap();
+    fs::create_dir_all(right.join("backend/target/debug")).unwrap();
+    fs::write(right.join("backend/target/debug/pi-n"), b"right-binary").unwrap();
+    fs::create_dir_all(right.join("src-tauri/target/debug")).unwrap();
+    fs::write(right.join("src-tauri/target/debug/pi-n-desktop"), b"desktop-binary").unwrap();
+
+    let left_head = workspace::snapshot_node(&left, &repo, "left").unwrap();
+    let right_head = workspace::snapshot_node(&right, &repo, "right").unwrap();
+
+    let published = crate::graph_merge::merge_graph(
+        &repo,
+        &[left_head, right_head],
+        || panic!("gitignored Cargo target binaries must not trigger a Merger conflict"),
+    )
+    .unwrap();
+    assert_eq!(bytes(&repo.join("left.txt")), b"left\n");
+    assert_eq!(bytes(&repo.join("right.txt")), b"right\n");
+    assert!(!repo.join("backend/target/debug/pi-n").exists());
+    assert!(!repo.join("src-tauri/target/debug/pi-n-desktop").exists());
+    let pub_tree =
+        workspace::repository_git(&repo, &["ls-tree", "-r", "--name-only", &published]).unwrap();
+    assert!(!pub_tree.contains("backend/target/debug/pi-n"));
+    assert!(!pub_tree.contains("src-tauri/target/debug/pi-n-desktop"));
+}

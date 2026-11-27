@@ -1354,6 +1354,17 @@ pub fn compute_git_changes(
     node: &str,
     execution_id: &str,
 ) -> Option<FileChangeSummary> {
+    compute_git_changes_inner(repo_or_worktree, before, after, node, execution_id, false)
+}
+
+fn compute_git_changes_inner(
+    repo_or_worktree: &Path,
+    before: &str,
+    after: Option<&str>,
+    node: &str,
+    execution_id: &str,
+    merger_commit: bool,
+) -> Option<FileChangeSummary> {
     if before.is_empty() || !repo_or_worktree.exists() {
         return None;
     }
@@ -1377,28 +1388,32 @@ pub fn compute_git_changes(
         leaf.eq_ignore_ascii_case(".DS_Store") || leaf.starts_with("._")
     };
     let mut items_map = git_diff::parse(&diff, node, execution_id)?;
-    let has_generated = items_map
-        .keys()
-        .any(|path| crate::workspace::is_generated_artifact(Path::new(path)));
-    let tracked = if has_generated {
+    let has_generated = items_map.keys().any(|path| {
+        let rel = Path::new(path);
+        crate::workspace::is_generated_artifact(rel) || crate::workspace::is_under_target_dir(rel)
+    });
+    let tracked = if has_generated || after.is_none() {
         crate::workspace::project_tracked_paths(repo_or_worktree)
     } else {
         Default::default()
     };
     let tracked_index = crate::workspace::TrackedPathIndex::new(repo_or_worktree, &tracked);
     items_map.retain(|path, _| {
-        !crate::path_identity::is_runtime_metadata_path(Path::new(path))
+        let rel = Path::new(path);
+        !crate::path_identity::is_runtime_metadata_path(rel)
             && path != ".git"
             && !path.starts_with(".git/")
             && !is_excluded_metadata(path)
-            && (!crate::workspace::is_generated_artifact(Path::new(path))
+            && ((!crate::workspace::is_generated_artifact(rel)
+                && !tracked_index.is_ignored_target(rel, Some(false)))
                 || tracked_index.matches(path))
     });
 
     // If comparing against live working tree (`after` is None), also collect untracked files.
     // Ignored ordinary project files are force-added to graph snapshots, so they are
     // still reported, including installed dependencies and runnable artifacts.
-    // Only rebuildable caches use the collector's artifact pathspec exclusions.
+    // Only rebuildable caches and untracked `.gitignore`-matched `target/` outputs
+    // use the collector's artifact pathspec exclusions.
     if after.is_none() {
         let mut untracked =
             run_git(&["ls-files", "--others", "--exclude-standard", "-z"]).unwrap_or_default();
@@ -1415,6 +1430,7 @@ pub fn compute_git_changes(
         .map(|arg| (*arg).to_string())
         .collect();
         ignored_args.extend(crate::workspace::generated_artifact_pathspecs());
+        ignored_args.extend(crate::workspace::ignored_target_pathspecs(repo_or_worktree));
         let ignored_refs: Vec<&str> = ignored_args.iter().map(String::as_str).collect();
         if let Ok(ignored) = run_git(&ignored_refs) {
             untracked.push_str(&ignored);
@@ -1427,8 +1443,11 @@ pub fn compute_git_changes(
             // Keep spaces and Unix backslashes just as the raw diff parser does;
             // transcript/tool-path cleanup would rename these files on display.
             let path = raw.to_string();
-            if crate::workspace::is_generated_artifact(Path::new(&path))
-                || crate::path_identity::is_runtime_metadata_path(Path::new(&path))
+            let rel = Path::new(&path);
+            if crate::workspace::is_generated_artifact(rel)
+                || (tracked_index.is_ignored_target(rel, Some(false))
+                    && !tracked_index.matches(&path))
+                || crate::path_identity::is_runtime_metadata_path(rel)
                 || path == ".git"
                 || path.starts_with(".git/")
                 || is_excluded_metadata(&path)
@@ -1460,6 +1479,52 @@ pub fn compute_git_changes(
                         source: Some("git".into()),
                     },
                 );
+            }
+        }
+    }
+
+    if merger_commit {
+        if let Some(after_sha) = after.filter(|head| !head.is_empty()) {
+            // For a 2-parent merge commit whose first parent is `before`, drop
+            // files cleanly inherited unchanged from the incoming second parent
+            // (untouched on `before` since merge-base and identical in `after`
+            // vs `p2`). Those belong to the incoming node execution, not the
+            // Merger; real conflicts (including `--theirs` resolutions) and any
+            // Merger edits stay attributed to the Merger.
+            if let Ok(line) = run_git(&["rev-list", "--parents", "-n", "1", after_sha]) {
+                let mut hashes = line.split_whitespace();
+                let _commit = hashes.next();
+                let parents: Vec<&str> = hashes.collect();
+                if parents.len() == 2 && parents[0] == before {
+                    let (p1, p2) = (parents[0], parents[1]);
+                    if let (Ok(diff_p2_raw), Ok(mb_raw)) = (
+                        run_git(&["diff", "--no-renames", "--name-only", "-z", p2, after_sha, "--"]),
+                        run_git(&["merge-base", p1, p2]),
+                    ) {
+                        let mb = mb_raw.trim();
+                        if !mb.is_empty() {
+                            if let Ok(changed_p1_raw) =
+                                run_git(&["diff", "--no-renames", "--name-only", "-z", mb, p1, "--"])
+                            {
+                                let diff_from_p2: HashSet<&str> = diff_p2_raw
+                                    .split('\0')
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                                let changed_on_p1: HashSet<&str> = changed_p1_raw
+                                    .split('\0')
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                                items_map.retain(|path, item| {
+                                    diff_from_p2.contains(path.as_str())
+                                        || changed_on_p1.contains(path.as_str())
+                                        || item.old_path.as_deref().is_some_and(|old| {
+                                            diff_from_p2.contains(old) || changed_on_p1.contains(old)
+                                        })
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1805,6 +1870,28 @@ pub fn record_git_commit_changes(
     before: &str,
     after: &str,
 ) {
+    record_git_commit_changes_inner(
+        run_id,
+        execution_id,
+        node,
+        worktree,
+        repository,
+        before,
+        after,
+        false,
+    );
+}
+
+fn record_git_commit_changes_inner(
+    run_id: &str,
+    execution_id: &str,
+    node: &str,
+    worktree: &Path,
+    repository: &Path,
+    before: &str,
+    after: &str,
+    merger_commit: bool,
+) {
     if run_id.is_empty() || execution_id.is_empty() || before.is_empty() || after.is_empty() {
         return;
     }
@@ -1813,7 +1900,9 @@ pub fn record_git_commit_changes(
     } else {
         repository
     };
-    if let Some(summary) = compute_git_changes(target, before, Some(after), node, execution_id) {
+    if let Some(summary) =
+        compute_git_changes_inner(target, before, Some(after), node, execution_id, merger_commit)
+    {
         // An empty diff is a successful result too, not a reason to rerun Git
         // on every live poll. Failed reads remain uncached and retryable.
         if let Ok(mut guard) = cache().lock() {
@@ -2244,7 +2333,12 @@ pub(crate) fn warm_scoped_changes(
         }
     }
 
-    for exec in state.executions.iter().chain(state.mergers.iter()) {
+    for (is_merger, exec) in state
+        .executions
+        .iter()
+        .map(|exec| (false, exec))
+        .chain(state.mergers.iter().map(|exec| (true, exec)))
+    {
         if state.superseded_execution_ids.contains(&exec.id)
             || scope.is_some_and(|ids| !ids.contains(&exec.id))
         {
@@ -2269,7 +2363,7 @@ pub(crate) fn warm_scoped_changes(
                     g.git_changes.contains_key(&key) || g.hydrated_executions.contains(&key)
                 });
                 if !has_git && !repo_str.is_empty() {
-                    record_git_commit_changes(
+                    record_git_commit_changes_inner(
                         &state.run_id,
                         &exec.id,
                         &exec.node,
@@ -2277,6 +2371,7 @@ pub(crate) fn warm_scoped_changes(
                         repo_path,
                         &exec.before,
                         after,
+                        is_merger,
                     );
                 }
             }
@@ -2285,7 +2380,8 @@ pub(crate) fn warm_scoped_changes(
 
     if let (None, Some(pub_state)) = (scope, &state.publication) {
         if let Some(head) = &pub_state.head {
-            if !state.base.is_empty() && !head.is_empty() && !pub_state.repository.is_empty() {
+            let pub_base = state.publication_base();
+            if !pub_base.is_empty() && !head.is_empty() && !pub_state.repository.is_empty() {
                 let has_pub = cache()
                     .lock()
                     .ok()
@@ -2294,7 +2390,7 @@ pub(crate) fn warm_scoped_changes(
                     record_publication_git_changes(
                         &state.run_id,
                         Path::new(&pub_state.repository),
-                        &state.base,
+                        pub_base,
                         head,
                     );
                 }

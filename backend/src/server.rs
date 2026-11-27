@@ -1,6 +1,6 @@
 use crate::{
     compiler,
-    engine::{parse_route_decision, run_pi, PiModelConfig, PiRequest, PiRole},
+    engine::{run_pi, PiModelConfig, PiRequest, PiRole},
     model::*,
     runtime::{perform_with_merger, Runtime},
     snapshot_view::snapshot_metadata,
@@ -749,7 +749,6 @@ pub struct Bootstrap {
     pub host_preflight: Option<crate::native::HostPreflight>,
 }
 
-const PARTITIONER_PROMPT: &str = include_str!("../resources/prompts/partitioner.md");
 const PLANNER_PROMPT: &str = include_str!("../resources/prompts/planner.md");
 const PLANNER_REVIEW_RULE: &str =
     "Once all nodes you assigned have completed, the harness will resume your session.";
@@ -1069,18 +1068,15 @@ fn bootstrap_projection(
     let mut env_overrides = std::collections::HashMap::new();
 
     let planner_cfg = PiModelConfig::resolve(PiRole::Planner, &config);
-    let partitioner_cfg = PiModelConfig::resolve(PiRole::Partitioner, &config);
     let node_cfg = PiModelConfig::resolve(PiRole::NodeAgent, &config);
     let merger_cfg = PiModelConfig::resolve(PiRole::Merger, &config);
 
     effective_role_models.insert("planner".into(), planner_cfg.model);
-    effective_role_models.insert("partitioner".into(), partitioner_cfg.model);
     effective_role_models.insert("nodeAgent".into(), node_cfg.model);
     effective_role_models.insert("merger".into(), merger_cfg.model);
 
     for (role_name, env_var) in [
         ("planner", "PLANNER_MODEL"),
-        ("partitioner", "PARTITIONER_MODEL"),
         ("nodeAgent", "NODE_AGENT_MODEL"),
         ("merger", "MERGER_MODEL"),
     ] {
@@ -1092,7 +1088,6 @@ fn bootstrap_projection(
     }
 
     for (role_name, role) in [
-        ("partitioner", PiRole::Partitioner),
         ("planner", PiRole::Planner),
         ("nodeAgent", PiRole::NodeAgent),
         ("merger", PiRole::Merger),
@@ -1479,7 +1474,7 @@ fn save_config_projection(
     bootstrap_projection(service, metadata, false, false)
 }
 
-/// Fold one streamed role line into a Planner/Partitioner metrics accumulator.
+/// Fold one streamed role line into a Planner metrics accumulator.
 ///
 /// Returns whether the line moved a counter the live session panel reads, so
 /// callers can publish a progress update at assistant-message boundaries
@@ -1635,19 +1630,28 @@ pub fn parse_planning_role_metrics(model: &str, log: &str) -> PlanningRoleMetric
     metrics
 }
 
+fn resolve_plan_mode(mode: Option<&str>) -> Result<&'static str, String> {
+    match mode {
+        None | Some("serial") => Ok("serial"),
+        Some("graph") => Ok("graph"),
+        Some(other) => Err(format!(
+            "Unsupported planning mode '{other}': expected 'serial' or 'graph'"
+        )),
+    }
+}
+
 pub fn validate_planning_preflight(config: &Config, mode: Option<&str>) -> Result<(), String> {
+    let resolved_mode = resolve_plan_mode(mode)?;
     #[cfg(not(feature = "fixture"))]
     {
         // Cover unsaved/request-specific bindings too. Preparation can overlap
-        // provider validation and Auto routing; no project snapshot is taken.
-        if mode != Some("serial") {
+        // provider validation; no project snapshot is taken.
+        if resolved_mode == "graph" {
             crate::native::warm_graph_runtime(PathBuf::from(&config.repository));
-        }
-        if mode == Some("graph") {
             crate::native::require_graph_execution()?;
         }
     }
-    validate_planning_models_preflight(config, mode, || {
+    validate_planning_models_preflight(config, Some(resolved_mode), || {
         #[cfg(not(feature = "fixture"))]
         {
             crate::provider_auth::request(serde_json::json!({
@@ -1669,25 +1673,19 @@ fn validate_planning_models_preflight(
     mode: Option<&str>,
     fetch_catalog: impl Fn() -> Option<serde_json::Value>,
 ) -> Result<(), String> {
+    let resolved_mode = resolve_plan_mode(mode)?;
     config.validate_model_settings()?;
-    if config.environment.is_some() && mode != Some("graph") {
-        return Err("Managed environments require explicit Graph routing; Auto/Serial are not silently changed".into());
+    if config.environment.is_some() && resolved_mode != "graph" {
+        return Err(
+            "Managed environments require explicit Graph routing; Serial is not silently changed"
+                .into(),
+        );
     }
-    let need_partitioner = mode.is_none();
-    let need_planner = mode != Some("serial");
+    let need_planner = resolved_mode == "graph";
     // Keep validation order and failure behavior, but reuse one catalog response
     // when both roles need checking. Check each model's format before its lookup.
     let catalog = std::cell::OnceCell::new();
 
-    if need_partitioner {
-        let partitioner_cfg = PiModelConfig::resolve(PiRole::Partitioner, config);
-        validate_role_model_preflight(
-            PiRole::Partitioner,
-            &partitioner_cfg.model,
-            &catalog,
-            &fetch_catalog,
-        )?;
-    }
     if need_planner {
         let planner_cfg = PiModelConfig::resolve(PiRole::Planner, config);
         validate_role_model_preflight(
@@ -1697,9 +1695,9 @@ fn validate_planning_models_preflight(
             &fetch_catalog,
         )?;
     }
-    // Explicit per-instance settings must also be checked before approving
-    // Serial or handing a Graph to the user, not only when a node starts.
-    if config.role_models.contains_key("nodeAgent") {
+    // Check NodeAgent for Serial runs and whenever explicit NodeAgent settings
+    // are configured, before approving Serial or handing a Graph to the user.
+    if resolved_mode == "serial" || config.role_models.contains_key("nodeAgent") {
         let node_cfg = PiModelConfig::resolve(PiRole::NodeAgent, config);
         validate_role_model_preflight(
             PiRole::NodeAgent,
@@ -2432,7 +2430,6 @@ fn plan_goal_internal(
     images: Option<Vec<crate::model::ImageAttachment>>,
     revision_run_id: Option<String>,
     service: &Arc<Service>,
-    on_partitioner_line: impl FnMut(&str),
     on_route: impl FnMut(&Route),
     on_planner_line: impl FnMut(&str),
 ) -> PlanningResult {
@@ -2445,7 +2442,6 @@ fn plan_goal_internal(
         service,
         false,
         |_| {},
-        on_partitioner_line,
         on_route,
         on_planner_line,
     )
@@ -2461,7 +2457,6 @@ fn plan_goal_internal_with_started(
     service: &Arc<Service>,
     background_review: bool,
     on_started: impl FnMut(&str),
-    on_partitioner_line: impl FnMut(&str),
     on_route: impl FnMut(&Route),
     on_planner_line: impl FnMut(&str),
 ) -> PlanningResult {
@@ -2475,7 +2470,6 @@ fn plan_goal_internal_with_started(
         background_review,
         None,
         on_started,
-        on_partitioner_line,
         on_route,
         on_planner_line,
     )
@@ -2492,13 +2486,13 @@ fn plan_goal_internal_with_options(
     background_review: bool,
     continue_planning_id: Option<&str>,
     mut on_started: impl FnMut(&str),
-    mut on_partitioner_line: impl FnMut(&str),
     mut on_route: impl FnMut(&Route),
     mut on_planner_line: impl FnMut(&str),
 ) -> PlanningResult {
     if goal.trim().is_empty() {
         return Err(("Enter a goal".into(), None));
     }
+    let resolved_mode = resolve_plan_mode(mode).map_err(|error| (error, None))?;
     let mut config = config;
     config.max_feedback = config.max_feedback.min(MAX_FEEDBACK);
     config.max_parallel = config.max_parallel.min(MAX_GRAPH_NODE_WORKERS);
@@ -2666,7 +2660,7 @@ fn plan_goal_internal_with_options(
                     validate_run_admission_with_size_check(
                         &repository,
                         &config,
-                        mode,
+                        Some(resolved_mode),
                         crate::workspace::cached_check_workspace_size,
                     )
                     .map_err(|e| (e, None))?;
@@ -2680,7 +2674,8 @@ fn plan_goal_internal_with_options(
                         .map_err(|error| (error, None))?;
                 }
                 check_planning_cancelled(&owner).map_err(|e| (e, None))?;
-                validate_planning_preflight(&config, mode).map_err(|error| (error, None))?;
+                validate_planning_preflight(&config, Some(resolved_mode))
+                    .map_err(|error| (error, None))?;
                 // Prove the retained session and draft before recording a new turn:
                 // a rejected retry must leave the previous attempt retryable.
                 let continuation_data = if let Some(previous_id) = continue_planning_id {
@@ -2816,7 +2811,7 @@ fn plan_goal_internal_with_options(
                 directory.join("request.json"),
                 serde_json::to_vec(&serde_json::json!({
                     "formatVersion": 1,
-                    "goal": goal, "config": config, "mode": mode, "revisionRunId": revision_run_id,
+                    "goal": goal, "config": config, "mode": resolved_mode, "revisionRunId": revision_run_id,
                     "runId": owner, "backgroundReview": background_review,
                     "continuePlanningId": continue_planning_id, "continuationInitial": continuation_initial
                 }))
@@ -2829,9 +2824,7 @@ fn plan_goal_internal_with_options(
                     status: Some("running".into()),
                     created_at: Some(now_ms),
                     repository: Some(repo_str.clone()),
-                    plan_type: mode
-                        .filter(|mode| matches!(*mode, "graph" | "serial"))
-                        .map(str::to_owned),
+                    plan_type: Some(resolved_mode.to_string()),
                     goal: Some(if background_review {
                         original_graph
                             .as_ref()
@@ -2851,10 +2844,14 @@ fn plan_goal_internal_with_options(
                             selected.as_ref().map(|execution| execution.id.clone())
                         },
                     ),
-                    roles: ["partition", "planner"]
-                        .into_iter()
-                        .map(|role| (role.to_string(), PlanningRoleMetrics::default()))
-                        .collect(),
+                    roles: if resolved_mode == "graph" {
+                        ["planner"].as_slice()
+                    } else {
+                        [].as_slice()
+                    }
+                    .iter()
+                    .map(|role| ((*role).to_string(), PlanningRoleMetrics::default()))
+                    .collect(),
                     ..Default::default()
                 };
                 write_planning_summary(&directory, &running).map_err(|error| (error, None))?;
@@ -2869,9 +2866,7 @@ fn plan_goal_internal_with_options(
                             goal: goal.clone(),
                             config: config.clone(),
                             planning: running.clone(),
-                            plan_type: mode
-                                .filter(|mode| matches!(*mode, "graph" | "serial"))
-                                .map(str::to_owned),
+                            plan_type: Some(resolved_mode.to_string()),
                         })
                         .map_err(|error| (error, None))?;
                     runtime
@@ -2916,96 +2911,12 @@ fn plan_goal_internal_with_options(
                 let mut planner_workspace_selected = false;
                 let plan_outcome = (|| -> Result<Snapshot, String> {
                     let route_path = directory.join("route.json");
-                    let (route, partition_metrics) = match mode {
-                        Some("serial") => {
-                            let route = Route {
-                                plan_type: "serial".into(),
-                            };
-                            fs::write(&route_path, serde_json::to_string_pretty(&route).unwrap())
-                                .map_err(|error| error.to_string())?;
-                            on_route(&route);
-                            (route, PlanningRoleMetrics::default())
-                        }
-                        Some("graph") => {
-                            let route = Route {
-                                plan_type: "graph".into(),
-                            };
-                            fs::write(&route_path, serde_json::to_string_pretty(&route).unwrap())
-                                .map_err(|error| error.to_string())?;
-                            on_route(&route);
-                            (route, PlanningRoleMetrics::default())
-                        }
-                        _ => {
-                            let partitioner_system_prompt =
-                                std::env::var("PARTITIONER_SYSTEM_PROMPT")
-                                    .unwrap_or_else(|_| PARTITIONER_PROMPT.trim().to_string());
-                            let task = goal.clone();
-                            let partitioner_model_cfg =
-                                PiModelConfig::resolve(PiRole::Partitioner, &config);
-                            let partitioner_config =
-                                partitioner_model_cfg.effective_config(&config);
-                            let mut partitioner_extra_args =
-                                vec!["--no-tools", "--no-context-files"];
-                            if let Some(thinking) = &partitioner_model_cfg.thinking {
-                                partitioner_extra_args.push("--thinking");
-                                partitioner_extra_args.push(thinking.as_str());
-                            }
-                            let mut log = String::new();
-                            let mut partition_log =
-                                fs::File::create(directory.join("partition.jsonl"))
-                                    .map_err(|e| e.to_string())?;
-                            let mut log_error = None;
-                            let partition_start = std::time::Instant::now();
-                            let partition_result = run_pi(
-                                PiRequest {
-                                    role: PiRole::Partitioner,
-                                    config: &partitioner_config,
-                                    cwd: &repository,
-                                    task: &task,
-                                    session_dir: &directory.join("partition-session"),
-                                    extension: None,
-                                    tools: Some(""),
-                                    session_id: None,
-                                    extra_args: partitioner_extra_args,
-                                    environment: vec![
-                                        ("PI_N_MODE", "partition".into()),
-                                        ("PI_N_GRAPH_PATH", route_path.to_string_lossy().into()),
-                                    ],
-                                    system_prompt: Some(&partitioner_system_prompt),
-                                    images: images.as_deref(),
-                                },
-                                |text| {
-                                    if let Err(error) = partition_log.write_all(text.as_bytes()) {
-                                        log_error = Some(error.to_string());
-                                    }
-                                    log.push_str(&text);
-                                    on_partitioner_line(&text);
-                                },
-                            );
-                            let partition_wall_sec = partition_start.elapsed().as_secs_f64();
-                            if let Some(error) = log_error {
-                                return Err(format!("Cannot persist planning output: {error}"));
-                            }
-                            let mut partition_metrics =
-                                parse_planning_role_metrics(&partitioner_config.model, &log);
-                            if partition_metrics.duration_seconds == 0.0 {
-                                partition_metrics.duration_seconds = partition_wall_sec;
-                            }
-                            // A failed engine call is not a routing decision. In particular, do not
-                            // turn authentication/provider failures into an auto-approved serial run.
-                            let output = partition_result
-                                .map_err(|error| format!("Partitioner failed: {error}"))?;
-                            let route = parse_route_decision(&output);
-                            fs::write(&route_path, serde_json::to_string_pretty(&route).unwrap())
-                                .map_err(|error| error.to_string())?;
-                            on_route(&route);
-                            eprintln!(
-                        "[Pi^n] [Router] Goal routed as '{}' in {:.2}s (tokens: in={}, out={})",
-                        route.plan_type, partition_metrics.duration_seconds, partition_metrics.usage.input, partition_metrics.usage.output
-                    );
-                            (route, partition_metrics)
-                        }
+                    let route = Route {
+                        plan_type: resolved_mode.into(),
                     };
+                    fs::write(&route_path, serde_json::to_string_pretty(&route).unwrap())
+                        .map_err(|error| error.to_string())?;
+                    on_route(&route);
                     running.plan_type = Some(route.plan_type.clone());
                     let _ = write_planning_summary(&directory, &running);
                     if revision_run_id.is_none() {
@@ -3029,14 +2940,6 @@ fn plan_goal_internal_with_options(
                             edges: Vec::new(),
                         },
                         "graph" => {
-                            if should_check_plan_goal_admission_size(
-                                revision_run_id.as_deref(),
-                                continuation_initial,
-                            ) && mode != Some("graph")
-                                && config.isolate_parallel_nodes
-                            {
-                                crate::workspace::cached_check_workspace_size(&repository)?;
-                            }
                             // The planning gate prevents new dispatch/publication.
                             let (selected, planner_context_required, continuation_workspace) =
                                 if revision_run_id.is_some() && !background_review {
@@ -3564,16 +3467,14 @@ fn plan_goal_internal_with_options(
                                 .map_err(|e| e.to_string())?;
                             candidate_graph
                         }
-                        _ => return Err("Partitioner returned an invalid route".into()),
+                        other => return Err(format!("Unsupported planning route: {other}")),
                     };
                     let total_planning_duration = planning_start.elapsed().as_secs_f64();
-                    let model_duration = partition_metrics.duration_seconds
-                        + planner_metrics
-                            .as_ref()
-                            .map(|p| p.duration_seconds)
-                            .unwrap_or(0.0);
+                    let model_duration = planner_metrics
+                        .as_ref()
+                        .map(|p| p.duration_seconds)
+                        .unwrap_or(0.0);
                     let mut roles = std::collections::BTreeMap::new();
-                    roles.insert("partition".to_string(), partition_metrics);
                     if let Some(m) = planner_metrics {
                         roles.insert("planner".to_string(), m);
                     }
@@ -3717,8 +3618,33 @@ fn plan_goal_internal_with_options(
                             approval_required: pending && !config.auto_approve,
                         })?;
                     }
+                    let env_prune_plan = if runtime.state.phase == "completed" {
+                        runtime.plan_stale_environment_snapshot_prune()
+                    } else {
+                        None
+                    };
+                    let settled_repository = if runtime.state.phase == "completed"
+                        && !runtime.is_serial()
+                        && !service.driving.load(Ordering::SeqCst)
+                    {
+                        runtime.source_repository().ok().flatten()
+                    } else {
+                        None
+                    };
                     let snapshot = runtime.state.clone();
                     drop(runtime);
+                    drop(_source_guard);
+                    if let Some((store, retained_env_refs, retained_launch_refs)) = env_prune_plan {
+                        if let Err(error) = store.prune_unreferenced_snapshots(
+                            &retained_env_refs,
+                            &retained_launch_refs,
+                        ) {
+                            eprintln!("Cannot prune stale environment snapshots: {error}");
+                        }
+                    }
+                    if let Some(repository) = settled_repository {
+                        reclaim_source_snapshot(&service, &repository);
+                    }
                     write_planning_summary(&directory, &summary)?;
                     // The durable log is final now; tell every open conversation so a
                     // transcript read that raced the writer (or settled at a stale EOF)
@@ -3736,21 +3662,6 @@ fn plan_goal_internal_with_options(
                         let mut roles: std::collections::BTreeMap<String, PlanningRoleMetrics> =
                             Default::default();
                         let mut model_duration = 0.0;
-                        let partition_file = directory.join("partition.jsonl");
-                        if partition_file.exists() {
-                            if let Ok(content) = fs::read_to_string(&partition_file) {
-                                let partitioner_model_cfg =
-                                    PiModelConfig::resolve(PiRole::Partitioner, &config);
-                                let partitioner_config =
-                                    partitioner_model_cfg.effective_config(&config);
-                                let m = parse_planning_role_metrics(
-                                    &partitioner_config.model,
-                                    &content,
-                                );
-                                model_duration += m.duration_seconds;
-                                roles.insert("partition".into(), m);
-                            }
-                        }
                         let planner_file = directory.join("planner.jsonl");
                         if planner_file.exists() {
                             if let Ok(content) = fs::read_to_string(&planner_file) {
@@ -3786,10 +3697,7 @@ fn plan_goal_internal_with_options(
                                 .ok()
                                 .and_then(|bytes| serde_json::from_slice::<Route>(&bytes).ok())
                                 .map(|route| route.plan_type)
-                                .or_else(|| {
-                                    mode.filter(|m| matches!(*m, "graph" | "serial"))
-                                        .map(str::to_owned)
-                                }),
+                                .or_else(|| Some(resolved_mode.to_string())),
                             goal: running.goal.clone(),
                             run_id: Some(owner.clone()),
                         };
@@ -3844,11 +3752,30 @@ fn plan_goal_internal_with_options(
                                 );
                             }
                             if background_review {
-                                if let Ok(mut runtime) = service.runtime.lock() {
+                                let env_prune_plan = if let Ok(mut runtime) = service.runtime.lock() {
                                     let _ = runtime.emit(EventKind::PlannerReviewFinished {
                                         planning: failure_summary.clone(),
                                         approval_required: false,
                                     });
+                                    if runtime.state.phase == "completed" {
+                                        runtime.plan_stale_environment_snapshot_prune()
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                if let Some((store, retained_env_refs, retained_launch_refs)) =
+                                    env_prune_plan
+                                {
+                                    if let Err(error) = store.prune_unreferenced_snapshots(
+                                        &retained_env_refs,
+                                        &retained_launch_refs,
+                                    ) {
+                                        eprintln!(
+                                            "Cannot prune stale environment snapshots: {error}"
+                                        );
+                                    }
                                 }
                             } else if let Ok(mut runtime) = service.runtime.lock() {
                                 // The aborted turn's durable planner.jsonl stays part of
@@ -3974,6 +3901,14 @@ fn recover_plannings(service: &Arc<Service>) -> Result<(), String> {
         {
             continue;
         }
+        // Deferred online deletion can leave planning files on disk across a
+        // crash/restart; skip tombstoned Runs before reading logs or rewriting
+        // summary.json.
+        if let Some(run_id) = summary.run_id.as_deref() {
+            if !is_valid_planning_id(run_id) || primary.store.run_was_deleted(run_id)? {
+                continue;
+            }
+        }
         let recorded = primary.store.run_for_planning_id(&summary.planning_id)?;
         let request = fs::read(directory.join("request.json"))
             .ok()
@@ -4031,7 +3966,6 @@ fn recover_plannings(service: &Arc<Service>) -> Result<(), String> {
                     summary.roles.clear();
                     summary.model_duration = 0.0;
                     for (role, pi_role) in [
-                        ("partition", PiRole::Partitioner),
                         ("planner", PiRole::Planner),
                         ("merger", PiRole::Merger),
                     ] {
@@ -4211,7 +4145,6 @@ fn plan_goal(
         service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .map_err(|(error, _)| error)
 }
@@ -4251,15 +4184,21 @@ fn reclaim_source_snapshot(service: &Arc<Service>, repository: &std::path::Path)
         if has_published_head && !crate::workspace::is_standard_git(repository) {
             crate::workspace::remove_shadow_repo(repository)?;
         } else {
-            let protected = crate::cleanup::protected_shadow_objects_for_repository(
-                &reader,
-                "",
-                Some(repository),
-            )?;
-            crate::workspace::prune_shadow_unreachable_for_source(
+            crate::workspace::prune_shadow_unreachable_for_source_with_retention(
                 &shadow,
                 Some(repository),
-                &protected,
+                || {
+                    if reader.shadow_repo_needed_by_other_run(&run_id, repository)? {
+                        return Ok(None);
+                    }
+                    let (protected, retained_views) =
+                        crate::cleanup::shadow_retention_for_repository(
+                            &reader,
+                            "",
+                            Some(repository),
+                        )?;
+                    Ok(Some((protected, Some(retained_views))))
+                },
             )?;
         }
         Ok(())
@@ -4385,15 +4324,23 @@ fn drive(service: Arc<Service>) {
                     }
                     // Every batch has drained and delivered before settlement.
                     // Review is run-level, never an intermediate handoff step.
-                    {
+                    let env_prune_plan = {
                         let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
                         if runtime.batch_workspaces() && runtime.state.phase == "completed" {
                             if let Err(error) = runtime.defer_cleanup_worktrees() {
                                 eprintln!("Cannot retire completed batch workspaces: {error}");
                             }
-                            if let Err(error) = runtime.prune_stale_environment_snapshots() {
-                                eprintln!("Cannot prune stale environment snapshots: {error}");
-                            }
+                            runtime.plan_stale_environment_snapshot_prune()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some((store, retained_env_refs, retained_launch_refs)) = env_prune_plan {
+                        if let Err(error) = store.prune_unreferenced_snapshots(
+                            &retained_env_refs,
+                            &retained_launch_refs,
+                        ) {
+                            eprintln!("Cannot prune stale environment snapshots: {error}");
                         }
                     }
                     let shared_review = service.runtime.lock().map_err(|e| e.to_string())?
@@ -4401,7 +4348,7 @@ fn drive(service: Arc<Service>) {
                     if let Some(config) = shared_review {
                         if let Err((error, _)) = plan_goal_internal_with_started(
                             POST_TASK_REVIEW_PROMPT.into(), config, Some("graph"), None,
-                            Some(run_id.clone()), &service, true, |_| {}, |_| {}, |_| {}, |_| {},
+                            Some(run_id.clone()), &service, true, |_| {}, |_| {}, |_| {},
                         ) {
                             eprintln!("Post-task Planner review failed: {error}");
                         }
@@ -5962,17 +5909,20 @@ fn clear_history(service: &Arc<Service>) -> Result<(), String> {
         }
         child_guards.push(guard);
     }
-    #[cfg(not(feature = "fixture"))]
-    crate::engine::invalidate_warm_node();
     let run_ids = runtime.store.runs()?;
     runtime.clear_history_deferred()?;
-    for run_id in &run_ids {
-        crate::engine::stop_lingering_for_run(run_id);
-        crate::engine::stop_planner_services_for_run(run_id);
+    for guard in &mut child_guards {
+        guard.forget_deleted_runs(&run_ids);
     }
     drop(child_guards);
     drop(runtime);
     invalidate_service_cache(&root, None);
+    #[cfg(not(feature = "fixture"))]
+    crate::engine::invalidate_warm_node();
+    for run_id in &run_ids {
+        crate::engine::stop_lingering_for_run(run_id);
+        crate::engine::stop_planner_services_for_run(run_id);
+    }
     crate::cleanup::detached::wake_worker();
     Ok(())
 }
@@ -5985,16 +5935,17 @@ fn delete_run(run_id: String, service: &Arc<Service>) -> Result<(), String> {
     if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
         return Err("Wait for the current operation to finish".into());
     }
-    #[cfg(not(feature = "fixture"))]
-    crate::engine::invalidate_warm_node();
     let root = runtime.root.clone();
     runtime.delete_runs_deferred(std::slice::from_ref(&run_id))?;
-    // Retire services only after deletion commits; a rejected request must
-    // preserve the existing conversation and its processes.
-    crate::engine::stop_lingering_for_run(&run_id);
-    crate::engine::stop_planner_services_for_run(&run_id);
     drop(runtime);
     invalidate_service_cache(&root, Some(&run_id));
+    // Retire parked services only after deletion commits and Run locks are
+    // released, before waking the cleanup worker, so process teardown cannot
+    // block concurrent service lookups or fail a rejected request.
+    #[cfg(not(feature = "fixture"))]
+    crate::engine::invalidate_warm_node();
+    crate::engine::stop_lingering_for_run(&run_id);
+    crate::engine::stop_planner_services_for_run(&run_id);
     crate::cleanup::detached::wake_worker();
     Ok(())
 }
@@ -6046,19 +5997,19 @@ fn delete_workspace(repository: String, service: &Arc<Service>) -> Result<Vec<St
         }
         runtimes.push(runtime);
     }
-    #[cfg(not(feature = "fixture"))]
-    crate::engine::invalidate_warm_node();
     runtimes[0].delete_runs_deferred(&ids)?;
-    for id in &ids {
-        crate::engine::stop_lingering_for_run(id);
-        crate::engine::stop_planner_services_for_run(id);
-    }
     for runtime in &mut runtimes {
         runtime.forget_deleted_runs(&ids);
     }
     drop(runtimes);
     for id in &ids {
         invalidate_service_cache(&root, Some(id));
+    }
+    #[cfg(not(feature = "fixture"))]
+    crate::engine::invalidate_warm_node();
+    for id in &ids {
+        crate::engine::stop_lingering_for_run(id);
+        crate::engine::stop_planner_services_for_run(id);
     }
     crate::cleanup::detached::wake_worker();
     Ok(ids)
@@ -6116,8 +6067,10 @@ fn retry_cleanup_tasks_with_gc(
     // Deleted Run IDs cannot be reused; detached receipts can only remove their
     // unique retired paths. Neither needs to hold a live Run's mutex during I/O.
     let store = crate::store::Store::open(&root.join("events.sqlite"))?;
+    let mut cleaned_deleted = false;
     for task in tasks {
         if task.manifest.sequence.is_none() || store.run_was_deleted(&task.run_id)? {
+            cleaned_deleted = true;
             if let Err(error) = crate::cleanup::attempt(&root, &store, &task) {
                 eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
             }
@@ -6135,6 +6088,16 @@ fn retry_cleanup_tasks_with_gc(
             continue;
         }
         let runtime = target.runtime.lock().map_err(|error| error.to_string())?;
+        // Deletion can commit between selecting the workspace task and locking
+        // its Run. Release the lock and execute the replacement deletion task.
+        if runtime.store.run_was_deleted(&task.run_id)? {
+            drop(runtime);
+            cleaned_deleted = true;
+            if let Err(error) = crate::cleanup::attempt(&root, &store, &task) {
+                eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
+            }
+            continue;
+        }
         if task.manifest.sequence.is_some()
             && (target.driving.load(Ordering::SeqCst) || target.planning.load(Ordering::SeqCst))
         {
@@ -6143,6 +6106,9 @@ fn retry_cleanup_tasks_with_gc(
         if let Err(error) = runtime.retry_cleanup_deferred(&task.run_id) {
             eprintln!("[Pi^n] Pending cleanup {}: {error}", task.run_id);
         }
+    }
+    if cleaned_deleted {
+        store.reclaim_deleted_pages_passive();
     }
     if run_periodic_orphan_gc {
         if let Err(error) = crate::attachment_inputs::prune_orphaned_unscoped(
@@ -6159,6 +6125,13 @@ fn retry_cleanup_tasks_with_gc(
             || any_active_graph_or_planning_service(service),
         ) {
             eprintln!("[Pi^n] Orphaned shadow repository cleanup: {error}");
+        }
+        if let Err(error) = crate::cleanup::prune_retained_shadow_views_with_guard(
+            &root,
+            &store,
+            || any_active_graph_or_planning_service(service),
+        ) {
+            eprintln!("[Pi^n] Retained shadow view cleanup: {error}");
         }
         if let Err(error) = crate::cleanup::prune_orphaned_publication_dirs(
             &root,
@@ -6220,7 +6193,8 @@ fn get_planning(planning_id: String, service: &Arc<Service>) -> Result<PlanningS
     if !is_valid_planning_id(&planning_id) {
         return Err(format!("Invalid planning ID: {planning_id}"));
     }
-    let planning_dir = service_data_root(service)?.join("planning");
+    let root = service_data_root(service)?;
+    let planning_dir = root.join("planning");
     let summary_path = crate::path_safety::real_child_path(
         &planning_dir,
         &planning_dir.join(&planning_id).join("summary.json"),
@@ -6231,6 +6205,12 @@ fn get_planning(planning_id: String, service: &Arc<Service>) -> Result<PlanningS
     let summary = read_planning_summary(content.as_bytes())?;
     if summary.planning_id != planning_id {
         return Err("Planner summary belongs to another attempt".into());
+    }
+    if let Some(run_id) = summary.run_id.as_deref() {
+        let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+        if reader.run_was_deleted(run_id)? {
+            return Err(format!("Planning summary not found: {planning_id}"));
+        }
     }
     Ok(summary)
 }
@@ -6298,7 +6278,7 @@ fn get_planning_output_with_options(
         return Err("Invalid planning ID".into());
     }
     let summary = get_planning(planning_id.clone(), service)?;
-    if !matches!(role.as_str(), "partition" | "planner") {
+    if role != "planner" {
         return Err("Invalid planning role".into());
     }
     let root = service_data_root(service)?.join("planning");
@@ -6630,7 +6610,8 @@ fn list_plannings(
     service: &Arc<Service>,
     repository_filter: Option<String>,
 ) -> Result<Vec<PlanningSummary>, String> {
-    let planning_dir = service_data_root(service)?.join("planning");
+    let root = service_data_root(service)?;
+    let planning_dir = root.join("planning");
     if !planning_dir.exists() {
         return Ok(Vec::new());
     }
@@ -6668,6 +6649,31 @@ fn list_plannings(
                 }
             }
         }
+    }
+    // Deferred online deletion can leave planning files on disk until the
+    // background cleanup worker finishes. Filter against tombstones after
+    // scanning so a concurrently committed deletion never reappears.
+    if !summaries.is_empty() {
+        let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
+        let mut deleted_cache = std::collections::HashMap::<String, bool>::new();
+        let mut visible = Vec::with_capacity(summaries.len());
+        for summary in summaries {
+            let deleted = if let Some(run_id) = summary.run_id.as_deref() {
+                if let Some(&was_deleted) = deleted_cache.get(run_id) {
+                    was_deleted
+                } else {
+                    let was_deleted = reader.run_was_deleted(run_id)?;
+                    deleted_cache.insert(run_id.to_owned(), was_deleted);
+                    was_deleted
+                }
+            } else {
+                false
+            };
+            if !deleted {
+                visible.push(summary);
+            }
+        }
+        summaries = visible;
     }
     summaries.sort_by(|a, b| {
         b.created_at
@@ -6723,6 +6729,7 @@ fn get_file_changes(
                 planning_id: runtime.state.planning_id.clone(),
                 planning: runtime.state.planning.clone(),
                 base: runtime.state.base.clone(),
+                latest_source_base: runtime.state.latest_source_base.clone(),
                 publication: runtime.state.publication.clone(),
                 superseded_execution_ids: runtime.state.superseded_execution_ids.clone(),
                 executions: runtime.state.executions.iter().map(strip_exec).collect(),
@@ -7875,7 +7882,7 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
                 crate::provider_auth::begin_shutdown();
                 crate::native::begin_shutdown();
                 #[cfg(not(feature = "fixture"))]
-                crate::engine::stop_partition_prewarm();
+                crate::engine::stop_prewarm();
                 crate::engine::stop_lingering();
                 // Terminate child processes FIRST so any thread holding a
                 // runtime lock while waiting on a subprocess unblocks promptly,
@@ -8465,7 +8472,6 @@ fn handle_http_request_with_options(
             let producer_slot = Arc::clone(&plan_stream_slot);
             thread::spawn(move || {
                 let _producer_slot = producer_slot;
-                let tx_part = tx.clone();
                 let tx_route = tx.clone();
                 let tx_plan = tx.clone();
                 let result = plan_goal_internal_with_options(
@@ -8484,12 +8490,6 @@ fn handle_http_request_with_options(
                             &serde_json::json!({"runId": run_id}),
                             false,
                         )
-                    },
-                    |line| {
-                        let frame = crate::api_contract::PlannerOutputFrame::from_line(line);
-                        if let Ok(value) = serde_json::to_value(frame) {
-                            send_sse_event(&tx_part, "partitioner", &value, true);
-                        }
                     },
                     |route| {
                         send_sse_event(

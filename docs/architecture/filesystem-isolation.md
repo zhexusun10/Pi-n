@@ -11,7 +11,6 @@
 
 | Role | Working directory | Access boundary |
 | --- | --- | --- |
-| Partitioner | Source project | Host-user process; classification has no tools |
 | Planner | Source initially/after publication; selected current node worktree for follow-ups | Native Bash without write-command filtering; follows the selected workspace's platform/source policy |
 | Serial agent | Source project | Host-user project access |
 | Graph Node Agent (private) | Current private Run repository | Platform policy below; path adaptation is not additional permission |

@@ -125,9 +125,8 @@ test('macOS browser drives Graph publication and a persistent Serial follow-up',
         PI_N_GLOBAL_PI_AGENT_DIR: join(directory, 'global'), PI_CODING_AGENT_DIR: agent,
         PI_N_ISOLATED_PI_MODELS: '1', PI_N_DEV_LAZY_PRIMARY: '1',
         GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
-        PLANNER_MODEL: 'browser-local/native', NODE_AGENT_MODEL: 'browser-local/native',
-        PARTITIONER_MODEL: 'browser-local/native', MERGER_MODEL: 'browser-local/native',
-        PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', PARTITIONER_THINKING: 'off', MERGER_THINKING: 'off' });
+        PLANNER_MODEL: 'browser-local/native', NODE_AGENT_MODEL: 'browser-local/native', MERGER_MODEL: 'browser-local/native',
+        PLANNER_THINKING: 'off', NODE_AGENT_THINKING: 'off', MERGER_THINKING: 'off' });
       const target = resolve(process.env.CARGO_TARGET_DIR || 'backend/target');
       backend = spawn(join(target, 'debug', 'pi-n'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
       backend.stderr.on('data', chunk => { diagnostics += chunk; });

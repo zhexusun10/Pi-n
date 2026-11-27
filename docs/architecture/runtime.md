@@ -134,7 +134,7 @@ even if composition marked it blocked, including unmanaged Runs. A dependency
 blocked only by an upstream failure is not a separate recovery root. The
 `canResume` hint and retry use the persisted attempt and block evidence.
 A node conversation's Stop interrupts only that node. A Planner conversation's
-Stop cancels only its in-flight Planner/Partitioner turn; it does not pause the
+Stop cancels only its in-flight Planner turn; it does not pause the
 Run or interrupt node agents. If that turn had temporarily paused dispatch to
 drain affected writers, the Stop undoes that scheduling-only pause and lets
 deferred work resume. Run-wide Stop/cancel also cancels planning.
@@ -159,7 +159,7 @@ Saving changed Node Agent model/thinking settings records the conversation's
 selection and synchronizes per-node overrides for unstarted and failed nodes.
 Conversation-scoped `/model` and `/thinking` edits to Node Agent also synchronize
 the shared model/thinking defaults, matching Settings: unspecified role fields
-inherit the new default, while explicit Planner/Partitioner fields stay unchanged.
+inherit the new default, while explicit Planner fields stay unchanged.
 Per-node composer overrides never update those conversation defaults.
 Every subsequent dispatch uses the latest conversation selection, including
 feedback targets, invalidated descendants, retries, history edits and follow-ups
@@ -788,7 +788,7 @@ so its session panel refreshes before the turn settles. See
 [ExecutionTranscript.tsx](../../src/components/ExecutionTranscript.tsx).
 
 Planning attempts retain requests, graph candidates, summaries, and Pi JSONL
-streams. Parsed Planner/Partitioner lines send only their structured `event`;
+streams. Parsed Planner lines send only their structured `event`;
 non-JSON diagnostics send only `raw`. The final `complete.snapshot` uses the same
 browser metadata projection as HTTP reads, excluding transcript output and heavy
 event payloads. Durable logs remain available through the byte-page APIs. The

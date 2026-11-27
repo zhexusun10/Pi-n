@@ -597,6 +597,79 @@ fn host_rust_toolchain_variables_for(
     resolved
 }
 
+/// Resolve an existing host Playwright browser cache directory
+/// (`PLAYWRIGHT_BROWSERS_PATH`) before private-HOME redirection replaces
+/// `HOME`/`USERPROFILE`/`XDG_CACHE_HOME`/`LOCALAPPDATA`.
+///
+/// Respects any explicit host `PLAYWRIGHT_BROWSERS_PATH` environment override
+/// (which ambient inheritance already carries) and skips directories that do
+/// not exist or fall inside `excluded_root`.
+pub(crate) fn host_playwright_browsers_variable(
+    excluded_root: Option<&Path>,
+) -> Option<(&'static str, PathBuf)> {
+    let home = home_dir();
+    let cache_override = if cfg!(target_os = "macos") {
+        None
+    } else if cfg!(windows) {
+        environment_path("LOCALAPPDATA")
+    } else {
+        environment_path("XDG_CACHE_HOME")
+    };
+    host_playwright_browsers_variable_for(
+        home.as_deref(),
+        cache_override.as_deref(),
+        env_var_non_empty,
+        excluded_root,
+    )
+}
+
+fn host_playwright_browsers_variable_for(
+    home: Option<&Path>,
+    cache_override: Option<&Path>,
+    has_env: impl Fn(&str) -> bool,
+    excluded_root: Option<&Path>,
+) -> Option<(&'static str, PathBuf)> {
+    if has_env("PLAYWRIGHT_BROWSERS_PATH") {
+        return None;
+    }
+    let candidate = if cfg!(target_os = "macos") {
+        home.filter(|path| path.is_absolute())?
+            .join("Library/Caches/ms-playwright")
+    } else if cfg!(windows) {
+        let base = cache_override
+            .filter(|path| path.is_absolute())
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                home.filter(|path| path.is_absolute())
+                    .map(|h| h.join("AppData/Local"))
+            })?;
+        base.join("ms-playwright")
+    } else {
+        let base = cache_override
+            .filter(|path| path.is_absolute())
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                home.filter(|path| path.is_absolute())
+                    .map(|h| h.join(".cache"))
+            })?;
+        base.join("ms-playwright")
+    };
+    if !candidate.is_dir() {
+        return None;
+    }
+    if let Some(root) = excluded_root {
+        if crate::workspace::scope_contains(&candidate, root)
+            || candidate
+                .canonicalize()
+                .ok()
+                .is_some_and(|real| crate::workspace::scope_contains(&real, root))
+        {
+            return None;
+        }
+    }
+    Some(("PLAYWRIGHT_BROWSERS_PATH", host_path(&candidate)))
+}
+
 pub(crate) fn workspace_environment(
     workspace: &Path,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
@@ -632,6 +705,9 @@ pub(crate) fn workspace_environment(
     for (key, path) in host_rust_toolchain_variables(Some(workspace)) {
         bindings.insert(key.to_string(), path.to_string_lossy().into_owned());
     }
+    if let Some((key, path)) = host_playwright_browsers_variable(Some(workspace)) {
+        bindings.insert(key.to_string(), path.to_string_lossy().into_owned());
+    }
     Ok(bindings)
 }
 
@@ -652,7 +728,7 @@ fn is_managed_worktrees_or_workspaces_bucket(path: &Path) -> bool {
             })
 }
 
-pub fn validate_workspace(role: PiRole, repository: &Path, cwd: &Path) -> Result<(), String> {
+pub fn validate_workspace(_role: PiRole, repository: &Path, cwd: &Path) -> Result<(), String> {
     crate::workspace::validate_binding(repository)?;
     if let Some(bucket) = cwd
         .parent()
@@ -678,9 +754,6 @@ pub fn validate_workspace(role: PiRole, repository: &Path, cwd: &Path) -> Result
         // Planner follow-ups and conflict repair can use a current node slot.
         // Private Planner/Merger turns retain the same workspace validation and
         // platform boundaries as other private executions.
-        if role == PiRole::Partitioner {
-            return Err("Partitioner must use the bound source directory".into());
-        }
         if cwd.starts_with(&repository) || repository.starts_with(&cwd) {
             return Err("Graph workspace must not overlap the source directory".into());
         }
@@ -1068,7 +1141,7 @@ pub fn command(role: PiRole, repository: &Path, cwd: &Path) -> Result<Command, S
 
 /// Per-backend-lifecycle verification context token. Child engine hosts share
 /// this token to avoid repeating identical Git baseline and dependency scans
-/// across Provider/Auth, Partitioner, Planner, and NodeAgent prewarm workers.
+/// across Provider/Auth, Planner, and NodeAgent prewarm workers.
 pub(crate) fn baseline_verification_context() -> &'static str {
     static CONTEXT: OnceLock<String> = OnceLock::new();
     CONTEXT.get_or_init(|| format!("{}:{}", std::process::id(), uuid::Uuid::new_v4()))
@@ -1880,7 +1953,6 @@ mod tests {
         assert!(command(PiRole::Planner, &source, &private)
             .unwrap_err()
             .contains("platform context"));
-        assert!(validate_workspace(PiRole::Partitioner, &source, &private).is_err());
         #[cfg(unix)]
         {
             let alias = temp.path().join("alias");
@@ -1914,7 +1986,6 @@ mod tests {
             let input = crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
             crate::workspace::prepare(&source, &private, &input, &[]).unwrap();
             validate_workspace(PiRole::Merger, &source, &private).unwrap();
-            assert!(validate_workspace(PiRole::Partitioner, &source, &private).is_err());
             assert!(command(PiRole::Merger, &source, &private)
                 .unwrap_err()
                 .contains("platform context"));
@@ -2007,7 +2078,7 @@ export default function () {
         let canonical = source.canonicalize().unwrap();
         let alias = temp.path().join("source-link");
         crate::path_safety::directory_link(&source, &alias);
-        for role in [PiRole::Partitioner, PiRole::Planner] {
+        for role in [PiRole::Planner] {
             for cwd in [&source, &canonical, &alias] {
                 let command =
                     execution_command(role, &source, cwd, temp.path(), temp.path()).unwrap();
@@ -2443,6 +2514,44 @@ export default async function () {
                 Some(&project_root),
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn host_playwright_browsers_variable_preserves_existing_cache_and_respects_overrides() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("user-home");
+        let cache = if cfg!(target_os = "macos") {
+            home.join("Library/Caches/ms-playwright")
+        } else if cfg!(windows) {
+            home.join("AppData/Local/ms-playwright")
+        } else {
+            home.join(".cache/ms-playwright")
+        };
+        fs::create_dir_all(&cache).unwrap();
+
+        assert_eq!(
+            host_playwright_browsers_variable_for(Some(&home), None, |_| false, None),
+            Some(("PLAYWRIGHT_BROWSERS_PATH", host_path(&cache)))
+        );
+        assert_eq!(
+            host_playwright_browsers_variable_for(
+                Some(&home),
+                None,
+                |key| key == "PLAYWRIGHT_BROWSERS_PATH",
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            host_playwright_browsers_variable_for(Some(&home), None, |_| false, Some(&home)),
+            None
+        );
+        let empty = temp.path().join("empty-home");
+        fs::create_dir_all(&empty).unwrap();
+        assert_eq!(
+            host_playwright_browsers_variable_for(Some(&empty), None, |_| false, None),
+            None
         );
     }
 }

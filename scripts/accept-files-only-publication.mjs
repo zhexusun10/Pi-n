@@ -156,7 +156,7 @@ try {
   env = { ...process.env, PI_N_DATA_DIR: join(directory, 'data'), PI_N_PORT: String(port),
     PI_N_CACHE_DIR: join(directory, 'cache'), PI_N_WORKSPACE_PARENT: join(directory, 'workspaces'),
     PI_N_NATIVE_RUNTIME_PARENT: join(directory, 'runtime'), PI_CODING_AGENT_DIR: agent, PI_N_ISOLATED_PI_MODELS: '1' };
-  for (const role of ['PLANNER', 'PARTITIONER', 'NODE_AGENT', 'MERGER']) {
+  for (const role of ['PLANNER', 'NODE_AGENT', 'MERGER']) {
     env[`${role}_MODEL`] = 'files-only-acceptance/native'; env[`${role}_THINKING`] = 'off';
   }
   await start();

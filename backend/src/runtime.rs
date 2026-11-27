@@ -861,6 +861,9 @@ impl Runtime {
                     planning,
                     approval_required,
                 })?;
+                if self.state.phase == "completed" {
+                    let _ = self.prune_stale_environment_snapshots();
+                }
             }
         }
         if let Some(execution) = self
@@ -1603,6 +1606,7 @@ impl Runtime {
 
     pub fn clear_history(&mut self) -> Result<(), String> {
         self.clear_history_deferred()?;
+        self.store.reclaim_deleted_pages();
         if let Err(error) = self.retry_deleted_cleanups() {
             eprintln!("[Pi^n] History cleared; filesystem cleanup remains queued: {error}");
         }
@@ -1634,7 +1638,7 @@ impl Runtime {
         }
         // Validate every directory first, then atomically transfer ownership to
         // the cleanup queue with deletion. Filesystem failure cannot orphan it.
-        self.store.clear_with_cleanup(&cleanups)?;
+        self.store.clear_with_cleanup_deferred(&cleanups)?;
         let current_config = self.state.config.clone();
         self.state = Snapshot {
             config: current_config,
@@ -1650,6 +1654,7 @@ impl Runtime {
 
     pub fn delete_runs(&mut self, run_ids: &[String]) -> Result<(), String> {
         self.delete_runs_deferred(run_ids)?;
+        self.store.reclaim_deleted_pages();
         // Logical deletion has committed. Filesystem failures remain retryable
         // without making the browser retain a conversation that no longer exists.
         for run_id in run_ids {
@@ -1683,7 +1688,7 @@ impl Runtime {
             ));
         }
         // Validate the whole batch before either SQL deletion or filesystem I/O.
-        self.store.delete_runs_with_cleanup(&cleanups)?;
+        self.store.delete_runs_with_cleanup_deferred(&cleanups)?;
         self.forget_deleted_runs(run_ids);
         Ok(())
     }
@@ -1843,6 +1848,9 @@ impl Runtime {
             crate::native::require_graph_execution()?;
         }
         let images = images.filter(|imgs| !imgs.is_empty());
+        if self.state.plan_type.as_deref() == Some(plan_type) && images.is_none() {
+            return Ok(());
+        }
         self.emit(EventKind::Routed {
             plan_type: plan_type.into(),
             images,
@@ -2737,6 +2745,7 @@ impl Runtime {
         )?;
         compile(&graph, true)
             .map_err(|errors| serde_json::to_string(&errors).unwrap_or_default())?;
+        let graph = (graph != self.state.graph).then_some(graph);
         self.emit(EventKind::GraphRevised {
             graph,
             planning_id,
@@ -3101,6 +3110,7 @@ impl Runtime {
                 &self.exclusions()?,
             )?)
         };
+        let graph = (graph != self.state.graph).then_some(graph);
         self.emit(EventKind::GraphRevised {
             graph,
             planning_id: planning.planning_id.clone(),
@@ -3141,7 +3151,7 @@ impl Runtime {
         }
         let previous_node = previous.node_agent_settings();
         let nodes = if node_settings == previous_node {
-            // Planner/Partitioner changes are conversation settings only; they
+            // Planner changes are conversation settings only; they
             // must never opt a failed Node Agent attempt into Continue.
             Vec::new()
         } else {

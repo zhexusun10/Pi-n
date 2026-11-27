@@ -25,6 +25,7 @@ symlinkSync(root, join(repository, "outside"), process.platform === "win32" ? "j
 process.env.PI_N_GRAPH_PATH = join(root, "graph.json");
 process.env.PI_N_COMPILER_PATH ||= join(resolve(process.env.CARGO_TARGET_DIR || 'backend/target'), `debug/pi-n${process.platform === "win32" ? ".exe" : ""}`);
 process.env.PI_N_MODE = "planner";
+delete process.env.PI_N_AGENT_KIND;
 process.env.PI_N_PLANNER_WRITE_TOOLS = "true";
 // Planner behavior must not depend on the host's feedback retry setting.
 process.env.PI_N_MAX_FEEDBACK = "0";
@@ -1763,24 +1764,21 @@ fn main() {
   const plannerPrompt = buildSystemPrompt(plannerOptions);
   assert.doesNotMatch(plannerPrompt, /Use project-root-relative paths|node task handoffs|generated configuration/);
 
-  // Partitioner and Merger use the same namespace without the Planner extension.
-  for (const mode of ["partition", "merger"]) {
-    process.env.PI_N_MODE = mode;
+  // Merger uses the same namespace without the Planner extension.
+  {
+    process.env.PI_N_MODE = "merger";
     const roleExtension = await loadExtensions([adapterPath], repository);
     assert.deepEqual(roleExtension.errors, []);
     const hooks = roleExtension.extensions[0].handlers;
-    assert.equal(hooks.has("before_agent_start"), mode !== "partition", "Execution roles receive the relative-path convention");
+    assert.equal(hooks.has("before_agent_start"), true, "Execution roles receive the relative-path convention");
     assert.equal(hooks.has("context"), false, "No content rewriting");
-    if (mode === "partition") assert.equal(roleExtension.extensions[0].tools.size, 0);
-    else {
-      assert.ok(roleExtension.extensions[0].tools.has("bash"));
-      const mergerOptions = normalizeBuildSystemPromptOptions({ customPrompt: "base", cwd: repository });
-      assert.equal(await hooks.get("before_agent_start")![0]({ systemPromptOptions: mergerOptions }), undefined);
-      assert.equal(mergerOptions.forceSystemPrompt, undefined);
-      const mergerPrompt = buildSystemPrompt(mergerOptions);
-      assert.match(mergerPrompt, /Use project-root-relative paths in Bash commands and project files/);
-      assert.doesNotMatch(mergerPrompt, /handoffs|generated configuration/);
-    }
+    assert.ok(roleExtension.extensions[0].tools.has("bash"));
+    const mergerOptions = normalizeBuildSystemPromptOptions({ customPrompt: "base", cwd: repository });
+    assert.equal(await hooks.get("before_agent_start")![0]({ systemPromptOptions: mergerOptions }), undefined);
+    assert.equal(mergerOptions.forceSystemPrompt, undefined);
+    const mergerPrompt = buildSystemPrompt(mergerOptions);
+    assert.match(mergerPrompt, /Use project-root-relative paths in Bash commands and project files/);
+    assert.doesNotMatch(mergerPrompt, /handoffs|generated configuration/);
   }
   // Exercise the production node adapter with real read/write/edit/bash tools.
   process.env.PI_N_MODE = "node";

@@ -647,6 +647,69 @@ test("card-shell projections validate byte cursors, enforce LRU string sizing, a
   assert.equal(hydratedThinking.content, "FULL_HYDRATED_REASONING");
 });
 
+test("card hydration preserves tool_execution_end output when followed by a content-stripped message_end(toolResult)", () => {
+  const tool: TranscriptItem = {
+    id: "call-stripped",
+    type: "tool_call",
+    toolCallId: "call-stripped",
+    toolName: "bash",
+    args: { command: "echo hi" },
+    status: "success",
+    source: "exec-1",
+    rawResultRange: [200, 600],
+    resultOmitted: true,
+    bodyOmitted: true,
+  };
+  const combinedJsonl = [
+    JSON.stringify({
+      type: "tool_execution_end",
+      toolCallId: "call-stripped",
+      toolName: "bash",
+      isError: false,
+      result: { content: [{ type: "text", text: "hi\n" }], details: { exitCode: 0 } },
+      piNRawRange: [200, 600],
+    }),
+    JSON.stringify({
+      type: "message_end",
+      piNRawRange: [600, 750],
+      message: {
+        role: "toolResult",
+        toolCallId: "call-stripped",
+        toolName: "bash",
+        isError: false,
+        details: { exitCode: 0 },
+      },
+    }),
+  ].join("\n") + "\n";
+
+  const patches = extractHydratedCardPatches(combinedJsonl, [tool], "exec-1");
+  const key = hydrationKeyForItem(tool)!;
+  assert.equal(isItemHydrated(tool, patches.get(key)), true);
+  const [hydrated] = applyHydratedCardPatches([tool], patches);
+  assert.equal(hydrated.result, "hi\n");
+  assert.equal(hydrated.resultOmitted, undefined);
+  assert.equal(hydrated.bodyOmitted, undefined);
+
+  // A standalone stripped `message_end(toolResult)` must not mark an omitted result as hydrated.
+  const strippedOnly = JSON.stringify({
+    type: "message_end",
+    piNRawRange: [600, 750],
+    message: {
+      role: "toolResult",
+      toolCallId: "call-stripped",
+      toolName: "bash",
+      isError: false,
+      details: { exitCode: 0 },
+    },
+  }) + "\n";
+  const strippedPatches = extractHydratedCardPatches(strippedOnly, [tool], "exec-1");
+  assert.equal(isItemHydrated(tool, strippedPatches.get(key)), false);
+  const [stillOmitted] = applyHydratedCardPatches([tool], strippedPatches);
+  assert.equal(stillOmitted.result, undefined);
+  assert.equal(stillOmitted.resultOmitted, true);
+  assert.equal(stillOmitted.bodyOmitted, true);
+});
+
 test("leading live summaries keep stable IDs across tool completion, follow-up tools, thinking-to-tool growth, and prepends", () => {
   const think: TranscriptItem = { id: "think_output_0_0", type: "thinking", role: "assistant", content: "Inspecting", status: "success" };
   const call1Running: TranscriptItem = { id: "call-1", type: "tool_call", toolCallId: "call-1", toolName: "bash", args: { command: "ls" }, status: "running" };
@@ -673,6 +736,13 @@ test("leading live summaries keep stable IDs across tool completion, follow-up t
   assert.equal(withFirstToolRaw[0].id, "summary_call-1");
   const withFirstTool = stabilizeActivitySummaryIds(withFirstToolRaw, onlyThinking);
   assert.equal(withFirstTool[0].id, "summary_think_output_0_0");
+
+  // Upgrading summary -> full shifts a pure-thinking item's offset ID; keep the mounted running summary ID.
+  const shiftedLiveThink: TranscriptItem = { id: "think_output_2203_0", type: "thinking", role: "assistant", content: "Full live reasoning", status: "running" };
+  const shiftedSummaryRaw = visibleTranscriptRows([shiftedLiveThink], undefined, { collapseCards: true, live: true, canPrepend: false }).rows;
+  assert.equal(shiftedSummaryRaw[0].id, "summary_think_output_2203_0");
+  const shiftedSummary = stabilizeActivitySummaryIds(shiftedSummaryRaw, onlyThinking);
+  assert.equal(shiftedSummary[0].id, "summary_think_output_0_0");
 
   // Reaching byte zero after a prepend (canPrepend true -> false) keeps the leading settled summary ID.
   const tailSettled = visibleTranscriptRows([call1Done, call2Done, textAfter], undefined, { collapseCards: true, live: false, canPrepend: true }).rows;

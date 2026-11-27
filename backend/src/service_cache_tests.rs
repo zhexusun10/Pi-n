@@ -191,12 +191,12 @@ fn workspace_size_limit_applies_only_to_compile_with_isolated_parallel_nodes() {
     )
     .is_ok());
 
-    // Pre-route Auto mode defers size checking until routing chooses graph.
+    // Default (omitted) mode is Direct and does not scan workspace size.
     assert!(validate_run_admission_with_size_check(
         std::path::Path::new(&repository),
         &isolated_config,
-        Some("auto"),
-        |_| panic!("Auto mode must not scan workspace size before routing"),
+        None,
+        |_| panic!("Default Direct mode must not scan workspace size"),
     )
     .is_ok());
 

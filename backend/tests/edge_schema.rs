@@ -103,7 +103,7 @@ fn graph_ids_roundtrip_through_events_and_checkpoints() {
             config,
         },
         EventKind::GraphRevised {
-            graph: graph.clone(),
+            graph: Some(graph.clone()),
             planning_id: "revision".into(),
             planning: PlanningSummary {
                 planning_id: "revision".into(),

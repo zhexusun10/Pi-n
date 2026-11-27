@@ -374,11 +374,13 @@ when:
 - a path contains a scoped internal cache subtree: `node_modules/.cache`,
   `node_modules/.vite`, `node_modules/.vite-*`, `.next/cache`, `.nuxt/cache`,
   `.angular/cache`, `.vitepress/cache`, `.vuepress/.cache`, `.vuepress/.temp`,
-  `.nx/cache`, `.nx/workspace-data`, `.cache/clangd`, or Rust/Cargo internal
+  `.nx/cache`, `.nx/workspace-data`, `.cache/clangd`, Rust/Cargo internal
   cache/intermediate entries nested under `target/` (`.fingerprint`,
   `incremental`, `deps`, `build`, `tmp`, `CACHEDIR.TAG`, `.rustc_info.json`,
   `.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`, and `.d`,
-  `.rmeta`, `.rlib`, `.rcgu.o` compiler intermediates); or
+  `.rmeta`, `.rlib`, `.rcgu.o` compiler intermediates), or any untracked path
+  under a `target/` directory that matches the project's own Git ignore rules
+  (`.gitignore`, `.git/info/exclude`, global excludes); or
 - a filename ends with `.tsbuildinfo`.
 
 Project Git tracking still overrides these cache exclusions.
@@ -386,8 +388,8 @@ Project Git tracking still overrides these cache exclusions.
 Installed dependencies and runnable artifacts are **not** disposable caches.
 `node_modules` packages, `.next`/`.nuxt` build outputs (outside their `cache`
 subtrees), `.yarn/cache`, `.dart_tool`, `.build`, `.swiftpm`, `bin`, `obj`,
-`dist`, `build`, `out`, runnable `target` outputs (top-level `debug`/`release`
-binaries, `doc`, example binaries), `zig-out` and standalone `.pyc`/`.pyo` files
+`dist`, `build`, `out`, non-ignored `target` outputs (or tracked files under
+`target/`), `zig-out` and standalone `.pyc`/`.pyo` files
 follow the ordinary project Git channel, even when ignored or untracked. A
 manifest or registry may be missing, and local package patches, private/offline
 dependencies and sourceless modules cannot be assumed rebuildable. Pi^n does not

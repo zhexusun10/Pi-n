@@ -336,7 +336,6 @@ fn continuation(auto: bool, followup_first: bool) {
             &service,
             |_| {},
             |_| {},
-            |_| {},
         )
         .unwrap();
         let mut runtime = service.runtime.lock().unwrap();
@@ -528,7 +527,6 @@ console.log(JSON.stringify({type:'message_end', message:{role:'assistant',conten
                 &service,
                 |_| {},
                 |_| {},
-                |_| {},
             )
             .unwrap();
             assert_eq!(revised.nodes["first"].status, "completed");
@@ -585,7 +583,6 @@ fn aborted_follow_up_revision_is_recorded_in_the_run_conversation() {
         Some(run_id.clone()),
         &service,
         false,
-        |_| {},
         |_| {},
         |_| {},
         |_| {},
@@ -813,7 +810,6 @@ fn post_task_review_rejects_header_only_history_and_preserves_failure_after_rest
         |_| {},
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     wait_for_driver_exit(&service);
@@ -1011,7 +1007,6 @@ emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'tex
             None,
             None,
             &worker_service,
-            |_| {},
             |_| {},
             |_| {},
         )

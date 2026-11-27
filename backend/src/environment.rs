@@ -1241,14 +1241,6 @@ impl Environments {
         } else {
             Vec::new()
         };
-        let project_guard = if self.config.launch.state_bound() {
-            Some(crate::workspace_view::preparation_guard(
-                path,
-                &project_exclusions,
-            )?)
-        } else {
-            None
-        };
         if history_edit {
             self.validate_history_result_at(path, selected, &selected.launch_ref)?;
         }
@@ -1274,6 +1266,23 @@ impl Environments {
                 .load_launch(&selected.launch_ref)?
                 .environment
                 .is_none();
+        let will_materialize =
+            !preserve_failed && !unbound_best_effort && !(same_view && !history_edit);
+        let will_initialize = selected.layout.is_none()
+            && !self.config.import_source
+            && !self.config.initialize.is_empty();
+        // Skip the before/after full project-tree guard on pure no-op paths
+        // (neither managed-root materialization nor initializer execution can
+        // touch the workspace).
+        let project_guard =
+            if self.config.launch.state_bound() && (will_materialize || will_initialize) {
+                Some(crate::workspace_view::preparation_guard(
+                    path,
+                    &project_exclusions,
+                )?)
+            } else {
+                None
+            };
         if !preserve_failed && !unbound_best_effort && (history_edit || !same_view) {
             self.preflight_prepared_runtime_evidence(path, selected)?;
         }
@@ -1283,7 +1292,7 @@ impl Environments {
         if !unbound_best_effort && same_view && !history_edit && !preserve_failed {
             self.verify_view(path, &selected.launch_ref, &selected.environment_ref)?;
             view_verified_exact = true;
-        } else if !preserve_failed && !unbound_best_effort {
+        } else if will_materialize {
             // Operation intent and recorded byte/launch coverage govern this
             // protection, never a diagnostic reason inherited from an old job.
             // An explicit history restoration retains its existing semantics.
@@ -1313,10 +1322,7 @@ impl Environments {
         } else {
             scoped.validate(std::slice::from_ref(&selected.environment_ref))?;
         }
-        if selected.layout.is_none()
-            && !self.config.import_source
-            && !self.config.initialize.is_empty()
-        {
+        if will_initialize {
             view_verified_exact = false;
             let launch = self.load_launch(&selected.launch_ref)?.expanded(path);
             let expand = |v: &str| {

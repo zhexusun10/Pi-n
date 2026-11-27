@@ -146,7 +146,7 @@ fn refresh_summaries(catalog: &mut Catalog, version: i64) -> Result<(), String> 
                  FROM events
                  WHERE run_id NOT IN (SELECT run_id FROM deleted_runs)
                  GROUP BY run_id
-                 ORDER BY MAX(sequence) DESC",
+                 ORDER BY MIN(sequence) DESC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt

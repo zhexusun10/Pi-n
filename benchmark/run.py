@@ -22,8 +22,8 @@ import time
 from urllib import error, request
 
 
-ROLE_MODELS = ("PARTITIONER_MODEL", "PLANNER_MODEL", "NODE_AGENT_MODEL", "MERGER_MODEL")
-ROLE_THINKING = ("PARTITIONER_THINKING", "PLANNER_THINKING", "NODE_AGENT_THINKING", "MERGER_THINKING")
+ROLE_MODELS = ("PLANNER_MODEL", "NODE_AGENT_MODEL", "MERGER_MODEL")
+ROLE_THINKING = ("PLANNER_THINKING", "NODE_AGENT_THINKING", "MERGER_THINKING")
 TERMINAL_FAILURES = {"needs_attention", "publication_failed", "rejected", "paused"}
 
 
@@ -113,9 +113,8 @@ class PiNClient:
 
 
 def run_goal(client, instruction, config, timeout, poll_interval=1.0):
-    # No mode=graph/serial: the Partitioner must choose, including on Linux.
     deadline = time.monotonic() + timeout
-    snap = client.call("plan_goal", {"goal": instruction, "config": config}, timeout=timeout)
+    snap = client.call("plan_goal", {"goal": instruction, "config": config, "mode": "graph"}, timeout=timeout)
     run_id = snap.get("runId")
     if not run_id:
         raise RuntimeError("Planning returned no runId")
@@ -263,7 +262,7 @@ def main(argv=None):
                     "PI_CODING_AGENT_DIR": pi_dir,
                     "PI_N_ISOLATED_PI_MODELS": "1"})
         # Avoid hidden .env or role-specific overrides silently changing the
-        # provider/model or thinking level for Partitioner, Planner, nodes or merger.
+        # provider/model or thinking level for Planner, nodes or merger.
         env.update({key: args.model for key in ROLE_MODELS})
         for key in ROLE_THINKING:
             env.pop(key, None)

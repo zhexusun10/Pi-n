@@ -17,15 +17,12 @@ import { extensionErrorText } from "./extensionErrors";
 export interface PlannerStreamState {
   runId: string;
   initialPlanMode: PlanMode | undefined;
-  stage: "idle" | "partitioning" | "planning" | "completed" | "error";
+  stage: "idle" | "planning" | "completed" | "error";
   items: TranscriptItem[];
   plannerMessageStart: number;
   representedPlanningIds: string[];
   isContinuation: boolean;
   startedAt: number | undefined;
-  partitionerThinking: string;
-  partitionerThinkingActive: boolean;
-  partitionerText: string;
   plannerThinking: string;
   plannerThinkingActive: boolean;
   plannerText: string;
@@ -44,9 +41,6 @@ export const initialPlannerStream: PlannerStreamState = {
   representedPlanningIds: [],
   isContinuation: false,
   startedAt: undefined,
-  partitionerThinking: "",
-  partitionerThinkingActive: false,
-  partitionerText: "",
   plannerThinking: "",
   plannerThinkingActive: false,
   plannerText: "",
@@ -152,39 +146,6 @@ export function applyPlannerExtensionError(
   // A failed extension hook is a visible diagnostic, not proof that Pi's
   // underlying turn failed or stopped. Keep the current planning stage.
   return appendPlannerError(prev, extensionErrorText(event));
-}
-
-export function applyPartitionerDelta(
-  prev: PlannerStreamState,
-  thinkChunk: string,
-  textChunk: string,
-  thinkingActive: boolean,
-): PlannerStreamState {
-  return {
-    ...prev,
-    partitionerThinking: prev.partitionerThinking + thinkChunk,
-    partitionerThinkingActive: thinkingActive,
-    partitionerText: prev.partitionerText + textChunk,
-  };
-}
-
-export function applyPartitionerMessageEnd(
-  prev: PlannerStreamState,
-  content: unknown,
-): PlannerStreamState {
-  let thinking = prev.partitionerThinking;
-  if (!thinking && Array.isArray(content)) {
-    for (const part of content) {
-      if (part.type === "thinking" && part.thinking) {
-        thinking = part.thinking;
-      }
-    }
-  }
-  return {
-    ...prev,
-    partitionerThinking: thinking,
-    partitionerThinkingActive: false,
-  };
 }
 
 export function applyPlannerUserMessageStart(

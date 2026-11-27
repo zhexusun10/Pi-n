@@ -126,7 +126,7 @@ function PromptFixture({ compact = false, uncontrolled = false }: { compact?: bo
 
 function ModePromptFixture({ compact = false }: { compact?: boolean }) {
   const [goal, setGoal] = useState("");
-  const [planMode, setPlanMode] = useState<"auto" | "serial" | "graph">("auto");
+  const [planMode, setPlanMode] = useState<"serial" | "graph">("serial");
   if (compact) return <PromptBox compact value={goal} onChange={event => setGoal(event.target.value)}
     planMode={planMode} onPlanModeChange={setPlanMode} />;
   return <div style={{ position: "fixed", inset: 0 }}>

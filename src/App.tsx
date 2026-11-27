@@ -48,7 +48,7 @@ import { closeThinkingItems, splitThinkingTagDelta } from "./services/thinkingTr
 import { plannerContentSteerId } from "./services/plannerText";
 import { newExecutionSteer, plannerSteerOwner, withoutPlannerSteerIdentity } from "./services/plannerSteers";
 import {
-  appendPlannerError, applyPartitionerDelta, applyPartitionerMessageEnd,
+  appendPlannerError,
   applyPlannerAssistantMessageEnd, applyPlannerEdgeEditsToState, applyPlannerNodeEditsToState, applyPlannerExtensionError,
   applyPlannerTextDelta, applyPlannerThinkingUpdate, applyPlannerToolCallUpdate,
   applyPlannerCompaction,
@@ -80,7 +80,6 @@ import {
   normalizeWorkspacePath,
   orderProjects,
   pinRunInWorkspace,
-  promoteRunInWorkspace,
   reorderRunsInWorkspace,
   reorderSubset,
   snapshotBelongsToWorkspace,
@@ -89,7 +88,7 @@ import {
   workspaceRunsFromSummaries,
 } from "./services/workspaceConversations";
 import { landingDraftKey, loadLandingDraft, saveLandingDraft, clearLandingDraft } from "./services/landingDraft";
-import { applyAccentColor, useAccentColor, useCompletionNotifications, useCompletionNotificationSound, useHideAutoMode, useLandingBackground } from "./services/displayPreferences";
+import { applyAccentColor, useAccentColor, useCompletionNotifications, useCompletionNotificationSound, useLandingBackground } from "./services/displayPreferences";
 import {
   formatNotificationBody,
   isCompletionNotificationPhase,
@@ -136,7 +135,6 @@ function snapshotModelConfig(snapshot: Snapshot | null | undefined, repository: 
 export default function App() {
   const landingBackground = useLandingBackground();
   const accentColor = useAccentColor();
-  const hideAutoMode = useHideAutoMode();
   const completionNotifications = useCompletionNotifications();
   const completionNotificationSound = useCompletionNotificationSound();
   const completionNotificationSoundRef = useRef(completionNotificationSound);
@@ -297,6 +295,9 @@ export default function App() {
   // A Settings refresh belongs to one opening. Closing, reopening or saving
   // supersedes its read even when the foreground Run has not changed.
   const settingsReadGeneration = useRef(0);
+  // Global default saves (Settings modal or home composer) are ordered so a
+  // late earlier response cannot overwrite a newer selection.
+  const defaultSaveGeneration = useRef(0);
   const [runLabels, setRunLabels] = useState<Record<string, string>>({});
   const [runModes, setRunModes] = useState<Record<string, PlanMode>>({});
   const deletedRunIdsRef = useRef(new Set<string>());
@@ -576,19 +577,6 @@ export default function App() {
     });
   };
 
-  const promoteRunToTop = useCallback((runId: string, repo: string) => {
-    if (!runId || !repo || deletedRunIdsRef.current.has(runId)) return;
-    const pinnedSet = new Set(Object.keys(pinnedRunsRef.current));
-    setWorkspaceRuns((prev) => {
-      const updated = promoteRunInWorkspace(prev, runId, repo, pinnedSet);
-      if (updated === prev) return prev;
-      writeStorageJson(STORAGE_KEYS.workspaceRuns, updated);
-      const owner = workspaceKey(repo);
-      if (owner && updated[owner]) syncWorkspaceRunOrder(owner, updated[owner]);
-      return updated;
-    });
-  }, []);
-
   const replaceProvisionalRunId = (oldId: string, newId: string, label: string, repository: string) => {
     transferLocalWork(oldId, newId);
     // Keep the sidebar card keyed by the provisional ID so adopting the durable
@@ -733,24 +721,16 @@ export default function App() {
   const [revertedPlannerSteers, setRevertedPlannerSteers] = useState<ReadonlySet<string>>(() => new Set());
   const planningAbortControllerRef = useRef<AbortController | null>(null);
 
-  // 规划路由模式选择：serial (默认 Direct，单Agent跳过Partitioner) / graph (Compile，Planner跳过Partitioner) / auto (Partitioner评估)
-  const [selectedPlanMode, setPlanMode] = useState<PlanMode>(() => {
+  // 规划路由模式选择：serial (默认 Direct，单Agent直接执行) / graph (Compile，Planner编排工作图)
+  const [planMode, setPlanMode] = useState<PlanMode>(() => {
     const saved = readStorageString(STORAGE_KEYS.planMode);
-    return saved === "serial" || saved === "graph" || saved === "auto" ? saved : "serial";
+    return saved === "graph" ? "graph" : "serial";
   });
-  const planMode = hideAutoMode && selectedPlanMode === "auto" ? "serial" : selectedPlanMode;
-
-  useEffect(() => {
-    if (planMode === selectedPlanMode) return;
-    setPlanMode(planMode);
-    writeStorageString(STORAGE_KEYS.planMode, planMode);
-  }, [planMode, selectedPlanMode]);
 
   const handlePlanModeChange = useCallback((mode: PlanMode) => {
-    const nextMode = hideAutoMode && mode === "auto" ? "serial" : mode;
-    setPlanMode(nextMode);
-    writeStorageString(STORAGE_KEYS.planMode, nextMode);
-  }, [hideAutoMode]);
+    setPlanMode(mode);
+    writeStorageString(STORAGE_KEYS.planMode, mode);
+  }, []);
 
   const resetSessionMessages = useCallback(() => {
     resetPresentedCardIds();
@@ -893,9 +873,6 @@ export default function App() {
         payload.node = targetNode;
       }
       const snapshot = await runtimeService.control(action, payload);
-      if (startsWork && snapshot.runId) {
-        promoteRunToTop(snapshot.runId, snapshot.config?.repository || config.repository);
-      }
       if (!applyForegroundSnapshot(snapshot, generation)) return false;
       setModal(null);
     } finally {
@@ -997,9 +974,6 @@ export default function App() {
           ?? snapshot.events.at(-1);
         const queuedOnly = accepted?.type === "node_messaged" && accepted.queued;
         if (snapshot.paused && !queuedOnly) snapshot = await runtimeService.control("resume_after_intervention", { runId: snapshot.runId });
-        if (snapshot.runId) {
-          promoteRunToTop(snapshot.runId, snapshot.config?.repository || config.repository);
-        }
         const applied = applyForegroundSnapshot(snapshot, generation);
         if (applied) {
           onAccepted?.(snapshot);
@@ -1057,8 +1031,8 @@ export default function App() {
       // The viewed Run owns the Planner. A detached stream from an older
       // conversation must never receive this message.
       const planningRunId = state.runId || plannerStream.runId;
-      if (plannerStream.stage === "partitioning" || !planningRunId || planningRunId.startsWith("pending-")) {
-        setError(t("任务路由器仍在工作，请等待 Planner 启动后再追加消息。"));
+      if (!planningRunId || planningRunId.startsWith("pending-")) {
+        setError(t("Planner 正在启动，请稍候再追加消息。"));
         return false;
       }
       // Pending steer is presentation state, not a Pi user turn. Inserting it
@@ -1105,9 +1079,6 @@ export default function App() {
           const status: ChatMessage["plannerSteerStatus"] | undefined = !submitted ? "unknown"
             : latest?.status === "queued" || latest?.status === "accepted" || latest?.status === "consumed" || latest?.status === "handled" || latest?.status === "failed" || latest?.status === "unknown"
               ? latest.status : "submitted";
-          if (submitted && plannerSteerOwner({ recorded: submitted, status }) !== "composer") {
-            promoteRunToTop(planningRunId, snapshot.config?.repository || state.config?.repository || config.repository);
-          }
           // A send the reader left behind is owned by the durable record: the
           // card must not linger as "submitting" in the conversation it left.
           if (!isCurrent()) { removeMessage(message); return false; }
@@ -1135,7 +1106,6 @@ export default function App() {
           const durable = await recoverPlannerSteer(planningRunId, message.plannerSteerId);
           if (!isCurrent()) { removeMessage(message); return false; }
           if (plannerSteerOwner(durable) === "pending") {
-            promoteRunToTop(planningRunId, state.config?.repository || config.repository);
             setSessionEntries(prev => prev.map(entry => entry.id === message.id
               ? { ...entry, plannerSteerStatus: "unknown", plannerSteerError: durable.error ?? failure } : entry));
             setError(t("送达状态未知，请检查对话后再重试：{0}", localizeError(durable.error ?? failure)));
@@ -2031,6 +2001,7 @@ export default function App() {
 
   const handleSaveConfig = useCallback(async (draftConfig: Config): Promise<boolean> => {
     settingsReadGeneration.current += 1;
+    defaultSaveGeneration.current += 1;
     const generation = foregroundGeneration.current;
     // Settings change models/defaults, not the selected workspace. Rediscovery
     // or Git status here can stall saving behind an unrelated large tree scan.
@@ -2088,18 +2059,46 @@ export default function App() {
     settingsReadGeneration.current += 1;
     if (!scope.runId) {
       // The home composer's choice is remembered as the default for new
-      // conversations, across restarts.
+      // conversations, across restarts. Apply immediately so submitting a new
+      // conversation before `saveConfig` returns uses the chosen model, and
+      // keep global defaults/localStorage synced even if the user navigates
+      // into that conversation while persistence is in flight.
+      const saveGeneration = ++defaultSaveGeneration.current;
+      const previousConfig = config;
       const nextConfig = updateRoleModelConfig(config, scope.role, settings);
-      const boot = await runtimeService.saveConfig(nextConfig);
-      if (generation !== foregroundGeneration.current || displayedRunIdRef.current !== state.runId) return;
+      setConfig(previous => updateRoleModelConfig(previous, scope.role, settings));
+      let boot: Awaited<ReturnType<typeof runtimeService.saveConfig>>;
+      try {
+        boot = await runtimeService.saveConfig(nextConfig);
+      } catch (error) {
+        if (
+          generation === foregroundGeneration.current &&
+          displayedRunIdRef.current === state.runId &&
+          saveGeneration === defaultSaveGeneration.current
+        ) {
+          setConfig(previous => applyModelConfig(previous, previousConfig));
+        }
+        throw error;
+      }
+      if (saveGeneration !== defaultSaveGeneration.current) return;
       const persisted = {
         ...boot.config,
         maxFeedback: normalizeMaxFeedback(boot.config.maxFeedback),
         maxParallel: normalizeMaxParallel(boot.config.maxParallel),
       };
+      acceptedSettingsRef.current = persisted;
       setDefaultSettings(persisted);
-      setConfig(previous => updateRoleModelConfig(previous, scope.role, settings));
-      writeStorageJson(STORAGE_KEYS.config, applyModelConfig(nextConfig, persisted));
+      const storedConfig = readStorageJson(STORAGE_KEYS.config);
+      writeStorageJson(
+        STORAGE_KEYS.config,
+        applyModelConfig(storedConfig ? { ...nextConfig, ...storedConfig } : nextConfig, persisted),
+      );
+      if (
+        generation === foregroundGeneration.current &&
+        displayedRunIdRef.current === state.runId
+      ) {
+        setConfig(previous => applyModelConfig(previous, persisted));
+      }
       return;
     }
     const snapshot = await runtimeService.composerModels({ ...scope, settings });
@@ -2201,8 +2200,7 @@ export default function App() {
     // (or has live work) must keep showing the committed topology; an idle
     // approved graph may preview.
     const liveRevision = isContinuing && state.approved && (active || state.phase === "running");
-    const requestedMode = mode || (isContinuing ? "graph" : planMode);
-    const effectiveMode = hideAutoMode && requestedMode === "auto" ? "serial" : requestedMode;
+    const effectiveMode: PlanMode = mode || (isContinuing ? "graph" : planMode);
     const targetRepo = config.repository;
     if (!targetRepo) {
       setModal("settings");
@@ -2273,7 +2271,7 @@ export default function App() {
       landingComposerDraftsRef.current.clearAttachments(landingDraftKey(undefined));
       setIsPlanning(true);
       beginLocalWork(scope, provisionalRunId);
-      setRouteType(effectiveMode === "auto" ? "undecided" : effectiveMode);
+      setRouteType(effectiveMode);
       setSelected("");
 
       recordRunToWorkspace(provisionalRunId, targetRepo);
@@ -2317,15 +2315,12 @@ export default function App() {
       setPlannerStream({
         runId: provisionalRunId,
         initialPlanMode: effectiveMode,
-        stage: effectiveMode === "auto" ? "partitioning" : effectiveMode === "graph" ? "planning" : "idle",
+        stage: effectiveMode === "graph" ? "planning" : "idle",
         items: [],
         plannerMessageStart: 0,
         representedPlanningIds: [],
         isContinuation: false,
         startedAt: Date.now(),
-        partitionerThinking: "",
-        partitionerThinkingActive: false,
-        partitionerText: "",
         plannerThinking: "",
         plannerThinkingActive: false,
         plannerText: "",
@@ -2352,7 +2347,6 @@ export default function App() {
       setIsPlanning(true);
       if (effectiveRevisionRunId) {
         beginLocalWork(scope, effectiveRevisionRunId);
-        promoteRunToTop(effectiveRevisionRunId, targetRepo);
       }
       // A Planner turn does not change the draft/runtime phase. The workbench
       // displays planning separately, including while old snapshots are polled.
@@ -2407,11 +2401,9 @@ export default function App() {
 
     const completion = run(async () => {
       let abortController: AbortController | null = null;
-      let routeConfirmed = false;
       let failureSummary: PlanningSummary | undefined;
       try {
         if (!planningRecovery.current(scope)) return;
-        let partInTag = false;
         let planInTag = false;
         const graphEditQueue = new PlannerGraphEditQueue();
         const previewKnownNodes = new Set((isContinuing ? state.graph.nodes : []).map((item) => item.id));
@@ -2496,44 +2488,12 @@ export default function App() {
                   });
                 }
               }
-            } else if (event.type === "partitioner") {
-              const pEvent = event.event;
-              if (pEvent?.type === "message_update") {
-                const aEvent = pEvent.assistantMessageEvent;
-                if (aEvent?.type === "thinking_start") {
-                  queuePlannerStream((prev) => ({ ...prev, partitionerThinkingActive: true }));
-                } else if (aEvent?.type === "thinking_delta") {
-                  const delta = aEvent.delta || "";
-                  queuePlannerStream((prev) => ({
-                    ...prev,
-                    partitionerThinking: prev.partitionerThinking + delta,
-                    partitionerThinkingActive: true,
-                  }));
-                } else if (aEvent?.type === "thinking_end") {
-                  queuePlannerStream((prev) => ({ ...prev, partitionerThinkingActive: false }));
-                } else if (aEvent?.type === "text_delta") {
-                  const split = splitThinkingTagDelta(aEvent.delta || "", partInTag);
-                  partInTag = split.inTag;
-                  queuePlannerStream((prev) => applyPartitionerDelta(prev, split.thinkChunk, split.textChunk, split.inTag));
-                }
-              } else if (pEvent?.type === "message_end") {
-                // Show the complete route as soon as Pi finishes the turn, without
-                // waiting for its CLI to exit. Only route_decision confirms it;
-                // errors before confirmation revert this preview.
-                if (effectiveMode === "auto" && pEvent.message?.role === "assistant" && pEvent.message?.stopReason === "stop") {
-                  const text = (pEvent.message.content ?? [])
-                    .filter((item: any) => item.type === "text")
-                    .map((item: any) => item.text)
-                    .join("\n").trim().toLowerCase();
-                  if (text === "graph" || text === "serial") setRouteType(text);
-                }
-                setPlannerStream((prev) => applyPartitionerMessageEnd(prev, pEvent.message?.content));
-              }
             } else if (event.type === "route_decision") {
               if (event.planType) {
-                routeConfirmed = true;
                 setRouteType(event.planType);
-                setPlannerStream((prev) => ({ ...prev, stage: "planning" }));
+                if (event.planType === "graph") {
+                  setPlannerStream((prev) => ({ ...prev, stage: "planning" }));
+                }
               }
             } else if (event.type === "planner") {
               queuePlannerStream((prev) => (prev.stage !== "planning" ? { ...prev, stage: "planning" } : prev));
@@ -2758,13 +2718,11 @@ export default function App() {
           String(err?.message || err).includes("The user aborted a request");
         if (isAbort) {
           void restoreCommittedGraph();
-          if (!routeConfirmed && effectiveMode === "auto") setRouteType(deduceRouteType(state));
           return;
         }
         const errorMsg = String(err?.message || err);
         setError(errorMsg);
         void restoreCommittedGraph();
-        if (!routeConfirmed && effectiveMode === "auto") setRouteType(deduceRouteType(state));
         // Keep the failed first-message conversation mounted: wiping the whole
         // snapshot here remounts the landing view over the workspace (page flash)
         // and hides the failure the user is looking at.
@@ -2778,7 +2736,7 @@ export default function App() {
             error: errorMsg,
             createdAt: Date.now(),
             repository: targetRepo,
-            planType: effectiveMode === "graph" ? "graph" : undefined,
+            planType: effectiveMode,
             goal: targetGoal,
             runId: "",
           };
@@ -2839,9 +2797,6 @@ export default function App() {
       return isCurrent();
     };
     const acceptNodeEdit = async (snapshot: Snapshot) => {
-      if (snapshot.runId) {
-        promoteRunToTop(snapshot.runId, snapshot.config?.repository || config.repository);
-      }
       if (!applyForegroundSnapshot(snapshot, generation)) return false;
       if (!snapshot.paused) return true;
       const resumed = await runtimeService.control("resume_after_intervention", { runId: snapshot.runId });
@@ -2941,9 +2896,6 @@ export default function App() {
             requestId: selectedMessage.steerRequestId,
           });
           if (snapshot.paused) snapshot = await runtimeService.control("resume_after_intervention", { runId: snapshot.runId });
-          if (snapshot.runId) {
-            promoteRunToTop(snapshot.runId, snapshot.config?.repository || config.repository);
-          }
           if (!applyForegroundSnapshot(snapshot, generation)) return false;
           const base = sessionEntries.length > 0 ? sessionEntries : effectiveMessages;
           setSessionEntries(applySelectedVersionToEntries(
@@ -3139,7 +3091,7 @@ export default function App() {
       await handlePlanGoal(
         backendGoal,
         { displayText: backendGoal, files: parsedExisting.attachments, images: targetMsg.images },
-        routeType === "undecided" ? "auto" : routeType,
+        routeType === "graph" ? "graph" : "serial",
         undefined,
         true
       );
@@ -3187,9 +3139,6 @@ export default function App() {
             requestId,
           });
           if (snapshot.paused) snapshot = await runtimeService.control("resume_after_intervention", { runId: snapshot.runId });
-          if (snapshot.runId) {
-            promoteRunToTop(snapshot.runId, snapshot.config?.repository || config.repository);
-          }
           if (!applyForegroundSnapshot(snapshot, generation)) return false;
           setSessionEntries(rolledBackEntries);
           const nextMerger = (snapshot.mergers ?? []).filter(item => item.node === targetMerger.node).at(-1);
@@ -3290,7 +3239,6 @@ export default function App() {
     handlePlanGoal,
     requireRepository,
     applyForegroundSnapshot,
-    promoteRunToTop,
     run,
   ]);
 
@@ -3726,7 +3674,7 @@ export default function App() {
       }));
       setPlannerStream({ ...initialPlannerStream, runId: id, stage: "planning", startedAt: Date.now() });
       setSessionEntries(messagesByRunRef.current.get(id) ?? []);
-      setRouteType(mode === "serial" ? "serial" : mode === "auto" ? "undecided" : "graph");
+      setRouteType(mode === "serial" ? "serial" : "graph");
       setGoal(runLabels[id] || "");
       setSelected("");
       setEditingMessage(null);
@@ -4103,7 +4051,7 @@ export default function App() {
                       plannerStream.runId === state.runId && plannerStream.initialPlanMode
                         ? plannerStream.initialPlanMode
                         : (state.approved && state.planType === "graph" && persistedRunningPlanning
-                          ? "graph" : runModes[state.runId] ?? (recoveredPlanning?.planType === "undecided" ? "auto" : undefined))
+                          ? "graph" : runModes[state.runId])
                     }
                     selected={selected}
                     setSelected={setSelected}

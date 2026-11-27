@@ -6,13 +6,12 @@ import type { ProviderCatalog } from "../services/providerAuth";
 import { availableCatalogModels, modelRoles, normalizeModelThinkingLevels, roleModelConfig, thinkingLevelLabel, updateRoleModelConfig } from "../modelConfig";
 import { ScopedModelsModal } from "./modals/ScopedModelsModal";
 
-export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {}, busy, hidePartitioner = false }: {
+export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {}, busy }: {
   config: Config;
   setConfig: React.Dispatch<React.SetStateAction<Config>>;
   catalog?: ProviderCatalog;
   envOverrides?: Record<string, string>;
   busy: boolean;
-  hidePartitioner?: boolean;
 }) {
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
   const isHidden = (key: string) => catalog?.hiddenModels?.includes(key) || catalog?.models.some(model => `${model.provider}/${model.id}` === key && model.hidden);
@@ -29,7 +28,7 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
       {catalog && availableModels.length === 0 && <p className="role-model-note" role="status">{catalog.models.some(model => model.available)
         ? t("所有可用模型均已隐藏，可在管理可见模型中恢复显示。")
         : t("暂无可用模型，请先在上方登录 Provider 或绑定 API Key，然后刷新状态。")}</p>}
-      {modelRoles.filter(role => !hidePartitioner || role.id !== "partitioner").map(role => {
+      {modelRoles.map(role => {
         const selected = draft.roleModels?.[role.id];
         const model = selected?.model ?? (role.id === "nodeAgent" ? draft.model : "");
         const settings = roleModelConfig(draft, role.id);

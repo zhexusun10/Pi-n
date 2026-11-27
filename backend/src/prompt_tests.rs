@@ -1268,7 +1268,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     assert_eq!(snapshot.run_id, run_id);
@@ -1383,7 +1382,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     let run_id = first.run_id.clone();
@@ -1412,7 +1410,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         None,
         Some(run_id.clone()),
         &service,
-        |_| {},
         |_| {},
         |_| {},
     )
@@ -1549,7 +1546,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     // The user saved a different Planner model in settings after the first
@@ -1561,7 +1557,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         None,
         Some(first.run_id.clone()),
         &service,
-        |_| {},
         |_| {},
         |_| {},
     )
@@ -1986,7 +1981,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &first_service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     let first_id = first.planning_id.clone().unwrap();
@@ -2001,7 +1995,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         None,
         Some(first.run_id.clone()),
         &service,
-        |_| {},
         |_| {},
         |_| {},
     )
@@ -2130,7 +2123,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     assert_eq!(snapshot.run_id, run_id);
@@ -2255,7 +2247,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
         &service,
         |_| {},
         |_| {},
-        |_| {},
     )
     .unwrap();
     assert!(!snapshot.paused);
@@ -2321,7 +2312,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
             None,
             revision,
             &service,
-            |_| {},
             |_| {},
             |_| {},
         )
@@ -2425,7 +2415,6 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"
             None,
             Some(run_id.clone()),
             &service,
-            |_| {},
             |_| {},
             |_| {},
         )
@@ -2564,7 +2553,7 @@ fn manual_graph_edits_after_reject_create_approvable_graph_drafts() {
 
 #[cfg(feature = "fixture")]
 #[test]
-fn partitioner_and_planner_share_source_cwd_and_create_only_session_data_before_approval() {
+fn planner_uses_source_cwd_and_creates_only_session_data_before_approval() {
     let temp = tempfile::TempDir::new().unwrap();
     let project = temp.path().join("project");
     let repo = crate::fixture::repository(&project).unwrap();
@@ -2573,10 +2562,6 @@ fn partitioner_and_planner_share_source_cwd_and_create_only_session_data_before_
     fs::write(&script, r#"cat >/dev/null
 test -f source-marker || exit 17
 case "$PI_N_MODE" in
-  partition)
-    printf '%s' "$PI_N_WORKSPACE_ROOT" > partition-cwd.txt
-    printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"parallel"}]}}'
-    ;;
   planner)
     printf '%s' "$PI_N_WORKSPACE_ROOT" > planner-cwd.txt
     printf '%s' '{"originalGoal":"test","nodes":[{"id":"worker","task":"test"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
@@ -2613,11 +2598,10 @@ esac
     let snapshot = plan_goal_internal(
         "test".into(),
         config,
-        None,
+        Some("graph"),
         None,
         None,
         &service,
-        |_| {},
         |_| {},
         |_| {},
     )
@@ -2625,14 +2609,11 @@ esac
     assert_eq!(snapshot.phase, "awaiting_approval");
     assert!(snapshot.executions.is_empty());
     let canonical = repo.canonicalize().unwrap();
-    for role in ["partition", "planner"] {
-        let cwd = fs::read_to_string(repo.join(format!("{role}-cwd.txt"))).unwrap();
-        assert_eq!(PathBuf::from(cwd).canonicalize().unwrap(), canonical);
-    }
+    let cwd = fs::read_to_string(repo.join("planner-cwd.txt")).unwrap();
+    assert_eq!(PathBuf::from(cwd).canonicalize().unwrap(), canonical);
     let attempt = root
         .join("planning")
         .join(snapshot.planning_id.as_ref().unwrap());
-    assert!(attempt.join("partition-session").is_dir());
     assert!(root
         .join("planner-sessions")
         .join(&snapshot.run_id)
@@ -2653,55 +2634,7 @@ esac
 
 #[cfg(feature = "fixture")]
 #[test]
-fn partitioner_receives_unmodified_goal() {
-    let temp = tempfile::TempDir::new().unwrap();
-    let repo = crate::fixture::repository(temp.path()).unwrap();
-    let script = temp.path().join("partition.sh");
-    fs::write(&script, r#"test "$(cat)" = "Build two modules" || exit 17
-printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"serial"}]}}'
-"#).unwrap();
-    let service = Arc::new(Service {
-        runtime: Mutex::new(Runtime::open(&temp.path().join("runtime")).unwrap()),
-        driving: AtomicBool::new(false),
-        drive_signal: (Mutex::new(0), std::sync::Condvar::new()),
-        planning: AtomicBool::new(false),
-        extension: temp.path().join("unused.ts"),
-    });
-    let config = Config {
-        feedback_enabled: false,
-        environment: None,
-        repository: repo.to_string_lossy().into(),
-        engine: "pi".into(),
-        pi_command: "/bin/sh".into(),
-        pi_args: vec![script.to_string_lossy().into()],
-        model: "mock/model".into(),
-        thinking_level: "medium".into(),
-        max_parallel: 2,
-        max_feedback: 1,
-        auto_approve: false,
-        role_models: Default::default(),
-        post_task_review: false,
-        planner_write_tools: true,
-        isolate_parallel_nodes: true,
-    };
-    let snapshot = plan_goal_internal(
-        "Build two modules".into(),
-        config,
-        None,
-        None,
-        None,
-        &service,
-        |_| {},
-        |_| {},
-        |_| {},
-    )
-    .unwrap();
-    assert_eq!(snapshot.plan_type.as_deref(), Some("serial"));
-}
-
-#[cfg(feature = "fixture")]
-#[test]
-fn partitioner_failure_persists_history_without_compiling_or_approving_a_run() {
+fn planner_failure_persists_history_without_compiling_or_approving_a_run() {
     let temp = tempfile::TempDir::new().unwrap();
     let repo = temp.path().join("repository");
     fs::create_dir_all(&repo).unwrap();
@@ -2736,15 +2669,14 @@ fn partitioner_failure_persists_history_without_compiling_or_approving_a_run() {
             auto_approve: false,
             role_models: Default::default(),
         },
-        None,
+        Some("graph"),
         None,
         None,
         &service,
         |_| {},
-        |_| panic!("Failure must not emit a route"),
         |_| {},
     );
-    assert!(result.unwrap_err().0.contains("Partitioner failed"));
+    assert!(result.unwrap_err().0.contains("provider unavailable"));
     let runtime = service.runtime.lock().unwrap();
     assert_ne!(runtime.state.run_id, before);
     assert_eq!(runtime.state.phase, "planning_failed");
@@ -2760,14 +2692,13 @@ fn partitioner_failure_persists_history_without_compiling_or_approving_a_run() {
         .unwrap()
         .unwrap()
         .path();
-    assert!(fs::read_to_string(directory.join("partition.jsonl"))
+    assert!(fs::read_to_string(directory.join("planner.jsonl"))
         .unwrap()
         .contains("provider unavailable"));
-    assert!(!directory.join("route.json").exists());
     let summary_content = fs::read_to_string(directory.join("summary.json")).unwrap();
     let failure_summary: PlanningSummary = serde_json::from_str(&summary_content).unwrap();
     assert_eq!(failure_summary.status.as_deref(), Some("failed"));
-    assert!(failure_summary.roles.contains_key("partition"));
+    assert!(failure_summary.roles.contains_key("planner"));
 }
 
 #[cfg(feature = "fixture")]
@@ -2841,7 +2772,6 @@ fn stopping_a_concurrent_planner_does_not_stop_the_other_run() {
             &first,
             |_| {},
             |_| {},
-            |_| {},
         )
     });
     let mut deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -2859,7 +2789,6 @@ fn stopping_a_concurrent_planner_does_not_stop_the_other_run() {
                 None,
                 None,
                 &second,
-                |_| {},
                 |_| {},
                 |_| {},
             )
@@ -2951,7 +2880,6 @@ fn failed_planner_revision_keeps_graph_and_refreshes_source_for_later_nodes() {
             None,
             Some(run_id.clone()),
             &service,
-            |_| {},
             |_| {},
             |_| {}
         )
@@ -3065,7 +2993,6 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
                     &worker_service,
                     |_| {},
                     |_| {},
-                    |_| {},
                 )
             });
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
@@ -3172,7 +3099,6 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
                 &service,
                 |_| {},
                 |_| {},
-                |_| {},
             )
         }));
         markers.push((started, release));
@@ -3248,7 +3174,6 @@ printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","content":[
                 None,
                 None,
                 &service,
-                |_| {},
                 |_| {},
                 |_| {},
             )
@@ -4877,10 +4802,8 @@ fn planner_system_prompt_preserves_inline_and_file_overrides() {
 
 #[test]
 fn planning_prompts_separate_user_query_from_system() {
-    for template in [PLANNER_PROMPT, PARTITIONER_PROMPT] {
-        assert!(!template.contains("{{query}}"));
-        assert!(!template.contains("User query:"));
-    }
+    assert!(!PLANNER_PROMPT.contains("{{query}}"));
+    assert!(!PLANNER_PROMPT.contains("User query:"));
 }
 
 #[test]
@@ -5261,14 +5184,22 @@ fn planning_preflight_fetches_catalog_only_once_for_both_roles() {
         max_parallel: 2,
         max_feedback: 0,
         auto_approve: false,
-        role_models: Default::default(),
+        role_models: [(
+            "nodeAgent".to_string(),
+            RoleModelConfig {
+                model: "example/node".into(),
+                thinking_level: Some("low".into()),
+            },
+        )]
+        .into_iter()
+        .collect(),
     };
     let calls = std::cell::Cell::new(0);
     let fetch = || {
         calls.set(calls.get() + 1);
         Some(serde_json::json!({ "result": { "providers": [] } }))
     };
-    validate_planning_models_preflight(&config, None, fetch).unwrap();
+    validate_planning_models_preflight(&config, Some("graph"), fetch).unwrap();
     assert_eq!(calls.get(), 1);
 
     calls.set(0);
@@ -5276,21 +5207,22 @@ fn planning_preflight_fetches_catalog_only_once_for_both_roles() {
         calls.set(calls.get() + 1);
         None
     };
-    validate_planning_models_preflight(&config, None, unavailable).unwrap();
+    validate_planning_models_preflight(&config, Some("graph"), unavailable).unwrap();
     assert_eq!(calls.get(), 1); // A failed lookup is also reused.
 
     calls.set(0);
-    let partitioner_model = PiModelConfig::resolve(PiRole::Partitioner, &config).model;
-    let provider = partitioner_model.split('/').next().unwrap();
+    let planner_model = PiModelConfig::resolve(PiRole::Planner, &config).model;
+    let provider = planner_model.split('/').next().unwrap();
     let unauthenticated = || {
         calls.set(calls.get() + 1);
         Some(
             serde_json::json!({ "result": { "providers": [{ "id": provider, "configured": false }] } }),
         )
     };
-    let error = validate_planning_models_preflight(&config, None, unauthenticated).unwrap_err();
+    let error =
+        validate_planning_models_preflight(&config, Some("graph"), unauthenticated).unwrap_err();
     assert!(error.contains("not authenticated"));
-    assert!(error.contains(&partitioner_model));
+    assert!(error.contains(&planner_model));
     assert_eq!(calls.get(), 1);
 
     let slash_provider = "http://127.0.0.1:8080/v1";
@@ -5312,7 +5244,7 @@ fn planning_preflight_fetches_catalog_only_once_for_both_roles() {
     assert!(error.contains(slash_provider));
 
     let catalog = std::cell::OnceCell::new();
-    validate_role_model_preflight(PiRole::Partitioner, "invalid", &catalog, &fetch).unwrap_err();
+    validate_role_model_preflight(PiRole::Planner, "invalid", &catalog, &fetch).unwrap_err();
     assert!(catalog.get().is_none()); // Invalid format still fails before the lookup.
 }
 
@@ -5550,10 +5482,6 @@ fn save_config_updates_bootstrap_and_persists() {
         "openai/gpt-4o"
     );
     assert_eq!(
-        updated.effective_role_models.get("partitioner").unwrap(),
-        "openai/gpt-4o"
-    );
-    assert_eq!(
         updated.effective_role_models.get("nodeAgent").unwrap(),
         "openai/gpt-4o"
     );
@@ -5752,7 +5680,6 @@ fn independent_role_settings_persist_and_invalid_levels_do_not_replace_saved_con
     let config: Config = serde_json::from_value(serde_json::json!({
         "repository": temp.path(), "model": "legacy/default", "thinkingLevel": "medium", "maxParallel": 2,
         "roleModels": {
-            "partitioner": {"model": "example/small", "thinkingLevel": "off"},
             "planner": {"model": "example/large", "thinkingLevel": "high"},
             "nodeAgent": {"model": "example/coder", "thinkingLevel": "low"}
         }
@@ -5805,7 +5732,7 @@ fn explicit_node_model_is_checked_even_in_serial_preflight() {
 
 #[cfg(feature = "fixture")]
 #[test]
-fn auto_planning_and_node_execution_receive_their_independent_cli_settings() {
+fn graph_planning_and_node_execution_receive_their_independent_cli_settings() {
     let temp = tempfile::tempdir().unwrap();
     let repository = temp.path().join("repository");
     fs::create_dir(&repository).unwrap();
@@ -5823,10 +5750,6 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 case "$PI_N_MODE" in
-    partition)
-        test "$model:$thinking" = 'example/small:off' || exit 21
-        text=parallel
-        ;;
     planner)
         test "$model:$thinking" = 'example/large:high' || exit 22
         printf '%s' '{"originalGoal":"test","nodes":[{"id":"worker","task":"test"}],"edges":[]}' > "$PI_N_GRAPH_PATH"
@@ -5845,7 +5768,6 @@ printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"
         "autoApprove": false, "postTaskReview": false,
         "engine": "pi", "piCommand": "/bin/sh", "piArgs": [script],
         "roleModels": {
-            "partitioner": {"model": "example/small", "thinkingLevel": "off"},
             "planner": {"model": "example/large", "thinkingLevel": "high"},
             "nodeAgent": {"model": "example/coder", "thinkingLevel": "low"}
         }
@@ -5860,11 +5782,10 @@ printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"
     let snapshot = plan_goal_internal(
         "test".into(),
         config,
-        None,
+        Some("graph"),
         None,
         None,
         &service,
-        |_| {},
         |_| {},
         |_| {},
     )

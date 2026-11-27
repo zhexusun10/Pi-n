@@ -180,7 +180,7 @@ Coding goal
 | **Workspace** | Direct in your project | Adaptive: shared source for ≤3 nodes; isolated workspaces for >3 |
 | **Scheduling** | Sequential | Dependency-aware, bounded parallelism (2–40 workers) in Rust |
 
-> **Tip:** Want automatic routing? Turn off **Hide Auto mode** in **Settings → UI settings** to let the Partitioner choose Direct or Compile per task. Unlock bounded rework edges under **Settings → Compile mode settings → Enable Feedback**.
+> **Tip:** Unlock bounded rework edges under **Settings → Compile mode settings → Enable Feedback**.
 
 ---
 

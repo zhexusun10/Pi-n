@@ -1,5 +1,6 @@
-//! Three independent, unbound source-role processes. Run identity, resources,
-//! sessions and tools are installed only after a worker has been claimed.
+//! Two independent, unbound source-role processes (Planner and Node). Run
+//! identity, resources, sessions and tools are installed only after a worker
+//! has been claimed.
 use super::{
     prewarm::{Pool, ReadyProcess, Ticket},
     Config, PiRole, PREWARM_SHUTTING_DOWN,
@@ -18,13 +19,11 @@ struct Key {
     repository: PathBuf,
 }
 
-static PARTITIONER: OnceLock<Pool<Key, ReadyProcess>> = OnceLock::new();
 static PLANNER: OnceLock<Pool<Key, ReadyProcess>> = OnceLock::new();
 static NODE_SOURCE: OnceLock<Pool<Key, ReadyProcess>> = OnceLock::new();
 
 fn mode(role: PiRole) -> &'static str {
     match role {
-        PiRole::Partitioner => "partition",
         PiRole::Planner => "planner",
         PiRole::NodeAgent => "node",
         PiRole::Merger => unreachable!(),
@@ -32,7 +31,6 @@ fn mode(role: PiRole) -> &'static str {
 }
 fn slot(role: PiRole) -> &'static OnceLock<Pool<Key, ReadyProcess>> {
     match role {
-        PiRole::Partitioner => &PARTITIONER,
         PiRole::Planner => &PLANNER,
         PiRole::NodeAgent => &NODE_SOURCE,
         PiRole::Merger => unreachable!(),
@@ -47,7 +45,7 @@ fn key(config: &Config) -> Result<Key, String> {
 
 pub(super) fn request(config: &Config, role: PiRole, refill: bool) {
     if cfg!(test)
-        || role == PiRole::Merger
+        || matches!(role, PiRole::Merger)
         || PREWARM_SHUTTING_DOWN.load(Ordering::SeqCst)
         || config.repository.trim().is_empty()
     {
@@ -98,7 +96,7 @@ fn schedule(
 }
 
 pub(super) fn claim(config: &Config, role: PiRole, cwd: &Path) -> Option<ReadyProcess> {
-    if role == PiRole::Merger
+    if matches!(role, PiRole::Merger)
         || PREWARM_SHUTTING_DOWN.load(Ordering::SeqCst)
         || process_control::current_owner().is_none()
         || process_control::check_current_owner_stop().is_err()
@@ -166,7 +164,7 @@ pub(super) fn bind(
 }
 
 pub(super) fn invalidate() {
-    for slot in [&PARTITIONER, &PLANNER, &NODE_SOURCE] {
+    for slot in [&PLANNER, &NODE_SOURCE] {
         if let Some(pool) = slot.get() {
             pool.invalidate();
         }
@@ -176,12 +174,12 @@ pub(super) fn shutdown() {
     // Set the shutdown flag before iterating slots so no concurrent `request()`
     // can initialize a fresh slot after this loop passes it.
     PREWARM_SHUTTING_DOWN.store(true, Ordering::SeqCst);
-    for slot in [&PARTITIONER, &PLANNER, &NODE_SOURCE] {
+    for slot in [&PLANNER, &NODE_SOURCE] {
         if let Some(pool) = slot.get() {
             pool.shutdown();
         }
     }
-    for slot in [&PARTITIONER, &PLANNER, &NODE_SOURCE] {
+    for slot in [&PLANNER, &NODE_SOURCE] {
         if let Some(pool) = slot.get() {
             if !pool.wait_idle(Duration::from_secs(5)) {
                 eprintln!("[Pi^n] Process preparation shutdown timed out");
@@ -198,7 +196,7 @@ mod tests {
     impl Drop for Cleanup {
         fn drop(&mut self) {
             invalidate();
-            for slot in [&PARTITIONER, &PLANNER, &NODE_SOURCE] {
+            for slot in [&PLANNER, &NODE_SOURCE] {
                 if let Some(pool) = slot.get() {
                     if !pool.wait_idle(Duration::from_secs(5)) {
                         eprintln!("Prepared-role test cleanup did not settle");
@@ -233,12 +231,12 @@ mod tests {
             environment: None,
             role_models: Default::default(),
         };
-        for role in [PiRole::Partitioner, PiRole::Planner, PiRole::NodeAgent] {
+        for role in [PiRole::Planner, PiRole::NodeAgent] {
             // This checks ownership and late binding, not cold-import latency.
             // Concurrent native SDK imports can be slow on hosted Windows.
             schedule(&config, role, false, Duration::from_secs(90)).unwrap();
         }
-        for role in [PiRole::Partitioner, PiRole::Planner, PiRole::NodeAgent] {
+        for role in [PiRole::Planner, PiRole::NodeAgent] {
             // Include command construction, spawn, handshake and pool teardown;
             // racing an outer wait against the same RPC deadline hides errors.
             assert!(

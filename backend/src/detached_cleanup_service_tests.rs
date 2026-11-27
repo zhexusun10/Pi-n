@@ -438,14 +438,203 @@ fn deletion_supersedes_a_previously_selected_workspace_cleanup_task() {
     let session = root.join("planner-sessions").join(&run_id);
     fs::create_dir_all(&session).unwrap();
     fs::write(session.join("history.jsonl"), "history").unwrap();
+    {
+        let runtime = service.runtime.lock().unwrap();
+        runtime
+            .store
+            .fail_cleanup(&run_id, "prior workspace failure")
+            .unwrap();
+    }
     delete_run(run_id.clone(), &service).unwrap();
     assert!(session.exists());
     // The maintenance worker may have read the workspace-only task before the
-    // delete committed. It must use the new manifest, including histories.
+    // delete committed. It must use the new manifest, including histories, and
+    // start with a clean retry counter rather than stale workspace errors.
     let store = crate::store::Store::open(&root.join("events.sqlite")).unwrap();
+    let replacement = store.cleanup_task(&run_id).unwrap().unwrap();
+    assert_eq!(replacement.attempts, 0);
+    assert!(replacement.last_error.is_none());
     crate::cleanup::attempt(&root, &store, &stale).unwrap();
     assert!(!session.exists());
     assert!(!workspace.exists());
     assert!(store.cleanup_task(&run_id).unwrap().is_none());
     assert!(source.join("user.txt").is_file());
+}
+
+#[test]
+fn deferred_deletion_hides_pending_planning_history_and_clears_child_state() {
+    let (_temp, source, _workspace, service) = fixture(false);
+    service.driving.store(false, Ordering::SeqCst);
+    let repo = source.to_string_lossy().into_owned();
+    let (root, doomed_run) = {
+        let runtime = service.runtime.lock().unwrap();
+        (runtime.root.clone(), runtime.state.run_id.clone())
+    };
+    let live_run = Uuid::new_v4().to_string();
+    let live_service = service_for_run(&service, &live_run, true).unwrap();
+    live_service
+        .runtime
+        .lock()
+        .unwrap()
+        .create(
+            Graph {
+                nodes: vec![crate::model::Node {
+                    id: "task".into(),
+                    task: "keep".into(),
+                }],
+                ..Default::default()
+            },
+            serde_json::from_value(serde_json::json!({
+                "repository": source, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+    let doomed_plan = Uuid::new_v4().to_string();
+    let live_plan = Uuid::new_v4().to_string();
+    for (run_id, plan_id, status, error, created_at) in [
+        (&doomed_run, &doomed_plan, "running", None, 200u64),
+        (&live_run, &live_plan, "failed", Some("live error"), 100u64),
+    ] {
+        let dir = root.join("planning").join(plan_id);
+        fs::create_dir_all(&dir).unwrap();
+        let summary = crate::model::PlanningSummary {
+            planning_id: plan_id.clone(),
+            run_id: Some(run_id.clone()),
+            repository: Some(repo.clone()),
+            goal: Some("plan goal".into()),
+            status: Some(status.into()),
+            error: error.map(str::to_string),
+            created_at: Some(created_at),
+            ..Default::default()
+        };
+        write_planning_summary(&dir, &summary).unwrap();
+        fs::write(
+            dir.join("request.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "runId": run_id,
+                "goal": "plan goal",
+                "config": {"repository": source, "model": "test", "maxParallel": 1}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(dir.join("planner.jsonl"), "{\"type\":\"text\"}\n").unwrap();
+    }
+
+    let doomed_summary_path = root.join("planning").join(&doomed_plan).join("summary.json");
+    let before_bytes = fs::read(&doomed_summary_path).unwrap();
+
+    // Online deletion defers removing planning files, but all Planner history
+    // endpoints must immediately hide the tombstoned conversation.
+    delete_run(doomed_run.clone(), &service).unwrap();
+    assert!(doomed_summary_path.is_file());
+
+    let listed = list_plannings(&service, Some(repo.clone())).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].planning_id, live_plan);
+    assert!(get_planning(doomed_plan.clone(), &service).is_err());
+    assert!(get_planning_output(
+        doomed_plan.clone(),
+        "planner".into(),
+        0,
+        false,
+        None,
+        None,
+        &service,
+    )
+    .is_err());
+    assert_eq!(
+        get_planning(live_plan.clone(), &service).unwrap().planning_id,
+        live_plan
+    );
+
+    // Startup recovery before background cleanup must not rewrite or reimport
+    // the tombstoned Run's still-on-disk planning files.
+    recover_plannings(&service).unwrap();
+    assert_eq!(fs::read(&doomed_summary_path).unwrap(), before_bytes);
+
+    // clear_history must also hide remaining pending planning files and clear
+    // cached child services' in-memory snapshots.
+    clear_history(&service).unwrap();
+    assert!(live_service.runtime.lock().unwrap().state.run_id.is_empty());
+    assert!(list_plannings(&service, Some(repo)).unwrap().is_empty());
+    assert!(get_planning(live_plan.clone(), &service).is_err());
+
+    retry_cleanup_tasks_with_gc(&service, false).unwrap();
+    assert!(!root.join("planning").join(&doomed_plan).exists());
+    assert!(!root.join("planning").join(&live_plan).exists());
+    invalidate_service_cache(&root, None);
+}
+
+#[test]
+fn deferred_shadow_cleanup_respects_shadow_use_lock_and_new_compile_run() {
+    let (_temp, source, workspace, service) = fixture(false);
+    service.driving.store(false, Ordering::SeqCst);
+    crate::workspace::materialize_shadow_repo(&source, &[]).unwrap();
+    let shadow = crate::workspace::shadow_repo_dir(&source).unwrap();
+    assert!(shadow.is_dir());
+    let (root, doomed_run) = {
+        let mut runtime = service.runtime.lock().unwrap();
+        runtime
+            .emit(EventKind::Routed {
+                plan_type: "graph".into(),
+                images: None,
+            })
+            .unwrap();
+        (runtime.root.clone(), runtime.state.run_id.clone())
+    };
+    delete_run(doomed_run.clone(), &service).unwrap();
+    assert!(workspace.exists());
+    assert!(shadow.is_dir());
+
+    // An active shadow reader (e.g. a concurrent snapshot) must defer shadow
+    // removal rather than letting background cleanup delete it underneath.
+    let store = crate::store::Store::open(&root.join("events.sqlite")).unwrap();
+    let task = store.cleanup_task(&doomed_run).unwrap().unwrap();
+    {
+        let shadow_lock = crate::workspace::shadow_use_lock(&shadow).unwrap();
+        let _reader = shadow_lock.read().unwrap();
+        assert!(crate::cleanup::attempt(&root, &store, &task).is_err());
+        assert!(shadow.is_dir());
+    }
+    assert!(store.cleanup_task(&doomed_run).unwrap().is_some());
+
+    // If a new Compile conversation starts on the same repository before
+    // cleanup finishes, retrying cleanup must keep the shared shadow repo.
+    let next_run = Uuid::new_v4().to_string();
+    let next_service = service_for_run(&service, &next_run, true).unwrap();
+    {
+        let mut runtime = next_service.runtime.lock().unwrap();
+        runtime
+            .create(
+                Graph {
+                    nodes: vec![crate::model::Node {
+                        id: "task".into(),
+                        task: "new compile".into(),
+                    }],
+                    ..Default::default()
+                },
+                serde_json::from_value(serde_json::json!({
+                    "repository": source, "model": "test", "maxParallel": 1
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        runtime
+            .emit(EventKind::Routed {
+                plan_type: "graph".into(),
+                images: None,
+            })
+            .unwrap();
+    }
+
+    retry_cleanup_tasks_with_gc(&service, false).unwrap();
+    assert!(!workspace.exists());
+    assert!(shadow.is_dir());
+    assert!(store.cleanup_task(&doomed_run).unwrap().is_none());
+    assert!(source.join("user.txt").is_file());
+    invalidate_service_cache(&root, None);
 }

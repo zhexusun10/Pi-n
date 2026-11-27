@@ -85,9 +85,9 @@ test('runtime cache priming creates no session and a new private temp can consum
       await chmod(path, 0o555);
     };
     if (process.platform !== 'win32') await protect(cache);
-    value = host('partition', source, { ...env, TMPDIR: temp, TMP: temp, TEMP: temp,
+    value = host('planner', source, { ...env, TMPDIR: temp, TMP: temp, TEMP: temp,
       PI_N_TRUSTED_GIT: join(directory, 'missing-git') });
-    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'partition' })).success, true);
+    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'planner' })).success, true);
     assert.deepEqual(await readdir(temp), [], 'read-only seeds must avoid per-session baseline/compile caches');
   } finally {
     await value?.stop();
@@ -109,19 +109,19 @@ test('prepared host loads the latest Pi overlay from the task binding', { timeou
     PI_N_RUNTIME_CACHE_DIR: cache,
     PI_N_ISOLATED_PI_MODELS: '0', PI_OFFLINE: '1' };
   delete env.PI_N_UPSTREAM_PI_MODELS;
-  const value = host('partition', source, env);
+  const value = host('planner', source, env);
   try {
-    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'partition' })).success, true);
+    assert.equal((await value.request({ type: 'pi_n_prepare', role: 'planner' })).success, true);
     const compiled = await readdir(join(cache, 'compile'), { recursive: true });
     assert.ok(compiled.some(name => /(?:^|[/\\])[0-9a-f]{8,}$/i.test(name)), 'ready must publish compiled code while the prepared host is still alive');
     // This file and its binding only appear after the process is prepared.
     await writeFile(upstream, JSON.stringify({ providers: { 'prepared-overlay': {
       baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'fixture', models: [{ id: 'latest' }],
     } } }));
-    const reply = await value.request({ type: 'pi_n_bind', role: 'partition', cwd: source,
+    const reply = await value.request({ type: 'pi_n_bind', role: 'planner', cwd: source,
       args: ['--mode', 'rpc', '--no-tools', '--no-extensions', '--no-skills', '--no-approve',
         '--model', 'prepared-overlay/latest', '--session-dir', sessions],
-      environment: { PI_N_MODE: 'partition', PI_N_EXECUTION_KIND: 'source', PI_N_SOURCE_ALIAS: source,
+      environment: { PI_N_MODE: 'planner', PI_N_EXECUTION_KIND: 'source', PI_N_SOURCE_ALIAS: source,
         PI_N_WORKSPACE_ROOT: source, PI_N_ORIGINAL_ROOT: source, PI_CODING_AGENT_DIR: agent,
         PI_N_BASELINE_CONTEXT: 'prepared-test-context', PI_N_VERIFIED_BASELINE: null,
         PI_N_UPSTREAM_PI_MODELS: upstream } });
@@ -267,7 +267,7 @@ test('prepared queue identities survive async input rewriting without recalling 
   }
 });
 
-test('three prepared roles bind real isolated sessions; Planner paths, extensions, tools and RPC bytes are task-scoped', { timeout: 180000 }, async t => {
+test('prepared Planner and Node roles bind real isolated sessions; paths, extensions, tools and RPC bytes are task-scoped', { timeout: 180000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-n-prepared-host-'));
   const children = [];
   const requests = [];
@@ -316,7 +316,7 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
     await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { 'prepared-test': {
       baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: 'openai-completions', apiKey: 'loopback-only',
-      models: ['partition', 'planner', 'node'].map(model),
+      models: ['planner', 'node'].map(model),
     } } }));
     const env = { ...process.env, PI_CODING_AGENT_DIR: agent, PI_N_GLOBAL_PI_AGENT_DIR: global,
       PI_N_ISOLATED_PI_MODELS: '1', PI_OFFLINE: '1', PI_N_ACTIVE_RUN_ID: 'outer-must-not-leak',
@@ -325,7 +325,7 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
       PI_N_CONTINUE_INTERRUPTED: 'outer-continuation-must-not-leak', PI_N_FEEDBACK_SOURCE: 'outer-feedback-must-not-leak',
       PI_N_FEEDBACK_ENABLED: 'true',
       PI_N_UNREMOVABLE_NODES: JSON.stringify(['outer-node-must-not-leak']) };
-    const roles = ['partition', 'planner', 'node'];
+    const roles = ['planner', 'node'];
     const started = performance.now();
     const prepared = roles.map(role => { const value = host(role, source, env); children.push(value); return value; });
     await Promise.all(prepared.map((value, index) => value.request({ type: 'pi_n_prepare', role: roles[index] })
@@ -351,8 +351,7 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
       const target = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'backend/target');
       const args = ['--mode', 'rpc', '--no-prompt-templates', '--no-themes', '--model', `prepared-test/${role}`,
         '--thinking', 'off', '--session-id', sessionId, '--session-dir', session];
-      if (role === 'partition') args.push('--no-tools', '--no-extensions', '--no-skills', '--no-approve');
-      else if (role === 'planner') args.push('--no-approve', '--exclude-tools', 'ls,find,grep', '--no-context-files',
+      if (role === 'planner') args.push('--no-approve', '--exclude-tools', 'ls,find,grep', '--no-context-files',
         '--system-prompt', join(root, 'backend/resources/prompts/planner.md'),
         '--extension', join(root, 'backend/resources/planner.ts'));
       else args.push('--approve');
@@ -403,8 +402,7 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
         assert.ok(body.messages.filter(message => message.role === 'user').every(message => !text(message.content).includes('<ACCEPT>')));
       } else assert.doesNotMatch(system, /End your response with exactly one standalone final line/);
       const tools = body.tools?.map(tool => tool.function.name) ?? [];
-      if (role === 'partition') assert.deepEqual(tools, []);
-      else if (role === 'planner') {
+      if (role === 'planner') {
         assert.match(system, /You are (?:a|the) planner operating inside (?:Pi\^n, )?a (?:graph-based )?coding agent harness/);
         assert.ok(['edit_graph', 'read_graph', 'read', 'bash', 'write', 'edit'].every(tool => tools.includes(tool)));
         assert.ok(['node', 'edge'].every(tool => !tools.includes(tool)), 'retired mutation tools are not advertised');
@@ -460,12 +458,12 @@ test('three prepared roles bind real isolated sessions; Planner paths, extension
         assert.ok(['ls', 'find', 'grep'].every(tool => !tools.includes(tool)), 'node tool surface excludes ls/find/grep for every project');
       }
       // Match Rust's Planner/Node steer handoff window before closing RPC.
-      if (role !== 'partition') await delay(500);
+      await delay(500);
       const closed = once(value.child, 'close');
       value.child.stdin.end();
       assert.equal((await closed)[0], 0, value.diagnostics);
     }
-    assert.equal(new Set(sessionIds).size, 3);
+    assert.equal(new Set(sessionIds).size, 2);
     const loaded = (await readFile(marker, 'utf8')).trim().split(/\r?\n/).map(JSON.parse);
     assert.deepEqual(loaded.map(value => value.role).sort(), ['node', 'planner']);
     assert.equal(loaded.find(value => value.role === 'node').nodeName, undefined, 'node extensions must not inherit an outer node identity');

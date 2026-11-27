@@ -19,6 +19,8 @@
 }
 
 .prompt-box-suggestions-header {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -136,8 +138,13 @@
   padding: 6px;
   /* Keep block layout on the scroller itself: WebKit flex-direction: column
      skips re-stretching children after overflow-y: auto adds the custom 10px
-     scrollbar, clipping each item's right edge until hover forces relayout. */
+     scrollbar, clipping each item's right edge until hover forces relayout.
+     Isolate the scroller's stacking context so the header's spinning refresh
+     icon on `/` cannot overlap-promote every `position: relative` item out of
+     the scrolling compositing layer (which causes ghosting in WKWebView while
+     scrolling with the keyboard). */
   display: block;
+  isolation: isolate;
   background: var(--bg-canvas);
 }
 
