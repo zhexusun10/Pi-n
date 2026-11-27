@@ -4,7 +4,6 @@
 :root {
   --surface-card-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
   --shell-card-shadow: 0 0 16px rgba(15, 23, 42, 0.04);
-  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 1px 3px rgba(15, 23, 42, 0.02);
   font-family: "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   color: var(--text-primary);
   background: var(--bg-canvas);
@@ -1672,18 +1671,6 @@ h3 {
   }
 }
 
-@keyframes banner-slide-down {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .projects-placeholder,
 .run-placeholder {
   font-size: 12.5px;
@@ -2494,7 +2481,7 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-subtle, #f8fafc);
+  background: var(--bg-surface, #f8fafc);
   color: var(--text-tertiary, #94a3b8);
 }
 
@@ -2644,6 +2631,7 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   background: var(--text-primary);
   color: var(--text-inverse);
   border: none;
@@ -2712,14 +2700,14 @@ h3 {
   background: var(--bg-surface-hover);
 }
 
-/* 右侧操作区：模式选择器与发送按钮水平对齐 */
+/* 右侧操作区：模型选择器、模式选择器与发送按钮水平对齐 */
 .prompt-box-right-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px 8px;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   max-width: 100%;
   min-width: 0;
   margin-left: auto;
@@ -2740,6 +2728,7 @@ h3 {
   padding: 2.5px 3px;
   gap: var(--prompt-mode-gap);
   height: 32px;
+  flex-shrink: 0;
   max-width: 100%;
   min-width: 0;
   position: relative;
@@ -2851,6 +2840,13 @@ h3 {
 .prompt-box-mode-btn.active .prompt-box-mode-text {
   color: #ffffff;
   font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .prompt-box-right-actions {
+    flex: 1 1 200px;
+    flex-wrap: wrap;
+  }
 }
 
 /* Keep the composer controls from overflowing when the viewport is narrower

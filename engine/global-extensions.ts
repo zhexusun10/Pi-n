@@ -1,5 +1,6 @@
 // Discover resources without loading extension code or changing the user's Pi config.
-import { readFileSync, existsSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { isCaseInsensitive, pathKey, toHostInput } from './path-identity.mjs';
@@ -192,8 +193,9 @@ export async function setExtensionEnabled(
       persisted.webSearch = { keenablePublic: options.keenablePublic };
     }
   }
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
   const target = join(directory, 'extensions.json');
-  const temporary = `${target}.${process.pid}.tmp`;
+  const temporary = `${target}.${randomUUID()}.tmp`;
   const payload = persisted.webSearch ? { overrides: persisted.overrides, webSearch: persisted.webSearch } : { overrides: persisted.overrides };
   try {
     writeFileSync(temporary, JSON.stringify(payload, null, 2), { mode: 0o600 });

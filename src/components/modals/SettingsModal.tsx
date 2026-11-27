@@ -160,6 +160,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
     onClose: () => { if (!savingRef.current && pendingLanguage === null) onClose(); },
   });
   const isPresent = useIsPresent();
+  const wasPresentRef = useRef(isPresent);
+  // If the modal is reopened before AnimatePresence finishes its exit
+  // animation, React reuses the mounted instance; reset staged drafts so
+  // cancelled edits never leak into the new session.
+  useEffect(() => {
+    const wasPresent = wasPresentRef.current;
+    wasPresentRef.current = isPresent;
+    if (!wasPresent && isPresent) {
+      savingRef.current = false;
+      setSaving(false);
+      dirtyRef.current = false;
+      syncedConfigRef.current = config;
+      setDraftConfig({ ...config });
+      setAutoApprove(config.autoApprove ?? true);
+      setPostTaskReview(config.postTaskReview ?? true);
+      setPlannerWriteTools(config.plannerWriteTools ?? true);
+      setIsolateParallelNodes(config.isolateParallelNodes ?? true);
+      setMaxParallelInput(String(normalizeMaxParallel(config.maxParallel)));
+      setMaxFeedbackInput(String(normalizeMaxFeedback(config.maxFeedback)));
+      setFeedbackEnabled(config.feedbackEnabled ?? false);
+      setAutoExpandCotDraft(autoExpandCotEnabled());
+      setExecutionOverviewDraft(executionOverviewEnabled());
+      setLandingBackgroundDraft(currentLandingBackground());
+      setAccentColorDraft(currentAccentColor());
+      setHideAutoModeDraft(hideAutoModeEnabled());
+      setCompletionNotificationsDraft(completionNotificationsEnabled());
+      setCompletionNotificationSoundDraft(completionNotificationSoundEnabled());
+      setSaveError("");
+      setLanguageError("");
+      setPendingLanguage(null);
+    }
+  }, [isPresent, config]);
 
   if (!isOpen) return null;
 
@@ -198,7 +230,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
           <div className="settings-header-title-wrap">
             <h2 id={titleId}>Settings</h2>
           </div>
-          <button className="icon-button" aria-label={t("关闭弹窗")} disabled={saving} onClick={onClose}>
+          <button type="button" className="icon-button" aria-label={t("关闭弹窗")} disabled={saving} onClick={onClose}>
             <X size={18} />
           </button>
         </header>

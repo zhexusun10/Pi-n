@@ -530,3 +530,40 @@ test("pickRepository falls back to window.prompt only when picker is unsupported
     delete (globalThis as any).window.prompt;
   }
 });
+
+test("deleteWorkspace invalidates cached files and skills for the deleted repository", async () => {
+  const originalFetch = globalThis.fetch;
+  let fileFetchCount = 0;
+  let skillFetchCount = 0;
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/list_files")) {
+        fileFetchCount++;
+        return response({ files: [`file-${fileFetchCount}.ts`] });
+      }
+      if (url.endsWith("/list_skills")) {
+        skillFetchCount++;
+        return response({ skills: [{ name: `skill-${skillFetchCount}`, description: "" }] });
+      }
+      if (url.endsWith("/delete_workspace")) {
+        return response(["run-deleted"]);
+      }
+      return response({});
+    };
+    const repo = "/tmp/deleted-workspace-cache-test";
+    assert.deepEqual(await runtimeService.listFiles(repo), ["file-1.ts"]);
+    assert.deepEqual(await runtimeService.listSkills(repo), [{ name: "skill-1", description: "" }]);
+    // Cached reads do not hit fetch again.
+    assert.deepEqual(await runtimeService.listFiles(repo), ["file-1.ts"]);
+    assert.equal(fileFetchCount, 1);
+
+    await runtimeService.deleteWorkspace(repo);
+    assert.deepEqual(await runtimeService.listFiles(repo), ["file-2.ts"]);
+    assert.deepEqual(await runtimeService.listSkills(repo), [{ name: "skill-2", description: "" }]);
+    assert.equal(fileFetchCount, 2);
+    assert.equal(skillFetchCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

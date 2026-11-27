@@ -143,7 +143,6 @@ pub(crate) fn session_cwd(cwd: &Path) -> Result<PathBuf, String> {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn validate_session(directory: &Path, id: &str, cwd: &Path) -> Result<(), String> {
     open_session(directory, id, cwd).map(|_| ())
 }

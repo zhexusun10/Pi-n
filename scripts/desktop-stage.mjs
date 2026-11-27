@@ -494,7 +494,7 @@ export function backendReleaseBinary(target, env = process.env, installationRoot
 }
 
 async function downloadFile(url, destination) {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
     throw new Error(`Failed downloading ${url} (HTTP ${response.status} ${response.statusText})`);
   }
@@ -618,6 +618,9 @@ const SENSITIVE_RELEASE_ENV_VARS = [
   'APPLE_CERTIFICATE_PASSWORD',
   'APPLE_API_KEY_P8',
   'APPLE_PASSWORD',
+  'WINDOWS_CERTIFICATE',
+  'WINDOWS_CERTIFICATE_PASSWORD',
+  'WINDOWS_SIGN_COMMAND',
 ];
 
 function stripReleaseSecrets(env) {

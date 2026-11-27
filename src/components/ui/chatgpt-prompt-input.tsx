@@ -1,5 +1,5 @@
 import { t } from "../../i18n";
-import React, { useState, useRef, useLayoutEffect, useEffect, useId, useCallback, useMemo, useSyncExternalStore } from "react";
+import React, { Suspense, lazy, useState, useRef, useLayoutEffect, useEffect, useId, useCallback, useMemo, useSyncExternalStore } from "react";
 import { motion, AnimatePresence, useIsPresent, useReducedMotion } from "motion/react";
 import {
   ArrowUp,
@@ -24,8 +24,12 @@ import { useComposerCommands } from "../../hooks/useComposerCommands";
 import { parseSlashCommand } from "../../services/composerCommands";
 import { ExtensionCommandUI } from "./ExtensionCommandUI";
 import { ComposerNotice } from "./ComposerNotice";
-import { ScopedModelsModal } from "../modals/ScopedModelsModal";
+import { ComposerModelSelector } from "./ComposerModelSelector";
 import { ImagePreviewModal, type PreviewImageItem } from "../modals/ImagePreviewModal";
+
+const LazyScopedModelsModal = lazy(() =>
+  import("../modals/ScopedModelsModal").then(module => ({ default: module.ScopedModelsModal })),
+);
 import { ImageContextMenu } from "./ImageContextMenu";
 import type { ContextMenuAnchor } from "./context-menu";
 import { useHideAutoMode } from "../../services/displayPreferences";
@@ -152,6 +156,7 @@ interface PromptBoxProps
   runId?: string;
   node?: string;
   conversationModel?: boolean;
+  isMerger?: boolean;
 }
 
 export const PROMPT_BOX_RESIZE_DURATION = 0.3;
@@ -317,6 +322,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       runId,
       node,
       conversationModel,
+      isMerger = false,
       ...restProps
     },
     forwardedRef
@@ -1770,7 +1776,11 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           )}
         </AnimatePresence>
         <AnimatePresence>
-          {commands.scopedModelsOpen && <ScopedModelsModal key="scoped-models-modal" onClose={commands.closeScopedModels} />}
+          {commands.scopedModelsOpen && (
+            <Suspense key="scoped-models-modal" fallback={null}>
+              <LazyScopedModelsModal onClose={commands.closeScopedModels} />
+            </Suspense>
+          )}
         </AnimatePresence>
         {(commandError || commands.notice || commands.ui) && (
           <div className="prompt-command-popover-stack" onClick={(e) => e.stopPropagation()}>
@@ -2136,8 +2146,23 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             )}
           </div>
 
-          {/* Right Action Button: Mode Selector + Send/Interrupt Button */}
+          {/* Right Action Button: Model Selector + Mode Selector + Send/Interrupt Button */}
           <div className="prompt-box-right-actions">
+            <ComposerModelSelector
+              runId={runId}
+              node={node}
+              planMode={visiblePlanMode}
+              conversationModel={conversationModel}
+              isMerger={isMerger}
+              compact={compact}
+              disabled={disabled || isBusy || isPreparing || isSubmitting}
+              onOpenScopedModels={commands.openScopedModels}
+              onError={setCommandError}
+              onNoticeClear={() => {
+                setCommandError("");
+                commands.clearNotice();
+              }}
+            />
             {hasModeSelector && onPlanModeChange && (
               <div
                 ref={modeSelectorRef}

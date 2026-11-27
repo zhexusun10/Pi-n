@@ -191,6 +191,28 @@ fn nonblocking_fallback_survives_primary_unlock_before_dispatch_for_other_run() 
 }
 
 #[test]
+fn metadata_snapshot_without_run_id_waits_for_contended_runtime_instead_of_returning_would_block() {
+    let temp = tempfile::tempdir().unwrap();
+    let service = primary(temp.path());
+    service.runtime.lock().unwrap().state.run_id = "active-run".into();
+
+    let held = service.runtime.lock().unwrap();
+    let reader = service.clone();
+    let worker = thread::spawn(move || {
+        dispatch(
+            &reader,
+            "snapshot",
+            serde_json::json!({ "detail": "metadata" }),
+        )
+    });
+    thread::sleep(Duration::from_millis(30));
+    drop(held);
+
+    let metadata = worker.join().unwrap().unwrap();
+    assert_eq!(metadata["runId"], "active-run");
+}
+
+#[test]
 fn a_busy_run_does_not_hold_the_primary_runtime_during_unrelated_lookup() {
     let temp = tempfile::tempdir().unwrap();
     let primary = primary(temp.path());

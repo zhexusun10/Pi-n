@@ -26,4 +26,4 @@
 .scoped-model-row { display: flex; align-items: center; gap: 12px; padding: 8px; border-bottom: 1px solid var(--border-subtle, #e2e8f0); cursor: pointer; }
 .scoped-model-row span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .scoped-model-row small { color: var(--text-secondary); }
-.scoped-models-modal [role=alert] { color: var(--error, #b91c1c); }
+.scoped-models-modal [role=alert] { color: var(--status-danger-strong, #b91c1c); }

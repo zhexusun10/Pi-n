@@ -385,11 +385,6 @@
   font-weight: 500;
 }
 
-.thinking-status.completed {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
 .thinking-header-right {
   display: flex;
   align-items: center;

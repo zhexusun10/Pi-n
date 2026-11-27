@@ -327,7 +327,9 @@ fn acquire_nested_format_locks(source: &Path) -> Result<Vec<runtime_lock::Runtim
         if is_reparse_or_symlink(&meta) || !meta.file_type().is_dir() {
             continue;
         }
-        if path.join("runtime.lock").exists() || path.join("events.sqlite").exists() {
+        if fs::symlink_metadata(path.join("runtime.lock")).is_ok()
+            || fs::symlink_metadata(path.join("events.sqlite")).is_ok()
+        {
             locks.push(runtime_lock::acquire_runtime(&path)?);
         }
     }
@@ -459,7 +461,15 @@ fn copy_tree_strict(
 }
 
 fn copy_file_exact(src: &Path, dst: &Path, src_meta: &fs::Metadata) -> Result<u64, String> {
-    let mut reader = File::open(src)
+    let mut reader_opts = OpenOptions::new();
+    reader_opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        reader_opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut reader = reader_opts
+        .open(src)
         .map_err(|error| format!("Cannot open legacy file {}: {error}", src.display()))?;
     let mut writer = OpenOptions::new()
         .write(true)

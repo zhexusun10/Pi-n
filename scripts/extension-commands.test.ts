@@ -163,3 +163,9 @@ test('failed worker spawn settles catalog and close without hanging', { timeout:
   await assert.rejects(host.dispatch({ operation: 'catalog', repository: missingRepo }), /Extension command worker stopped|disconnected/);
   await host.close();
 }));
+
+test('non-slash text fails immediately without spawning a worker', { timeout: 5_000 }, () => fixture(async (host, paths) => {
+  const invalid = await start(host, paths.a, 'plain text without leading slash');
+  const failed = await poll(host, invalid, state => state.status === 'failed');
+  assert.match(failed.error, /active session|unavailable/);
+}));

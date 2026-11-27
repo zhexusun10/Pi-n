@@ -144,8 +144,14 @@ fn persist_with(root: &Path, run: &str, after_capture: impl FnOnce()) -> Result<
     let directory = path.parent().ok_or("Invalid file-change path")?;
     fs::create_dir_all(directory).map_err(|e| e.to_string())?;
     let temporary = path.with_file_name("changes.json.tmp");
-    fs::write(&temporary, bytes).map_err(|e| e.to_string())?;
-    fs::rename(&temporary, &path).map_err(|e| e.to_string())?;
+    if let Err(error) = fs::write(&temporary, bytes) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    if let Err(error) = fs::rename(&temporary, &path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
     if let Ok(mut guard) = cache().lock() {
         guard.mark_persisted_if_unchanged(run, captured_seq, captured_epoch, previous_had_entries);
     }

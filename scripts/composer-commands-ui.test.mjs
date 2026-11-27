@@ -863,3 +863,185 @@ test("/reload invalidates cached command catalog so newly registered commands ar
     await server.close();
   }
 });
+
+test("inline composer model selector uses white rounded cards with a thinking-level submenu and respects mode/node scope", { timeout: 30_000 }, async () => {
+  const server = await commandServer();
+  let browser;
+  try {
+    await server.listen();
+    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const errors = [];
+    let hiddenModels = [];
+    page.on("pageerror", error => errors.push(String(error)));
+    await page.route("**/api/*", async route => {
+      const url = route.request().url();
+      assert.ok(!url.endsWith("/save_config"), "inline model selector must not save global defaults");
+      if (url.endsWith("/provider_auth")) {
+        const body = route.request().postDataJSON();
+        if (body.operation === "model_visibility") {
+          await route.fulfill({ json: { result: { hiddenModels } } });
+          return;
+        }
+        await route.fulfill({
+          json: {
+            result: {
+              providers: [{ id: "test", name: "Test", methods: [], configured: true }],
+              warning: null,
+              hiddenModels,
+              models: [
+                { provider: "test", id: "one", name: "gemini-one-gyp", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off", "minimal", "low", "high"], thinkingLevelFallbacks: {} },
+                { provider: "test", id: "two", name: "claude-two", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off", "low", "medium", "high", "xhigh", "max"], thinkingLevelFallbacks: {} },
+                { provider: "test", id: "plain", name: "plain-fast", api: "mock", contextWindow: 1000, available: true, thinkingLevels: ["off"], thinkingLevelFallbacks: {} },
+              ],
+            },
+          },
+        });
+        return;
+      }
+      const result = url.endsWith("/list_files") ? { files: [] } : url.endsWith("/list_skills") ? { skills: [] }
+        : url.endsWith("/extension_command") ? { instance: "standalone", commands: [] } : {};
+      await route.fulfill({ json: { result } });
+    });
+
+    const base = `http://127.0.0.1:${server.httpServer.address().port}/__commands`;
+    await page.goto(base);
+    const output = async () => JSON.parse(await page.locator("output").textContent());
+    const trigger = page.locator('[data-testid="composer-model-selector"]');
+    await trigger.waitFor();
+
+    // Positioned directly to the left of the send button (no mode selector in fixture).
+    const placement = await page.evaluate(() => {
+      const selector = document.querySelector('[data-testid="composer-model-selector"]').getBoundingClientRect();
+      const send = document.querySelector(".prompt-box-send-btn").getBoundingClientRect();
+      const name = document.querySelector(".prompt-box-model-trigger-name");
+      return {
+        leftOfSend: selector.right <= send.left + 1,
+        sameRow: Math.abs((selector.top + selector.bottom) / 2 - (send.top + send.bottom) / 2) <= 4,
+        descenderOverflowY: name.scrollHeight - name.clientHeight,
+      };
+    });
+    assert.equal(placement.leftOfSend, true, "model selector sits to the left of the send button");
+    assert.equal(placement.sameRow, true, "model selector aligns vertically with the send button");
+    assert.equal(placement.descenderOverflowY, 0, "model name descenders (g/y/p) are not clipped vertically");
+    assert.equal(await trigger.locator("svg").count(), 0, "model trigger does not render an expand/collapse chevron icon");
+
+    // Open Level-1 menu: white card matching input corner radius, no role label.
+    await trigger.click();
+    const menu = page.locator('[data-testid="composer-model-menu"]');
+    await menu.waitFor();
+    const cardStyle = await page.evaluate(() => {
+      const box = document.querySelector(".prompt-box-container");
+      const menuEl = document.querySelector('[data-testid="composer-model-menu"]');
+      return {
+        boxRadius: getComputedStyle(box).borderTopLeftRadius,
+        menuRadius: getComputedStyle(menuEl).borderTopLeftRadius,
+        text: menuEl.innerText,
+      };
+    });
+    assert.equal(cardStyle.menuRadius, cardStyle.boxRadius, "menu card border-radius aligns with input box");
+    assert.ok(!/Planner|Node Agent|\bNode\b/i.test(cardStyle.text), "minimalist menu does not display role headings");
+
+    // Compile mode (default graph): hovering a model opens Level-2 thinking submenu; choosing max saves both to planner.
+    const twoItem = menu.locator('[data-model-key="test/two"]');
+    await twoItem.hover();
+    const submenu = page.locator('[data-testid="composer-thinking-submenu"]');
+    await submenu.waitFor();
+    const subGeometry = await page.evaluate(() => {
+      const menuEl = document.querySelector('[data-testid="composer-model-menu"]');
+      const subEl = document.querySelector('[data-testid="composer-thinking-submenu"]');
+      return {
+        subRadius: getComputedStyle(subEl).borderTopLeftRadius,
+        menuRadius: getComputedStyle(menuEl).borderTopLeftRadius,
+        subBottom: subEl.getBoundingClientRect().bottom,
+        menuBottom: menuEl.getBoundingClientRect().bottom,
+      };
+    });
+    assert.equal(subGeometry.subRadius, subGeometry.menuRadius, "submenu card border-radius matches Level-1 card");
+    assert.ok(subGeometry.subBottom <= subGeometry.menuBottom + 2, "submenu stays aligned above composer controls");
+
+    await submenu.locator('[data-thinking-level="max"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 1);
+    assert.deepEqual((await output()).calls[0], {
+      scope: { role: "planner" },
+      settings: { model: "test/two", thinkingLevel: "max" },
+    });
+    await expect(trigger).toContainText("claude-two");
+    await expect(trigger).toContainText("max");
+
+    // Clicking the currently selected model opens its Level-2 thinking submenu; keyboard selects medium.
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/two"]').click();
+    await submenu.waitFor();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 2);
+    assert.deepEqual((await output()).calls[1], {
+      scope: { role: "planner" },
+      settings: { model: "test/two", thinkingLevel: "medium" },
+    });
+
+    // Switch to Direct (serial) mode: clicking a model directly without choosing a thinking level defaults to xhigh.
+    await page.getByText("Switch mode").click();
+    await trigger.click();
+    await menu.waitFor();
+    await menu.locator('[data-model-key="test/two"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 3);
+    assert.deepEqual((await output()).calls[2], {
+      scope: { role: "nodeAgent" },
+      settings: { model: "test/two", thinkingLevel: "xhigh" },
+    });
+
+    // Single-level model selects directly without submenu and clamps to its only supported level.
+    await trigger.click();
+    await menu.waitFor();
+    const plainItem = menu.locator('[data-model-key="test/plain"]');
+    await plainItem.hover();
+    assert.equal(await submenu.count(), 0, "model with only off thinking level has no submenu");
+    await plainItem.click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 4);
+    assert.deepEqual((await output()).calls[3], {
+      scope: { role: "nodeAgent" },
+      settings: { model: "test/plain", thinkingLevel: "off" },
+    });
+
+    // Node dialog targets only that node via keyboard ArrowRight into Level-2 submenu.
+    await page.goto(`${base}?run=1&node=a`);
+    await trigger.waitFor();
+    await trigger.click();
+    await menu.waitFor();
+    await page.keyboard.press("ArrowRight");
+    await submenu.waitFor();
+    await submenu.locator('[data-thinking-level="minimal"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 1);
+    const nodeOut = await output();
+    assert.deepEqual(nodeOut.calls[0], {
+      scope: { runId: "run-a", node: "a", role: "nodeAgent" },
+      settings: { model: "test/one", thinkingLevel: "minimal" },
+    });
+    assert.equal(nodeOut.nodes.a.modelConfig.thinkingLevel, "minimal");
+    assert.equal(nodeOut.nodes.b.modelConfig, undefined);
+
+    // Hidden currently-selected model displays generic hidden label without leaking ID, still lets user change thinking level.
+    hiddenModels = ["test/one"];
+    await trigger.click();
+    await menu.waitFor();
+    await expect(trigger).toContainText("当前已选模型已隐藏");
+    const hiddenRow = menu.locator(".composer-model-item").first();
+    await expect(hiddenRow).toContainText("当前已选模型已隐藏");
+    assert.ok(!(await menu.innerText()).includes("gemini-one-gyp"), "hidden model name is not revealed");
+    await hiddenRow.click();
+    await submenu.waitFor();
+    await submenu.locator('[data-thinking-level="off"]').click();
+    await page.waitForFunction(() => JSON.parse(document.querySelector("output").textContent).calls.length === 2);
+    assert.equal((await output()).calls[1].settings.thinkingLevel, "off");
+
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser?.close();
+    await server.close();
+  }
+});

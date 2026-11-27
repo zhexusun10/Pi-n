@@ -146,11 +146,16 @@ impl GitBootstrapStatus {
     }
 }
 
+struct BootstrapState {
+    status: GitBootstrapStatus,
+    in_flight: bool,
+}
+
 /// Single-flight background manager for on-demand Git provisioning.
 #[derive(Clone)]
 pub struct GitBootstrapManager {
     app_data_dir: PathBuf,
-    status: Arc<Mutex<GitBootstrapStatus>>,
+    state: Arc<Mutex<BootstrapState>>,
 }
 
 impl GitBootstrapManager {
@@ -166,24 +171,38 @@ impl GitBootstrapManager {
         };
         Self {
             app_data_dir,
-            status: Arc::new(Mutex::new(initial)),
+            state: Arc::new(Mutex::new(BootstrapState {
+                status: initial,
+                in_flight: false,
+            })),
         }
     }
 
     pub fn status(&self) -> GitBootstrapStatus {
-        self.status
+        self.state
             .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .status
+            .clone()
     }
 
     /// Start background provisioning if the manager was initialized in the
     /// `"downloading"` phase (i.e. no host or cached managed Git was found).
     pub fn start_background_if_needed(&self) {
-        if self.status().phase != "downloading" {
-            return;
+        let should_spawn = {
+            let mut guard = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if guard.status.phase != "downloading" || guard.in_flight {
+                return;
+            }
+            guard.in_flight = true;
+            true
+        };
+        if should_spawn {
+            self.spawn_worker();
         }
-        self.spawn_worker();
     }
 
     /// Retry provisioning after a failure. Idempotent if already downloading,
@@ -191,16 +210,17 @@ impl GitBootstrapManager {
     pub fn retry(&self) -> GitBootstrapStatus {
         let should_spawn = {
             let mut guard = self
-                .status
+                .state
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if guard.phase != "failed" {
-                return guard.clone();
+            if guard.status.phase != "failed" || guard.in_flight {
+                return guard.status.clone();
             }
             if current_platform_spec().is_none() {
-                return guard.clone();
+                return guard.status.clone();
             }
-            *guard = GitBootstrapStatus::downloading();
+            guard.in_flight = true;
+            guard.status = GitBootstrapStatus::downloading();
             true
         };
         if should_spawn {
@@ -211,14 +231,30 @@ impl GitBootstrapManager {
 
     fn spawn_worker(&self) {
         let app_data_dir = self.app_data_dir.clone();
-        let status = Arc::clone(&self.status);
-        let worker_status = Arc::clone(&status);
+        let state = Arc::clone(&self.state);
+        let worker_state = Arc::clone(&state);
         if let Err(error) = thread::Builder::new()
             .name("pi-n-git-bootstrap".into())
             .spawn(move || {
+                struct InFlightReset(Arc<Mutex<BootstrapState>>);
+                impl Drop for InFlightReset {
+                    fn drop(&mut self) {
+                        let mut guard = self
+                            .0
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        guard.in_flight = false;
+                        if guard.status.phase == "downloading" {
+                            guard.status = GitBootstrapStatus::failed(
+                                "Managed Git bootstrap worker terminated unexpectedly.",
+                            );
+                        }
+                    }
+                }
+                let _reset = InFlightReset(Arc::clone(&worker_state));
                 let Some(spec) = current_platform_spec() else {
-                    set_status(
-                        &worker_status,
+                    finish_worker(
+                        &worker_state,
                         GitBootstrapStatus::failed(
                             "Automatic Git download is not available on this platform.",
                         ),
@@ -236,19 +272,19 @@ impl GitBootstrapManager {
                             "[Pi^n-desktop] Managed Git ready at {}",
                             git_path.display()
                         );
-                        set_status(&worker_status, GitBootstrapStatus::ready(git_path));
+                        finish_worker(&worker_state, GitBootstrapStatus::ready(git_path));
                     }
                     Err(error) => {
                         eprintln!(
                             "[Pi^n-desktop] Managed Git provisioning failed: {error}"
                         );
-                        set_status(&worker_status, GitBootstrapStatus::failed(error));
+                        finish_worker(&worker_state, GitBootstrapStatus::failed(error));
                     }
                 }
             })
         {
-            set_status(
-                &status,
+            finish_worker(
+                &state,
                 GitBootstrapStatus::failed(format!(
                     "Failed to start managed Git bootstrap worker: {error}"
                 )),
@@ -257,10 +293,12 @@ impl GitBootstrapManager {
     }
 }
 
-fn set_status(slot: &Arc<Mutex<GitBootstrapStatus>>, next: GitBootstrapStatus) {
-    if let Ok(mut guard) = slot.lock() {
-        *guard = next;
-    }
+fn finish_worker(slot: &Arc<Mutex<BootstrapState>>, next: GitBootstrapStatus) {
+    let mut guard = slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.status = next;
+    guard.in_flight = false;
 }
 
 struct TempDirGuard(PathBuf);
@@ -341,12 +379,17 @@ pub fn provision_managed_git(
         let _ = fs::remove_dir_all(&install_dir);
     }
 
-    fs::rename(&staging_dir, &install_dir).map_err(|error| {
-        format!(
+    if let Err(error) = fs::rename(&staging_dir, &install_dir) {
+        if final_git.is_file() {
+            if let Ok(verified) = verify_git_executable(&final_git) {
+                return Ok(verified);
+            }
+        }
+        return Err(format!(
             "Cannot finalize managed Git installation at {}: {error}",
             install_dir.display()
-        )
-    })?;
+        ));
+    }
 
     verify_git_executable(&final_git)
 }

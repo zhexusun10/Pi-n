@@ -1,0 +1,325 @@
+/* Composer minimalist model selector trigger & two-level white menu cards */
+
+.prompt-box-model-picker {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(220px, 100%);
+  flex: 0 1 auto;
+}
+
+.prompt-box-model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.prompt-box-container.compact .prompt-box-model-trigger {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.prompt-box-model-trigger:hover:not(:disabled),
+.prompt-box-model-trigger[aria-expanded="true"]:not(:disabled) {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--text-primary);
+  filter: none;
+}
+
+.prompt-box-model-trigger:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.prompt-box-model-trigger:disabled,
+.prompt-box-container.disabled .prompt-box-model-trigger {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.prompt-box-model-trigger-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.prompt-box-model-trigger.is-placeholder .prompt-box-model-trigger-name,
+.prompt-box-model-trigger.is-hidden-model .prompt-box-model-trigger-name {
+  color: var(--text-secondary);
+}
+
+.prompt-box-model-trigger-sep {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.prompt-box-model-trigger-level {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* White card matching the input box corner radius (26px default, 16px compact) */
+.composer-model-menu,
+.composer-thinking-submenu {
+  position: fixed;
+  box-sizing: border-box;
+  background: var(--bg-canvas, #ffffff);
+  border: 1px solid var(--border-default, #e2e8f0);
+  border-radius: 26px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.11), 0 2px 6px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+  user-select: none;
+}
+
+.composer-model-menu.is-compact,
+.composer-thinking-submenu.is-compact {
+  border-radius: var(--radius-surface, 16px);
+}
+
+.composer-model-menu {
+  z-index: 9500;
+  min-width: 196px;
+  max-width: min(268px, calc(100vw - 16px));
+  display: flex;
+  flex-direction: column;
+  animation: composerModelCardIn 0.13s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: bottom right;
+}
+
+.composer-model-menu[data-placement="below"] {
+  transform-origin: top right;
+}
+
+.composer-thinking-submenu {
+  z-index: 9510;
+  min-width: 136px;
+  max-width: min(200px, calc(100vw - 16px));
+  max-height: calc(100dvh - var(--desktop-titlebar-inset, 0px) - 16px);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  animation: composerSubmenuCardIn 0.09s ease-out;
+}
+
+/* Invisible hover bridge spanning the gap between Level-1 and Level-2 cards
+   so diagonal or slow pointer movement never drops or flickers the submenu. */
+.composer-thinking-submenu::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  left: -10px;
+}
+
+.composer-thinking-submenu[data-side="left"]::before {
+  left: auto;
+  right: -10px;
+}
+
+@keyframes composerModelCardIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes composerSubmenuCardIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Keep block layout on scrollers so WKWebView does not clip right edges when
+   a custom scrollbar appears. */
+.composer-model-list,
+.composer-thinking-list {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  border-radius: inherit;
+  padding: 6px;
+}
+
+.composer-model-menu.is-compact .composer-model-list,
+.composer-thinking-submenu.is-compact .composer-thinking-list {
+  padding: 5px;
+}
+
+.composer-model-divider {
+  height: 1px;
+  background: var(--border-subtle, #f1f5f9);
+  margin: 4px 10px;
+}
+
+.composer-model-item,
+.composer-thinking-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.composer-model-menu.is-compact .composer-model-item,
+.composer-thinking-submenu.is-compact .composer-thinking-item {
+  padding: 6px 10px;
+  border-radius: 11px;
+  font-size: 12.5px;
+}
+
+.composer-model-item + .composer-model-item,
+.composer-thinking-item + .composer-thinking-item {
+  margin-top: 2px;
+}
+
+.composer-model-item:hover:not(:disabled),
+.composer-model-item[data-submenu-open="true"]:not(:disabled),
+.composer-thinking-item:hover:not(:disabled) {
+  background: var(--bg-surface-hover, #f0f0f2);
+  filter: none;
+}
+
+.composer-model-item:focus-visible,
+.composer-thinking-item:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.composer-model-item:disabled,
+.composer-thinking-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.composer-model-item.is-selected,
+.composer-thinking-item.is-selected {
+  font-weight: 600;
+}
+
+.composer-model-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-model-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.composer-model-item-check,
+.composer-thinking-item-check {
+  color: var(--composer-accent);
+  flex-shrink: 0;
+}
+
+.composer-model-item-chevron {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.composer-model-item:hover:not(:disabled) .composer-model-item-chevron,
+.composer-model-item[data-submenu-open="true"] .composer-model-item-chevron {
+  color: var(--text-secondary);
+}
+
+.composer-thinking-item {
+  white-space: nowrap;
+}
+
+.composer-model-empty {
+  padding: 14px 12px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-model-empty-action {
+  padding: 4px 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.composer-model-empty-action:hover {
+  background: var(--bg-surface-hover);
+  filter: none;
+}
+
+@media (max-width: 360px) {
+  .prompt-box-model-trigger {
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .prompt-box-model-trigger-level {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-model-menu,
+  .composer-thinking-submenu {
+    animation: none;
+  }
+}

@@ -77,6 +77,9 @@ export function useSnapshotPolling(
     for (const id of dirtyRuns.current) {
       if (id && !retained.has(id)) dirtyRuns.current.delete(id);
     }
+    for (const id of notifiedVersions.current.keys()) {
+      if (id && !retained.has(id)) notifiedVersions.current.delete(id);
+    }
     for (const id of phases.current.keys()) {
       if (retained.has(id)) continue;
       phases.current.delete(id); versions.current.delete(id); revisions.current.delete(id);

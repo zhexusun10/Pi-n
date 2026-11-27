@@ -137,7 +137,8 @@ fn acquire_lock_file(
             )
         };
         if locked == 0 {
-            let _ = locks.lock().map(|mut owned| owned.remove(&key));
+            let mut owned = locks.lock().unwrap_or_else(|e| e.into_inner());
+            owned.remove(&key);
             return Err(busy_message.into());
         }
         Ok(RuntimeLock {
@@ -167,7 +168,8 @@ impl Drop for RuntimeLock {
                 let _ = UnlockFileEx(self._marker.as_raw_handle(), 0, 1, 0, &mut overlapped);
             }
             if let Some(locks) = PROCESS_LOCKS.get() {
-                let _ = locks.lock().map(|mut owned| owned.remove(&self.key));
+                let mut owned = locks.lock().unwrap_or_else(|e| e.into_inner());
+                owned.remove(&self.key);
             }
         }
     }

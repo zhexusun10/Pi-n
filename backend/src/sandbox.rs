@@ -293,14 +293,22 @@ fn write_profile(
         .map(|path| quote(path).map(|path| format!(" (require-not (subpath {path}))")))
         .collect::<Result<Vec<_>, _>>()?
         .concat();
-    let mut state_ancestors = String::new();
+    let current_run = current.parent().ok_or("Invalid execution path")?;
+    let mut state_ancestor_dirs = std::collections::BTreeSet::new();
     for exception in &exceptions {
         let mut parent = exception.parent();
         while let Some(path) = parent.filter(|path| path.starts_with(&worktree_root)) {
-            state_ancestors.push_str(&format!(" (require-not (literal {}))", quote(path)?));
+            if path != worktree_root && path != current_run {
+                state_ancestor_dirs.insert(path.to_path_buf());
+            }
             parent = path.parent();
         }
     }
+    let state_ancestors = state_ancestor_dirs
+        .iter()
+        .map(|path| quote(path).map(|path| format!(" (require-not (literal {path}))")))
+        .collect::<Result<Vec<_>, _>>()?
+        .concat();
     let mut text = format!(
         "(version 1)\n(allow default)\n\
          (deny file-read-data {read_source_rule})\n\
@@ -313,7 +321,7 @@ fn write_profile(
              (require-not (literal {root})) (require-not (literal {run})){state_ancestors}))\n",
         root = quote(&worktree_root)?,
         current = quote(&current)?,
-        run = quote(current.parent().ok_or("Invalid execution path")?)?,
+        run = quote(current_run)?,
     );
     if let Some((data, session, engine, installation)) = &extra {
         let data_rule = format!(

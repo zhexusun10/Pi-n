@@ -38,7 +38,7 @@ export function availableCatalogModels(catalog: ProviderCatalog | null | undefin
 }
 
 export const modelRoles: Array<{ id: ModelRole; label: string; description: string }> = [
-  { id: "nodeAgent", label: "Node Agent", description: t("负责任务的具体执行，同时作为其他角色的默认模型。") },
+  { id: "nodeAgent", label: "Node", description: t("负责任务的具体执行，同时作为其他角色的默认模型。") },
   { id: "planner", label: "Planner", description: t("负责拆解需求与规划执行蓝图，推荐使用能力更强的模型。") },
   { id: "partitioner", label: "Partitioner", description: t("快速判断任务复杂度并选择执行模式，推荐使用轻量高速模型。") },
 ];
@@ -52,6 +52,18 @@ export const THINKING_LEVEL_SCALE: readonly ThinkingLevel[] = [
   "xhigh",
   "max",
 ] as const;
+
+export function thinkingLevelLabel(level: ThinkingLevel): string {
+  switch (level) {
+    case "off": return t("关闭");
+    case "minimal": return t("最少 (minimal)");
+    case "low": return t("低 (low)");
+    case "medium": return t("中 (medium)");
+    case "high": return t("高 (high)");
+    case "xhigh": return t("极高 (xhigh)");
+    case "max": return t("最大 (max)");
+  }
+}
 
 export function defaultRoleThinkingLevel(
   role: ModelRole,

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { CONVERSATION_BOTTOM_THRESHOLD } from "../services/conversationScroll";
 import { FOLLOW_LATEST_EVENT, TRANSCRIPT_SCROLL_ADJUSTED_EVENT, isNestedScrollGesture, olderInsertionTop, transcriptScrollParent } from "../services/transcriptScroll";
 import { transcriptAutoFillBudget, TRANSCRIPT_VIEWPORT_BUFFER } from "../services/transcriptPaging";
+import { observeElementResize } from "../services/sharedResizeObserver";
 import { useStableCallback } from "./useStableCallback";
 
 function needsInitialTranscriptFill(element: HTMLElement | null, hasOlder: boolean, error: string): boolean {
@@ -184,7 +185,7 @@ export function useAutoTranscriptHistory(ref: RefObject<HTMLElement | null>, has
         lastTouchY = touch.clientY;
         if (touchDeltaY >= -1) return;
       }
-      if ((event.target as HTMLElement).closest?.("input, textarea, [contenteditable=true]")) return;
+      if ((event.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable=true]")) return;
       if (event instanceof WheelEvent && event.deltaY >= -0.5) return;
       if (event instanceof KeyboardEvent && !["ArrowUp", "PageUp", "Home"].includes(event.key) && !(event.key === " " && event.shiftKey)) return;
       if (isNestedScrollGesture(event, parent, touchDeltaY)) return;
@@ -192,8 +193,8 @@ export function useAutoTranscriptHistory(ref: RefObject<HTMLElement | null>, has
       check();
     };
     const unsubscribeBudget = budget.subscribe(check);
-    const observer = new ResizeObserver(check);
-    observer.observe(element); observer.observe(parent);
+    const unobserveElement = observeElementResize(element, check);
+    const unobserveParent = observeElementResize(parent, check);
     parent.addEventListener("wheel", resumeFill, { passive: true });
     parent.addEventListener("touchstart", onTouchStart, { passive: true });
     parent.addEventListener("touchmove", resumeFill, { passive: true });
@@ -203,7 +204,7 @@ export function useAutoTranscriptHistory(ref: RefObject<HTMLElement | null>, has
     check();
     return () => {
       unsubscribeBudget();
-      observer.disconnect(); parent.removeEventListener(FOLLOW_LATEST_EVENT, check);
+      unobserveElement(); unobserveParent(); parent.removeEventListener(FOLLOW_LATEST_EVENT, check);
       parent.removeEventListener("wheel", resumeFill);
       parent.removeEventListener("touchstart", onTouchStart);
       parent.removeEventListener("touchmove", resumeFill);

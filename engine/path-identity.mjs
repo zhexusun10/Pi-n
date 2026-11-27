@@ -7,6 +7,7 @@ import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const caseCache = new Map();
+const trailingSep = new RegExp(`\\${sep}+$`);
 
 /** Strip Rust's extended Windows prefix for Node/Git Bash consumers. */
 export function hostPath(value) {
@@ -218,7 +219,7 @@ export function samePath(left, right) {
 export function pathKey(value) {
   const path = actualPath(value);
   const insensitive = process.platform === 'win32' || isCaseInsensitive(path);
-  return foldPath(hostPath(path), insensitive).replace(new RegExp(`\\${sep}+$`), '');
+  return foldPath(hostPath(path), insensitive).replace(trailingSep, '');
 }
 
 /** Convert a file URL or Git Bash /c/... spelling to a Node host path. */

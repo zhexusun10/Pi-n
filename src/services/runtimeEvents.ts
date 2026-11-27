@@ -110,6 +110,9 @@ function closeConnection(): void {
     source.close();
     source = null;
   }
+  if (!hasSubscribers()) {
+    detachVisibilityListener();
+  }
 }
 
 function openEventSource(url: string): void {
@@ -161,14 +164,18 @@ function openEventSource(url: string): void {
     es.addEventListener("planning_output_available", (event: MessageEvent) => {
       try {
         const data = JSON.parse(String(event.data));
-        if (!data?.runId || !data?.planningId) return;
+        if (typeof data?.runId !== "string" || !data.runId || typeof data?.planningId !== "string" || !data.planningId) return;
         dispatch(() => { for (const listener of planningListeners) listener(data); });
       } catch {}
     });
     es.addEventListener("output_available", (event: MessageEvent) => {
       try {
         const data = JSON.parse(String(event.data)) as OutputAvailableEvent;
-        if (!data?.runId || !data?.executionId || typeof data.totalBytes !== "number") return;
+        if (
+          typeof data?.runId !== "string" || !data.runId ||
+          typeof data?.executionId !== "string" || !data.executionId ||
+          typeof data.totalBytes !== "number" || !Number.isFinite(data.totalBytes) || data.totalBytes < 0
+        ) return;
         const key = `${data.runId}:${data.executionId}`;
         const hasSpecific = outputListeners.has(key);
         const hasSettled = Boolean(data.settled) && settledOutputListeners.size > 0;

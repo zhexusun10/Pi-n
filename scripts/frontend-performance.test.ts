@@ -489,3 +489,58 @@ test("streaming Markdown repair prevents transient setext headings and partial c
   assert.equal(cache.render("```ts\nconst x = 1;\n``", true), openFence);
   assert.equal(cache.render("```ts\nconst x = 1;\n```", true), openFence);
 });
+
+test("SSE runtimeEvents ignores malformed output_available frames and detaches visibility listener when idle", async () => {
+  const originalDocument = (globalThis as { document?: unknown }).document;
+  const originalEventSource = (globalThis as { EventSource?: unknown }).EventSource;
+  let visibilityListeners = 0;
+  const fakeDoc = {
+    hidden: false,
+    addEventListener(type: string) { if (type === "visibilitychange") visibilityListeners++; },
+    removeEventListener(type: string) { if (type === "visibilitychange") visibilityListeners--; },
+  };
+  const listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  class FakeEventSource {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    readyState = FakeEventSource.OPEN;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(readonly url: string) {}
+    addEventListener(type: string, fn: (event: MessageEvent) => void) {
+      const list = listeners.get(type) ?? [];
+      list.push(fn);
+      listeners.set(type, list);
+    }
+    close() { this.readyState = FakeEventSource.CLOSED; }
+  }
+  (globalThis as { document?: unknown }).document = fakeDoc;
+  (globalThis as { EventSource?: unknown }).EventSource = FakeEventSource;
+  const received: Array<{ runId: string; executionId: string; totalBytes: number }> = [];
+  const unsub = subscribeExecutionOutput("run-1", "exec-1", event => received.push(event));
+  try {
+    enableRuntimeEvents();
+    assert.equal(visibilityListeners, 1);
+    const emit = (payload: unknown) => {
+      for (const fn of listeners.get("output_available") ?? []) {
+        fn({ data: JSON.stringify(payload) } as MessageEvent);
+      }
+    };
+    emit({ runId: "run-1", executionId: "exec-1", totalBytes: -5 });
+    emit({ runId: "run-1", executionId: "exec-1", totalBytes: null });
+    emit({ runId: 123, executionId: "exec-1", totalBytes: 10 });
+    emit({ runId: "run-1", executionId: "exec-1", totalBytes: 42 });
+    await Promise.resolve();
+    assert.deepEqual(received, [{ runId: "run-1", executionId: "exec-1", totalBytes: 42 }]);
+    unsub();
+    assert.equal(visibilityListeners, 0, "detaches visibilitychange listener when last subscriber leaves");
+  } finally {
+    unsub();
+    setRuntimeEventsConnectedForTest(false);
+    if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
+    else (globalThis as { document?: unknown }).document = originalDocument;
+    if (originalEventSource === undefined) delete (globalThis as { EventSource?: unknown }).EventSource;
+    else (globalThis as { EventSource?: unknown }).EventSource = originalEventSource;
+  }
+});

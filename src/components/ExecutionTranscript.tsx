@@ -609,7 +609,7 @@ function ExecutionHistory({ runId, execution, endOffset, deferredReveal = false,
   const activeProjection = normalizeTranscriptProjection(window);
 
   return <div ref={wrapperRef} data-execution-id={execution.id} data-run-id={runId} aria-busy={!initialReady}>
-    {error && <p role="alert">{localizeError(error)} <button onClick={() => {
+    {error && <p role="alert">{localizeError(error)} <button type="button" onClick={() => {
       if (failedOlder.current) { setError(""); void loadOlder(); }
       else setRetry(value => value + 1);
     }}>{t("重试")}</button></p>}

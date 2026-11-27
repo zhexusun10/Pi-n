@@ -151,11 +151,16 @@ fn save_once(path: &Path, value: &[u8]) -> Result<(), String> {
         .create_new(true)
         .open(&temporary)
         .map_err(|e| e.to_string())?;
-    file.write_all(value)
-        .and_then(|_| file.sync_all())
-        .map_err(|e| e.to_string())?;
+    let write_res = file.write_all(value).and_then(|_| file.sync_all());
     drop(file);
-    fs::rename(temporary, path).map_err(|e| e.to_string())
+    if let Err(error) = write_res {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    fs::rename(&temporary, path).map_err(|e| {
+        let _ = fs::remove_file(&temporary);
+        e.to_string()
+    })
 }
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -805,19 +810,23 @@ fn diff_paths(
 }
 
 fn normalize_path_key(path: &str, case_insensitive: bool) -> String {
-    if case_insensitive {
-        path.to_lowercase()
-    } else {
-        path.to_string()
+    #[cfg(target_os = "macos")]
+    {
+        crate::path_identity::fold_relative_path(path, case_insensitive)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if case_insensitive {
+            path.to_lowercase()
+        } else {
+            path.to_string()
+        }
     }
 }
 
-fn parent_dir_key(key: &str) -> &str {
-    key.rsplit_once('/').map_or("", |(parent, _)| parent)
-}
-
 /// Returns true iff `left` and `right` touch strictly disjoint paths, including
-/// file-vs-directory ancestor collisions and case-insensitive aliases.
+/// file-vs-directory ancestor collisions, case-insensitive aliases, and macOS
+/// Unicode NFC/NFD aliases.
 fn paths_disjoint(
     left: &BTreeSet<String>,
     right: &BTreeSet<String>,
@@ -828,12 +837,8 @@ fn paths_disjoint(
     }
     let mut left_paths = HashSet::with_capacity(left.len());
     let mut left_prefixes = HashSet::new();
-    let mut left_non_ascii_parents = HashSet::new();
     for path in left {
         let key = normalize_path_key(path, case_insensitive);
-        if case_insensitive && !path.is_ascii() {
-            left_non_ascii_parents.insert(parent_dir_key(&key).to_string());
-        }
         let mut cursor = key.as_str();
         while let Some((prefix, _)) = cursor.rsplit_once('/') {
             if !left_prefixes.insert(prefix.to_string()) {
@@ -848,14 +853,6 @@ fn paths_disjoint(
         if left_paths.contains(&key) || left_prefixes.contains(&key) {
             return false;
         }
-        if case_insensitive
-            && !path.is_ascii()
-            && left_non_ascii_parents.contains(parent_dir_key(&key))
-        {
-            // Conservatively reject potential Unicode NFC/NFD aliases within the
-            // same directory on case-insensitive volumes.
-            return false;
-        }
         let mut cursor = key.as_str();
         while let Some((prefix, _)) = cursor.rsplit_once('/') {
             if left_paths.contains(prefix) {
@@ -867,6 +864,16 @@ fn paths_disjoint(
     true
 }
 
+fn format_source_files_changed_error(paths: &BTreeSet<String>) -> String {
+    let list = paths
+        .iter()
+        .take(8)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Source files changed during publication; private results are preserved. These paths match neither the original nor the result: {list}. This may be an interrupted legacy file write, not a user edit. Preserve the current files and reconcile them with the retained publication before retrying.")
+}
+
 fn source_files_changed_error(
     repository: &Path,
     input: &str,
@@ -875,13 +882,12 @@ fn source_files_changed_error(
 ) -> Result<String, String> {
     let from_input = diff_paths(repository, input, live)?;
     let from_result = diff_paths(repository, result, live)?;
-    let paths = from_input
-        .intersection(&from_result)
-        .take(8)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok(format!("Source files changed during publication; private results are preserved. These paths match neither the original nor the result: {paths}. This may be an interrupted legacy file write, not a user edit. Preserve the current files and reconcile them with the retained publication before retrying."))
+    let mismatched: BTreeSet<String> = from_input.intersection(&from_result).cloned().collect();
+    if mismatched.is_empty() {
+        Ok(format_source_files_changed_error(&from_input))
+    } else {
+        Ok(format_source_files_changed_error(&mismatched))
+    }
 }
 
 fn with_source_lease<T>(
@@ -921,11 +927,14 @@ fn with_source_lease<T>(
             }
         }
     };
-    lease
+    let write_res = lease
         .write_all(marker.as_bytes())
-        .and_then(|_| lease.sync_all())
-        .map_err(|e| e.to_string())?;
+        .and_then(|_| lease.sync_all());
     drop(lease);
+    if let Err(error) = write_res {
+        let _ = fs::remove_file(&lock_path);
+        return Err(error.to_string().into());
+    }
     let outcome = operation();
     let released = release_owned_lock(&lock_path, marker.as_bytes());
     match outcome {
@@ -971,12 +980,11 @@ fn deliver(
         }
         atomic_files::cleanup_temporaries(repository, journal, &prepared.input, &prepared.result)?;
         let live = workspace::live_tree_scoped(repository, exclusions)?;
-        let live_tree = live.clone();
         let input_tree = tree(repository, &prepared.input)?;
         let final_tree = tree(repository, &prepared.result)?;
         let case_insensitive = crate::path_identity::case_insensitive_volume(repository);
         let mut compile_changed_cache: Option<BTreeSet<String>> = None;
-        if live_tree != input_tree {
+        if live != input_tree {
             if applying {
                 let from_input = diff_paths(repository, &prepared.input, &live)?;
                 let from_result = diff_paths(repository, &prepared.result, &live)?;
@@ -993,12 +1001,9 @@ fn deliver(
                         false
                     };
                     if !disjoint_ok {
-                        return Err(AttemptError::Fatal(source_files_changed_error(
-                            repository,
-                            &prepared.input,
-                            &prepared.result,
-                            &live,
-                        )?));
+                        return Err(AttemptError::Fatal(format_source_files_changed_error(
+                            &mismatched,
+                        )));
                     }
                 }
             } else if options.reconcile_disjoint_source_changes {
@@ -1027,7 +1032,7 @@ fn deliver(
                 ));
             }
         }
-        if live_tree != final_tree {
+        if live != final_tree {
             let compile_empty = match &compile_changed_cache {
                 Some(changed) => changed.is_empty(),
                 None => input_tree == final_tree,
@@ -1065,7 +1070,11 @@ fn deliver(
 
 fn release_owned_lock(path: &Path, marker: &[u8]) -> Result<(), String> {
     if read_optional(path)?.as_deref() == Some(marker) {
-        fs::remove_file(path).map_err(|e| e.to_string())?;
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
     Ok(())
 }
@@ -1362,6 +1371,33 @@ mod tests {
             &set(&["笔记.md"]),
             true,
         ));
+        assert!(paths_disjoint(
+            &set(&["笔记.md"]),
+            &set(&["中文.md"]),
+            true,
+        ));
+        #[cfg(target_os = "macos")]
+        {
+            // macOS normalizes Unicode NFC/NFD across both files and directory
+            // components regardless of volume case sensitivity.
+            for case_insensitive in [false, true] {
+                assert!(!paths_disjoint(
+                    &set(&["caf\u{00e9}.txt"]),
+                    &set(&["cafe\u{0301}.txt"]),
+                    case_insensitive,
+                ));
+                assert!(!paths_disjoint(
+                    &set(&["caf\u{00e9}/a.txt"]),
+                    &set(&["cafe\u{0301}/a.txt"]),
+                    case_insensitive,
+                ));
+                assert!(!paths_disjoint(
+                    &set(&["caf\u{00e9}"]),
+                    &set(&["cafe\u{0301}/b.txt"]),
+                    case_insensitive,
+                ));
+            }
+        }
     }
 
     #[test]

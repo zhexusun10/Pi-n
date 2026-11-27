@@ -182,6 +182,33 @@ export function localizePlanWarning(warning: string, language: Locale = locale):
   return message;
 }
 
+interface CompiledTemplate {
+  regex: RegExp;
+  indices: number[];
+  english: string;
+}
+
+let compiledErrorTemplates: CompiledTemplate[] | null = null;
+
+function getCompiledErrorTemplates(): CompiledTemplate[] {
+  if (compiledErrorTemplates) return compiledErrorTemplates;
+  const templates: CompiledTemplate[] = [];
+  for (const [key, english] of Object.entries(en)) {
+    if (!/\{\d+\}/.test(key)) continue;
+    const indices: number[] = [];
+    const escaped = key.split(/(\{\d+\})/).map(part => {
+      if (/^\{\d+\}$/.test(part)) {
+        indices.push(Number(part.slice(1, -1)));
+        return "([\\s\\S]*?)";
+      }
+      return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }).join("");
+    templates.push({ regex: new RegExp(`^${escaped}$`), indices, english });
+  }
+  compiledErrorTemplates = templates;
+  return templates;
+}
+
 /** Localize application errors, never conversation content or tool/model output. */
 export function localizeError(error: unknown, language: Locale = locale): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -213,17 +240,8 @@ export function localizeError(error: unknown, language: Locale = locale): string
   const prefix = message.startsWith("Error: ") ? "Error: " : "";
   const text = prefix ? message.slice(prefix.length) : message;
   if (en[text]) return annotateProviderError(prefix + en[text], language);
-  for (const [key, english] of Object.entries(en)) {
-    if (!/\{\d+\}/.test(key)) continue;
-    const indices: number[] = [];
-    const escaped = key.split(/(\{\d+\})/).map(part => {
-      if (/^\{\d+\}$/.test(part)) {
-        indices.push(Number(part.slice(1, -1)));
-        return "([\\s\\S]*?)";
-      }
-      return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }).join("");
-    const match = text.match(new RegExp(`^${escaped}$`));
+  for (const { regex, indices, english } of getCompiledErrorTemplates()) {
+    const match = text.match(regex);
     if (match) {
       const values: string[] = [];
       indices.forEach((index, i) => { values[index] = localizeError(match[i + 1], language); });

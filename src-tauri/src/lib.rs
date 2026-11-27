@@ -241,7 +241,12 @@ async fn open_external_url(url: String) -> Result<(), String> {
         #[cfg(not(target_os = "windows"))]
         {
             let mut command = if cfg!(target_os = "macos") {
-                let mut command = std::process::Command::new("open");
+                let open_bin = if Path::new("/usr/bin/open").is_file() {
+                    "/usr/bin/open"
+                } else {
+                    "open"
+                };
+                let mut command = std::process::Command::new(open_bin);
                 command.arg(&validated);
                 command
             } else {
@@ -391,7 +396,10 @@ fn is_svg_bytes(bytes: &[u8]) -> bool {
                 return false;
             };
             rest = after[end + 3..].trim_start();
-        } else if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+        } else if rest
+            .get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<!doctype"))
+        {
             let Some(end) = rest.find('>') else {
                 return false;
             };
@@ -400,8 +408,8 @@ fn is_svg_bytes(bytes: &[u8]) -> bool {
             break;
         }
     }
-    rest.len() >= 4
-        && rest[..4].eq_ignore_ascii_case("<svg")
+    rest.get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<svg"))
         && rest
             .as_bytes()
             .get(4)
@@ -2078,7 +2086,7 @@ mod tests {
         let script = temp.path().join("fake-backend.sh");
         fs::write(
             &script,
-            "#!/bin/sh\nprintf '{\"type\":\"pi_n_ready\",\"port\":43219,\"dataDir\":\"/tmp/d\"}\\n'\ncat >/dev/null\nexit 0\n",
+            "#!/bin/sh\nprintf '{\"type\":\"pi_n_ready\",\"port\":43219,\"dataDir\":\"/tmp/d\"}\\n'\nwhile IFS= read -r _; do :; done\nexit 0\n",
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
@@ -2284,6 +2292,14 @@ mod tests {
         assert_eq!(decoded, png);
         assert_eq!(detect_desktop_image_extension(&decoded).unwrap(), "png");
         assert!(detect_desktop_image_extension(b"plain text not image").is_err());
+        // Multi-byte UTF-8 straddling byte indices 4 and 9 must not panic in SVG detection.
+        assert!(detect_desktop_image_extension("<své>".as_bytes()).is_err());
+        assert!(detect_desktop_image_extension("<!doctypé>".as_bytes()).is_err());
+        assert_eq!(
+            detect_desktop_image_extension(b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>")
+                .unwrap(),
+            "svg"
+        );
 
         assert_eq!(
             sanitize_desktop_image_filename(Some("artifacts/01-main-menu.png"), "png"),

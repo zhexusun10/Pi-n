@@ -252,7 +252,7 @@ export default function piNPlanner(pi: ExtensionAPI) {
   // results are already published. Graph structure cannot express it, so the
   // server passes it beside the graph and the edit is rejected where the
   // Planner can still react instead of failing the commit afterwards.
-  const unremovableNodes: string[] = JSON.parse(process.env.PI_N_UNREMOVABLE_NODES ?? '[]');
+  const unremovableNodes: string[] = JSON.parse(process.env.PI_N_UNREMOVABLE_NODES || '[]');
   // Only read_graph returns graph contents. Mutations follow Pi's native tools:
   // concise feedback, with structured local effects/diagnostics for UI and logs.
   const outputFilePath = (tool: MutationTool | "read_graph") => join(dirname(graphPath),
@@ -464,6 +464,14 @@ export default function piNPlanner(pi: ExtensionAPI) {
       const stderr: Buffer[] = [];
       let error: Error | undefined;
       let outputBytes = 0;
+      let settled = false;
+      const finish = (status: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
+        resolve({ status, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), error });
+      };
       const stop = (reason: Error) => {
         error ??= reason;
         child.kill("SIGKILL");
@@ -476,15 +484,15 @@ export default function piNPlanner(pi: ExtensionAPI) {
       };
       child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk));
       child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk));
-      child.on("error", reason => { error ??= reason; });
+      child.on("error", reason => {
+        error ??= reason;
+        if (child.pid === undefined) finish(null);
+      });
       child.stdin.on("error", stop);
       const abort = () => stop(new Error("Operation aborted"));
       const timeout = setTimeout(() => stop(new Error("Compiler timed out after 10000 ms.")), 10000);
-      child.once("close", status => {
-        clearTimeout(timeout);
-        signal?.removeEventListener("abort", abort);
-        resolve({ status, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), error });
-      });
+      timeout.unref();
+      child.once("close", finish);
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
       else child.stdin.end(input);

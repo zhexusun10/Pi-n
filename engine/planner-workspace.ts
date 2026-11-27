@@ -36,6 +36,7 @@ export function configurePlannerWorkspace(
   const parsed = JSON.parse(rawTargets) as Record<string, WorkspaceTarget>;
   targetFile = process.env.PI_N_PLANNER_WORKSPACES_FILE;
   targets = new Map(Object.entries(parsed));
+  listeners.clear();
   const initial = realpathSync.native(workspace);
   state = { workspace: initial, project, alias, paths: createWorkspacePaths(initial, project, alias, workspaceRoots(targets)) };
 }

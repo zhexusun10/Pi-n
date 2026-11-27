@@ -67,7 +67,10 @@ fn copy_with_clone(
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.to_string()),
             }
-            fs::copy(source, destination).map_err(|e| e.to_string())?;
+            if let Err(error) = fs::copy(source, destination) {
+                let _ = fs::remove_file(destination);
+                return Err(error.to_string());
+            }
             Ok(CopyKind::Bytes)
         }
         Err(error) => {
@@ -331,15 +334,19 @@ fn clone(source: &Path, destination: &Path) -> io::Result<()> {
     {
         return Err(io::Error::last_os_error());
     }
-    source.seek(io::SeekFrom::Start(bytes))?;
-    destination.seek(io::SeekFrom::Start(bytes))?;
-    let mut tail = [0; 65536];
-    let count = source.read(&mut tail)?;
-    destination.write_all(&tail[..count])?;
-    if bytes + count as u64 != size {
-        return Err(io::Error::other(
-            "Source changed during private block clone",
-        ));
+    let tail_len = (size - bytes) as usize;
+    if tail_len > 0 {
+        source.seek(io::SeekFrom::Start(bytes))?;
+        destination.seek(io::SeekFrom::Start(bytes))?;
+        let mut tail = vec![0u8; tail_len];
+        source.read_exact(&mut tail).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                io::Error::other("Source changed during private block clone")
+            } else {
+                error
+            }
+        })?;
+        destination.write_all(&tail)?;
     }
     destination.sync_all()?;
     Ok(())

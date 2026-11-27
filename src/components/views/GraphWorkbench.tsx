@@ -3711,6 +3711,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                 repository={config?.repository}
                 runId={state.runId}
                 node={conversationNode}
+                isMerger={Boolean(selectedMerger)}
                 draftStore={composerDrafts}
                 draftKey={composerDraftKey}
                 onSubmit={handleSendMessageWithScroll}
@@ -4182,6 +4183,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                 runId={state.runId}
                 node={isSerialExecution ? state.graph.nodes[0]?.id : undefined}
                 conversationModel
+                planMode={effectiveRouteType === "serial" ? "serial" : effectiveRouteType === "graph" ? "graph" : undefined}
                 draftStore={composerDrafts}
                 draftKey={composerDraftKey}
                 onSubmit={handleSendMessageWithScroll}

@@ -18,6 +18,13 @@ import {
 const INTERRUPTED_CONTINUATION = '__pi_n_continue_interrupted__';
 const FEEDBACK_RULE = 'End your response with exactly one standalone final line:\n<ACCEPT>\nor\n<FEEDBACK>\nIf sending <FEEDBACK>, clearly describe the additional instruction for the target before the marker.';
 
+function findLastIndex<T>(items: readonly T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (predicate(items[index])) return index;
+  }
+  return -1;
+}
+
 export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
   return function workspacePolicy(pi: ExtensionAPI) {
   const continuation = process.env.PI_N_CONTINUE_INTERRUPTED === 'true';
@@ -52,8 +59,8 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
       // Pi's provider adapter performs its own native normalization.
       const messages = feedbackInputContext(event.messages).filter(message =>
         !(message.role === 'custom' && message.customType === 'pi-n-interrupted-continuation'));
-      const lastAssistant = messages.findLastIndex(message => message.role === 'assistant');
-      const lastUser = messages.findLastIndex(message => message.role === 'user');
+      const lastAssistant = findLastIndex(messages, message => message.role === 'assistant');
+      const lastUser = findLastIndex(messages, message => message.role === 'user');
       const projected: typeof messages = [];
       let omittedCalls = new Set<string>();
       for (let index = 0; index < messages.length; index++) {
@@ -247,9 +254,16 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
       pi.registerTool({
         ...baseBashTool,
         ...(timeoutPolicy ? { parameters: timeoutPolicy.parameters } : {}),
-        async execute(toolCallId, params, signal, onUpdate, ctx) {
+        async execute(
+          toolCallId: string,
+          rawParams: unknown,
+          signal?: AbortSignal,
+          onUpdate?: (update: any) => void,
+          ctx?: any,
+        ) {
           // Preserve native bash semantics. Callers can request errexit/pipefail
           // explicitly; injecting them changes otherwise valid shell programs.
+          const params = rawParams as { command: string; timeout?: number; [key: string]: unknown };
           const rawCmd = params.command;
           const configuredDefault = activeBashTimeout?.getDefaultTimeoutSeconds() ?? null;
           const usedDefaultTimeout = params.timeout === undefined && configuredDefault !== null;
@@ -309,7 +323,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
             }),
           };
         },
-      });
+      } as any);
     };
     registerBashTool(activeBashTimeout);
     bashTimeoutBridge?.setBashHost(policy => registerBashTool(policy));

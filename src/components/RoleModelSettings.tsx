@@ -3,13 +3,8 @@ import React, { useState } from "react";
 import { AnimatePresence } from "motion/react";
 import type { Config, ThinkingLevel } from "../types";
 import type { ProviderCatalog } from "../services/providerAuth";
-import { availableCatalogModels, modelRoles, normalizeModelThinkingLevels, roleModelConfig, updateRoleModelConfig } from "../modelConfig";
+import { availableCatalogModels, modelRoles, normalizeModelThinkingLevels, roleModelConfig, thinkingLevelLabel, updateRoleModelConfig } from "../modelConfig";
 import { ScopedModelsModal } from "./modals/ScopedModelsModal";
-
-const thinkingLabels: Record<ThinkingLevel, string> = {
-  off: t("关闭"), minimal: t("最少 (minimal)"), low: t("低 (low)"),
-  medium: t("中 (medium)"), high: t("高 (high)"), xhigh: t("极高 (xhigh)"), max: t("最大 (max)"),
-};
 
 export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {}, busy, hidePartitioner = false }: {
   config: Config;
@@ -61,7 +56,7 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
                     setConfig(prev => normalizeModelThinkingLevels(updateRoleModelConfig(prev, role.id, { model: value }), catalog));
                   }
                 }} className="provider-filter-select" disabled={busy || !catalog || availableModels.length === 0}>
-                  <option value="">{role.id === "nodeAgent" ? t("请选择可用模型") : t("使用 Node Agent 默认模型")}</option>
+                  <option value="">{role.id === "nodeAgent" ? t("请选择可用模型") : t("使用 Node 默认模型")}</option>
                   {model && !currentModel && <option value={model} disabled>{isHidden(model) ? t("当前已选模型已隐藏") : `${catalog ? t("已选模型不可用：") : t("当前模型：")}${model}`}</option>}
                   {availableModels.map(item => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id} ({item.provider}/{item.id})</option>)}
                 </select>
@@ -74,8 +69,8 @@ export function RoleModelSettings({ config, setConfig, catalog, envOverrides = {
                     setConfig(prev => normalizeModelThinkingLevels(updateRoleModelConfig(prev, role.id, { thinkingLevel: value }), catalog));
                   }
                 }} className="provider-filter-select">
-                  {!supported && <option value={settings.thinkingLevel} disabled>{thinkingLabels[settings.thinkingLevel]}</option>}
-                  {levels.map(value => <option key={value} value={value}>{thinkingLabels[value]}</option>)}
+                  {!supported && <option value={settings.thinkingLevel} disabled>{thinkingLevelLabel(settings.thinkingLevel)}</option>}
+                  {levels.map(value => <option key={value} value={value}>{thinkingLevelLabel(value)}</option>)}
                 </select>
               </label>
             </div>

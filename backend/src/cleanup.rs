@@ -954,7 +954,7 @@ pub(crate) fn shadow_repo_idle(path: &Path, min_age: std::time::Duration) -> boo
 
 /// Reclaim shadow repositories under `<root>/shadow_repos` that have no
 /// referencing Run in `store` and have been idle for at least `min_age`.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn prune_orphaned_shadow_repos(
     root: &Path,
     store: &Store,

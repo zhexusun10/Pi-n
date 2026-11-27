@@ -18,9 +18,14 @@ export type MarkdownSegment =
   | { type: "html"; blocks: string[] | null; html: string; key: string }
   | { type: "image-stack"; images: StackedMarkdownImage[]; trailingCursor?: boolean; key: string };
 
-const STREAMING_CURSOR_RE = /^<span\s+class="thinking-streaming-cursor"\s*><\/span>/i;
+const STREAMING_CURSOR_STICKY_RE = /<span\s+class="thinking-streaming-cursor"\s*><\/span>/iy;
 const IMG_TAG_OPEN_RE = /^<img\b([^>]*?)\s*\/?>/i;
+const IMG_TAG_OPEN_STICKY_RE = /<img\b([^>]*?)\s*\/?>/iy;
 const BR_TAG_RE = /^<br\s*\/?>/i;
+const BR_TAG_STICKY_RE = /<br\s*\/?>/iy;
+const WS_STICKY_RE = /[\s\u00a0]+/y;
+const OPEN_LI_STICKY_RE = /<li\b[^>]*>/iy;
+const OPEN_TAG_STICKY_RE = /<([a-z][a-z0-9-]*)\b[^>]*>/iy;
 const ATTR_RE = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 const VOID_TAGS = new Set([
@@ -104,30 +109,32 @@ function tokenizeInline(innerHtml: string): InlinePiece[] {
   const len = innerHtml.length;
 
   while (index < len) {
-    const rest = innerHtml.slice(index);
-
-    const wsMatch = /^[\s\u00a0]+/.exec(rest);
+    WS_STICKY_RE.lastIndex = index;
+    const wsMatch = WS_STICKY_RE.exec(innerHtml);
     if (wsMatch) {
       tokens.push({ kind: "sep", raw: wsMatch[0] });
       index += wsMatch[0].length;
       continue;
     }
 
-    const brMatch = BR_TAG_RE.exec(rest);
+    BR_TAG_STICKY_RE.lastIndex = index;
+    const brMatch = BR_TAG_STICKY_RE.exec(innerHtml);
     if (brMatch) {
       tokens.push({ kind: "sep", raw: brMatch[0] });
       index += brMatch[0].length;
       continue;
     }
 
-    const cursorMatch = STREAMING_CURSOR_RE.exec(rest);
+    STREAMING_CURSOR_STICKY_RE.lastIndex = index;
+    const cursorMatch = STREAMING_CURSOR_STICKY_RE.exec(innerHtml);
     if (cursorMatch) {
       tokens.push({ kind: "cursor", raw: cursorMatch[0] });
       index += cursorMatch[0].length;
       continue;
     }
 
-    const imgMatch = IMG_TAG_OPEN_RE.exec(rest);
+    IMG_TAG_OPEN_STICKY_RE.lastIndex = index;
+    const imgMatch = IMG_TAG_OPEN_STICKY_RE.exec(innerHtml);
     if (imgMatch) {
       const image = parseImgTag(imgMatch[0]);
       if (image) {
@@ -286,9 +293,11 @@ function extractImageListUnits(block: string, groupId: number): BlockUnit[] | nu
   const items: string[] = [];
   let index = 0;
   while (index < inner.length) {
-    const ws = /^[\s\u00a0]+/.exec(inner.slice(index));
+    WS_STICKY_RE.lastIndex = index;
+    const ws = WS_STICKY_RE.exec(inner);
     if (ws) { index += ws[0].length; continue; }
-    const openLi = /^<li\b[^>]*>/i.exec(inner.slice(index));
+    OPEN_LI_STICKY_RE.lastIndex = index;
+    const openLi = OPEN_LI_STICKY_RE.exec(inner);
     if (!openLi) return null;
     index += openLi[0].length;
     const itemStart = index;
@@ -341,7 +350,8 @@ function splitTopLevelHtmlBlocks(html: string): string[] {
   const len = html.length;
 
   while (index < len) {
-    const ws = /^[\s\u00a0]+/.exec(html.slice(index));
+    WS_STICKY_RE.lastIndex = index;
+    const ws = WS_STICKY_RE.exec(html);
     if (ws) {
       index += ws[0].length;
       continue;
@@ -355,7 +365,8 @@ function splitTopLevelHtmlBlocks(html: string): string[] {
       continue;
     }
 
-    const openMatch = /^<([a-z][a-z0-9-]*)\b[^>]*>/i.exec(html.slice(index));
+    OPEN_TAG_STICKY_RE.lastIndex = index;
+    const openMatch = OPEN_TAG_STICKY_RE.exec(html);
     if (!openMatch) {
       const closeBracket = html.indexOf(">", index + 1);
       const end = closeBracket === -1 ? len : closeBracket + 1;
@@ -375,8 +386,8 @@ function splitTopLevelHtmlBlocks(html: string): string[] {
     const start = index;
     index += openTag.length;
     let depth = 1;
-    const openRe = new RegExp(`^<${tagName}\\b[^>]*>`, "i");
-    const closeRe = new RegExp(`^<\\/${tagName}\\s*>`, "i");
+    const openRe = new RegExp(`<${tagName}\\b[^>]*>`, "iy");
+    const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "iy");
 
     while (index < len && depth > 0) {
       const nextLt = html.indexOf("<", index);
@@ -384,14 +395,15 @@ function splitTopLevelHtmlBlocks(html: string): string[] {
         index = len;
         break;
       }
-      const slice = html.slice(nextLt);
-      const closeMatch = closeRe.exec(slice);
+      closeRe.lastIndex = nextLt;
+      const closeMatch = closeRe.exec(html);
       if (closeMatch) {
         depth--;
         index = nextLt + closeMatch[0].length;
         continue;
       }
-      const nestedOpen = openRe.exec(slice);
+      openRe.lastIndex = nextLt;
+      const nestedOpen = openRe.exec(html);
       if (nestedOpen && !/\/>\s*$/.test(nestedOpen[0])) {
         depth++;
         index = nextLt + nestedOpen[0].length;

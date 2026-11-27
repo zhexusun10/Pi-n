@@ -741,8 +741,8 @@ mod tests {
             &format!(
                 r#"printf 'ARGS=%s\nPORT=%s\nDATA=%s\nROOT=%s\nDIR=%s\nNODE=%s\nPATH=%s\n' "$*" "$PI_N_PORT" "$PI_N_DATA_DIR" "$PI_N_INSTALLATION_ROOT" "$PI_N_INSTALLATION_DIR" "$PI_N_TRUSTED_NODE" "$PATH" > "{}"
 printf '{{"type":"pi_n_ready","port":43210,"dataDir":"%s"}}\n' "$PI_N_DATA_DIR"
-# Block until parent closes stdin, then exit cleanly.
-cat >/dev/null
+# Block until parent closes stdin, then exit cleanly (pure POSIX builtin; no external `cat`).
+while IFS= read -r _; do :; done
 exit 0"#,
                 env_dump.display()
             ),

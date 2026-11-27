@@ -131,7 +131,7 @@ test("hiding Partitioner omits only its controls and preserves its saved model s
     config, setConfig: () => {}, catalog, busy: false, hidePartitioner,
   }));
   const hidden = render(true);
-  assert.ok(hidden.includes(`aria-label="${t("{0} 模型配置", "Node Agent")}"`));
+  assert.ok(hidden.includes(`aria-label="${t("{0} 模型配置", "Node")}"`));
   assert.ok(hidden.includes(`aria-label="${t("{0} 模型配置", "Planner")}"`));
   assert.ok(!hidden.includes(`aria-label="${t("{0} 模型配置", "Partitioner")}"`));
   assert.ok(render(false).includes(`aria-label="${t("{0} 模型配置", "Partitioner")}"`));
@@ -142,8 +142,8 @@ test("role sections do not repeat agent names in field labels", () => {
   const markup = renderToStaticMarkup(React.createElement(RoleModelSettings, { config: legacy, setConfig: () => {}, catalog, busy: false }));
   assert.ok(markup.includes(`<span>${t("模型")}</span>`));
   assert.ok(markup.includes(`<span>${t("思维等级")}</span>`));
-  assert.ok(!markup.includes("<span>Node Agent 模型</span>"));
-  assert.ok(!markup.includes("<span>Node Agent 思维等级</span>"));
+  assert.ok(!markup.includes("<span>Node 模型</span>"));
+  assert.ok(!markup.includes("<span>Node 思维等级</span>"));
   assert.ok(!markup.includes("<span>Planner 模型</span>"));
   assert.ok(!markup.includes("<span>Planner 思维等级</span>"));
   assert.ok(!markup.includes("<span>Partitioner 模型</span>"));

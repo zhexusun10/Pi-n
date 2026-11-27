@@ -6979,8 +6979,15 @@ pub fn dispatch(
                 }
                 runtime.browser_metadata()?
             }
-            Err(std::sync::TryLockError::WouldBlock) if run_id.is_some() => {
-                return durable_snapshot_metadata(run_id.unwrap(), service);
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if let Some(id) = run_id {
+                    return durable_snapshot_metadata(id, service);
+                }
+                service
+                    .runtime
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .browser_metadata()?
             }
             Err(error) => return Err(error.to_string()),
         };
@@ -8356,24 +8363,6 @@ fn handle_http_request_with_options(
                 return;
             }
 
-            let stream_receipt = if let Some(token) = &operation_id {
-                match api_transport::begin(token, command, &receipt_body, port, &request_id) {
-                    api_transport::Begin::New(guard) => Some(guard),
-                    api_transport::Begin::Reply(status, body) => {
-                        respond_api_json(
-                            request,
-                            status,
-                            &body,
-                            req_origin.as_deref(),
-                            &request_id,
-                            true,
-                        );
-                        return;
-                    }
-                }
-            } else {
-                None
-            };
             static ACTIVE_PLAN_STREAMS: std::sync::atomic::AtomicUsize =
                 std::sync::atomic::AtomicUsize::new(0);
             const MAX_ACTIVE_PLAN_STREAMS: usize = 8;
@@ -8398,6 +8387,24 @@ fn handle_http_request_with_options(
                 return;
             }
             let _plan_stream_slot = PlanStreamSlot;
+            let stream_receipt = if let Some(token) = &operation_id {
+                match api_transport::begin(token, command, &receipt_body, port, &request_id) {
+                    api_transport::Begin::New(guard) => Some(guard),
+                    api_transport::Begin::Reply(status, body) => {
+                        respond_api_json(
+                            request,
+                            status,
+                            &body,
+                            req_origin.as_deref(),
+                            &request_id,
+                            true,
+                        );
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
             let (tx, rx) = std::sync::mpsc::sync_channel(512);
             let service_clone = match revision_run_id.as_deref() {
                 Some(run_id) => service_for_run(service, run_id, false),
@@ -8501,7 +8508,10 @@ fn handle_http_request_with_options(
                         send_sse_event(&tx, "error", &body, false);
                     }
                 }
-                let _ = tx.send(Vec::new());
+                // Non-blocking EOF marker: if the bounded channel is full due to
+                // a stalled client, dropping `tx` still closes the stream cleanly
+                // without hanging this producer thread.
+                let _ = tx.try_send(Vec::new());
             });
 
             let stream = SseStreamReceiver {

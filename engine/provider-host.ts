@@ -68,16 +68,16 @@ const stop = async () => {
   if (!commandHost && commandHostLoading) {
     try { commandHost = await commandHostLoading; } catch {}
   }
-  await commandHost?.close();
-  adapter.close();
+  try { await commandHost?.close(); } catch {}
+  try { adapter.close(); } catch {}
   process.exit(0);
 };
 process.stdout.on("error", () => { void stop(); });
 input.on("close", () => {
   inputClosed = true;
   // A vanished parent must not leave an interactive login child alive forever.
-  if (pending) setTimeout(stop, 40000).unref();
+  if (pending) setTimeout(() => { void stop(); }, 40000).unref();
   finish();
 });
-process.on("SIGTERM", stop);
-process.on("SIGINT", stop);
+process.on("SIGTERM", () => { void stop(); });
+process.on("SIGINT", () => { void stop(); });

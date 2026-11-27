@@ -76,6 +76,13 @@ for (const language of ["en", "zh-CN"]) {
       const draft = "Build a thoughtful interface.\nKeep the existing functionality intact.";
       await input.fill(draft);
 
+      const homeModelPlacement = await page.evaluate(() => {
+        const picker = document.querySelector(".landing-screen [data-testid='composer-model-selector']")?.getBoundingClientRect();
+        const mode = document.querySelector(".landing-screen .prompt-box-mode-selector")?.getBoundingClientRect();
+        return Boolean(picker && mode && picker.right <= mode.left + 1);
+      });
+      assert.equal(homeModelPlacement, true, "home model selector sits to the left of the mode buttons");
+
       for (const [width, height] of [[1440, 900], [1280, 768], [1100, 768], [1024, 768], [961, 768], [960, 768], [768, 600], [390, 844], [320, 568], [900, 420]]) {
         await page.setViewportSize({ width, height });
         await expectHomeLayout(page);

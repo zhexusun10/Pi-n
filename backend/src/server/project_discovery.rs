@@ -21,15 +21,22 @@ pub(super) struct SkillItem {
 
 pub(super) fn parse_skill_markdown(path: &Path) -> Option<(String, String)> {
     // Skill paths may be user-provided links, but pipes/devices are not documents.
-    // In particular, opening a FIFO for reading can wait forever for a writer.
-    if !fs::metadata(path).ok()?.is_file() {
+    // Open non-blocking on Unix and validate the opened file descriptor to avoid
+    // a TOCTOU race or blocking indefinitely on a FIFO.
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
         return None;
     }
     // Discovery previews metadata; it must not allocate the whole instruction body.
     let mut bytes = Vec::new();
-    fs::File::open(path)
-        .ok()?
-        .take(MAX_SKILL_PREVIEW_BYTES)
+    file.take(MAX_SKILL_PREVIEW_BYTES)
         .read_to_end(&mut bytes)
         .ok()?;
     let content = match std::str::from_utf8(&bytes) {

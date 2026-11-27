@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSy
 import { spawnSync, execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { configurePlannerWorkspace, switchPlannerWorkspace, plannerWorkspaceState } from '../engine/planner-workspace.ts';
+import { configurePlannerWorkspace, onPlannerWorkspaceChanged, switchPlannerWorkspace, plannerWorkspaceState } from '../engine/planner-workspace.ts';
 import { samePath } from '../engine/path-identity.mjs';
 import { managedBashOptions, rebindWorkspaceEnvironment } from '../engine/launch-binding.mjs';
 import workspacePolicy from '../engine/prompt-extension.ts';
@@ -242,6 +242,40 @@ test('Planner before_agent_start normalizes systemPromptOptions with switched ac
     const options = { appendSystemPrompt: `Inspect ${wsB}/file.txt`, sections: {}, promptGuidelines: [] };
     await handlers.get('before_agent_start')!({ systemPromptOptions: options });
     assert.equal(options.appendSystemPrompt, 'Inspect ./file.txt');
+  } finally {
+    process.chdir(original);
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('configurePlannerWorkspace clears stale change listeners from earlier bindings', () => {
+  const original = process.cwd();
+  const previous = { ...process.env };
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-planner-listeners-'));
+  try {
+    const project = join(root, 'project');
+    const wsA = join(root, 'ws-a');
+    const wsB = join(root, 'ws-b');
+    mkdirSync(project);
+    mkdirSync(wsA);
+    mkdirSync(wsB);
+    process.env.PI_N_EXECUTION_KIND = 'source';
+    delete process.env.PI_N_PLANNER_WORKSPACES_FILE;
+    const raw = JSON.stringify({
+      a: { requestedNode: 'a', actualNode: 'a', executionId: 'exec-a', workspace: wsA },
+      b: { requestedNode: 'b', actualNode: 'b', executionId: 'exec-b', workspace: wsB },
+    });
+    let staleCalls = 0;
+    let freshCalls = 0;
+    configurePlannerWorkspace(wsA, project, project, raw);
+    onPlannerWorkspaceChanged(() => { staleCalls++; });
+    configurePlannerWorkspace(wsA, project, project, raw);
+    onPlannerWorkspaceChanged(() => { freshCalls++; });
+    switchPlannerWorkspace('b');
+    assert.equal(staleCalls, 0);
+    assert.equal(freshCalls, 1);
   } finally {
     process.chdir(original);
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];

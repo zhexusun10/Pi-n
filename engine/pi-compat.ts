@@ -383,9 +383,10 @@ export function clearUnreadQueue(agent: AgentSession['agent'], clearDisplayQueue
 // hooks. Async-local scope follows only that submission through async rewriting;
 // nested, unmarked extension submissions explicitly start an unowned scope.
 export function installQueueIdentity() {
-  const context = new AsyncLocalStorage<{ agent: Agent; requestId: string; claimed: boolean; active: boolean } | undefined>();
+  type SessionAgent = AgentSession['agent'];
+  const context = new AsyncLocalStorage<{ agent: SessionAgent; requestId: string; claimed: boolean; active: boolean } | undefined>();
   const identities = new WeakMap<object, string>();
-  const deferredInputs = new WeakMap<object, { agent: Agent; requestId: string; text: string }>();
+  const deferredInputs = new WeakMap<object, { agent: SessionAgent; requestId: string; text: string }>();
   const marker = /\n\n<pi-n-(node-|)steer-id>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})<\/pi-n-\1steer-id>$/;
   const wrap = <T extends (this: AgentSession, text: string, ...args: any[]) => Promise<any>>(original: T, mayDefer = false): T => function (this: AgentSession, text: string, ...args: any[]) {
     // Pi defers prompt(text, options) during agent_settled and calls prompt
@@ -418,7 +419,7 @@ export function installQueueIdentity() {
   const steer = Agent.prototype.steer;
   const followUp = Agent.prototype.followUp;
   const clearQueue = AgentSession.prototype.clearQueue;
-  const identify = (agent: Agent, message: Parameters<Agent['steer']>[0]) => {
+  const identify = (agent: SessionAgent, message: Parameters<Agent['steer']>[0]) => {
     const scope = context.getStore();
     if (scope?.active && !scope.claimed && scope.agent === agent && message.role === 'user') {
       identities.set(message, scope.requestId);
@@ -432,21 +433,21 @@ export function installQueueIdentity() {
     return subscribe.call(this, (event) => {
       if ((event.type === 'message_start' || event.type === 'message_end') && event.message?.role === 'user') {
         const requestId = identities.get(event.message);
-        if (requestId) return listener({ piNRequestId: requestId, ...event } as typeof event);
+        if (requestId) return listener({ piNRequestId: requestId, ...event } as unknown as typeof event);
       }
       return listener(event);
     });
   };
   Agent.prototype.prompt = function (input: any, ...rest: any[]) {
     if (Array.isArray(input)) {
-      for (const message of input) if (message && typeof message === 'object') identify(this, message);
+      for (const message of input) if (message && typeof message === 'object') identify(this as unknown as SessionAgent, message);
     } else if (input && typeof input === 'object') {
-      identify(this, input);
+      identify(this as unknown as SessionAgent, input);
     }
     return agentPrompt.call(this, input, ...rest);
   };
-  Agent.prototype.steer = function (message) { identify(this, message); steer.call(this, message); };
-  Agent.prototype.followUp = function (message) { identify(this, message); followUp.call(this, message); };
+  Agent.prototype.steer = function (message) { identify(this as unknown as SessionAgent, message); steer.call(this, message); };
+  Agent.prototype.followUp = function (message) { identify(this as unknown as SessionAgent, message); followUp.call(this, message); };
   AgentSession.prototype.clearQueue = function () { return clearUnreadQueue(this.agent, () => clearQueue.call(this), identities); };
   return () => {
     AgentSession.prototype.prompt = prompt;

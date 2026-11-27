@@ -83,6 +83,10 @@ static int32_t map_authorization_status(UNAuthorizationStatus status) {
 didReceiveNotificationResponse:(UNNotificationResponse *)response
          withCompletionHandler:(void (^)(void))completionHandler {
     (void)center;
+    if ([response.actionIdentifier isEqualToString:UNNotificationDismissActionIdentifier]) {
+        completionHandler();
+        return;
+    }
     NSDictionary *userInfo = response.notification.request.content.userInfo;
     id rawRunId = userInfo[@"runId"];
     NSString *runId = [rawRunId isKindOfClass:[NSString class]] ? (NSString *)rawRunId : nil;

@@ -239,10 +239,12 @@ pub(super) fn parse_hydrate_ranges(
         }
         let start = pair[0]
             .as_u64()
-            .ok_or("Invalid hydrate range start")? as usize;
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or("Invalid hydrate range start")?;
         let end = pair[1]
             .as_u64()
-            .ok_or("Invalid hydrate range end")? as usize;
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or("Invalid hydrate range end")?;
         let clamped_end = end.min(max_end);
         if start >= clamped_end {
             continue;

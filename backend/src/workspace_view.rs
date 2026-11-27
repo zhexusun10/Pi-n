@@ -4098,6 +4098,17 @@ pub(crate) fn prepare(
         canonical_dirs.insert(dir.clone());
     }
     for name in sorted_candidate_names(&base_view, &inputs, Some(1)) {
+        // A recorded view may still carry generated-artifact directories from
+        // before an exclusion-policy update; skip them here so `expected`
+        // matches `scan_scoped_with_links`.
+        if workspace::collection_excluded_with_index(
+            path,
+            Path::new(name),
+            &tracked_index,
+            exclusions,
+        ) {
+            continue;
+        }
         if canonical_dirs.contains_alias(name) || expected_aliases.contains_alias(name) {
             continue;
         }
@@ -4105,6 +4116,14 @@ pub(crate) fn prepare(
             choose_directory_entry_indexed(&base_index, &input_indices, name)?
         {
             let resolved_name = resolve_parent_alias_prefix_indexed(&chosen_name, &canonical_dirs);
+            if workspace::collection_excluded_with_index(
+                path,
+                Path::new(&resolved_name),
+                &tracked_index,
+                exclusions,
+            ) {
+                continue;
+            }
             canonical_dirs.insert(resolved_name.clone());
             expected_aliases.insert(resolved_name.clone());
             expected.entry(resolved_name).or_insert(directory);
@@ -4146,6 +4165,14 @@ pub(crate) fn prepare(
         )
         .collect();
     for name in special_names {
+        if workspace::collection_excluded_with_index(
+            path,
+            Path::new(&name),
+            &tracked_index,
+            exclusions,
+        ) {
+            continue;
+        }
         if expected_aliases.contains_alias(&name) || canonical_dirs.contains_alias(&name) {
             continue;
         }
@@ -4950,10 +4977,26 @@ pub(crate) fn seal_composed_view(
     }
     let mut recorded_directories = std::collections::BTreeSet::new();
     for name in sorted_candidate_names(&base_view, &inputs, Some(1)) {
+        if workspace::collection_excluded_with_index(
+            path,
+            Path::new(name),
+            &tracked_index,
+            exclusions,
+        ) {
+            continue;
+        }
         if !canonical_dirs.contains_alias(name) && !entry_aliases.contains_alias(name) {
             let chosen_name =
                 choose_alias_spelling_indexed(&base_index, &input_indices, name, Some(1))?;
             let resolved_name = resolve_parent_alias_prefix_indexed(&chosen_name, &canonical_dirs);
+            if workspace::collection_excluded_with_index(
+                path,
+                Path::new(&resolved_name),
+                &tracked_index,
+                exclusions,
+            ) {
+                continue;
+            }
             canonical_dirs.insert(resolved_name.clone());
             recorded_directories.insert(resolved_name);
         }

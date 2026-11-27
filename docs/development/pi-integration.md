@@ -22,9 +22,11 @@ Working directories, source-write effects, and platform permissions belong to [E
 
 ## Composer commands
 
-The composer owns `/model` and `/thinking` menus and validates selections against
-Pi's provider catalog/capabilities. `/model` shares Settings' full available-model
-selection and ordering (without a result-count cap); its open menu observes catalog
+The composer owns `/model` and `/thinking` menus as well as its inline model
+selector (placed left of the send button, or left of the mode selector on home,
+with a secondary thinking-level submenu) and validates selections against
+Pi's provider catalog/capabilities. `/model` and the inline picker share Settings' full available-model
+selection and ordering (without a result-count cap); open menus observe catalog
 refreshes and authentication changes through the shared catalog store. Graph (and Auto) main input targets Planner;
 Serial main input targets the conversation's Node Agent profile; a node input
 targets only that node. Home-screen selections stay in the unsent conversation

@@ -136,7 +136,7 @@ impl TerminalSession {
                 if let Ok(guard) = self.master.lock() {
                     if let Some(master) = guard.as_ref() {
                         if let Some(pgid) = master.process_group_leader() {
-                            if pgid > 0 {
+                            if pgid > 1 {
                                 unsafe {
                                     libc::kill(-pgid, libc::SIGHUP);
                                     libc::kill(-pgid, libc::SIGTERM);
@@ -147,7 +147,7 @@ impl TerminalSession {
                 }
                 if let Some(pid) = self.child_pid {
                     if let Ok(pid_i32) = i32::try_from(pid) {
-                        if pid_i32 > 0 && !self.child_exited.load(Ordering::Acquire) {
+                        if pid_i32 > 1 && !self.child_exited.load(Ordering::Acquire) {
                             unsafe {
                                 libc::kill(-pid_i32, libc::SIGHUP);
                                 libc::kill(-pid_i32, libc::SIGTERM);

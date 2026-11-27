@@ -3950,3 +3950,50 @@ fn prepare_conflicts_uses_common_composition_base_when_source_advances_after_for
     );
     assert_eq!(bytes(&repo.join("shared.txt")), b"resolved\n");
 }
+
+#[test]
+fn prepare_and_virtual_publication_skip_legacy_recorded_excluded_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    let base = workspace::snapshot_repository(&repo).unwrap();
+
+    let node = slot(&temp, "legacy-view-node");
+    workspace::prepare(&repo, &node, &base, &[]).unwrap();
+    fs::create_dir_all(node.join("backend/target/debug")).unwrap();
+    fs::write(node.join("backend/target/debug/pi-n"), "binary\n").unwrap();
+    fs::write(node.join("result.txt"), "ok\n").unwrap();
+    let head = workspace::snapshot_node(&node, &repo, "legacy-view-node").unwrap();
+
+    // Inject a now-excluded Cargo intermediate directory into the immutable
+    // `view.json`, simulating a snapshot sealed before `CARGO_TARGET_CACHE_ENTRIES`
+    // excluded `target/**/build` and `target/**/deps`.
+    let record = record_path(&repo, &head).unwrap();
+    let mut legacy_view = load(&record).unwrap();
+    for dir in ["backend/target/debug/build", "backend/target/debug/deps"] {
+        legacy_view.entries.insert(
+            dir.to_string(),
+            Entry::Directory {
+                mode: 0o755,
+                extra: crate::workspace_metadata::Extra::default(),
+            },
+        );
+    }
+    save(&record, &legacy_view).unwrap();
+
+    // 1. Materialized preparation on a reused/composed slot must skip the
+    //    now-excluded recorded directories so `verified == expected` passes.
+    let composed = slot(&temp, "legacy-dir-composed");
+    workspace::prepare(&repo, &composed, &base, &[]).unwrap();
+    workspace::git(&composed, &["merge", "--no-edit", "--no-ff", &head]).unwrap();
+    prepare(&repo, &composed, &base, &[head.clone()], &[], false).unwrap();
+
+    // 2. Virtual publication must likewise omit the excluded directories from
+    //    the sealed composed view.
+    let published =
+        crate::graph_merge::merge_graph(&repo, &[head], || panic!("no conflict")).unwrap();
+    let pub_view = load(&record_path(&repo, &published).unwrap()).unwrap();
+    assert!(!pub_view.entries.contains_key("backend/target/debug/build"));
+    assert!(!pub_view.entries.contains_key("backend/target/debug/deps"));
+    assert!(pub_view.entries.contains_key("backend/target/debug/pi-n"));
+    assert_eq!(bytes(&repo.join("result.txt")), b"ok\n");
+}

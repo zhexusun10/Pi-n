@@ -21,10 +21,11 @@ export const KNOWN_PROVIDER_ENV_VARS = {
 };
 
 export function applyDisabledProviders(env = process.env) {
-  const dir = env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent');
+  let dir = toHostInput(env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
+  if (dir === '~' || /^~[\\/]/.test(dir)) dir = homedir() + dir.slice(1);
   let disabled = [];
   try {
-    disabled = JSON.parse(readFileSync(join(dir, 'disabled-providers.json'), 'utf8'));
+    disabled = JSON.parse(readFileSync(join(resolve(dir), 'disabled-providers.json'), 'utf8'));
   } catch {}
   env.PYTHONDONTWRITEBYTECODE = '1';
   if (Array.isArray(disabled)) {

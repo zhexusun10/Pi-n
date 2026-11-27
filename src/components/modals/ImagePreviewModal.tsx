@@ -55,17 +55,20 @@ export function ImagePreviewModal({
 
   useEffect(() => {
     setContextMenu(null);
+    if (!open) setFailedOriginalKey(null);
   }, [open, index]);
 
   useEffect(() => {
     if (!open || !current || (!originalPath && !sessionOriginalKey)) return;
     if (cachedOriginalSrc) return;
     let cancelled = false;
-    void loadOriginalImageUrl({ originalPath, runId, sessionOriginalKey }).then((url) => {
-      if (!cancelled && url) {
-        setResolvedOriginal({ key: targetKey, url });
-      }
-    });
+    void loadOriginalImageUrl({ originalPath, runId, sessionOriginalKey })
+      .then((url) => {
+        if (!cancelled && url) {
+          setResolvedOriginal({ key: targetKey, url });
+        }
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -83,7 +86,7 @@ export function ImagePreviewModal({
   });
 
   useEffect(() => {
-    if (!canNavigate || index === null || !onChangeIndex) return;
+    if (!canNavigate || index === null || !onChangeIndex || contextMenu) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       if (event.key === "ArrowLeft") {
@@ -96,7 +99,7 @@ export function ImagePreviewModal({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canNavigate, index, total, onChangeIndex]);
+  }, [canNavigate, index, total, onChangeIndex, contextMenu]);
 
   if (!open || !current || typeof document === "undefined") return null;
 

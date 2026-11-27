@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { toHostInput } from './path-identity.mjs';
 import { readModelVisibility, saveModelVisibility } from './model-visibility.mjs';
@@ -26,9 +26,15 @@ function loadDisabledProviders() {
 }
 
 function saveDisabledProviders(set) {
+  const target = getDisabledProvidersPath();
+  const temporary = `${target}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(getDisabledProvidersPath(), JSON.stringify([...set], null, 2), { encoding: "utf8", mode: 0o600 });
-  } catch {}
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    writeFileSync(temporary, JSON.stringify([...set], null, 2), { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, target);
+  } catch {} finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 function purgeEnvVarsForProvider(providerId) {

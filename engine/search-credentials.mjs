@@ -94,7 +94,7 @@ export function withInheritedSearchCredentials(upstream) {
     let directory = toHostInput(process.env.PI_N_GLOBAL_PI_AGENT_DIR || join(homedir(), '.pi', 'agent'));
     if (directory === '~' || /^~[\\/]/.test(directory)) directory = homedir() + directory.slice(1);
     const source = resolve(directory, 'better-web-search-auth.json');
-    if (source === resolve(upstream.getCredentialsPath())) return undefined;
+    if (samePath(source, upstream.getCredentialsPath())) return undefined;
     const previous = process.env.PI_BETTER_WEB_SEARCH_AUTH;
     // savedApiKey is synchronous: restore the path before any other IPC job
     // can run. Validation and file parsing stay owned by the pinned extension.

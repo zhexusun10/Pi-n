@@ -226,7 +226,7 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
       } else {
         await runtimeService.composerRename({ runId, title });
       }
-      if (identity.current === scopeKey) showNotice(t("已重命名对话：{0}", title), AUTO_DISMISS_NOTICE_MS);
+      if (isCurrent()) showNotice(t("已重命名对话：{0}", title), AUTO_DISMISS_NOTICE_MS);
       return "handled";
     }
     if (command.name === "model" || command.name === "thinking") {
@@ -281,6 +281,12 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
     ensureNoAttachment();
     if (requiresHistory && resolved.standalone) throw new Error(t('此 Pi 指令需要活动会话，请先开始对话。'));
     const repository = commandRepository;
+    if (active.current) {
+      const previous = active.current;
+      active.current = null;
+      setUI([]);
+      void cancelDialogs(previous, previous.requests.splice(0));
+    }
     if (resolved.standalone) {
       const session: CommandSession = { standalone: true, repository, runId: runId ?? '', node, instance: available.instance,
         commandId: createUuid(), requests: [] };
@@ -369,5 +375,5 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
     commandsLoading: commandCatalog.key === catalogKey && commandCatalog.loading,
     commandsError: commandCatalog.key === catalogKey ? commandCatalog.error : '',
     refreshCommands: () => setRefreshRevision(value => value + 1),
-    clearNotice, scopedModelsOpen, closeScopedModels: () => setScopedModelsOpen(false) };
+    clearNotice, scopedModelsOpen, openScopedModels: () => setScopedModelsOpen(true), closeScopedModels: () => setScopedModelsOpen(false) };
 }

@@ -523,6 +523,11 @@ export const runtimeService = {
   deleteWorkspace: async (repository: string) => {
     const deleted = await request<string[]>("delete_workspace", { repository });
     for (const runId of deleted) { invalidateTranscriptCaches(runId); snapshotBases.delete(runId); snapshotTickets.delete(runId); }
+    const key = repository || "__default__";
+    filesRequests.set(key, (filesRequests.get(key) ?? 0) + 1);
+    skillsRequests.set(key, (skillsRequests.get(key) ?? 0) + 1);
+    filesCache.delete(key);
+    skillsCache.delete(key);
     return deleted;
   },
   listFiles: async (repository?: string, forceRefresh = false): Promise<string[]> => {

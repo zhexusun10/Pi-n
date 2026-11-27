@@ -80,13 +80,13 @@ function closeOnPageHide() {
 }
 
 export function subscribeWebTerminalEvents(handlers: Handlers): () => void {
-  if (subscribers.size === 0) window.addEventListener("pagehide", closeOnPageHide);
+  if (subscribers.size === 0 && typeof window !== "undefined") window.addEventListener("pagehide", closeOnPageHide);
   subscribers.add(handlers);
   schedule();
   return () => {
     subscribers.delete(handlers);
     if (!subscribers.size) {
-      window.removeEventListener("pagehide", closeOnPageHide);
+      if (typeof window !== "undefined") window.removeEventListener("pagehide", closeOnPageHide);
       if (timer !== null) clearTimeout(timer);
       timer = null;
     }

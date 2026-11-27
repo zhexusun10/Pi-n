@@ -79,15 +79,26 @@ class Worker {
     });
   }
   respond(response: Event) {
-    if (!this.closed) this.child.stdin.write(`${JSON.stringify(response)}\n`);
+    if (!this.closed && !this.closing) this.child.stdin.write(`${JSON.stringify(response)}\n`);
   }
   close() {
     if (this.closed || this.closing) return this.done;
     this.closing = true;
     this.child.stdin.end();
-    const timer = setTimeout(() => { if (!this.closed) this.child.kill(); }, 2_000);
-    timer.unref();
-    this.child.once('close', () => clearTimeout(timer));
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const termTimer = setTimeout(() => {
+      if (this.closed) return;
+      this.child.kill();
+      killTimer = setTimeout(() => {
+        if (!this.closed) this.child.kill('SIGKILL');
+      }, 2_000);
+      killTimer.unref();
+    }, 2_000);
+    termTimer.unref();
+    void this.done.finally(() => {
+      clearTimeout(termTimer);
+      clearTimeout(killTimer);
+    });
     return this.done;
   }
 }
@@ -115,6 +126,7 @@ export class ExtensionCommands {
   private async execute(text: string, job: Job) {
     try {
       const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+      if (!match) throw new Error('Unknown extension command');
       const worker = new Worker(job.repository, event => {
         if (job.status !== 'pending') return;
         if (['select', 'confirm', 'input', 'editor'].includes(event.method)) job.dialogs.set(event.id, event);
@@ -124,7 +136,7 @@ export class ExtensionCommands {
       job.worker = worker;
       const catalog = await worker.request({ type: 'get_commands' });
       if (job.status !== 'pending') return;
-      if (!match || !catalog.commands.some((command: Event) => available(command) && command.name === match[1])) throw new Error('Unknown extension command');
+      if (!catalog.commands.some((command: Event) => available(command) && command.name === match[1])) throw new Error('Unknown extension command');
       await worker.request({ type: 'prompt', message: `/${match[1]}${match[2] ? ` ${match[2]}` : ''}` });
       // Notify is fire-and-forget in Pi's RPC protocol. Wait for the worker
       // to close so the final UI event is delivered before completion is

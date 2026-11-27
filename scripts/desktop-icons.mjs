@@ -122,7 +122,11 @@ export function generateDesktopIcons({
     const result = spawnSync(
       command,
       [...prefixArgs, 'icon', svgPath, '-o', generatedDir],
-      { cwd: installationRoot, encoding: 'utf8', shell: false },
+      {
+        cwd: installationRoot,
+        encoding: 'utf8',
+        shell: process.platform === 'win32' && /\.cmd$/i.test(command),
+      },
     );
 
     if (result.error) throw result.error;

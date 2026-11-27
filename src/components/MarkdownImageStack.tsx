@@ -59,7 +59,6 @@ export function buildStackPreviewState(
 interface StackCardProps {
   image: StackedMarkdownImage;
   index: number;
-  total: number;
   rel: number;
   isActive: boolean;
   isBrowse: boolean;
@@ -78,7 +77,6 @@ interface StackCardProps {
 const StackCard: React.FC<StackCardProps> = React.memo(({
   image,
   index,
-  total,
   rel,
   isActive,
   isBrowse,
@@ -413,7 +411,6 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
                 key={key}
                 image={image}
                 index={index}
-                total={total}
                 rel={rel}
                 isActive={index === activeIndex}
                 isBrowse={isBrowse}

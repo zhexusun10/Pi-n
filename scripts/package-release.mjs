@@ -221,7 +221,7 @@ export function packageRelease(platform, arch, artifact) {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const [platform, arch, artifact] = process.argv.slice(2);
   try {
     packageRelease(platform, arch, artifact);
