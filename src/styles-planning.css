@@ -1539,7 +1539,7 @@ button.transcript-error-toggle {
 .markdown-content img[data-workspace-path]:not([src]),
 .markdown-content img[data-workspace-path][aria-busy="true"] {
   min-height: 80px;
-  background: var(--bg-surface, #F9F9FA);
+  background: var(--bg-surface, #FAFAFA);
   color: transparent;
 }
 
@@ -1604,7 +1604,7 @@ button.transcript-error-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-surface, #F9F9FA);
+  background: var(--bg-surface, #FAFAFA);
   overflow: hidden;
 }
 
@@ -1623,7 +1623,7 @@ button.transcript-error-toggle {
 .markdown-content .markdown-image-stack-frame img[data-workspace-path]:not([src]),
 .markdown-content .markdown-image-stack-frame img[data-workspace-path][aria-busy="true"] {
   min-height: 0;
-  background: var(--bg-surface, #F9F9FA);
+  background: var(--bg-surface, #FAFAFA);
   color: transparent;
   opacity: 0;
 }

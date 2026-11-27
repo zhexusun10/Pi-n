@@ -867,7 +867,7 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     });
     assert.equal(winLayout.barHeight, "32px");
     assert.equal(winLayout.barBackgroundColor, winLayout.sidebarBackgroundColor, "Windows titlebar matches the sidebar surface color");
-    assert.equal(winLayout.barBackgroundColor, "rgb(249, 249, 250)");
+    assert.equal(winLayout.barBackgroundColor, "rgb(250, 250, 250)");
     assert.equal(winLayout.bgStageTop, 32);
     assert.equal(winLayout.gridCenterY, 32 + (winLayout.viewportHeight - 32) / 2, "Windows grid centers vertically on the content area below its bordered titlebar");
     assert.equal(winLayout.sidebarTop, 44, "Windows keeps the 12px sidebar top margin below its bordered titlebar");

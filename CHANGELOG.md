@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Added independent benchmark references ([Arena.ai *Coding Agents Harness Tax*](https://arena.ai/blog/coding-agents-harness-tax) and [Li et al., *Finding the Right Fit: Model-Harness Interactions across Agent Tasks*](https://arxiv.org/html/2610.00917v1)) to `README.md` and `README.zh-CN.md` to back up Pi^n's Harness Tax, minimal-scaffold, and runtime loop-edge arguments.
+
 ## [2.0.1] - 2026-11-28
 
 ### Changed
+
+- Updated the global `--bg-surface` color token (used by the sidebar, desktop titlebar on Windows, and surface fallbacks) from `#F9F9FA` to `#FAFAFA` (`src/tokens.css`, `src/styles-planning.css`, `scripts/desktop-transport-ui.test.mjs`).
 
 - Tightened the running tool card inner glow (`inset 0 0 6px -1px` and softer `--running-card-glow` alpha in both Blue and Black accent themes) so the pulse stays close to the card border instead of bleeding over header and body content (`src/styles-planning.css`, `src/tokens.css`).
 
