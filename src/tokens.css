@@ -108,7 +108,7 @@
   --running-pulse-glow: rgba(37, 99, 235, 0.5);
   --running-card-border: rgba(59, 130, 246, 0.65);
   --running-card-bg: rgba(59, 130, 246, 0.035);
-  --running-card-glow: rgba(59, 130, 246, 0.18);
+  --running-card-glow: rgba(59, 130, 246, 0.12);
   --running-status-color: #3B82F6;
   --running-node-border: var(--brand-border);
   --running-node-shadow: 0 2px 10px rgba(37, 99, 235, 0.08);
@@ -155,7 +155,7 @@
   --running-pulse-glow: rgba(24, 24, 27, 0.4);
   --running-card-border: rgba(24, 24, 27, 0.42);
   --running-card-bg: rgba(15, 23, 42, 0.025);
-  --running-card-glow: rgba(24, 24, 27, 0.14);
+  --running-card-glow: rgba(24, 24, 27, 0.09);
   --running-status-color: var(--brand-default);
   --running-node-border: rgba(24, 24, 27, 0.42);
   --running-node-shadow: 0 2px 10px rgba(24, 24, 27, 0.1);

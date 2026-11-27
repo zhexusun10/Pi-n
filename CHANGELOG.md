@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tightened the running tool card inner glow (`inset 0 0 6px -1px` and softer `--running-card-glow` alpha in both Blue and Black accent themes) so the pulse stays close to the card border instead of bleeding over header and body content (`src/styles-planning.css`, `src/tokens.css`).
+
 - Aligned `ConfirmModal` (used for deleting conversations and removing workspaces) backdrop veil and dialog shadow with the Settings modal (`--bg-scrim` via `.modal-backdrop.subtle-backdrop` + `.modal-backdrop-tint`, and `--shadow-modal` on `.confirm-dialog`) (`src/components/modals/ConfirmModal.tsx`, `src/styles.css`, `src/tokens.css`, `docs/development/ui-components.md`, `scripts/dialog-accessibility.test.mjs`).
 
 - Remembered each model's last selected thinking level in browser storage for composer model switching (both the inline model selector and `/model` / `/thinking` slash commands), restoring the saved level when switching back to a model and falling back to capability fallbacks or the default unchosen level when unavailable (`src/services/modelThinkingMemory.ts`, `src/components/ui/ComposerModelMenu.tsx`, `src/hooks/useComposerCommands.ts`, `scripts/model-thinking-memory.test.ts`, `scripts/composer-commands-ui.test.mjs`).
