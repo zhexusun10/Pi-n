@@ -57,12 +57,11 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
     // across seconds while expanding.
     const smoothContent = useSmoothStreamText(rawContent, isStreaming, isExpanded, 160, item?.id);
     // Sync continuous pulse keyframes to wall-clock phase on mount so remounting
-    // across collapse/expand card transitions never flashes the icon or dot back to 0%.
+    // across collapse/expand card transitions never flashes the icon back to 0%.
     const [pulsePhase] = useState(() => {
       const now = typeof performance !== "undefined" ? performance.now() : 0;
       return {
         glowDelay: `${-((now % 4000) / 1000).toFixed(3)}s`,
-        dotDelay: `${-((now % 1200) / 1000).toFixed(3)}s`,
       };
     });
     const [isCopied, setIsCopied] = useState(false);
@@ -329,7 +328,6 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
                   >
-                    <span className="thinking-pulse-dot" style={{ animationDelay: pulsePhase.dotDelay }} />
                     <span>{t("思考中...")}</span>
                   </motion.span>
                 )}

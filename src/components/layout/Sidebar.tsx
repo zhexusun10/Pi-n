@@ -8,6 +8,7 @@ import type { RunIndicator } from "../../hooks/useRunIndicators";
 import { useSidebarCardDrag } from "../../hooks/useSidebarCardDrag";
 import { normalizeWorkspacePath, workspaceKey } from "../../services/workspaceConversations";
 import { copyTextToClipboard } from "../../services/externalLink";
+import { useLandingBackground } from "../../services/displayPreferences";
 import { workspacePathDisplay } from "./workspacePathDisplay";
 import { ContextMenu, ContextMenuSubmenu, contextMenuAnchor, type ContextMenuAnchor } from "../ui/context-menu";
 import { PiBrandMark } from "../ui/PiBrandMark";
@@ -437,6 +438,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
   // Wide launches start expanded; narrow windows start with the rail so the
   // composer keeps its room. Collapsing remains session-local.
   const [isCollapsed, setIsCollapsed] = useState(startsCollapsed);
+  const landingBackground = useLandingBackground();
   const [showArchivedProjects, setShowArchivedProjects] = useState(false);
   const [showArchivedRuns, setShowArchivedRuns] = useState(false);
   // Only undo a collapse we caused by resizing; a user's manual choice wins.
@@ -949,7 +951,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
     <aside className={`sidebar${isCollapsed ? " is-collapsed" : ""}`} aria-label={t("侧边栏")}>
       <div className="sidebar-brand-row">
         <div className="brand" aria-label="Pi^n">
-          <PiBrandMark width={22} height={18} />
+          <PiBrandMark width={22} height={18} monochrome={landingBackground !== "grid"} />
         </div>
         <button
           type="button"

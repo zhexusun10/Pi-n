@@ -89,7 +89,7 @@ import {
   workspaceRunsFromSummaries,
 } from "./services/workspaceConversations";
 import { landingDraftKey, loadLandingDraft, saveLandingDraft, clearLandingDraft } from "./services/landingDraft";
-import { useCompletionNotifications, useCompletionNotificationSound, useHideAutoMode, useLandingBackground } from "./services/displayPreferences";
+import { applyAccentColor, useAccentColor, useCompletionNotifications, useCompletionNotificationSound, useHideAutoMode, useLandingBackground } from "./services/displayPreferences";
 import {
   formatNotificationBody,
   isCompletionNotificationPhase,
@@ -135,12 +135,16 @@ function snapshotModelConfig(snapshot: Snapshot | null | undefined, repository: 
 
 export default function App() {
   const landingBackground = useLandingBackground();
+  const accentColor = useAccentColor();
   const hideAutoMode = useHideAutoMode();
   const completionNotifications = useCompletionNotifications();
   const completionNotificationSound = useCompletionNotificationSound();
   const completionNotificationSoundRef = useRef(completionNotificationSound);
   completionNotificationSoundRef.current = completionNotificationSound;
   const openNotificationRunRef = useRef<(runId: string) => void>(() => {});
+  useEffect(() => {
+    applyAccentColor(accentColor);
+  }, [accentColor]);
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") return;
     const desktop = isTauriDesktop();

@@ -268,7 +268,18 @@ fn compose_graph_scoped(
     mut resolve: impl FnMut() -> Result<(), String>,
 ) -> Result<String, String> {
     workspace::validate_binding(repository)?;
-    if crate::workspace_view::is_bound(repository) {
+    // Verify common project-view ancestry before performing any merges or
+    // invoking a Merger agent so missing/ambiguous evidence fails immediately
+    // instead of after expensive conflict resolution.
+    let preflight_base = git(repository, &["rev-parse", "refs/pi-n/base"])
+        .ok()
+        .filter(|base| crate::workspace_view::has_record(source, base));
+    // Materialized publication starts from `prepare_composition`, which defers
+    // binding the visible project view until either conflict repair or final
+    // sealing. Pin parent refs whenever recorded view evidence is present so
+    // `prepare_conflicts_scoped` composes every parent's metadata before a
+    // Merger runs instead of falling back to bare Git checkout metadata.
+    if crate::workspace_view::is_bound(repository) || preflight_base.is_some() {
         for head in heads {
             git(
                 repository,
@@ -276,15 +287,10 @@ fn compose_graph_scoped(
             )?;
         }
     }
-    // Verify common project-view ancestry before performing any merges or
-    // invoking a Merger agent so missing/ambiguous evidence fails immediately
-    // instead of after expensive conflict resolution.
-    let preflight_base = git(repository, &["rev-parse", "refs/pi-n/base"])
-        .ok()
-        .filter(|base| crate::workspace_view::has_record(source, base));
     if let Some(base) = preflight_base.as_deref() {
         crate::workspace_view::composition_base(source, base, heads)?;
     }
+    let mut resolved_heads = Vec::new();
     if let Some(head) = pending(repository) {
         if !heads.contains(&head) {
             return Err(
@@ -295,6 +301,10 @@ fn compose_graph_scoped(
             resolve()?;
         }
         finish_merge(repository, &head, exclusions, true)?;
+        let merged = git(repository, &["rev-parse", "HEAD"])?;
+        if crate::workspace_view::has_record(source, &merged) {
+            resolved_heads.push(merged);
+        }
     }
     // Commit pending user edits as the base before node results merge on top.
     // The user's work is always accepted; a real conflict with node results is
@@ -325,6 +335,12 @@ fn compose_graph_scoped(
             resolved = true;
         }
         finish_merge(repository, head, exclusions, resolved)?;
+        if resolved {
+            let merged = git(repository, &["rev-parse", "HEAD"])?;
+            if crate::workspace_view::has_record(source, &merged) {
+                resolved_heads.push(merged);
+            }
+        }
     }
     // A plain-folder or bound composition carries a recorded source view, so the
     // composed head needs its own project-view record. Host-only fixture
@@ -334,14 +350,27 @@ fn compose_graph_scoped(
         .filter(|base| crate::workspace_view::has_record(source, base));
     if let Some(base) = recorded_base {
         let current = git(repository, &["rev-parse", "HEAD"])?;
-        let mut inputs = heads.to_vec();
         // A Merger's newly resolved head may still exist only in this private
         // workspace. Choose the common source baseline from the imported inputs
-        // before adding that local view to the metadata composition.
-        let base = crate::workspace_view::composition_base(source, &base, &inputs)?;
-        if crate::workspace_view::has_record(source, &current) {
+        // before adding local resolution views and pruning dominated ancestors.
+        let base = crate::workspace_view::composition_base(source, &base, heads)?;
+        let mut inputs: Vec<String> = heads
+            .iter()
+            .filter(|head| crate::workspace_view::has_record(source, head))
+            .cloned()
+            .collect();
+        for merged in resolved_heads {
+            if !inputs.contains(&merged) {
+                inputs.push(merged);
+            }
+        }
+        if crate::workspace_view::has_record(source, &current) && !inputs.contains(&current) {
             inputs.push(current);
         }
+        // Only independent recorded heads compete in metadata composition; a
+        // Merger commit (or newer descendant) already supersedes its ancestors
+        // and must not falsely conflict with them.
+        let inputs = workspace::independent_heads(repository, &inputs)?;
         let observed =
             crate::workspace_view::prepare(source, repository, &base, &inputs, exclusions, false)?;
         return crate::workspace_view::seal_prepared_scoped(

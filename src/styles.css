@@ -821,9 +821,9 @@ h3 {
 }
 
 .project-workspace-item.active {
-  background: rgba(15, 23, 42, 0.055);
-  border-color: var(--border-default);
-  box-shadow: var(--card-shadow);
+  background: var(--sidebar-active-bg);
+  border-color: var(--sidebar-active-border);
+  box-shadow: var(--sidebar-active-shadow);
 }
 
 .proj-details {
@@ -1281,16 +1281,16 @@ h3 {
 }
 
 .sidebar-archive-btn.is-active {
-  background: rgba(15, 23, 42, 0.055);
+  background: var(--sidebar-active-bg);
   color: var(--text-primary);
-  border-color: var(--border-default);
-  box-shadow: var(--card-shadow);
+  border-color: var(--sidebar-active-border);
+  box-shadow: var(--sidebar-active-shadow);
 }
 
 .sidebar-archive-btn.is-active:hover {
-  background: rgba(15, 23, 42, 0.055);
+  background: var(--sidebar-active-bg);
   color: var(--text-primary);
-  border-color: var(--border-default);
+  border-color: var(--sidebar-active-border);
 }
 
 .sidebar-add-btn:focus-visible,
@@ -1516,10 +1516,10 @@ h3 {
 }
 
 .run-item.chosen {
-  background: rgba(15, 23, 42, 0.055);
-  border-color: var(--border-default);
+  background: var(--sidebar-active-bg);
+  border-color: var(--sidebar-active-border);
   color: var(--text-primary);
-  box-shadow: var(--card-shadow);
+  box-shadow: var(--sidebar-active-shadow);
 }
 
 .run-item.chosen .run-title-text {
@@ -1580,7 +1580,7 @@ h3 {
 .run-dot {
   height: 6px;
   width: 6px;
-  background: var(--brand-default);
+  background: var(--running-pulse-color);
   border-radius: 50%;
   margin: 0 3px;
   flex-shrink: 0;
@@ -1606,8 +1606,8 @@ h3 {
 
 .run-dot.running-pulse {
   margin: 0 11px 0 3px;
-  background: var(--brand-default);
-  box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
+  background: var(--running-pulse-color);
+  box-shadow: 0 0 8px var(--running-pulse-glow);
   animation: pulse-glow 1.5s infinite ease-in-out;
 }
 
@@ -1897,7 +1897,7 @@ h3 {
 .primary:not(:disabled):hover {
   background: var(--brand-hover);
   border-color: var(--brand-hover);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 2px 8px var(--brand-shadow-sm);
 }
 
 .primary:not(:disabled):active {
@@ -2272,9 +2272,9 @@ h3 {
 
 /* 拖拽文件进入输入框悬浮状态 */
 .prompt-box-container.dragging-over {
-  border-color: var(--brand-default, #2563eb) !important;
-  background: color-mix(in srgb, var(--brand-subtle, rgba(37, 99, 235, 0.08)) 60%, var(--bg-canvas)) !important;
-  box-shadow: 0 0 0 2px var(--brand-border, rgba(37, 99, 235, 0.25)), 0 0 24px rgba(37, 99, 235, 0.15) !important;
+  border-color: var(--composer-accent) !important;
+  background: color-mix(in srgb, var(--composer-accent-subtle) 60%, var(--bg-canvas)) !important;
+  box-shadow: var(--composer-drag-shadow) !important;
 }
 
 .prompt-box-drag-overlay {
@@ -2288,7 +2288,7 @@ h3 {
   gap: 10px;
   background: var(--bg-canvas);
   pointer-events: none;
-  color: var(--brand-default, #2563eb);
+  color: var(--composer-accent);
   font-weight: 500;
   font-size: 14px;
 }
@@ -2572,14 +2572,14 @@ h3 {
   width: 26px;
   height: 26px;
   border-radius: 7px;
-  background: var(--brand-subtle);
-  color: var(--brand-default);
+  background: var(--composer-accent-subtle);
+  color: var(--composer-accent);
   flex-shrink: 0;
   margin-top: 1px;
 }
 
 .prompt-box-file-icon .prompt-box-file-icon-code {
-  color: var(--brand-default);
+  color: var(--composer-accent);
 }
 
 .prompt-box-file-icon .prompt-box-file-icon-text {
@@ -2664,12 +2664,12 @@ h3 {
 
 .prompt-box-send-btn.active {
   opacity: 1;
-  background: var(--brand-default);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+  background: var(--composer-accent);
+  box-shadow: var(--composer-accent-shadow);
 }
 
 .prompt-box-send-btn.active:hover {
-  background: var(--brand-hover);
+  background: var(--composer-accent-hover);
   transform: scale(1.05);
 }
 
@@ -2685,8 +2685,8 @@ h3 {
 /* 发送按钮工作/打断状态 */
 .prompt-box-send-btn.working {
   opacity: 1 !important;
-  background: var(--brand-default);
-  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4);
+  background: var(--composer-accent);
+  box-shadow: var(--composer-accent-working-shadow);
   cursor: pointer;
 }
 
@@ -2817,7 +2817,7 @@ h3 {
 }
 
 .prompt-box-mode-btn.active:hover .prompt-box-mode-pill-indicator {
-  background: var(--brand-hover);
+  background: var(--composer-accent-hover);
 }
 
 /* 滑动动画药丸背景 (Framer Motion layoutId 驱动) */
@@ -2825,8 +2825,8 @@ h3 {
   position: absolute;
   inset: 0;
   border-radius: 9999px;
-  background: var(--brand-default, #2563eb);
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
+  background: var(--composer-accent);
+  box-shadow: var(--composer-pill-shadow);
   transition: background-color 0.15s ease;
   z-index: 0;
   pointer-events: none;

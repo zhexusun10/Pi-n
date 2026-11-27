@@ -5456,14 +5456,23 @@ pub(crate) fn prepare_conflicts_scoped(
             "refs/pi-n/parents/",
         ],
     )?;
-    prepare(
-        source,
-        path,
-        &base,
-        &parents.lines().map(str::to_owned).collect::<Vec<_>>(),
-        exclusions,
-        false,
-    )?;
+    let parent_heads: Vec<String> = parents
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let base = composition_base(source, &base, &parent_heads)?;
+    let mut inputs: Vec<String> = parent_heads
+        .into_iter()
+        .filter(|head| has_record(source, head))
+        .collect();
+    if let Ok(current) = workspace::git(path, &["rev-parse", "HEAD"]) {
+        if has_record(source, &current) && !inputs.contains(&current) {
+            inputs.push(current);
+        }
+    }
+    let inputs = workspace::independent_heads(path, &inputs)?;
+    prepare(source, path, &base, &inputs, exclusions, false)?;
     if !path.join(".git").exists() {
         let conflicts = workspace::git(path, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
         let before = conflicts

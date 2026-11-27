@@ -129,8 +129,19 @@
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  padding: 6px 8px 16px;
+  /* Slimmer 6px scrollbar track + 2px right padding = 8px total, matching the
+     8px left inset without leaving a wide gutter on the right edge. */
+  padding: 6px 2px 16px 8px;
   background: var(--bg-canvas);
+}
+
+.changes-pane-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.changes-pane-body::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
 }
 
 .changes-pane-state {
@@ -384,6 +395,15 @@
   contain: layout style;
 }
 
+.changed-file-diff-box::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.changed-file-diff-box::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+}
+
 .changed-file-diff-lines {
   display: flex;
   flex-direction: column;
@@ -397,7 +417,7 @@
 }
 
 .diff-line-hunk {
-  background: rgba(37, 99, 235, 0.06);
+  background: var(--brand-subtle);
   color: var(--text-secondary);
 }
 

@@ -6779,6 +6779,9 @@ fn get_file_changes(
     };
     // Bash rows are only leads (`rm x`, `sed -i x`): keep those Git confirms.
     let summary = crate::file_changes::verify_snapshot_changes(summary, &state);
+    // Hide untracked `.gitignore`d artifacts and rebuildable caches from the
+    // display summary while keeping project-tracked files and snapshot contracts intact.
+    let summary = crate::file_changes::filter_display_ignored(summary, &state);
     // The browser renders at most a small slice; keep the true totals and cap
     // the transferred rows so a build-heavy Run stays cheap to display.
     let summary = crate::file_changes::cap_summary_files(

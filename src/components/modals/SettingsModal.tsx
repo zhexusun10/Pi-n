@@ -12,7 +12,7 @@ import { ExtensionSettings } from "../ExtensionSettings";
 import { AutostartSettings } from "../AutostartSettings";
 import { UpdateSettings } from "../UpdateSettings";
 import { normalizeWorkspacePath } from "../../services/workspaceConversations";
-import { autoExpandCotEnabled, setAutoExpandCot, executionOverviewEnabled, setExecutionOverview, currentLandingBackground, setLandingBackground, hideAutoModeEnabled, setHideAutoMode, completionNotificationsEnabled, setCompletionNotifications, completionNotificationSoundEnabled, setCompletionNotificationSound } from "../../services/displayPreferences";
+import { autoExpandCotEnabled, setAutoExpandCot, executionOverviewEnabled, setExecutionOverview, currentLandingBackground, setLandingBackground, currentAccentColor, setAccentColor, hideAutoModeEnabled, setHideAutoMode, completionNotificationsEnabled, setCompletionNotifications, completionNotificationSoundEnabled, setCompletionNotificationSound } from "../../services/displayPreferences";
 import {
   getNotificationPermissionStatus,
   openDesktopNotificationSettings,
@@ -62,6 +62,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
   const [autoExpandCot, setAutoExpandCotDraft] = useState(() => autoExpandCotEnabled());
   const [executionOverview, setExecutionOverviewDraft] = useState(() => executionOverviewEnabled());
   const [landingBackground, setLandingBackgroundDraft] = useState(() => currentLandingBackground());
+  const [accentColor, setAccentColorDraft] = useState(() => currentAccentColor());
   const [hideAutoMode, setHideAutoModeDraft] = useState(() => hideAutoModeEnabled());
   const [completionNotifications, setCompletionNotificationsDraft] = useState(() => completionNotificationsEnabled());
   const [completionNotificationSound, setCompletionNotificationSoundDraft] = useState(() => completionNotificationSoundEnabled());
@@ -116,6 +117,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
       setAutoExpandCot(autoExpandCot);
       setExecutionOverview(executionOverview);
       setLandingBackground(landingBackground);
+      setAccentColor(accentColor);
       setHideAutoMode(hideAutoMode);
       setCompletionNotifications(completionNotifications);
       setCompletionNotificationSound(completionNotificationSound);
@@ -450,6 +452,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
                   aria-label={t("通知提示音")}
                 />
               </label>
+              <h5 className="settings-ui-group-title">{t("重点色")}</h5>
+              <p className="section-desc">{t("选择卡片、输入框控件与运行呼吸灯的重点色风格。")}</p>
+              <fieldset className="settings-accent-options" disabled={saving}>
+                <legend className="sr-only">{t("重点色")}</legend>
+                <label className={`settings-accent-option ${accentColor === "blue" ? "is-selected" : ""}`}>
+                  <span className="settings-background-preview settings-accent-preview is-blue" aria-hidden="true">
+                    <span className="settings-accent-preview-sidebar">
+                      <span className="settings-accent-preview-card">
+                        <span className="settings-accent-preview-dot" />
+                        <span className="settings-accent-preview-line" />
+                      </span>
+                      <span className="settings-accent-preview-line is-muted" />
+                    </span>
+                    <span className="settings-accent-preview-main">
+                      <span className="settings-accent-preview-bubble" />
+                      <span className="settings-accent-preview-composer">
+                        <span className="settings-accent-preview-pill" />
+                        <span className="settings-accent-preview-send" />
+                      </span>
+                    </span>
+                  </span>
+                  <span className="settings-background-option-label">
+                    <input type="radio" name="accent-color" value="blue" checked={accentColor === "blue"}
+                      onChange={() => setAccentColorDraft("blue")} />
+                    <span><strong>{t("蓝色")}</strong><small>{t("淡蓝色卡片搭配蓝色输入框与呼吸灯")}</small></span>
+                  </span>
+                </label>
+                <label className={`settings-accent-option ${accentColor === "black" ? "is-selected" : ""}`}>
+                  <span className="settings-background-preview settings-accent-preview is-black" aria-hidden="true">
+                    <span className="settings-accent-preview-sidebar">
+                      <span className="settings-accent-preview-card">
+                        <span className="settings-accent-preview-dot" />
+                        <span className="settings-accent-preview-line" />
+                      </span>
+                      <span className="settings-accent-preview-line is-muted" />
+                    </span>
+                    <span className="settings-accent-preview-main">
+                      <span className="settings-accent-preview-bubble" />
+                      <span className="settings-accent-preview-composer">
+                        <span className="settings-accent-preview-pill" />
+                        <span className="settings-accent-preview-send" />
+                      </span>
+                    </span>
+                  </span>
+                  <span className="settings-background-option-label">
+                    <input type="radio" name="accent-color" value="black" checked={accentColor === "black"}
+                      onChange={() => setAccentColorDraft("black")} />
+                    <span><strong>{t("黑色")}</strong><small>{t("灰色卡片搭配黑色输入框与呼吸灯")}</small></span>
+                  </span>
+                </label>
+              </fieldset>
               <h5 className="settings-ui-group-title">{t("首页背景")}</h5>
               <p className="section-desc">{t("自定义首页视觉风格。")}</p>
               <fieldset className="settings-background-options" disabled={saving}>

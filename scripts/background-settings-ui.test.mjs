@@ -845,3 +845,272 @@ test("completion notification fires for the currently viewed conversation when h
     await context.close();
   }
 });
+
+test("accent color stages with Settings, updates cards/composer/pulse together and persists across reload", { timeout: 90_000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
+  let savedConfig = { ...config }, failSave = true;
+  const errors = [], saves = [];
+  const runningToolJsonl = `${JSON.stringify({
+    type: "tool_execution_start",
+    toolCallId: "tool-accent-1",
+    toolName: "bash",
+    args: { command: "echo running" },
+  })}\n`;
+  const activeRun = {
+    ...empty,
+    runId: "accent-run",
+    title: "Accent test prompt",
+    planType: "serial",
+    approved: true,
+    config,
+    phase: "running",
+    graph: {
+      originalGoal: "Accent test prompt",
+      nodes: [{ id: "task", task: "Accent test prompt" }],
+      edges: [],
+    },
+    nodes: {
+      task: {
+        status: "running",
+        revision: 1,
+        head: null,
+        instruction: "Accent test prompt",
+        error: null,
+      },
+    },
+    executions: [{
+      id: "exec-accent-1",
+      node: "task",
+      revision: 1,
+      attempt: 1,
+      sessionId: "sess-accent",
+      worktree: repository,
+      before: "a",
+      after: null,
+      workspaceLineage: [],
+      input: null,
+      result: null,
+      status: "running",
+      startedAt: 1000,
+      completedAt: null,
+      output: "",
+      outputBytes: runningToolJsonl.length,
+      pid: null,
+      metrics: null,
+    }],
+    events: [{ sequence: 1, timestamp: 1000, type: "status" }],
+  };
+  const accentBootstrap = {
+    ...bootstrap,
+    snapshot: empty,
+    runs: ["accent-run"],
+    conversations: fixtureSummaries([activeRun]),
+  };
+  await context.addInitScript(({ repository }) => {
+    localStorage.setItem("pi_n_language_v1", "en");
+    localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Accent workspace", lastOpened: 1 }]));
+  }, { repository });
+  await context.route("**/api/*", async route => {
+    const command = new URL(route.request().url()).pathname.slice(5);
+    const body = route.request().postDataJSON();
+    if (command === "save_config") {
+      if (failSave) return route.fulfill({ status: 500, json: { error: "save rejected" } });
+      savedConfig = body.config;
+      saves.push(savedConfig);
+      return route.fulfill({ json: { result: { ...accentBootstrap, config: savedConfig } } });
+    }
+    if (command === "get_execution_output") {
+      return route.fulfill({
+        json: {
+          result: {
+            runId: "accent-run",
+            executionId: "exec-accent-1",
+            content: runningToolJsonl,
+            startOffset: 0,
+            nextOffset: runningToolJsonl.length,
+            totalBytes: runningToolJsonl.length,
+            complete: false,
+            status: "running",
+          },
+        },
+      });
+    }
+    const defaults = {
+      bootstrap: { ...accentBootstrap, config: savedConfig },
+      history: activeRun,
+      snapshot: activeRun,
+      load_run: activeRun,
+      get_file_changes: fixtureFileChanges(body),
+      extension_command: { instance: "standalone", commands: [] },
+      snapshot_if_changed: { version: "accent-v1", snapshot: null, activity: [] },
+      repository_status: { repository, valid: true, error: null },
+      list_plannings: [],
+      list_files: { files: [] },
+      list_skills: { skills: [] },
+      provider_auth: catalog,
+      pi_extensions: { globalDirectory: "mock", extensions: [] },
+      environment_capabilities: { platform: "macos", arch: "arm64", nativeWorkspace: true },
+    };
+    if (!(command in defaults)) errors.push(`Unexpected API: ${command}`);
+    return route.fulfill({ json: { result: defaults[command] ?? null } });
+  });
+
+  const page = await context.newPage();
+  page.setDefaultTimeout(10_000);
+  page.on("pageerror", error => errors.push(String(error)));
+
+  const readHomeAccentStyles = () => page.evaluate(() => {
+    const ws = document.querySelector(".project-workspace-item.active");
+    const pulse = document.querySelector(".run-dot.running-pulse");
+    const pill = document.querySelector(".landing-screen .prompt-box-mode-pill-indicator");
+    const send = document.querySelector(".landing-screen .prompt-box-send-btn.active");
+    return {
+      attr: document.documentElement.dataset.accentColor,
+      wsBg: ws ? getComputedStyle(ws).backgroundColor : null,
+      pulseBg: pulse ? getComputedStyle(pulse).backgroundColor : null,
+      pillBg: pill ? getComputedStyle(pill).backgroundColor : null,
+      sendBg: send ? getComputedStyle(send).backgroundColor : null,
+    };
+  });
+
+  try {
+    await page.goto(origin, { waitUntil: "domcontentloaded" });
+    await page.locator(".project-workspace-item.active").waitFor();
+    await page.locator(".run-dot.running-pulse").waitFor();
+    await page.locator(".landing-screen textarea").fill("Hello accent");
+    await page.locator(".landing-screen .prompt-box-send-btn.active").waitFor();
+
+    // Default is blue accent: light-blue sidebar card + blue composer controls and running pulse.
+    await page.waitForFunction(() => {
+      const send = document.querySelector(".landing-screen .prompt-box-send-btn.active");
+      return send && getComputedStyle(send).backgroundColor === "rgb(37, 99, 235)";
+    });
+    const defaultStyles = await readHomeAccentStyles();
+    assert.equal(defaultStyles.attr, "blue");
+    assert.equal(defaultStyles.wsBg, "rgb(239, 246, 255)");
+    assert.equal(defaultStyles.pulseBg, "rgb(37, 99, 235)");
+    assert.equal(defaultStyles.pillBg, "rgb(37, 99, 235)");
+    assert.equal(defaultStyles.sendBg, "rgb(37, 99, 235)");
+
+    // Staging Black in Settings and cancelling leaves the live accent untouched.
+    await openSettings(page);
+    const accentGroup = page.getByRole("group", { name: "Accent color", exact: true });
+    assert.equal(await accentGroup.getByRole("radio", { name: /Blue/ }).isChecked(), true);
+    assert.deepEqual(
+      await page.locator('input[name="accent-color"]').evaluateAll(inputs => inputs.map(input => input.value)),
+      ["blue", "black"],
+      "the default option appears first",
+    );
+    const accentTops = await page.locator(".settings-accent-option").evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().top)));
+    assert.equal(new Set(accentTops).size, 1, "the two accent options share one row");
+    await accentGroup.getByRole("radio", { name: /Black/ }).check();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.locator(".settings-modal").waitFor({ state: "detached" });
+    assert.equal((await readHomeAccentStyles()).attr, "blue");
+
+    // Failed save also leaves live accent untouched; retrying once backend accepts commits Black.
+    await openSettings(page);
+    await accentGroup.getByRole("radio", { name: /Black/ }).check();
+    await page.locator(".save-config-btn").click();
+    await page.locator(".settings-save-error").waitFor();
+    assert.equal((await readHomeAccentStyles()).attr, "blue");
+
+    failSave = false;
+    await page.locator(".save-config-btn").click();
+    await page.locator(".settings-modal").waitFor({ state: "detached" });
+    assert.ok(saves.every(saved => !("accentColor" in saved)), "accent color stays out of backend config");
+
+    await page.waitForFunction(() => {
+      const ws = document.querySelector(".project-workspace-item.active");
+      const send = document.querySelector(".landing-screen .prompt-box-send-btn.active");
+      const pill = document.querySelector(".landing-screen .prompt-box-mode-pill-indicator");
+      const pulse = document.querySelector(".run-dot.running-pulse");
+      return ws && send && pill && pulse
+        && getComputedStyle(ws).backgroundColor === "rgba(15, 23, 42, 0.055)"
+        && getComputedStyle(send).backgroundColor === "rgb(24, 24, 27)"
+        && getComputedStyle(pill).backgroundColor === "rgb(24, 24, 27)"
+        && getComputedStyle(pulse).backgroundColor === "rgb(24, 24, 27)";
+    });
+    const blackStyles = await readHomeAccentStyles();
+    assert.equal(blackStyles.attr, "black");
+    assert.equal(blackStyles.wsBg, "rgba(15, 23, 42, 0.055)");
+    assert.equal(blackStyles.pulseBg, "rgb(24, 24, 27)");
+    assert.equal(blackStyles.pillBg, "rgb(24, 24, 27)");
+    assert.equal(blackStyles.sendBg, "rgb(24, 24, 27)");
+
+    // Open conversation and verify user bubble, chosen sidebar card, Latest button, and running tool card match Black, then survive reload.
+    await page.locator('.run-item[data-run-id="accent-run"]').click();
+    await page.locator(".chat-bubble-user").waitFor();
+    await page.locator(".tool-call-card.running").waitFor();
+    await page.waitForFunction(() => {
+      const chosen = document.querySelector(".run-item.chosen");
+      return chosen && getComputedStyle(chosen).backgroundColor === "rgba(15, 23, 42, 0.055)";
+    });
+    const blackConv = await page.evaluate(() => {
+      const bubble = document.querySelector(".chat-bubble-user");
+      const chosen = document.querySelector(".run-item.chosen");
+      const latest = document.querySelector(".scroll-to-bottom-btn");
+      const runningTool = document.querySelector(".tool-call-card.running");
+      const runningStatus = document.querySelector(".tool-status.running");
+      return {
+        bubbleBg: bubble ? getComputedStyle(bubble).backgroundColor : null,
+        chosenBg: chosen ? getComputedStyle(chosen).backgroundColor : null,
+        latestBg: latest ? getComputedStyle(latest).backgroundColor : null,
+        runningToolBorder: runningTool ? getComputedStyle(runningTool).borderTopColor : null,
+        runningStatusColor: runningStatus ? getComputedStyle(runningStatus).color : null,
+      };
+    });
+    assert.equal(blackConv.bubbleBg, "rgba(15, 23, 42, 0.055)");
+    assert.equal(blackConv.chosenBg, "rgba(15, 23, 42, 0.055)");
+    assert.equal(blackConv.latestBg, "rgb(24, 24, 27)");
+    assert.equal(blackConv.runningToolBorder, "rgba(24, 24, 27, 0.42)");
+    assert.equal(blackConv.runningStatusColor, "rgb(24, 24, 27)");
+
+    // Reload preserves Black, and switching back to Blue restores light-blue cards + blue controls/outlines.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator(".project-workspace-item.active").waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.accentColor), "black");
+    assert.equal(await page.evaluate(() => localStorage.getItem("pi_n_accent_color_v1")), "black");
+
+    await openSettings(page);
+    assert.equal(await accentGroup.getByRole("radio", { name: /Black/ }).isChecked(), true);
+    await accentGroup.getByRole("radio", { name: /Blue/ }).check();
+    await page.locator(".save-config-btn").click();
+    await page.locator(".settings-modal").waitFor({ state: "detached" });
+    await page.locator('.run-item[data-run-id="accent-run"]').click();
+    await page.locator(".chat-bubble-user").waitFor();
+    await page.locator(".tool-call-card.running").waitFor();
+    await page.waitForFunction(() => {
+      const chosen = document.querySelector(".run-item.chosen");
+      return chosen && getComputedStyle(chosen).backgroundColor === "rgb(239, 246, 255)";
+    });
+    const blueConv = await page.evaluate(() => {
+      const bubble = document.querySelector(".chat-bubble-user");
+      const chosen = document.querySelector(".run-item.chosen");
+      const latest = document.querySelector(".scroll-to-bottom-btn");
+      const runningTool = document.querySelector(".tool-call-card.running");
+      const runningStatus = document.querySelector(".tool-status.running");
+      return {
+        attr: document.documentElement.dataset.accentColor,
+        bubbleBg: bubble ? getComputedStyle(bubble).backgroundColor : null,
+        bubbleBorder: bubble ? getComputedStyle(bubble).borderTopColor : null,
+        chosenBg: chosen ? getComputedStyle(chosen).backgroundColor : null,
+        chosenBorder: chosen ? getComputedStyle(chosen).borderTopColor : null,
+        latestBg: latest ? getComputedStyle(latest).backgroundColor : null,
+        runningToolBorder: runningTool ? getComputedStyle(runningTool).borderTopColor : null,
+        runningStatusColor: runningStatus ? getComputedStyle(runningStatus).color : null,
+      };
+    });
+    assert.equal(blueConv.attr, "blue");
+    assert.equal(blueConv.bubbleBg, "rgb(239, 246, 255)");
+    assert.equal(blueConv.bubbleBorder, "rgb(191, 219, 254)");
+    assert.equal(blueConv.chosenBg, "rgb(239, 246, 255)");
+    assert.equal(blueConv.chosenBorder, "rgb(191, 219, 254)");
+    assert.equal(blueConv.latestBg, "rgb(37, 99, 235)");
+    assert.equal(blueConv.runningToolBorder, "rgba(59, 130, 246, 0.65)");
+    assert.equal(blueConv.runningStatusColor, "rgb(59, 130, 246)");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});

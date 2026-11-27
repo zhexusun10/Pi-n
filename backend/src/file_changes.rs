@@ -1373,11 +1373,22 @@ pub fn compute_git_changes(
         leaf.eq_ignore_ascii_case(".DS_Store") || leaf.starts_with("._")
     };
     let mut items_map = git_diff::parse(&diff, node, execution_id)?;
+    let has_generated = items_map
+        .keys()
+        .any(|path| crate::workspace::is_generated_artifact(Path::new(path)));
+    let tracked = if has_generated {
+        crate::workspace::project_tracked_paths(repo_or_worktree)
+    } else {
+        Default::default()
+    };
+    let tracked_index = crate::workspace::TrackedPathIndex::new(repo_or_worktree, &tracked);
     items_map.retain(|path, _| {
         !crate::path_identity::is_runtime_metadata_path(Path::new(path))
             && path != ".git"
             && !path.starts_with(".git/")
             && !is_excluded_metadata(path)
+            && (!crate::workspace::is_generated_artifact(Path::new(path))
+                || tracked_index.matches(path))
     });
 
     // If comparing against live working tree (`after` is None), also collect untracked files.
@@ -1480,6 +1491,56 @@ pub fn merge_summaries(summaries: &[FileChangeSummary], is_running: bool) -> Fil
 /// tens of MiB. Keep the true totals and only the most notable rows, matching
 /// the browser's added/deleted-first, lines-descending display order.
 pub const MAX_DISPLAYED_FILE_CHANGES: usize = 60;
+
+/// Filter `.gitignore`-matched untracked build/dependency artifacts and
+/// rebuildable caches out of the UI display summary without altering snapshot
+/// collection contracts. Project-tracked files are always kept.
+pub fn filter_display_ignored(
+    summary: FileChangeSummary,
+    state: &Snapshot,
+) -> FileChangeSummary {
+    if summary.files.is_empty() {
+        return summary;
+    }
+    let Some(repo_str) = state
+        .config
+        .as_ref()
+        .map(|config| config.repository.as_str())
+        .filter(|path| !path.is_empty())
+    else {
+        return summary;
+    };
+    let repo = Path::new(repo_str);
+    let paths: Vec<&str> = summary.files.iter().map(|item| item.path.as_str()).collect();
+    let ignored = crate::workspace::project_ignored_paths(repo, &paths);
+    let has_generated = summary
+        .files
+        .iter()
+        .any(|item| crate::workspace::is_generated_artifact(Path::new(&item.path)));
+    let tracked = if has_generated {
+        crate::workspace::project_tracked_paths(repo)
+    } else {
+        Default::default()
+    };
+    let tracked_index = crate::workspace::TrackedPathIndex::new(repo, &tracked);
+    if ignored.is_empty() && !has_generated {
+        return summary;
+    }
+    let is_hidden = |path: &str| {
+        ignored.contains(path)
+            || (crate::workspace::is_generated_artifact(Path::new(path))
+                && !tracked_index.matches(path))
+    };
+    let active_file_path = summary
+        .active_file_path
+        .filter(|path| !is_hidden(path));
+    let files: Vec<FileChangeItem> = summary
+        .files
+        .into_iter()
+        .filter(|item| !is_hidden(&item.path))
+        .collect();
+    FileChangeSummary::from_files(files, summary.is_running, active_file_path)
+}
 
 pub fn cap_summary_files(mut summary: FileChangeSummary, limit: usize) -> FileChangeSummary {
     if summary.files.len() <= limit {
@@ -1878,9 +1939,9 @@ struct PersistedRunChanges {
 }
 
 /// Derived summaries are a cache, not history. Bump this whenever transcript
-/// parsing changes semantics so an older sidecar cannot keep stale rows (for
-/// example bash deletions that were never inside the workspace) authoritative.
-const PERSISTED_CHANGES_VERSION: u32 = 5;
+/// parsing or artifact-filtering semantics change so an older sidecar cannot
+/// keep stale rows authoritative.
+const PERSISTED_CHANGES_VERSION: u32 = 6;
 
 fn read_persisted(path: &Path) -> PersistedRunChanges {
     fs::read_to_string(path)
@@ -2849,6 +2910,96 @@ mod tests {
             "project artifacts stay: {paths:?}"
         );
         assert_eq!(live.added_count, 6);
+    }
+
+    #[test]
+    fn committed_git_changes_drop_cargo_intermediates_and_display_filter_hides_gitignored_outputs() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(repo.join("src")).unwrap();
+        crate::workspace::git(&repo, &["init", "-q"]).unwrap();
+        crate::workspace::git(&repo, &["config", "user.email", "test@example.com"]).unwrap();
+        crate::workspace::git(&repo, &["config", "user.name", "Test"]).unwrap();
+
+        fs::write(
+            repo.join(".gitignore"),
+            "backend/target*/\nsrc-tauri/gen/\ndist/\n.env*\n!.env.example\n",
+        )
+        .unwrap();
+        fs::create_dir_all(repo.join("dist")).unwrap();
+        fs::write(repo.join("dist/tracked.js"), "tracked-v1\n").unwrap();
+        fs::write(repo.join("src/lib.rs"), "pub fn v1() {}\n").unwrap();
+        crate::workspace::git(&repo, &["add", "-f", ".gitignore", "dist/tracked.js", "src/lib.rs"])
+            .unwrap();
+        crate::workspace::git(&repo, &["commit", "-q", "-m", "base"]).unwrap();
+        let before = crate::workspace::git(&repo, &["rev-parse", "HEAD"]).unwrap();
+
+        // Simulate a node that edited source + tracked dist file and ran cargo/build.
+        fs::write(repo.join("src/lib.rs"), "pub fn v2() {}\n").unwrap();
+        fs::write(repo.join("dist/tracked.js"), "tracked-v2\n").unwrap();
+        fs::write(repo.join(".env.example"), "KEY=placeholder\n").unwrap();
+        fs::write(repo.join(".env.local"), "SECRET=1\n").unwrap();
+        fs::create_dir_all(repo.join("dist")).unwrap();
+        fs::write(repo.join("dist/untracked.js"), "built\n").unwrap();
+        fs::create_dir_all(repo.join("src-tauri/gen/schemas")).unwrap();
+        fs::write(repo.join("src-tauri/gen/schemas/desktop.json"), "{}\n").unwrap();
+        fs::create_dir_all(repo.join("backend/target/debug/deps")).unwrap();
+        fs::create_dir_all(repo.join("backend/target/debug/build/anyhow-1")).unwrap();
+        fs::write(repo.join("backend/target/CACHEDIR.TAG"), "tag\n").unwrap();
+        fs::write(repo.join("backend/target/debug/pi-n"), "binary\n").unwrap();
+        fs::write(repo.join("backend/target/debug/pi-n.d"), "deps\n").unwrap();
+        fs::write(repo.join("backend/target/debug/deps/libfoo.rmeta"), "meta\n").unwrap();
+        fs::write(
+            repo.join("backend/target/debug/build/anyhow-1/root-output"),
+            "out\n",
+        )
+        .unwrap();
+
+        // Even if an older snapshot commit force-added Cargo intermediates,
+        // `compute_git_changes` drops them while keeping runnable outputs.
+        crate::workspace::git(&repo, &["add", "-f", "-A"]).unwrap();
+        // Reset project index back to tracked-only so `project_tracked_paths`
+        // reflects real project tracking (as in a private graph shadow commit).
+        crate::workspace::git(&repo, &["commit", "-q", "-m", "snapshot"]).unwrap();
+        let after = crate::workspace::git(&repo, &["rev-parse", "HEAD"]).unwrap();
+        crate::workspace::git(&repo, &["reset", "-q", "--mixed", &before]).unwrap();
+
+        let committed =
+            compute_git_changes(&repo, &before, Some(&after), "worker", "exec-1").unwrap();
+        let committed_paths: Vec<&str> = committed.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(
+            committed_paths.contains(&"backend/target/debug/pi-n"),
+            "runnable binary stays in raw git diff: {committed_paths:?}"
+        );
+        for dropped in [
+            "backend/target/CACHEDIR.TAG",
+            "backend/target/debug/pi-n.d",
+            "backend/target/debug/deps/libfoo.rmeta",
+            "backend/target/debug/build/anyhow-1/root-output",
+        ] {
+            assert!(
+                !committed_paths.contains(&dropped),
+                "Cargo intermediate {dropped} must be dropped from git changes: {committed_paths:?}"
+            );
+        }
+
+        // Display layer additionally hides untracked `.gitignore`d artifacts
+        // while keeping tracked files and negated ignore entries.
+        let mut state = Snapshot::default();
+        state.config = Some(
+            serde_json::from_value(serde_json::json!({
+                "repository": repo, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+        );
+        let displayed = filter_display_ignored(committed, &state);
+        let displayed_paths: Vec<&str> = displayed.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            displayed_paths,
+            vec![".env.example", "dist/tracked.js", "src/lib.rs"],
+            "display filter must hide untracked gitignored build artifacts: {displayed_paths:?}"
+        );
+        assert_eq!(displayed.total_files, 3);
     }
 
     #[test]

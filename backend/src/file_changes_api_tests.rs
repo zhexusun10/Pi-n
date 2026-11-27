@@ -1212,3 +1212,127 @@ fn bash_only_run_lists_verified_changes_that_open_to_content_and_survive_a_commi
     assert_eq!(list(), expected, "a later commit must not rewrite the history");
     crate::file_changes::invalidate_run(&run);
 }
+
+#[test]
+fn file_changes_api_hides_untracked_gitignored_build_outputs_while_keeping_source_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join("src")).unwrap();
+    crate::workspace::git(&repo, &["init", "-q"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.email", "test@example.com"]).unwrap();
+    crate::workspace::git(&repo, &["config", "user.name", "Tester"]).unwrap();
+    fs::write(
+        repo.join(".gitignore"),
+        "backend/target*/\nsrc-tauri/target*/\nsrc-tauri/gen/\n",
+    )
+    .unwrap();
+    fs::write(repo.join("src/app.rs"), "pub fn a() {}\n").unwrap();
+    crate::workspace::git(&repo, &["add", "."]).unwrap();
+    crate::workspace::git(&repo, &["commit", "-qm", "base"]).unwrap();
+
+    let base = crate::workspace::snapshot_repository(&repo).unwrap();
+    let run = Uuid::new_v4().to_string();
+    let worktree = temp
+        .path()
+        .join(".pi-n-worktrees")
+        .join(&run)
+        .join("worker");
+    crate::workspace::prepare(&repo, &worktree, &base, &[]).unwrap();
+    fs::write(worktree.join("src/app.rs"), "pub fn b() {}\n").unwrap();
+    fs::create_dir_all(worktree.join("backend/target/debug/deps")).unwrap();
+    fs::write(worktree.join("backend/target/debug/pi-n"), "binary\n").unwrap();
+    fs::write(
+        worktree.join("backend/target/debug/deps/libfoo.rmeta"),
+        "meta\n",
+    )
+    .unwrap();
+    fs::create_dir_all(worktree.join("src-tauri/gen/schemas")).unwrap();
+    fs::write(
+        worktree.join("src-tauri/gen/schemas/desktop-schema.json"),
+        "{}\n",
+    )
+    .unwrap();
+    let after = crate::workspace::snapshot_node(&worktree, &repo, "worker").unwrap();
+
+    // Snapshot contract: runnable binary stays in the node snapshot, while
+    // Cargo deps intermediate does not.
+    let tree_files = crate::workspace::repository_git(
+        &repo,
+        &["ls-tree", "-r", "--name-only", "-z", &after],
+    )
+    .unwrap();
+    assert!(tree_files.split('\0').any(|p| p == "backend/target/debug/pi-n"));
+    assert!(!tree_files
+        .split('\0')
+        .any(|p| p == "backend/target/debug/deps/libfoo.rmeta"));
+
+    let mut runtime = Runtime::open(temp.path()).unwrap();
+    runtime.state.run_id = run.clone();
+    runtime
+        .emit(EventKind::Created {
+            graph: Graph {
+                original_goal: "build and test".into(),
+                nodes: vec![Node {
+                    id: "worker".into(),
+                    task: "edit and test".into(),
+                }],
+                edges: vec![],
+            },
+            config: serde_json::from_value(serde_json::json!({
+                "repository": repo, "model": "test", "maxParallel": 1
+            }))
+            .unwrap(),
+            planning_id: None,
+            planning: None,
+        })
+        .unwrap();
+    runtime
+        .emit(EventKind::Started {
+            execution: Execution {
+                id: "exec-1".into(),
+                node: "worker".into(),
+                revision: 1,
+                attempt: 1,
+                session_id: "s1".into(),
+                worktree: worktree.to_string_lossy().into_owned(),
+                before: base.clone(),
+                workspace_lineage: vec![],
+                after: Some(after.clone()),
+                input: None,
+                result: None,
+                status: "completed".into(),
+                output: String::new(),
+                output_bytes: 0,
+                pid: None,
+                started_at: now(),
+                completed_at: Some(now()),
+                metrics: None,
+            },
+            message_sequences: None,
+            fresh_restart: false,
+        })
+        .unwrap();
+
+    let service = Arc::new(Service {
+        runtime: Mutex::new(runtime),
+        driving: AtomicBool::new(false),
+        drive_signal: (Mutex::new(0), Condvar::new()),
+        planning: AtomicBool::new(false),
+        extension: PathBuf::new(),
+    });
+    let value = read_changes(|| {
+        get_file_changes(
+            &serde_json::json!({ "runId": run, "executionId": "exec-1" }),
+            &service,
+        )
+    });
+    let paths: Vec<&str> = value["summary"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["src/app.rs"]);
+    assert_eq!(value["summary"]["totalFiles"].as_u64(), Some(1));
+    crate::file_changes::invalidate_run(&run);
+}

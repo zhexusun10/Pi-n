@@ -3708,3 +3708,245 @@ fn stat_reused_capture_caches_old_files_and_still_detects_content_or_metadata_ch
         "{err_mode}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn materialized_publication_conflict_preserves_parent_directory_metadata_and_succeeds() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    let base = workspace::snapshot_repository(&repo).unwrap();
+
+    #[cfg(target_os = "macos")]
+    let set_cargo_like_xattr = |dir: &Path| {
+        use std::os::unix::ffi::OsStrExt;
+        let xattr = std::ffi::CString::new("com.apple.fileprovider.ignore#P").unwrap();
+        let c_path = std::ffi::CString::new(dir.as_os_str().as_bytes()).unwrap();
+        assert_eq!(
+            unsafe {
+                libc::setxattr(
+                    c_path.as_ptr(),
+                    xattr.as_ptr(),
+                    b"1".as_ptr().cast(),
+                    1,
+                    0,
+                    0,
+                )
+            },
+            0
+        );
+    };
+
+    let mut heads = Vec::new();
+    for (name, content) in [("left", "left-build\n"), ("right", "right-build\n")] {
+        let node = slot(&temp, name);
+        workspace::prepare(&repo, &node, &base, &[]).unwrap();
+        let target_dir = node.join("backend/target");
+        fs::create_dir_all(target_dir.join("debug")).unwrap();
+        fs::write(target_dir.join("debug/pi-n"), content).unwrap();
+        fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        #[cfg(target_os = "macos")]
+        set_cargo_like_xattr(&target_dir);
+        heads.push(workspace::snapshot_node(&node, &repo, name).unwrap());
+    }
+
+    let extra_node = slot(&temp, "empty-dir");
+    workspace::prepare(&repo, &extra_node, &base, &[]).unwrap();
+    fs::create_dir_all(extra_node.join("src-tauri/resources")).unwrap();
+    heads.push(workspace::snapshot_node(&extra_node, &repo, "empty-dir").unwrap());
+
+    let expected_extra = {
+        let left_record = record_path(&repo, &heads[0]).unwrap();
+        let left_view = load(&left_record).unwrap();
+        match left_view.entries.get("backend/target") {
+            Some(Entry::Directory { extra, .. }) => extra.clone(),
+            other => panic!("expected backend/target directory metadata, got {other:?}"),
+        }
+    };
+
+    let mut saw_conflict = false;
+    let published = crate::graph_merge::merge_graph_with_workspace(&repo, &heads, |ws| {
+        saw_conflict = true;
+        // Mirrors `resolve_with_merger_for_node_revision`: prepare the conflict
+        // project view before the Merger runs, resolve, commit and seal.
+        prepare_conflicts(&repo, ws)?;
+        let target_dir = ws.join("backend/target");
+        let meta = fs::symlink_metadata(&target_dir).map_err(|e| e.to_string())?;
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o700,
+            "prepare_conflicts must inherit parent directory mode even from an unbound composition workspace"
+        );
+        assert_eq!(
+            crate::workspace_metadata::capture(&target_dir, &meta)?,
+            expected_extra,
+            "prepare_conflicts must inherit parent directory xattrs before Merger runs"
+        );
+        assert!(
+            ws.join("src-tauri/resources").is_dir(),
+            "prepare_conflicts must inherit parent empty directories"
+        );
+        fs::write(target_dir.join("debug/pi-n"), "resolved-build\n").map_err(|e| e.to_string())?;
+        workspace::git(ws, &["add", "-f", "--", "backend/target/debug/pi-n"])?;
+        crate::graph_merge::finish_project_resolution(ws, &[])?;
+        seal_prepared_scoped(ws, &repo, &[], None)?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert!(saw_conflict);
+    assert_eq!(
+        bytes(&repo.join("backend/target/debug/pi-n")),
+        b"resolved-build\n"
+    );
+    let follow = slot(&temp, "published-follow");
+    workspace::prepare(&repo, &follow, &published, &[]).unwrap();
+    let follow_meta = fs::symlink_metadata(follow.join("backend/target")).unwrap();
+    assert_eq!(follow_meta.permissions().mode() & 0o777, 0o700);
+    assert_eq!(
+        crate::workspace_metadata::capture(&follow.join("backend/target"), &follow_meta).unwrap(),
+        expected_extra
+    );
+    assert!(follow.join("src-tauri/resources").is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn publication_retry_accepts_existing_merger_commit_superseding_parent_metadata() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    let base = workspace::snapshot_repository(&repo).unwrap();
+
+    let mut heads = Vec::new();
+    for (name, content) in [("left", "left\n"), ("right", "right\n")] {
+        let node = slot(&temp, name);
+        workspace::prepare(&repo, &node, &base, &[]).unwrap();
+        let target_dir = node.join("backend/target");
+        fs::create_dir_all(target_dir.join("debug")).unwrap();
+        fs::write(target_dir.join("debug/pi-n"), content).unwrap();
+        fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        heads.push(workspace::snapshot_node(&node, &repo, name).unwrap());
+    }
+
+    let pub_path = slot(&temp, "publication-retry");
+    // First attempt: Merger resolves and seals a merge commit with different
+    // directory metadata, then fails before `prepared.json` is written (the
+    // same retained state as a failed publication retry).
+    let mut first_calls = 0usize;
+    let first_err =
+        crate::graph_merge::merge_graph_scoped_at(&repo, &heads, &[], &pub_path, |ws| {
+            first_calls += 1;
+            prepare_conflicts(&repo, ws)?;
+            let target_dir = ws.join("backend/target");
+            fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o755))
+                .map_err(|e| e.to_string())?;
+            fs::write(target_dir.join("debug/pi-n"), "merged\n").map_err(|e| e.to_string())?;
+            workspace::git(ws, &["add", "-f", "--", "backend/target/debug/pi-n"])?;
+            crate::graph_merge::finish_project_resolution(ws, &[])?;
+            seal_prepared_scoped(ws, &repo, &[], None)?;
+            Err("simulated interruption after sealing merger commit".into())
+        })
+        .unwrap_err();
+    assert_eq!(first_calls, 1);
+    assert!(first_err.contains("simulated interruption"), "{first_err}");
+
+    // Second attempt: retry against the retained workspace whose HEAD is
+    // already the sealed Merger commit descending from all parents.
+    let published = crate::graph_merge::merge_graph_scoped_at(&repo, &heads, &[], &pub_path, |_| {
+        panic!("retained merger commit already includes all parents")
+    })
+    .unwrap();
+
+    assert_eq!(bytes(&repo.join("backend/target/debug/pi-n")), b"merged\n");
+    let follow = slot(&temp, "retry-follow");
+    workspace::prepare(&repo, &follow, &published, &[]).unwrap();
+    assert_eq!(
+        fs::symlink_metadata(follow.join("backend/target"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755
+    );
+
+    // Independent parents with divergent metadata must still fail closed before
+    // any Merger runs.
+    let mut conflicting_heads = Vec::new();
+    for (name, content, mode) in [
+        ("conflict-a", "a\n", 0o700),
+        ("conflict-b", "b\n", 0o750),
+    ] {
+        let node = slot(&temp, name);
+        workspace::prepare(&repo, &node, &base, &[]).unwrap();
+        let dir = node.join("divergent");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("file.txt"), content).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+        conflicting_heads.push(workspace::snapshot_node(&node, &repo, name).unwrap());
+    }
+    let conflict_err =
+        crate::graph_merge::merge_graph_with_workspace(&repo, &conflicting_heads, |ws| {
+            prepare_conflicts(&repo, ws)
+        })
+        .unwrap_err();
+    assert!(
+        conflict_err.contains("Project metadata composition conflict at divergent"),
+        "{conflict_err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_conflicts_uses_common_composition_base_when_source_advances_after_fork() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(&temp);
+    fs::set_permissions(repo.join("tracked.txt"), fs::Permissions::from_mode(0o644)).unwrap();
+    let base = workspace::snapshot_repository(&repo).unwrap();
+
+    let mut heads = Vec::new();
+    for (name, content) in [("left", "left\n"), ("right", "right\n")] {
+        let node = slot(&temp, name);
+        workspace::prepare(&repo, &node, &base, &[]).unwrap();
+        fs::write(node.join("shared.txt"), content).unwrap();
+        heads.push(workspace::snapshot_node(&node, &repo, name).unwrap());
+    }
+
+    // Source metadata advances after the nodes forked.
+    fs::set_permissions(repo.join("tracked.txt"), fs::Permissions::from_mode(0o600)).unwrap();
+
+    let published = crate::graph_merge::merge_graph_with_workspace(&repo, &heads, |ws| {
+        prepare_conflicts(&repo, ws)?;
+        assert_eq!(
+            fs::symlink_metadata(ws.join("tracked.txt"))
+                .map_err(|e| e.to_string())?
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "prepare_conflicts must compose against the common ancestor so source metadata edits are preserved"
+        );
+        fs::write(ws.join("shared.txt"), "resolved\n").map_err(|e| e.to_string())?;
+        workspace::git(ws, &["add", "-f", "--", "shared.txt"])?;
+        crate::graph_merge::finish_project_resolution(ws, &[])?;
+        seal_prepared_scoped(ws, &repo, &[], None)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let follow = slot(&temp, "source-advanced-follow");
+    workspace::prepare(&repo, &follow, &published, &[]).unwrap();
+    assert_eq!(
+        fs::symlink_metadata(follow.join("tracked.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(bytes(&repo.join("shared.txt")), b"resolved\n");
+}

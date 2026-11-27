@@ -1,6 +1,7 @@
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { locale } from "./i18n";
+import { applyAccentColor, currentAccentColor } from "./services/displayPreferences";
 import { installDesktopExternalLinkHandler } from "./services/externalLink";
 import { installWindowFileDropGuard } from "./utils/fileDrop";
 import "@xyflow/react/dist/style.css";
@@ -13,6 +14,7 @@ import "./styles-workbench.css";
 import "./styles-planning.css";
 
 document.documentElement.lang = locale;
+applyAccentColor(currentAccentColor());
 installDesktopExternalLinkHandler();
 installWindowFileDropGuard();
 ReactDOM.createRoot(document.getElementById("root")!).render(<App />);

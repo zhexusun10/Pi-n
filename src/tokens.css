@@ -26,7 +26,7 @@
   --text-inverse: #FFFFFF;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
-  /* 品牌色体系 */
+  /* 品牌色体系（三色标识保留原色；交互重点色默认采用经典蓝，可在 UI 设置切换为黑色） */
   --pi-coral: #F09082;
   --pi-blue: #4D9ABF;
   --pi-yellow: #F1BE58;
@@ -36,6 +36,10 @@
   --brand-active: #1E40AF;
   --brand-subtle: #EFF6FF;
   --brand-border: #BFDBFE;
+  --brand-tint: rgba(59, 130, 246, 0.12);
+  --brand-tint-strong: rgba(37, 99, 235, 0.14);
+  --brand-shadow-sm: rgba(37, 99, 235, 0.2);
+  --brand-ring: rgba(37, 99, 235, 0.12);
   --accent: #2563EB;
   --accent-color: #2563EB;
 
@@ -70,6 +74,7 @@
   --status-waiting: #94A3B8;
 
   /* 遮罩与画布专用令牌 */
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 1px 3px rgba(15, 23, 42, 0.02);
   --bg-overlay: rgba(15, 23, 42, 0.45);
   /* 大型弹窗（Settings / Graph IR 编辑）的轻型遮罩 */
   --bg-scrim: rgba(15, 23, 42, 0.12);
@@ -79,4 +84,85 @@
   --graph-edge-feedback: #8B5CF6;
   --graph-edge-feedback-bg: #F5F3FF;
   --graph-edge-feedback-text: #7C3AED;
+
+  /* 重点色体系（默认：蓝色 — 经典淡蓝色信息卡片与侧边栏卡片 + 蓝色输入框/运行描边/呼吸灯/按钮） */
+  --user-bubble-bg: var(--brand-subtle);
+  --user-bubble-border: var(--brand-border);
+  --user-bubble-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  --user-bubble-expand-btn-bg: var(--bg-surface);
+  --user-bubble-edit-border: var(--brand-default);
+  --user-bubble-edit-shadow: 0 0 0 1px var(--brand-default), 0 4px 12px rgba(37, 99, 235, 0.08);
+  --sidebar-active-bg: var(--brand-subtle);
+  --sidebar-active-border: var(--brand-border);
+  --sidebar-active-shadow: 0 1px 3px rgba(37, 99, 235, 0.06);
+  --composer-accent: var(--brand-default);
+  --composer-accent-hover: var(--brand-hover);
+  --composer-accent-subtle: var(--brand-subtle);
+  --composer-accent-border: var(--brand-border);
+  --composer-accent-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+  --composer-accent-working-shadow: 0 2px 10px rgba(99, 102, 241, 0.4);
+  --composer-pill-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
+  --composer-drag-shadow: 0 0 0 2px var(--brand-border), 0 0 24px rgba(37, 99, 235, 0.15);
+  --composer-banner-border: rgba(59, 130, 246, 0.25);
+  --composer-banner-shadow: 0 1px 4px rgba(59, 130, 246, 0.08);
+  --running-pulse-color: var(--brand-default);
+  --running-pulse-glow: rgba(37, 99, 235, 0.5);
+  --running-card-border: rgba(59, 130, 246, 0.65);
+  --running-card-bg: rgba(59, 130, 246, 0.035);
+  --running-card-glow: rgba(59, 130, 246, 0.18);
+  --running-status-color: #3B82F6;
+  --running-node-border: var(--brand-border);
+  --running-node-shadow: 0 2px 10px rgba(37, 99, 235, 0.08);
+  --selected-node-shadow: 0 0 0 var(--task-node-ring-width, 3px) var(--brand-subtle), 0 4px 12px rgba(37, 99, 235, 0.1);
+  --route-undecided-bg: rgba(37, 99, 235, 0.08);
+  --route-undecided-border: rgba(37, 99, 235, 0.24);
+  --route-undecided-shadow: 0 2px 10px rgba(37, 99, 235, 0.05);
+}
+
+/* 重点色体系（黑色 — 灰色信息卡片与侧边栏卡片 + 黑色输入框/运行描边/呼吸灯/按钮） */
+:root[data-accent-color="black"] {
+  --border-focus: #18181B;
+  --brand-default: #18181B;
+  --brand-hover: #27272A;
+  --brand-active: #09090B;
+  --brand-subtle: rgba(15, 23, 42, 0.055);
+  --brand-border: #CBD5E1;
+  --brand-tint: rgba(24, 24, 27, 0.1);
+  --brand-tint-strong: rgba(24, 24, 27, 0.14);
+  --brand-shadow-sm: rgba(24, 24, 27, 0.18);
+  --brand-ring: rgba(24, 24, 27, 0.1);
+  --accent: #18181B;
+  --accent-color: #18181B;
+
+  --user-bubble-bg: rgba(15, 23, 42, 0.055);
+  --user-bubble-border: var(--border-default);
+  --user-bubble-shadow: var(--card-shadow);
+  --user-bubble-expand-btn-bg: var(--bg-canvas);
+  --user-bubble-edit-border: var(--brand-default);
+  --user-bubble-edit-shadow: 0 0 0 1px var(--brand-default), 0 4px 12px rgba(24, 24, 27, 0.08);
+  --sidebar-active-bg: rgba(15, 23, 42, 0.055);
+  --sidebar-active-border: var(--border-default);
+  --sidebar-active-shadow: var(--card-shadow);
+  --composer-accent: var(--brand-default);
+  --composer-accent-hover: var(--brand-hover);
+  --composer-accent-subtle: var(--brand-subtle);
+  --composer-accent-border: var(--brand-border);
+  --composer-accent-shadow: 0 2px 8px rgba(24, 24, 27, 0.24);
+  --composer-accent-working-shadow: 0 2px 10px rgba(24, 24, 27, 0.3);
+  --composer-pill-shadow: 0 1px 3px rgba(24, 24, 27, 0.25);
+  --composer-drag-shadow: 0 0 0 2px rgba(24, 24, 27, 0.16), 0 0 24px rgba(24, 24, 27, 0.1);
+  --composer-banner-border: rgba(15, 23, 42, 0.18);
+  --composer-banner-shadow: 0 1px 4px rgba(15, 23, 42, 0.07);
+  --running-pulse-color: var(--brand-default);
+  --running-pulse-glow: rgba(24, 24, 27, 0.4);
+  --running-card-border: rgba(24, 24, 27, 0.42);
+  --running-card-bg: rgba(15, 23, 42, 0.025);
+  --running-card-glow: rgba(24, 24, 27, 0.14);
+  --running-status-color: var(--brand-default);
+  --running-node-border: rgba(24, 24, 27, 0.42);
+  --running-node-shadow: 0 2px 10px rgba(24, 24, 27, 0.1);
+  --selected-node-shadow: 0 0 0 var(--task-node-ring-width, 3px) rgba(24, 24, 27, 0.09), 0 4px 12px rgba(24, 24, 27, 0.1);
+  --route-undecided-bg: rgba(15, 23, 42, 0.06);
+  --route-undecided-border: rgba(24, 24, 27, 0.22);
+  --route-undecided-shadow: 0 2px 10px rgba(24, 24, 27, 0.06);
 }

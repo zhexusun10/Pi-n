@@ -643,8 +643,19 @@ fn compose_virtual_publication(
     validate_private_paths(repository, &view)?;
     fs::create_dir_all(&view).map_err(|e| e.to_string())?;
     let base = crate::workspace_view::composition_base(repository, input, parents)?;
+    let view_parents: Vec<String> = parents
+        .iter()
+        .filter(|parent| crate::workspace_view::has_record(repository, parent))
+        .cloned()
+        .collect();
+    let view_parents = workspace::independent_heads(repository, &view_parents)?;
     match crate::workspace_view::seal_composed_view(
-        repository, &view, &base, parents, exclusions, &head,
+        repository,
+        &view,
+        &base,
+        &view_parents,
+        exclusions,
+        &head,
     )? {
         Some(_) => Ok(Some(head)),
         None => {

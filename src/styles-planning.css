@@ -163,14 +163,14 @@
 }
 
 .route-decision-pill.undecided {
-  background: rgba(37, 99, 235, 0.08);
-  color: #2563eb;
-  border: 1px solid rgba(37, 99, 235, 0.24);
-  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.05);
+  background: var(--route-undecided-bg);
+  color: var(--brand-default);
+  border: 1px solid var(--route-undecided-border);
+  box-shadow: var(--route-undecided-shadow);
 }
 
 .route-decision-pill.undecided .spin {
-  color: #2563eb;
+  color: var(--brand-default);
 }
 
 .route-decision-pill.serial {
@@ -383,28 +383,6 @@
   color: #d46555;
   background: rgba(240, 144, 130, 0.12);
   font-weight: 500;
-}
-
-.thinking-pulse-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--pi-coral, #F09082);
-  animation: pulse-dot 1.2s ease-in-out infinite;
-}
-
-@keyframes pulse-dot {
-
-  0%,
-  100% {
-    opacity: 0.3;
-    transform: scale(0.8);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1.2);
-  }
 }
 
 .thinking-status.completed {
@@ -1071,20 +1049,20 @@
 }
 
 .tool-call-card.running {
-  border-color: rgba(59, 130, 246, 0.65);
-  background: rgba(59, 130, 246, 0.035);
+  border-color: var(--running-card-border);
+  background: var(--running-card-bg);
 }
 
 /* Pulse only an inert overlay: never repaint the moving card's border/shadow
    every frame or change its entrance animation list when a tool settles.
    Match the 1px border's 9px inner radius and avoid a second hard inset ring
-   so the glow sits flush against the blue border without a corner gap. */
+   so the glow sits flush against the running border without a corner gap. */
 .tool-call-card.running::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: 9px;
-  box-shadow: inset 0 0 12px rgba(59, 130, 246, 0.18);
+  box-shadow: inset 0 0 12px var(--running-card-glow);
   pointer-events: none;
   animation: tool-running-glow 2.4s ease-in-out infinite;
 }
@@ -1359,7 +1337,7 @@ button.transcript-error-toggle {
 }
 
 .tool-status.running {
-  color: #3b82f6;
+  color: var(--running-status-color);
 }
 
 .tool-status.success {
@@ -2459,13 +2437,13 @@ button.transcript-error-toggle {
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 500;
-  background: var(--brand-default);
+  background: var(--composer-accent);
   color: var(--text-inverse);
   border: none;
   border-radius: 16px;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  transition: transform 0.15s ease, opacity 0.15s ease, visibility 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease, visibility 0.15s ease, background-color 0.15s ease;
   z-index: 20;
   opacity: 0;
   visibility: hidden;
@@ -2506,6 +2484,7 @@ button.transcript-error-toggle {
 }
 
 .scroll-to-bottom-btn.visible:hover {
+  background: var(--composer-accent-hover);
   transform: translateY(-2px);
 }
 
@@ -3082,9 +3061,9 @@ button.transcript-error-toggle {
 }
 
 .source-tag.env {
-  background: rgba(59, 130, 246, 0.1);
-  color: #2563eb;
-  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: var(--brand-tint);
+  color: var(--brand-default);
+  border: 1px solid var(--brand-border);
 }
 
 .source-tag.local {

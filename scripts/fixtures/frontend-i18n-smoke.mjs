@@ -127,7 +127,7 @@ try {
           ["verify", "正在准备节点工作区"],
           ["unknown", "正在准备节点工作区"],
           ["copy", "正在复制节点工作区"],
-          ["compose", "正在准备节点工作区（合并上游结果）"],
+          ["compose", "正在准备节点工作区"],
           ["conflict", "正在准备节点工作区（解决合并冲突）"],
         ]) {
           for (const nodes of [[], ["unique_workspace_one"], ["unique_workspace_one", "unique_workspace_two"]]) {

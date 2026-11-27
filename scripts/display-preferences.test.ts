@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LANDING_BACKGROUND_KEY,
+  ACCENT_COLOR_KEY,
   EXECUTION_OVERVIEW_KEY,
   HIDE_AUTO_MODE_KEY,
   COLLAPSE_CARDS_KEY,
@@ -16,6 +17,9 @@ import {
   currentLandingBackground,
   readLandingBackground,
   setLandingBackground,
+  currentAccentColor,
+  readAccentColor,
+  setAccentColor,
   collapseCardsEnabled,
   readCollapseCards,
   setCollapseCards,
@@ -111,6 +115,36 @@ test("home background persists locally and remains usable when storage writes fa
     assert.equal(currentLandingBackground(), "dots");
   } finally {
     setLandingBackground("paths");
+  }
+});
+
+test("accent color defaults to blue and handles unavailable or invalid storage", () => {
+  assert.equal(readAccentColor({ getItem: () => null }), "blue");
+  assert.equal(readAccentColor({ getItem: () => "blue" }), "blue");
+  assert.equal(readAccentColor({ getItem: () => "black" }), "black");
+  assert.equal(readAccentColor({ getItem: () => "unknown" }), "blue");
+  assert.equal(readAccentColor({ getItem: () => "" }), "blue");
+  assert.equal(readAccentColor(), "blue", "unavailable storage uses the default");
+  assert.equal(readAccentColor({ getItem: () => { throw new Error("blocked"); } }), "blue");
+});
+
+test("accent color persists locally and remains usable when storage writes fail", () => {
+  const original = currentAccentColor();
+  const writes: string[][] = [];
+  const storage = {
+    setItem: (key: string, value: string) => { writes.push([key, value]); },
+    removeItem: () => {},
+  };
+  try {
+    setAccentColor("blue", storage);
+    assert.equal(currentAccentColor(), "blue");
+    setAccentColor("black", storage);
+    assert.equal(currentAccentColor(), "black");
+    assert.deepEqual(writes, [[ACCENT_COLOR_KEY, "blue"], [ACCENT_COLOR_KEY, "black"]]);
+    setAccentColor("blue", { setItem: () => { throw new Error("blocked"); }, removeItem: () => {} });
+    assert.equal(currentAccentColor(), "blue");
+  } finally {
+    setAccentColor(original, storage);
   }
 });
 

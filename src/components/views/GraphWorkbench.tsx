@@ -123,8 +123,6 @@ function activityStatusText(activity: RuntimeActivity[]): string | null {
     switch (prepare.phase) {
       case "copy":
         return t("正在复制节点工作区");
-      case "compose":
-        return t("正在准备节点工作区（合并上游结果）");
       case "conflict":
         return t("正在准备节点工作区（解决合并冲突）");
       default:

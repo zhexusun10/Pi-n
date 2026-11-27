@@ -3290,6 +3290,7 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
         }
         None
     };
+    let mut resolved_merger_heads = Vec::new();
     for incoming in independent_heads(path, &resolved_heads)? {
         if git(path, &["merge-base", "--is-ancestor", &incoming, "HEAD"]).is_ok() {
             continue;
@@ -3316,6 +3317,11 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
             {
                 return Err(format!("Workspace composition blocked at {}. Merger did not finish a clean merge preserving the incoming parent; the worktree is preserved and retrying the node re-attempts composition.", path.display()));
             }
+            if let Ok(merged) = git(path, &["rev-parse", "HEAD"]) {
+                if crate::workspace_view::has_record(&canonical_repo, &merged) {
+                    resolved_merger_heads.push(merged);
+                }
+            }
         }
     }
     let head = git(path, &["rev-parse", "HEAD"])?;
@@ -3338,10 +3344,22 @@ pub(crate) fn prepare_with_merger_expected_for_run_scoped(
                 true,
             )
         } else {
-            let mut views = resolved_heads;
-            if head != base_head && crate::workspace_view::has_record(&canonical_repo, &head) {
+            let mut views: Vec<String> = resolved_heads
+                .into_iter()
+                .filter(|parent| crate::workspace_view::has_record(&canonical_repo, parent))
+                .collect();
+            for merged in resolved_merger_heads {
+                if !views.contains(&merged) {
+                    views.push(merged);
+                }
+            }
+            if head != base_head
+                && crate::workspace_view::has_record(&canonical_repo, &head)
+                && !views.contains(&head)
+            {
                 views.push(head.clone());
             }
+            let views = independent_heads(path, &views)?;
             crate::workspace_view::prepare(
                 &canonical_repo,
                 path,
@@ -3796,16 +3814,26 @@ pub(crate) const GENERATED_ARTIFACT_SCOPED_DIRS: &[(&str, &str)] = &[
 const GENERATED_ARTIFACT_SCOPED_PREFIXES: &[(&str, &str)] = &[("node_modules", ".vite-")];
 /// Strictly internal compiler/build cache entries nested anywhere beneath a
 /// Cargo `target` directory (including target triples like
-/// `target/aarch64-apple-darwin/debug/...`). Runnable outputs, docs, `deps/`
-/// and `build/` remain ordinary project files.
+/// `target/aarch64-apple-darwin/debug/...`). Runnable top-level binaries and
+/// `doc/` remain ordinary project files; intermediate crate outputs (`deps/`,
+/// `build/`), scratch directories (`tmp/`), lock/info files and `CACHEDIR.TAG`
+/// are rebuildable Cargo caches.
 const CARGO_TARGET_CACHE_ENTRIES: &[&str] = &[
     ".fingerprint",
     "incremental",
+    "deps",
+    "build",
+    "tmp",
+    "CACHEDIR.TAG",
     ".rustc_info.json",
     ".cargo-lock",
     ".cargo-build-lock",
     ".cargo-artifact-lock",
 ];
+/// Compiler intermediate metadata/object suffixes nested beneath a Cargo
+/// `target` directory (for example `target/debug/app.d` or
+/// `target/debug/examples/libfoo-*.rmeta`).
+const CARGO_TARGET_CACHE_SUFFIXES: &[&str] = &[".d", ".rmeta", ".rlib", ".rcgu.o"];
 /// Incremental compiler state. Standalone .pyc/.pyo can be the only executable
 /// module distribution; only bytecode beneath __pycache__ is a disposable cache.
 pub(crate) const GENERATED_ARTIFACT_SUFFIXES: &[&str] = &[".tsbuildinfo"];
@@ -3829,7 +3857,10 @@ pub(crate) fn is_generated_artifact(relative: &Path) -> bool {
             return true;
         }
         if under_target
-            && matches!(first, b'.' | b'i' | b'I')
+            && matches!(
+                first,
+                b'.' | b'i' | b'I' | b'd' | b'D' | b'b' | b'B' | b't' | b'T' | b'c' | b'C'
+            )
             && CARGO_TARGET_CACHE_ENTRIES
                 .iter()
                 .any(|entry| name.eq_ignore_ascii_case(entry))
@@ -3863,11 +3894,77 @@ pub(crate) fn is_generated_artifact(relative: &Path) -> bool {
     }
     relative.file_name().is_some_and(|name| {
         let name = name.to_string_lossy();
-        GENERATED_ARTIFACT_SUFFIXES.iter().any(|suffix| {
+        let matches_suffix = |suffix: &str| {
             name.get(name.len().saturating_sub(suffix.len())..)
                 .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
-        })
+        };
+        GENERATED_ARTIFACT_SUFFIXES
+            .iter()
+            .copied()
+            .any(matches_suffix)
+            || (under_target
+                && CARGO_TARGET_CACHE_SUFFIXES
+                    .iter()
+                    .copied()
+                    .any(matches_suffix))
     })
+}
+
+/// Return the subset of `paths` that match the project's own Git ignore rules
+/// (`.gitignore`, `.git/info/exclude`, global excludes) and are NOT tracked in
+/// the project's own Git index. Plain folders (without `.git`) or unreadable
+/// repositories return an empty set so display filtering never fails closed.
+pub(crate) fn project_ignored_paths(
+    cwd: &Path,
+    paths: &[&str],
+) -> std::collections::HashSet<String> {
+    if paths.is_empty() || fs::symlink_metadata(cwd.join(".git")).is_err() {
+        return Default::default();
+    }
+    let mut stdin = Vec::new();
+    for path in paths {
+        if path.is_empty() || path.contains('\0') {
+            continue;
+        }
+        let candidate = Path::new(path);
+        if candidate.is_absolute()
+            || candidate.components().any(|part| {
+                !matches!(part, std::path::Component::Normal(_)) || part.as_os_str() == ".git"
+            })
+        {
+            continue;
+        }
+        stdin.extend_from_slice(path.as_bytes());
+        stdin.push(0);
+    }
+    if stdin.is_empty() {
+        return Default::default();
+    }
+    let Ok((output, _)) = run_git_bytes_allowing(
+        cwd,
+        &["check-ignore", "--stdin", "-z", "--no-index"],
+        None,
+        Some(&stdin),
+        true,
+        &[1],
+    ) else {
+        return Default::default();
+    };
+    let mut ignored: std::collections::HashSet<String> = output
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| std::str::from_utf8(entry).ok())
+        .map(str::to_owned)
+        .collect();
+    if ignored.is_empty() {
+        return ignored;
+    }
+    let tracked = project_tracked_paths(cwd);
+    if !tracked.is_empty() {
+        let index = TrackedPathIndex::new(cwd, &tracked);
+        ignored.retain(|path| !index.matches(path));
+    }
+    ignored
 }
 
 /// The project's own Git-tracked paths (never the force-collected graph index).
@@ -4237,6 +4334,9 @@ pub(crate) fn generated_artifact_pathspecs() -> Vec<String> {
     for entry in CARGO_TARGET_CACHE_ENTRIES {
         specs.push(format!(":(exclude,glob,icase)**/target/**/{entry}"));
         specs.push(format!(":(exclude,glob,icase)**/target/**/{entry}/**"));
+    }
+    for suffix in CARGO_TARGET_CACHE_SUFFIXES {
+        specs.push(format!(":(exclude,glob,icase)**/target/**/*{suffix}"));
     }
     for suffix in GENERATED_ARTIFACT_SUFFIXES {
         specs.push(format!(":(exclude,glob,icase)**/*{suffix}"));

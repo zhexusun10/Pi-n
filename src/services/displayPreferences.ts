@@ -5,10 +5,12 @@ export const AUTO_EXPAND_COT_KEY = "pi_n_auto_expand_cot_v1";
 export const EXECUTION_OVERVIEW_KEY = "pi_n_execution_overview_v1";
 export const HIDE_AUTO_MODE_KEY = "pi_n_hide_auto_mode_v1";
 export const LANDING_BACKGROUND_KEY = "pi_n_landing_background_v1";
+export const ACCENT_COLOR_KEY = "pi_n_accent_color_v1";
 export const COLLAPSE_CARDS_KEY = "pi_n_collapse_cards_v1";
 export const COMPLETION_NOTIFICATIONS_KEY = "pi_n_completion_notifications_v1";
 export const COMPLETION_NOTIFICATION_SOUND_KEY = "pi_n_completion_notification_sound_v1";
 export type LandingBackground = "paths" | "dots" | "grid";
+export type AccentColor = "black" | "blue";
 
 type ReadableStorage = Pick<Storage, "getItem">;
 type WritableStorage = Pick<Storage, "setItem" | "removeItem">;
@@ -177,6 +179,50 @@ function subscribeToBackground(listener: () => void): () => void {
 
 export function useLandingBackground(): LandingBackground {
   return useSyncExternalStore(subscribeToBackground, currentLandingBackground, currentLandingBackground);
+}
+
+/** Blue accent (classic light-blue cards + blue accents) is the default; black switches to gray cards + black accents. */
+export function readAccentColor(storage?: ReadableStorage): AccentColor {
+  try {
+    const value = readableStorage(storage)?.getItem(ACCENT_COLOR_KEY);
+    return value === "black" ? "black" : "blue";
+  } catch {
+    return "blue";
+  }
+}
+
+export function applyAccentColor(accent: AccentColor): void {
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.accentColor = accent;
+  }
+}
+
+let accentColor = readAccentColor();
+applyAccentColor(accentColor);
+const accentColorListeners = new Set<() => void>();
+
+export function currentAccentColor(): AccentColor {
+  return accentColor;
+}
+
+export function setAccentColor(accent: AccentColor, storage?: WritableStorage): void {
+  accentColor = accent;
+  applyAccentColor(accent);
+  try {
+    writableStorage(storage)?.setItem(ACCENT_COLOR_KEY, accent);
+  } catch {
+    // Keep the choice for this session even if browser storage is blocked.
+  }
+  for (const listener of accentColorListeners) listener();
+}
+
+function subscribeToAccentColor(listener: () => void): () => void {
+  accentColorListeners.add(listener);
+  return () => { accentColorListeners.delete(listener); };
+}
+
+export function useAccentColor(): AccentColor {
+  return useSyncExternalStore(subscribeToAccentColor, currentAccentColor, currentAccentColor);
 }
 
 /** Transcript cards are expanded by default; collapsing is remembered across all conversations. */

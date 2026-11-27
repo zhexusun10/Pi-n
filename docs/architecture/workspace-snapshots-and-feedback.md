@@ -375,9 +375,10 @@ when:
   `node_modules/.vite`, `node_modules/.vite-*`, `.next/cache`, `.nuxt/cache`,
   `.angular/cache`, `.vitepress/cache`, `.vuepress/.cache`, `.vuepress/.temp`,
   `.nx/cache`, `.nx/workspace-data`, `.cache/clangd`, or Rust/Cargo internal
-  cache entries nested under `target/` (`.fingerprint`, `incremental`,
-  `.rustc_info.json`, `.cargo-lock`, `.cargo-build-lock`,
-  `.cargo-artifact-lock`); or
+  cache/intermediate entries nested under `target/` (`.fingerprint`,
+  `incremental`, `deps`, `build`, `tmp`, `CACHEDIR.TAG`, `.rustc_info.json`,
+  `.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`, and `.d`,
+  `.rmeta`, `.rlib`, `.rcgu.o` compiler intermediates); or
 - a filename ends with `.tsbuildinfo`.
 
 Project Git tracking still overrides these cache exclusions.
@@ -385,12 +386,15 @@ Project Git tracking still overrides these cache exclusions.
 Installed dependencies and runnable artifacts are **not** disposable caches.
 `node_modules` packages, `.next`/`.nuxt` build outputs (outside their `cache`
 subtrees), `.yarn/cache`, `.dart_tool`, `.build`, `.swiftpm`, `bin`, `obj`,
-`dist`, `build`, `out`, `target` outputs (`debug`/`release` binaries, `doc`,
-`deps`, `build`), `zig-out` and standalone `.pyc`/`.pyo` files follow the
-ordinary project Git channel, even when ignored or untracked. A manifest or
-registry may be missing, and local package patches, private/offline dependencies
-and sourceless modules cannot be assumed rebuildable. Pi^n does not run an
-installer to replace their bytes.
+`dist`, `build`, `out`, runnable `target` outputs (top-level `debug`/`release`
+binaries, `doc`, example binaries), `zig-out` and standalone `.pyc`/`.pyo` files
+follow the ordinary project Git channel, even when ignored or untracked. A
+manifest or registry may be missing, and local package patches, private/offline
+dependencies and sourceless modules cannot be assumed rebuildable. Pi^n does not
+run an installer to replace their bytes. For UI display, `get_file_changes`
+additionally filters untracked `.gitignore`-matched paths (while keeping
+project-tracked files) so build outputs do not drown out source edits in the
+changes panel.
 
 Fresh nodes and forks inherit the recorded dependency/artifact bytes, not a
 live-source copy or writable link to another workspace. Dependency-only edits
