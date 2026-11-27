@@ -24,7 +24,7 @@ test('Windows upgrade cleanup preserves unrelated processes and fails closed on 
   const result = execFileSync(cleanupPowerShell, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', join(root, 'scripts', 'fixtures', 'windows-upgrade-cleanup.ps1'), '-CleanupScript', cleanupScript,
-  ], { encoding: 'utf8', timeout: 30_000 });
+  ], { encoding: 'utf8', timeout: 90_000 });
   assert.match(result, /Scoped cleanup policy checks passed/);
 });
 

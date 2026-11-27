@@ -3050,8 +3050,9 @@ mod tests {
         )
         .unwrap();
 
-        // Even if an older snapshot commit force-added Cargo intermediates,
-        // `compute_git_changes` drops them while keeping runnable outputs.
+        // Even if an older snapshot commit force-added gitignored Cargo target
+        // outputs, `compute_git_changes` drops them while keeping non-target
+        // untracked build artifacts until the display filter runs.
         crate::workspace::git(&repo, &["add", "-f", "-A"]).unwrap();
         // Reset project index back to tracked-only so `project_tracked_paths`
         // reflects real project tracking (as in a private graph shadow commit).
@@ -3062,19 +3063,26 @@ mod tests {
         let committed =
             compute_git_changes(&repo, &before, Some(&after), "worker", "exec-1").unwrap();
         let committed_paths: Vec<&str> = committed.files.iter().map(|f| f.path.as_str()).collect();
-        assert!(
-            committed_paths.contains(&"backend/target/debug/pi-n"),
-            "runnable binary stays in raw git diff: {committed_paths:?}"
-        );
+        for kept in [
+            ".env.local",
+            "dist/untracked.js",
+            "src-tauri/gen/schemas/desktop.json",
+        ] {
+            assert!(
+                committed_paths.contains(&kept),
+                "non-target build output {kept} stays in raw git diff: {committed_paths:?}"
+            );
+        }
         for dropped in [
             "backend/target/CACHEDIR.TAG",
+            "backend/target/debug/pi-n",
             "backend/target/debug/pi-n.d",
             "backend/target/debug/deps/libfoo.rmeta",
             "backend/target/debug/build/anyhow-1/root-output",
         ] {
             assert!(
                 !committed_paths.contains(&dropped),
-                "Cargo intermediate {dropped} must be dropped from git changes: {committed_paths:?}"
+                "gitignored Cargo target output {dropped} must be dropped from git changes: {committed_paths:?}"
             );
         }
 

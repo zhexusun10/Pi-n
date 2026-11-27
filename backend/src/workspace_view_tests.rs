@@ -1278,7 +1278,7 @@ fn current_unix_ownership_is_normalized_only_after_checksum_validation() {
         "owner": [123456, 654321], "efs": false
     });
     let view = serde_json::json!({
-        "schema": VIEW_SCHEMA,
+        "schema": LEGACY_VIEW_SCHEMA,
         "source": "/legacy/source",
         "root_mode": 0o750,
         "root_extra": extra,
