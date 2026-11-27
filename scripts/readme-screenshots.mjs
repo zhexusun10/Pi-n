@@ -12,8 +12,12 @@ const scopedKey = (key) => `pi-n-format-1:${dataPath}:${key}`;
 
 const config = {
   repository,
-  model: 'anthropic/claude-sonnet-4-5',
-  thinkingLevel: 'medium',
+  model: 'openai-codex/gpt-6.2-astra',
+  thinkingLevel: 'xhigh',
+  roleModels: {
+    planner: { model: 'openai-codex/gpt-6.2-astra', thinkingLevel: 'xhigh' },
+    nodeAgent: { model: 'openai-codex/gpt-6.2-astra', thinkingLevel: 'xhigh' },
+  },
   maxParallel: 8,
   isolateParallelNodes: true,
   maxFeedback: 2,
@@ -1091,34 +1095,46 @@ try {
         {
           id: 'anthropic',
           name: 'Anthropic',
-          authenticated: true,
+          configured: true,
           authType: 'oauth',
-          status: 'configured',
+          methods: [
+            { id: 'oauth', name: 'OAuth' },
+            { id: 'api_key', name: 'API key' },
+          ],
         },
         {
           id: 'openai-codex',
           name: 'OpenAI Codex',
-          authenticated: true,
+          configured: true,
           authType: 'oauth',
-          status: 'configured',
+          methods: [
+            { id: 'oauth', name: 'OAuth' },
+          ],
         },
       ],
       models: [
         {
+          id: 'gpt-6.2-astra',
+          provider: 'openai-codex',
+          name: 'GPT-6.2 Astra',
+          api: 'openai-codex-responses',
+          contextWindow: 272000,
+          available: true,
+          thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+          thinkingLevelFallbacks: {},
+        },
+        {
           id: 'claude-sonnet-4-5',
           provider: 'anthropic',
           name: 'Claude Sonnet 4.5',
-          reasoning: true,
-          thinkingLevels: ['off', 'low', 'medium', 'high'],
-        },
-        {
-          id: 'gpt-5.3-codex',
-          provider: 'openai-codex',
-          name: 'GPT-5.3 Codex',
-          reasoning: true,
-          thinkingLevels: ['low', 'medium', 'high'],
+          api: 'anthropic-messages',
+          contextWindow: 200000,
+          available: true,
+          thinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh'],
+          thinkingLevelFallbacks: {},
         },
       ],
+      hiddenModels: [],
       warning: null,
     };
 
@@ -1465,7 +1481,9 @@ try {
           result = { skills: [{ name: 'deploy-preview', description: zh ? '运行预发环境部署与冒烟验证' : 'Deploy preview build and run smoke tests' }] };
           break;
         case 'provider_auth':
-          result = providerCatalog;
+          result = body.operation === 'model_visibility'
+            ? { hiddenModels: [] }
+            : providerCatalog;
           break;
         case 'pi_extensions':
           result = extensionCatalog;
@@ -1537,6 +1555,7 @@ try {
     // -------------------------------------------------------------------------
     await page.locator('.landing-screen').waitFor();
     await page.locator('.landing-page-grid').waitFor();
+    await page.locator('.landing-screen [data-testid="composer-model-selector"]').filter({ hasText: 'GPT-6.2 Astra' }).waitFor();
     await page.locator('.landing-screen textarea').fill(landingGoal);
     await page.locator('.landing-screen textarea').blur();
     await page.evaluate(() => document.fonts.ready);

@@ -6,8 +6,8 @@
 
 <p align="center">
   <strong>Direct with one pi. Compile into many.</strong><br>
-  A local-first desktop AI coding Agent Harness powered by <a href="https://github.com/earendil-works/pi">Pi</a>.<br>
-  Fast, uncluttered single-agent engineering by default—compiled into deterministic parallel execution graphs when work scales out.
+  A local-first desktop AI coding workbench powered by <a href="https://github.com/earendil-works/pi">Pi</a>.<br>
+  Cut 16X Harness Tax out of the box—code fast with one Pi, or compile into many running in parallel.
 </p>
 
 <p align="center">
@@ -101,8 +101,8 @@ Designed for all-day engineering, Pi<sup>n</sup> lets **deep execution inspectio
 </p>
 
 - **Real Shell, Right Where You Code** — Pop open an `xterm.js` PTY terminal in your project directory (or home directory before binding a workspace) straight from the composer. Resize, maximize, or minimize while keeping dev servers and test watchers running.
-- **Interactive `/` Command Palette** — Switch `/model` or `/thinking` mid-thread, curate global model pickers via `/scoped-models`, run `/compact`, `/session`, `/copy`, or `/name`, adjust shell timeouts via `/timeout`, inspect `/pi-trim`, manage `/mcp` servers, and trigger `/skill:...` inline.
-- **Thoughtful Desktop Craft** — Pick from three home canvases (**Tri-color grid**, **Dot pattern**, **Animated paths**), switch between **English** and **简体中文**, get background completion alerts (with optional sound), enable **Launch at login**, and stay up to date with signed in-app updates.
+- **Inline Model Picker & `/` Command Palette** — Switch models and thinking levels directly from the composer (or via `/model` and `/thinking`), curate global model pickers via `/scoped-models`, run `/compact`, `/session`, `/copy`, or `/name`, adjust shell timeouts via `/timeout`, inspect `/pi-trim`, manage `/mcp` servers, and trigger `/skill:...` inline.
+- **Thoughtful Desktop Craft** — Pick from three home canvases (**Tri-color grid**, **Dot pattern**, **Animated paths**) and **Blue** or **Black** accent themes, switch between **English** and **简体中文**, get background completion alerts (with optional sound), enable **Launch at login**, and stay up to date with signed in-app updates.
 
 ---
 

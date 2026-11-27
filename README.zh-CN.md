@@ -6,8 +6,8 @@
 
 <p align="center">
   <strong>Direct with one pi. Compile into many.</strong><br>
-  基于 <a href="https://github.com/earendil-works/pi">Pi</a> 打造的本地优先桌面端 AI 编程 Agent Harness。<br>
-  日常开发以极致顺手的单 Agent 高效开工，面对复杂多流工程时一键编译为确定性多 Agent 并行执行图。
+  基于 <a href="https://github.com/earendil-works/pi">Pi</a> 打造的本地桌面端 AI 编程工作台。<br>
+  省下 16X Harness Tax，开箱即用；从单 Pi 轻快编码，无缝扩展到多 Pi 并行交付。
 </p>
 
 <p align="center">
@@ -101,8 +101,8 @@
 </p>
 
 - **随时可用的停靠终端** — 从输入框一键打开当前项目目录（未绑定项目时默认主目录）的真实 Shell（`xterm.js` PTY），支持拖拽调高、最大化或最小化保活开发服务器与测试监听。
-- **交互式斜杠指令（`/`）** — 对话中随时使用 `/model`、`/thinking` 切换模型与推理档位，`/scoped-models` 精简模型选择器，`/compact`、`/session`、`/copy`、`/name` 管理会话，以及 `/timeout`、`/pi-trim`、`/mcp` 与 `/skill:...`。
-- **细腻的桌面端打磨** — 提供三种首页画布（**三色格子**、**点阵**、**动态线条**）、中英文双语界面、后台完成通知（含可选提示音）、登录自启与签名校验的应用内更新。
+- **输入框模型切换与斜杠指令（`/`）** — 直接在输入框切换模型与思维等级（也支持 `/model`、`/thinking`），通过 `/scoped-models` 精简模型选择器，使用 `/compact`、`/session`、`/copy`、`/name` 管理会话，以及 `/timeout`、`/pi-trim`、`/mcp` 与 `/skill:...`。
+- **细腻的桌面端打磨** — 提供三种首页画布（**三色格子**、**点阵**、**动态线条**）与 **蓝色 / 黑色** 重点色切换、中英文双语界面、后台完成通知（含可选提示音）、登录自启与签名校验的应用内更新。
 
 ---
 
