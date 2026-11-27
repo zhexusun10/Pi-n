@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-28
+
 ### Changed
 
 - Tightened the running tool card inner glow (`inset 0 0 6px -1px` and softer `--running-card-glow` alpha in both Blue and Black accent themes) so the pulse stays close to the card border instead of bleeding over header and body content (`src/styles-planning.css`, `src/tokens.css`).
