@@ -1541,3 +1541,201 @@ fn merger_file_changes_attribute_only_conflict_resolutions_not_clean_incoming_fi
     assert_eq!(paths, vec!["shared.txt"]);
     crate::file_changes::invalidate_run(&run);
 }
+
+#[test]
+fn file_changes_content_version_changes_when_line_counts_stay_equal() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let run_git = |args: &[&str]| crate::workspace::git(&repo, args).unwrap();
+    run_git(&["init", "-q"]);
+    run_git(&["config", "user.name", "Pi^n Test"]);
+    run_git(&["config", "user.email", "test@pi-n.invalid"]);
+    fs::write(repo.join("note.txt"), "base\n").unwrap();
+    run_git(&["add", "note.txt"]);
+    run_git(&["commit", "-qm", "base"]);
+    let base = run_git(&["rev-parse", "HEAD"]);
+
+    let mut versions = Vec::new();
+    for content in ["first\n", "second\n", "third\n"] {
+        fs::write(repo.join("note.txt"), content).unwrap();
+        let summary =
+            crate::file_changes::compute_git_changes(&repo, &base, None, "worker", "exec").unwrap();
+        assert_eq!(summary.files.len(), 1);
+        let item = &summary.files[0];
+        assert_eq!((item.additions, item.deletions), (1, 1));
+        versions.push(item.content_version.clone().expect("content_version"));
+    }
+    assert_ne!(versions[0], versions[1]);
+    assert_ne!(versions[1], versions[2]);
+    assert_ne!(versions[0], versions[2]);
+
+    let run = format!("content-version-{}", Uuid::new_v4());
+    let completed_exec = Execution {
+        id: "exec".into(),
+        node: "worker".into(),
+        revision: 0,
+        attempt: 1,
+        session_id: String::new(),
+        worktree: repo.to_string_lossy().into(),
+        before: String::new(),
+        after: None,
+        workspace_lineage: vec![],
+        input: None,
+        result: None,
+        status: "completed".into(),
+        output: String::new(),
+        output_bytes: 0,
+        pid: None,
+        started_at: now(),
+        completed_at: Some(now()),
+        metrics: None,
+    };
+    let log_for = |content: &str| {
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": "call-1",
+                "toolName": "write",
+                "args": { "path": "note.txt", "content": content }
+            }),
+            serde_json::json!({
+                "type": "tool_execution_end",
+                "toolCallId": "call-1",
+                "isError": false
+            }),
+        )
+    };
+    crate::file_changes::update_from_log_text(
+        &run,
+        "exec",
+        "worker",
+        &repo.to_string_lossy(),
+        &repo.to_string_lossy(),
+        &log_for("first\n"),
+        false,
+        true,
+    );
+    let first = crate::file_changes::get_cached_execution_changes(&run, &completed_exec).unwrap();
+    crate::file_changes::update_from_log_text(
+        &run,
+        "exec",
+        "worker",
+        &repo.to_string_lossy(),
+        &repo.to_string_lossy(),
+        &log_for("second\n"),
+        false,
+        true,
+    );
+    let second = crate::file_changes::get_cached_execution_changes(&run, &completed_exec).unwrap();
+    assert_eq!(first.files[0].additions, second.files[0].additions);
+    assert_ne!(
+        first.files[0].content_version,
+        second.files[0].content_version
+    );
+    crate::file_changes::invalidate_run(&run);
+}
+
+#[test]
+fn file_changes_api_paginates_all_files_deterministically() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let data = temp.path().join("data");
+    fs::create_dir_all(&source).unwrap();
+    let mut runtime = Runtime::open(&data).unwrap();
+    runtime.state.config = Some(
+        serde_json::from_value(serde_json::json!({
+            "repository": source.to_string_lossy(),
+            "model": "test/model",
+        }))
+        .unwrap(),
+    );
+    let run = format!("paginate-{}", Uuid::new_v4());
+    runtime.state.run_id = run.clone();
+    runtime.state.executions.push(Execution {
+        id: "exec-1".into(),
+        node: "worker".into(),
+        revision: 0,
+        attempt: 1,
+        session_id: String::new(),
+        worktree: source.to_string_lossy().into(),
+        before: String::new(),
+        after: None,
+        workspace_lineage: vec![],
+        input: None,
+        result: None,
+        status: "completed".into(),
+        output: String::new(),
+        output_bytes: 0,
+        pid: None,
+        started_at: now(),
+        completed_at: Some(now()),
+        metrics: None,
+    });
+    let mut log = String::new();
+    for i in 0..85 {
+        log.push_str(&format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": format!("call-{i}"),
+                "toolName": "write",
+                "args": { "path": format!("src/file-{i:03}.ts"), "content": format!("line {i}\n") }
+            }),
+            serde_json::json!({
+                "type": "tool_execution_end",
+                "toolCallId": format!("call-{i}"),
+                "isError": false
+            }),
+        ));
+    }
+    crate::file_changes::update_from_log_text(
+        &run,
+        "exec-1",
+        "worker",
+        &source.to_string_lossy(),
+        &source.to_string_lossy(),
+        &log,
+        false,
+        true,
+    );
+    let service = Arc::new(Service {
+        runtime: Mutex::new(runtime),
+        driving: AtomicBool::new(false),
+        drive_signal: (Mutex::new(0), Condvar::new()),
+        planning: AtomicBool::new(false),
+        extension: PathBuf::new(),
+    });
+    let page1 = read_changes(|| {
+        get_file_changes(
+            &serde_json::json!({ "runId": run, "offset": 0, "limit": 60 }),
+            &service,
+        )
+    });
+    let page2 = read_changes(|| {
+        get_file_changes(
+            &serde_json::json!({ "runId": run, "offset": 60, "limit": 60 }),
+            &service,
+        )
+    });
+    assert_eq!(page1["summary"]["totalFiles"], 85);
+    assert_eq!(page2["summary"]["totalFiles"], 85);
+    let p1: Vec<String> = page1["summary"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_string())
+        .collect();
+    let p2: Vec<String> = page2["summary"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(p1.len(), 60);
+    assert_eq!(p2.len(), 25);
+    let union: std::collections::BTreeSet<_> = p1.into_iter().chain(p2).collect();
+    assert_eq!(union.len(), 85);
+    crate::file_changes::invalidate_run(&run);
+}

@@ -425,6 +425,7 @@ fn path_baseline_inner(
             "--literal-pathspecs",
             "diff",
             "--raw",
+            "--no-abbrev",
             "--numstat",
             "-z",
             "--no-renames",
@@ -439,7 +440,11 @@ fn path_baseline_inner(
         args.push("--");
         args.extend(chunk.iter().map(String::as_str));
         let output = run(&args).map_err(|_| ())?;
-        changes.extend(super::git_diff::parse(&output, "", "").ok_or(())?);
+        let mut parsed = super::git_diff::parse(&output, "", "").ok_or(())?;
+        if after.is_none() {
+            super::stamp_working_tree_versions(root, &mut parsed);
+        }
+        changes.extend(parsed);
         if after.is_none() {
             let mut args = vec![
                 "-c",

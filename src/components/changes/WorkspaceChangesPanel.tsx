@@ -46,6 +46,9 @@ interface WorkspaceChangesPaneProps {
   summary: FileChangeSummary;
   isLoaded: boolean;
   refreshVersion: number;
+  loadingMore?: boolean;
+  remoteExhausted?: boolean;
+  onLoadMore?: () => void;
   hasGraphPane: boolean;
   onSelectGraph?: () => void;
   onClose: () => void;
@@ -62,6 +65,9 @@ export const WorkspaceChangesPane = React.memo(function WorkspaceChangesPane({
   summary,
   isLoaded,
   refreshVersion,
+  loadingMore = false,
+  remoteExhausted = false,
+  onLoadMore,
   hasGraphPane,
   onSelectGraph,
   onClose,
@@ -73,9 +79,11 @@ export const WorkspaceChangesPane = React.memo(function WorkspaceChangesPane({
     [runId, scopedExecutionIds],
   );
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const [visibleLimit, setVisibleLimit] = useState(MAX_RENDERED_FILE_CHANGES);
 
   useEffect(() => {
     setExpandedPaths(new Set());
+    setVisibleLimit(MAX_RENDERED_FILE_CHANGES);
   }, [effectiveViewScopeKey]);
 
   const toggleFile = useCallback((path: string) => {
@@ -107,10 +115,20 @@ export const WorkspaceChangesPane = React.memo(function WorkspaceChangesPane({
     () => [...summary.files].sort((a, b) => a.path.localeCompare(b.path)),
     [summary.files],
   );
-  const visibleFiles = orderedFiles.length > MAX_RENDERED_FILE_CHANGES
-    ? orderedFiles.slice(0, MAX_RENDERED_FILE_CHANGES)
+  const visibleFiles = orderedFiles.length > visibleLimit
+    ? orderedFiles.slice(0, visibleLimit)
     : orderedFiles;
-  const omittedCount = Math.max(0, summary.totalFiles - visibleFiles.length);
+  const remainingCount = Math.max(0, summary.totalFiles - visibleFiles.length);
+  const canLoadMoreLocal = orderedFiles.length > visibleFiles.length;
+  const canLoadMoreRemote = !canLoadMoreLocal && remainingCount > 0 && !remoteExhausted && Boolean(onLoadMore);
+  const handleLoadMore = useCallback(() => {
+    if (canLoadMoreLocal) {
+      setVisibleLimit((current) => Math.min(orderedFiles.length, current + MAX_RENDERED_FILE_CHANGES));
+    } else if (onLoadMore) {
+      setVisibleLimit((current) => Math.max(current, orderedFiles.length + MAX_RENDERED_FILE_CHANGES));
+      onLoadMore();
+    }
+  }, [canLoadMoreLocal, onLoadMore, orderedFiles.length]);
   const fileCountLabel = summary.totalFiles === 1
     ? t("1 个文件")
     : t("{0} 个文件", summary.totalFiles);
@@ -213,9 +231,24 @@ export const WorkspaceChangesPane = React.memo(function WorkspaceChangesPane({
                 refreshVersion={refreshVersion}
               />
             ))}
-            {omittedCount > 0 && (
+            {remainingCount > 0 && (
               <div className="changes-panel-truncated" data-testid="workspace-changes-truncated">
-                {t("… 其余 {0} 个文件变更已省略", omittedCount)}
+                {(canLoadMoreLocal || canLoadMoreRemote) && (
+                  <button
+                    type="button"
+                    className="changed-file-diff-more-btn"
+                    data-testid="workspace-changes-load-more"
+                    disabled={loadingMore}
+                    onClick={handleLoadMore}
+                  >
+                    {loadingMore
+                      ? t("正在加载更多文件…")
+                      : t("加载更多 {0} 个", Math.min(MAX_RENDERED_FILE_CHANGES, remainingCount))}
+                  </button>
+                )}
+                <span className="changes-panel-truncated-hint">
+                  {t("还有 {0} 个文件变更未显示", remainingCount)}
+                </span>
               </div>
             )}
           </div>

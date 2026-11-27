@@ -333,13 +333,14 @@ h3 {
 
 /* 侧边栏 (悬浮圆角卡片模式) */
 .sidebar {
-  --sidebar-content-width: 230px;
+  --sidebar-width: clamp(260px, 19vw, 300px);
+  --sidebar-content-width: calc(var(--sidebar-width) - 30px);
   --sidebar-scrollbar-offset: var(--scrollbar-size, 10px);
   --sidebar-anim-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --sidebar-width-duration: 0.32s;
   --sidebar-content-duration: 0.2s;
-  width: 260px;
-  max-width: 260px;
+  width: var(--sidebar-width);
+  max-width: var(--sidebar-width);
   flex-shrink: 0;
   margin: 12px 0 12px 12px;
   box-sizing: border-box;

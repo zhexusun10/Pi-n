@@ -26,10 +26,15 @@ export interface WorkspaceChangesViewModel {
   /** False until this scope has an authoritative summary. */
   isLoaded: boolean;
   refreshVersion: number;
+  loadingMore: boolean;
+  remoteExhausted: boolean;
   refresh: () => void;
+  loadMore: () => Promise<void>;
 }
 
 const REFRESH_INTERVAL_MS = 2_000;
+const FILE_CHANGES_PAGE_SIZE = 60;
+const MAX_BACKEND_PAGE_LIMIT = 500;
 
 function sameStringList(a?: string[], b?: string[]): boolean {
   if (a === b) return true;
@@ -69,6 +74,7 @@ function sameSummary(a: FileChangeSummary, b: FileChangeSummary): boolean {
       left.deletions !== right.deletions ||
       Boolean(left.isRunning) !== Boolean(right.isRunning) ||
       left.source !== right.source ||
+      left.contentVersion !== right.contentVersion ||
       !sameStringList(left.nodes, right.nodes) ||
       !sameStringList(left.executionIds, right.executionIds)
     ) {
@@ -76,6 +82,26 @@ function sameSummary(a: FileChangeSummary, b: FileChangeSummary): boolean {
     }
   }
   return true;
+}
+
+function hasRunningFile(summary: FileChangeSummary | undefined): boolean {
+  if (!summary) return false;
+  return Boolean(summary.isRunning) || summary.files.some((file) => Boolean(file.isRunning));
+}
+
+function mergeSummaryPages(base: FileChangeSummary, nextPage: FileChangeSummary): FileChangeSummary {
+  const seen = new Set(base.files.map((file) => file.path));
+  const files = [...base.files];
+  for (const item of nextPage.files) {
+    if (!seen.has(item.path)) {
+      seen.add(item.path);
+      files.push(item);
+    }
+  }
+  return {
+    ...nextPage,
+    files,
+  };
 }
 
 /**
@@ -101,9 +127,40 @@ export function useWorkspaceChanges({
   const emptyScope = scopedIds !== null && scopedIds.length === 0;
   const [fetched, setFetched] = useState<{ key: string; summary: FileChangeSummary } | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [remoteExhausted, setRemoteExhausted] = useState(false);
+  const loadedLimitRef = useRef(FILE_CHANGES_PAGE_SIZE);
+  const pageGenerationRef = useRef(0);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
+  const wasWorkingRef = useRef<{ scopeKey: string; isWorking: boolean }>({ scopeKey, isWorking });
+  const wasRunningSummaryRef = useRef(false);
   const forceRefreshRef = useRef(false);
   const poller = useRef<PollingController | null>(null);
   const snapshotSequence = state.events.at(-1)?.sequence ?? 0;
+
+  useEffect(() => {
+    loadedLimitRef.current = FILE_CHANGES_PAGE_SIZE;
+    pageGenerationRef.current += 1;
+    setLoadingMore(false);
+    setRemoteExhausted(false);
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    wasRunningSummaryRef.current = false;
+  }, [scopeKey]);
+
+  // Any running -> settled transition on the SAME scope must invalidate
+  // in-flight/pre-run diff cache entries so completion never resurrects stale diffs.
+  useEffect(() => {
+    const previous = wasWorkingRef.current;
+    const completed = previous.scopeKey === scopeKey && previous.isWorking && !isWorking;
+    wasWorkingRef.current = { scopeKey, isWorking };
+    if (completed && runId && !runId.startsWith("pending-")) {
+      invalidateFileDiffCache(runId);
+      setRefreshVersion((version) => version + 1);
+      forceRefreshRef.current = true;
+      poller.current?.wake();
+    }
+  }, [isWorking, runId, scopeKey]);
 
   useEffect(() => {
     forceRefreshRef.current = false;
@@ -117,15 +174,53 @@ export function useWorkspaceChanges({
       // metrics updates must not turn into an unbounded stream of Git scans.
       if (!forced && Date.now() < nextReadAt) return nextReadAt - Date.now();
       forceRefreshRef.current = false;
+      const startPageGeneration = pageGenerationRef.current;
+      const desiredLimit = loadedLimitRef.current;
       try {
-        const result = await runtimeService.getFileChanges(runId, scopedIds ?? undefined, abort.signal);
-        if (abort.signal.aborted) return null;
-        cacheFileChangeSummary(scopeKey, runId, result.summary);
+        let summary: FileChangeSummary;
+        if (desiredLimit <= FILE_CHANGES_PAGE_SIZE) {
+          const result = await runtimeService.getFileChanges(runId, scopedIds ?? undefined, abort.signal);
+          if (abort.signal.aborted) return null;
+          summary = result.summary;
+        } else {
+          // Backend clamps each page to MAX_BACKEND_PAGE_LIMIT (500); chunk
+          // polls above 500 so expanded lists never shrink back down.
+          let offset = 0;
+          let combined: FileChangeSummary | null = null;
+          while (offset < desiredLimit) {
+            const chunkLimit = Math.min(MAX_BACKEND_PAGE_LIMIT, desiredLimit - offset);
+            const result = await runtimeService.getFileChanges(
+              runId,
+              scopedIds ?? undefined,
+              abort.signal,
+              { offset, limit: chunkLimit },
+            );
+            if (abort.signal.aborted) return null;
+            combined = combined ? mergeSummaryPages(combined, result.summary) : result.summary;
+            if (result.summary.files.length < chunkLimit || combined.files.length >= result.summary.totalFiles) {
+              break;
+            }
+            offset += chunkLimit;
+          }
+          summary = combined ?? emptyFileChangeSummary;
+        }
+        // Do not let an earlier poll overwrite a newer `loadMore` page merge.
+        if (startPageGeneration !== pageGenerationRef.current) {
+          nextReadAt = Date.now() + REFRESH_INTERVAL_MS;
+          return isWorking ? REFRESH_INTERVAL_MS : Infinity;
+        }
+        const nowRunning = hasRunningFile(summary);
+        if (wasRunningSummaryRef.current && !nowRunning) {
+          invalidateFileDiffCache(runId);
+          setRefreshVersion((version) => version + 1);
+        }
+        wasRunningSummaryRef.current = nowRunning;
+        cacheFileChangeSummary(scopeKey, runId, summary);
         setFetched(previous => !previous || previous.key !== scopeKey
-          ? { key: scopeKey, summary: result.summary }
-          : sameSummary(previous.summary, result.summary)
+          ? { key: scopeKey, summary }
+          : sameSummary(previous.summary, summary)
             ? previous
-            : { key: scopeKey, summary: result.summary });
+            : { key: scopeKey, summary });
         nextReadAt = Date.now() + REFRESH_INTERVAL_MS;
         return isWorking ? REFRESH_INTERVAL_MS : Infinity;
       } catch {
@@ -151,10 +246,50 @@ export function useWorkspaceChanges({
   const refresh = useCallback(() => {
     invalidateFileDiffCache(runId || undefined);
     setRefreshVersion(version => version + 1);
+    setRemoteExhausted(false);
     if (!runId || runId.startsWith("pending-") || emptyScope) return;
     forceRefreshRef.current = true;
     poller.current?.wake();
   }, [runId, emptyScope]);
+
+  const loadMore = useCallback(async () => {
+    if (!runId || runId.startsWith("pending-") || emptyScope || loadingMore || remoteExhausted) return;
+    const current = (fetched && fetched.key === scopeKey ? fetched.summary : getCachedFileChangeSummary(scopeKey))
+      ?? emptyFileChangeSummary;
+    const offset = current.files.length;
+    if (offset >= current.totalFiles) return;
+    loadMoreAbortRef.current?.abort();
+    const abort = new AbortController();
+    loadMoreAbortRef.current = abort;
+    setLoadingMore(true);
+    try {
+      const result = await runtimeService.getFileChanges(
+        runId,
+        scopedIds ?? undefined,
+        abort.signal,
+        { offset, limit: FILE_CHANGES_PAGE_SIZE },
+      );
+      if (abort.signal.aborted) return;
+      const merged = mergeSummaryPages(current, result.summary);
+      if (merged.files.length === current.files.length) {
+        // Backend returned no additional paths (for example an older backend
+        // ignoring offset/limit); stop showing a no-op Load More button.
+        setRemoteExhausted(true);
+        return;
+      }
+      pageGenerationRef.current += 1;
+      loadedLimitRef.current = Math.max(loadedLimitRef.current, merged.files.length);
+      cacheFileChangeSummary(scopeKey, runId, merged);
+      setFetched({ key: scopeKey, summary: merged });
+    } catch {
+      // Keep current loaded rows; user can retry clicking Load More.
+    } finally {
+      if (loadMoreAbortRef.current === abort) {
+        loadMoreAbortRef.current = null;
+        setLoadingMore(false);
+      }
+    }
+  }, [emptyScope, fetched, loadingMore, remoteExhausted, runId, scopeKey, scopedIds]);
 
   return useMemo(() => {
     const cachedSummary = !emptyScope ? getCachedFileChangeSummary(scopeKey) : undefined;
@@ -165,13 +300,19 @@ export function useWorkspaceChanges({
       summary,
       isLoaded: !runId || runId.startsWith("pending-") || emptyScope || effectiveSummary !== undefined,
       refreshVersion,
+      loadingMore,
+      remoteExhausted,
       refresh,
+      loadMore,
     };
   }, [
     emptyScope,
     fetched,
+    loadMore,
+    loadingMore,
     refresh,
     refreshVersion,
+    remoteExhausted,
     runId,
     scopeKey,
   ]);

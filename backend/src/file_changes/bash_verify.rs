@@ -23,7 +23,7 @@
 
 use super::{
     file_diff::{path_baseline, BaselineOutcome, PathBaseline},
-    is_candidate, merge_file_item_into, untracked_additions, FileChangeItem, FileChangeSummary,
+    is_candidate, merge_file_item_into, untracked_file_stats, FileChangeItem, FileChangeSummary,
 };
 use crate::model::{Execution, Snapshot};
 use std::{
@@ -218,6 +218,9 @@ fn overlay_rows(kept: &mut BTreeMap<String, FileChangeItem>, rows: Vec<FileChang
                     }
                 }
                 existing.is_running |= row.is_running;
+                if existing.content_version.is_none() {
+                    existing.content_version = row.content_version;
+                }
             }
             None => {
                 kept.insert(row.path.clone(), row);
@@ -333,16 +336,22 @@ fn verify_inner(
             .iter()
             .filter(|path| covers(&item.path, path) && !baseline.changes.contains_key(*path))
         {
+            let (additions, content_version) =
+                match untracked_file_stats(&target.root.join(path)) {
+                    Some((lines, version)) => (lines.unwrap_or(0), Some(version)),
+                    None => (0, None),
+                };
             verified.push(FileChangeItem {
                 path: path.clone(),
                 old_path: None,
                 status: "added".into(),
-                additions: untracked_additions(&target.root.join(path)).unwrap_or(0),
+                additions,
                 deletions: 0,
                 is_running: running,
                 nodes: item.nodes.clone(),
                 execution_ids: item.execution_ids.clone(),
                 source: Some(VERIFIED_SOURCE.into()),
+                content_version,
             });
         }
     }
@@ -484,6 +493,7 @@ mod tests {
             nodes: vec!["task".into()],
             execution_ids: vec!["exec".into()],
             source: Some(source.into()),
+            content_version: None,
         }
     }
 

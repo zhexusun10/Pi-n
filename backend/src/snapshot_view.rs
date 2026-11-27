@@ -1302,6 +1302,7 @@ mod tests {
                 nodes: vec![],
                 execution_ids: vec![],
                 source: Some("git".into()),
+                content_version: None,
             })
             .collect::<Vec<_>>();
         let summary = FileChangeSummary::from_files(files, false, None);

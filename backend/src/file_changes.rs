@@ -30,6 +30,11 @@ pub struct FileChangeItem {
     pub execution_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Deterministic revision of the file's changed content (Git OIDs, working
+    /// tree content fingerprint, or transcript edit hash) so UI diff caches
+    /// invalidate when content changes with identical line counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -683,6 +688,115 @@ fn resolve_cd_target(raw: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     Some(normalize_lexically(&resolved))
 }
 
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+fn fnv1a64_extend(mut hash: u64, bytes: &[u8]) -> u64 {
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+fn hash_hex(bytes: &[u8]) -> String {
+    format!("{:016x}", fnv1a64(bytes))
+}
+
+fn combine_content_versions(left: Option<&str>, right: Option<&str>) -> Option<String> {
+    match (left, right) {
+        (None, None) => None,
+        (Some(a), None) => Some(a.to_string()),
+        (None, Some(b)) => Some(b.to_string()),
+        (Some(a), Some(b)) => {
+            let hash = fnv1a64_extend(fnv1a64_extend(fnv1a64(a.as_bytes()), b"\0"), b.as_bytes());
+            Some(format!("m:{hash:016x}"))
+        }
+    }
+}
+
+fn git_blob_oid_hex(bytes: &[u8]) -> String {
+    use sha1_checked::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(40);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
+}
+
+/// Fast deterministic content fingerprint for a live working-tree path.
+/// Uses Git's exact blob SHA-1 up to 256 KiB so live and staged summaries match
+/// identically when content is unchanged, and falls back to bounded metadata +
+/// edge sampling for larger files.
+pub(super) fn file_content_fingerprint(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const SMALL_LIMIT: u64 = 256 * 1024;
+    const EDGE_SAMPLE: usize = 8 * 1024;
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if crate::workspace_symlinks::is_link(&metadata) {
+        let target = fs::read_link(path).ok()?;
+        return Some(git_blob_oid_hex(target.as_os_str().as_encoded_bytes()));
+    }
+    if !metadata.is_file() {
+        return None;
+    }
+    let len = metadata.len();
+    let mut file = fs::File::open(path).ok()?;
+    if len <= SMALL_LIMIT {
+        let mut bytes = Vec::with_capacity(len as usize);
+        (&mut file).take(SMALL_LIMIT + 1).read_to_end(&mut bytes).ok()?;
+        if bytes.len() as u64 <= SMALL_LIMIT {
+            return Some(git_blob_oid_hex(&bytes));
+        }
+        let _ = file.seek(SeekFrom::Start(0));
+    }
+    let mut hash = fnv1a64(&len.to_le_bytes());
+    if let Ok(modified) = metadata.modified() {
+        if let Ok(elapsed) = modified.duration_since(std::time::UNIX_EPOCH) {
+            hash = fnv1a64_extend(hash, &elapsed.as_nanos().to_le_bytes());
+        }
+    }
+    let mut buf = [0u8; EDGE_SAMPLE];
+    if let Ok(n) = file.read(&mut buf) {
+        hash = fnv1a64_extend(hash, &buf[..n]);
+    }
+    if len > EDGE_SAMPLE as u64
+        && file.seek(SeekFrom::End(-(EDGE_SAMPLE as i64))).is_ok()
+    {
+        if let Ok(n) = file.read(&mut buf) {
+            hash = fnv1a64_extend(hash, &buf[..n]);
+        }
+    }
+    Some(format!("b:{hash:016x}"))
+}
+
+pub(super) fn stamp_working_tree_versions(root: &Path, items: &mut BTreeMap<String, FileChangeItem>) {
+    for (path, item) in items.iter_mut() {
+        let Some(version) = item.content_version.as_deref() else {
+            continue;
+        };
+        if let Some(old_oid) = version
+            .strip_prefix("git-wt:")
+            .and_then(|rest| rest.strip_suffix("..wt"))
+        {
+            if let Some(fp) = file_content_fingerprint(&root.join(path)) {
+                item.content_version = Some(format!("git:{old_oid}..{fp}"));
+            }
+        }
+    }
+}
+
 fn path_change_item(
     path: String,
     old_path: Option<String>,
@@ -708,6 +822,7 @@ fn path_change_item(
             vec![execution_id.into()]
         },
         source: Some("bash".into()),
+        content_version: None,
     }
 }
 
@@ -839,6 +954,12 @@ fn parse_bash_command_changes(
         }
     }
     flush_interpreter_chunk(&mut interpreter_chunk, cwd.as_deref(), &mut items);
+    let version = format!("bash:{}", hash_hex(command.as_bytes()));
+    for item in &mut items {
+        if item.content_version.is_none() {
+            item.content_version = Some(version.clone());
+        }
+    }
     items
 }
 
@@ -888,6 +1009,7 @@ fn build_tool_change_items(
                     vec![execution_id.into()]
                 },
                 source: Some("write".into()),
+                content_version: Some(format!("write:{}", hash_hex(content.as_bytes()))),
             }]
         }
         "edit" => {
@@ -897,6 +1019,7 @@ fn build_tool_change_items(
             };
             let mut total_add = 0usize;
             let mut total_del = 0usize;
+            let mut edit_hash: u64 = 0xcbf2_9ce4_8422_2325;
             if let Some(edits) = args["edits"].as_array() {
                 for edit in edits {
                     let old_t = edit["oldText"].as_str().unwrap_or_default();
@@ -904,6 +1027,10 @@ fn build_tool_change_items(
                     let (add, del) = count_line_changes(old_t, new_t);
                     total_add += add;
                     total_del += del;
+                    edit_hash = fnv1a64_extend(edit_hash, old_t.as_bytes());
+                    edit_hash = fnv1a64_extend(edit_hash, b"\0");
+                    edit_hash = fnv1a64_extend(edit_hash, new_t.as_bytes());
+                    edit_hash = fnv1a64_extend(edit_hash, b"\x1f");
                 }
             }
             vec![FileChangeItem {
@@ -924,6 +1051,7 @@ fn build_tool_change_items(
                     vec![execution_id.into()]
                 },
                 source: Some("edit".into()),
+                content_version: Some(format!("edit:{edit_hash:016x}")),
             }]
         }
         "bash" => {
@@ -1002,13 +1130,21 @@ fn merge_file_item_into(map: &mut BTreeMap<String, FileChangeItem>, incoming: Fi
             existing.additions = incoming.additions;
             existing.deletions = incoming.deletions;
             existing.source = incoming.source;
+            if incoming.content_version.is_some() {
+                existing.content_version = incoming.content_version;
+            }
         } else if !is_absolute_source(existing.source.as_deref()) {
             if incoming.source.as_deref() == Some("write") {
                 existing.additions = incoming.additions;
                 existing.deletions = incoming.deletions;
+                existing.content_version = incoming.content_version;
             } else {
                 existing.additions += incoming.additions;
                 existing.deletions += incoming.deletions;
+                existing.content_version = combine_content_versions(
+                    existing.content_version.as_deref(),
+                    incoming.content_version.as_deref(),
+                );
             }
             if incoming.source.is_some() {
                 existing.source = incoming.source;
@@ -1307,9 +1443,11 @@ mod git_diff;
 
 pub use bash_verify::{verify_bash_changes, verify_snapshot_changes, VerifyTarget};
 
-/// Best-effort live counts before an untracked path has a Git blob. Read link
-/// text, never its target, and bound regular-file reads even if the file grows.
-fn untracked_additions(path: &Path) -> Option<usize> {
+const ZERO_SHA1_OID: &str = "0000000000000000000000000000000000000000";
+
+/// Best-effort live counts and content fingerprint before an untracked path has
+/// a Git blob. Read link text, never its target, and bound regular-file reads.
+pub(super) fn untracked_file_stats(path: &Path) -> Option<(Option<usize>, String)> {
     use std::io::Read;
     const LIMIT: u64 = 256 * 1024;
     let metadata = fs::symlink_metadata(path).ok()?;
@@ -1320,8 +1458,12 @@ fn untracked_additions(path: &Path) -> Option<usize> {
             .as_encoded_bytes()
             .to_vec()
     } else {
-        if !metadata.is_file() || metadata.len() > LIMIT {
+        if !metadata.is_file() {
             return None;
+        }
+        if metadata.len() > LIMIT {
+            let fp = file_content_fingerprint(path)?;
+            return Some((None, format!("git:{ZERO_SHA1_OID}..{fp}")));
         }
         let mut bytes = Vec::new();
         fs::File::open(path)
@@ -1332,17 +1474,23 @@ fn untracked_additions(path: &Path) -> Option<usize> {
         bytes
     };
     if bytes.len() as u64 > LIMIT {
-        return None;
+        let fp = file_content_fingerprint(path)?;
+        return Some((None, format!("git:{ZERO_SHA1_OID}..{fp}")));
     }
+    let version = format!("git:{ZERO_SHA1_OID}..{}", git_blob_oid_hex(&bytes));
     // Git's default binary probe examines the first 8,000 bytes. Text does not
     // have to be UTF-8; count byte newlines and a final unterminated line.
     if bytes.iter().take(8000).any(|byte| *byte == 0) {
-        return Some(0);
+        return Some((Some(0), version));
     }
-    Some(
-        bytes.iter().filter(|byte| **byte == b'\n').count()
-            + usize::from(!bytes.is_empty() && bytes.last() != Some(&b'\n')),
-    )
+    let lines = bytes.iter().filter(|byte| **byte == b'\n').count()
+        + usize::from(!bytes.is_empty() && bytes.last() != Some(&b'\n'));
+    Some((Some(lines), version))
+}
+
+#[cfg(test)]
+fn untracked_additions(path: &Path) -> Option<usize> {
+    untracked_file_stats(path).and_then(|(lines, _)| lines)
 }
 
 /// Read status and line counts from one Git diff between commits or a working
@@ -1374,7 +1522,7 @@ fn compute_git_changes_inner(
             .or_else(|_| crate::workspace::git(repo_or_worktree, args))
     };
 
-    let mut diff_args = vec!["diff", "--raw", "--numstat", "-z", "-M", before];
+    let mut diff_args = vec!["diff", "--raw", "--no-abbrev", "--numstat", "-z", "-M", before];
     if let Some(after_sha) = after.filter(|head| !head.is_empty()) {
         if before == after_sha {
             return Some(FileChangeSummary::default());
@@ -1388,6 +1536,9 @@ fn compute_git_changes_inner(
         leaf.eq_ignore_ascii_case(".DS_Store") || leaf.starts_with("._")
     };
     let mut items_map = git_diff::parse(&diff, node, execution_id)?;
+    if after.is_none() {
+        stamp_working_tree_versions(repo_or_worktree, &mut items_map);
+    }
     let has_generated = items_map.keys().any(|path| {
         let rel = Path::new(path);
         crate::workspace::is_generated_artifact(rel) || crate::workspace::is_under_target_dir(rel)
@@ -1456,7 +1607,10 @@ fn compute_git_changes_inner(
             }
             if !items_map.contains_key(&path) {
                 let full = repo_or_worktree.join(&path);
-                let additions = untracked_additions(&full).unwrap_or(0);
+                let (additions, content_version) = match untracked_file_stats(&full) {
+                    Some((lines, version)) => (lines.unwrap_or(0), Some(version)),
+                    None => (0, None),
+                };
                 items_map.insert(
                     path.clone(),
                     FileChangeItem {
@@ -1477,6 +1631,7 @@ fn compute_git_changes_inner(
                             vec![execution_id.into()]
                         },
                         source: Some("git".into()),
+                        content_version,
                     },
                 );
             }
@@ -1606,11 +1761,16 @@ pub fn filter_display_ignored(
     FileChangeSummary::from_files(files, summary.is_running, active_file_path)
 }
 
-pub fn cap_summary_files(mut summary: FileChangeSummary, limit: usize) -> FileChangeSummary {
-    if summary.files.len() <= limit {
+pub fn page_summary_files(
+    mut summary: FileChangeSummary,
+    offset: usize,
+    limit: usize,
+) -> FileChangeSummary {
+    let total = summary.files.len();
+    if offset == 0 && total <= limit {
         return summary;
     }
-    let mut indices: Vec<usize> = (0..summary.files.len()).collect();
+    let mut indices: Vec<usize> = (0..total).collect();
     indices.sort_by(|a, b| {
         let lead = |item: &FileChangeItem| matches!(item.status.as_str(), "added" | "deleted");
         let changed = |item: &FileChangeItem| item.additions + item.deletions;
@@ -1618,14 +1778,86 @@ pub fn cap_summary_files(mut summary: FileChangeSummary, limit: usize) -> FileCh
         lead(second)
             .cmp(&lead(first))
             .then_with(|| changed(second).cmp(&changed(first)))
+            .then_with(|| first.path.cmp(&second.path))
     });
-    indices.truncate(limit);
-    let files = indices
+    let start = offset.min(total);
+    let end = start.saturating_add(limit).min(total);
+    let files = indices[start..end]
         .iter()
         .map(|index| summary.files[*index].clone())
         .collect();
     summary.files = files;
     summary
+}
+
+pub fn cap_summary_files(summary: FileChangeSummary, limit: usize) -> FileChangeSummary {
+    page_summary_files(summary, 0, limit)
+}
+
+fn is_safe_relative_path(path: &str) -> bool {
+    let p = Path::new(path);
+    !path.is_empty()
+        && !p.is_absolute()
+        && p.components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// Stamp live working-tree fingerprints onto returned rows when reading from a
+/// live workspace (non-git/transcript rows, or any row when the execution has
+/// no frozen `after` commit), preferring the newest owning execution's active
+/// worktree over the repository root so isolated Graph nodes also refresh
+/// accurately when edits keep identical line counts.
+pub fn refresh_live_content_versions(summary: &mut FileChangeSummary, state: &Snapshot) {
+    let repo = state
+        .config
+        .as_ref()
+        .map(|config| Path::new(&config.repository))
+        .filter(|path| !path.as_os_str().is_empty() && path.exists());
+    let exec_worktrees: HashMap<&str, (u64, &Path)> = state
+        .executions
+        .iter()
+        .chain(state.mergers.iter())
+        .filter(|exec| !exec.worktree.is_empty())
+        .map(|exec| (exec.id.as_str(), (exec.started_at, Path::new(&exec.worktree))))
+        .collect();
+    let all_settled_with_commits = state.publication.is_some()
+        || (!state.executions.is_empty()
+            && state
+                .executions
+                .iter()
+                .chain(state.mergers.iter())
+                .filter(|exec| !state.superseded_execution_ids.contains(&exec.id))
+                .all(|exec| {
+                    exec.status != "running"
+                        && exec.after.as_deref().is_some_and(|sha| !sha.is_empty())
+                }));
+    for item in &mut summary.files {
+        let frozen_commit = all_settled_with_commits
+            && item
+                .content_version
+                .as_deref()
+                .is_some_and(|version| version.starts_with("git:"));
+        if frozen_commit || item.status == "deleted" || !is_safe_relative_path(&item.path) {
+            continue;
+        }
+        let item_root = item
+            .execution_ids
+            .iter()
+            .filter_map(|id| exec_worktrees.get(id.as_str()).copied())
+            .filter(|(_, worktree)| worktree.exists())
+            .max_by_key(|(started_at, _)| *started_at)
+            .map(|(_, worktree)| worktree)
+            .or(repo);
+        let Some(root) = item_root else {
+            continue;
+        };
+        if let Some(fp) = file_content_fingerprint(&root.join(&item.path)) {
+            item.content_version = combine_content_versions(
+                item.content_version.as_deref(),
+                Some(&format!("live:{fp}")),
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2889,6 +3121,7 @@ mod tests {
                     nodes: vec!["worker".into()],
                     execution_ids: vec![],
                     source: Some("git".into()),
+                    content_version: None,
                 }],
                 false,
                 None,

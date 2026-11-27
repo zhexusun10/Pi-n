@@ -71,6 +71,7 @@ export interface FileChangeItem {
   nodes?: string[];
   executionIds?: string[];
   source?: "git" | "write" | "edit" | "bash";
+  contentVersion?: string;
 }
 
 export interface FileChangeSummary {
@@ -462,5 +463,33 @@ export interface TranscriptItem {
   thinkingCharCount?: number;
   /** Transient UI state while this card is hydrating its omitted body. */
   hydrating?: boolean;
+}
+
+export interface ParkedAgentStatus {
+  runId: string;
+  sessionId: string;
+  repository: string;
+  idleSecs: number;
+}
+
+export interface BackgroundServiceStatus {
+  runId: string;
+  count: number;
+}
+
+export interface ResidentProcessStatus {
+  resourceGeneration: number;
+  maxParkedAgents: number;
+  idleTtlSecs: number;
+  parkedAgents: ParkedAgentStatus[];
+  backgroundServices: BackgroundServiceStatus[];
+}
+
+export type ResidentReleaseScope = "agents" | "services" | "all";
+
+export interface ResidentReleaseResult {
+  releasedAgents: number;
+  releasedServices: number;
+  status: ResidentProcessStatus;
 }
 

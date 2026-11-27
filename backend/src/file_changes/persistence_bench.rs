@@ -26,6 +26,7 @@ fn summary(execution: &str, files: usize, source: &str) -> FileChangeSummary {
                 nodes: vec!["worker".into()],
                 execution_ids: vec![execution.into()],
                 source: Some(source.into()),
+                content_version: None,
             })
             .collect(),
         false,

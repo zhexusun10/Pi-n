@@ -9,7 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.2] - 2026-11-28
 
+### Fixed
+
+- Added deterministic `contentVersion` fingerprints (Git blob OIDs, live working-tree/worktree hashes, and transcript edit hashes) to `FileChangeItem` and threaded them through `useWorkspaceChanges` summary comparison, `ChangedFileRow` memo/cache keys, and same-scope completion invalidation so same-line-count edits and running-to-completed transitions never serve stale cached diffs (`backend/src/file_changes.rs`, `backend/src/file_changes/git_diff.rs`, `backend/src/file_changes/file_diff.rs`, `backend/src/file_changes/bash_verify.rs`, `backend/src/server/file_changes.rs`, `src/hooks/useWorkspaceChanges.ts`, `src/components/changes/ChangedFileRow.tsx`, `scripts/diff-cache-version-ui.test.mjs`).
+- Unified runtime resource invalidation (`engine::invalidate_runtime_resources`) across prepared processes, warm nodes, and parked Serial shells via a monotonic `resourceGeneration`, rotating stale parked Direct/Serial agents on extension or provider-auth changes while keeping stdout/stderr draining and preserving surviving background services in the Run-scoped service pool (`backend/src/engine/resident.rs`, `backend/src/engine.rs`, `backend/src/server.rs`).
+
+### Added
+
+- Added capacity (LRU, default 8) and idle TTL (default 30 min) resource budgets with periodic reaping for parked Serial agents (preserving background services on eviction), plus `get_resident_processes` / `release_resident_processes` endpoints and a Settings management section (`ResidentProcessesSettings`) distinguishing reclaimable idle agents from retained background services (`backend/src/engine/lingering.rs`, `backend/src/engine/resident.rs`, `backend/src/server/resident.rs`, `backend/src/api_contract.rs`, `src/components/modals/ResidentProcessesSettings.tsx`).
+- Added deterministic pagination (`offset` / `limit`, chunked across polls above 500 items and protected against in-flight poll overwrites) to `get_file_changes` and a "Load more" control in `WorkspaceChangesPane` so large change sets still open with a fast 60-row initial render while allowing complete review of all changed files (`backend/src/file_changes.rs`, `backend/src/server/file_changes.rs`, `src/hooks/useWorkspaceChanges.ts`, `src/components/changes/WorkspaceChangesPanel.tsx`).
+
 ### Changed
+
+- Extracted resident-process coordination (`backend/src/engine/resident.rs`, `backend/src/server/resident.rs`), file-change summary queries (`backend/src/server/file_changes.rs`), and settings/composer config persistence (`src/hooks/useConfigPersistence.ts`) out of `engine.rs`, `server.rs`, and `App.tsx`, and updated `docs/architecture/filesystem-isolation.md`.
+- Widened the expanded sidebar fluidly on wide viewports via `--sidebar-width: clamp(260px, 19vw, 300px)` and derived `--sidebar-content-width` from it, keeping `260px` at `<= 1368px` while giving workspace paths and conversation titles more room on wider MacBook and desktop displays, and refreshed README screenshots (`src/styles.css`, `scripts/ui-polish.test.mjs`, `assets/readme-*.png`).
 
 - Switched parked Serial conversations' model and thinking level in-place via Pi RPC (`set_model`, `get_available_models` for slash-containing provider IDs, and `set_thinking_level`) instead of retiring the parked process tree on selection changes, so background services (e.g., dev servers) survive model/thinking switches while still falling back to cold launch if the RPC switch fails (`backend/src/engine.rs`, `backend/src/engine/lingering.rs`).
 

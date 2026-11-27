@@ -2853,7 +2853,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     summary: workspaceChangesSummary,
     isLoaded: workspaceChangesLoaded,
     refreshVersion: workspaceChangesRefreshVersion,
+    loadingMore: workspaceChangesLoadingMore,
+    remoteExhausted: workspaceChangesRemoteExhausted,
     refresh: refreshWorkspaceChanges,
+    loadMore: loadMoreWorkspaceChanges,
   } = useWorkspaceChanges({
     state,
     // Scope by snapshot attempts rather than incrementally loaded transcript turns.
@@ -4456,6 +4459,9 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                           summary={workspaceChangesSummary}
                           isLoaded={workspaceChangesLoaded}
                           refreshVersion={workspaceChangesRefreshVersion}
+                          loadingMore={workspaceChangesLoadingMore}
+                          remoteExhausted={workspaceChangesRemoteExhausted}
+                          onLoadMore={loadMoreWorkspaceChanges}
                           hasGraphPane={hasGraphPane}
                           onSelectGraph={closeChangesPane}
                           onClose={closeChangesPane}
@@ -4474,6 +4480,9 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                   summary={workspaceChangesSummary}
                   isLoaded={workspaceChangesLoaded}
                   refreshVersion={workspaceChangesRefreshVersion}
+                  loadingMore={workspaceChangesLoadingMore}
+                  remoteExhausted={workspaceChangesRemoteExhausted}
+                  onLoadMore={loadMoreWorkspaceChanges}
                   hasGraphPane={false}
                   onSelectGraph={closeChangesPane}
                   onClose={closeChangesPane}

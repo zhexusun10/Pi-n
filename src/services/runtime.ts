@@ -29,7 +29,7 @@ const boundedCommands = new Set([
   "get_planning_snapshot", "get_execution_output", "get_planning_output", "search_conversations", "get_file_changes", "get_file_diff",
   "open_workspace_file",
   "provider_auth", "pi_extensions", "list_skills", "list_files",
-  "get_merger_prompt", "operation_status",
+  "get_merger_prompt", "get_resident_processes", "release_resident_processes", "operation_status",
 ]);
 const metadataTimeoutMs = 15_000;
 
@@ -366,11 +366,25 @@ export const runtimeService = {
         runId, executionId, ranges,
         ...(endOffset !== undefined ? { endOffset } : {}),
       }, signal),
-  getFileChanges: async (runId: string, execution?: string | string[], signal?: AbortSignal) => {
-    const result = await request<{ runId: string; executionId: string | null; executionIds: string[] | null; summary: FileChangeSummary }>(
+  getFileChanges: async (
+    runId: string,
+    execution?: string | string[],
+    signal?: AbortSignal,
+    pagination?: { offset?: number; limit?: number },
+  ) => {
+    const result = await request<{
+      runId: string;
+      executionId: string | null;
+      executionIds: string[] | null;
+      offset?: number;
+      limit?: number;
+      summary: FileChangeSummary;
+    }>(
       "get_file_changes", {
       runId,
       ...(Array.isArray(execution) ? { executionIds: execution } : execution ? { executionId: execution } : {}),
+      ...(pagination?.offset !== undefined ? { offset: pagination.offset } : {}),
+      ...(pagination?.limit !== undefined ? { limit: pagination.limit } : {}),
     }, signal);
     const expectedId = typeof execution === "string" && execution ? execution : null;
     const optionalStrings = (value: unknown) => value === undefined ||
@@ -380,6 +394,7 @@ export const runtimeService = {
       !Array.isArray(result.summary.files) || result.summary.files.some(file =>
         !file || typeof file.path !== "string" || !["added", "modified", "deleted", "renamed"].includes(file.status) ||
         (file.oldPath !== undefined && typeof file.oldPath !== "string") ||
+        (file.contentVersion !== undefined && typeof file.contentVersion !== "string") ||
         !optionalStrings(file.nodes) || !optionalStrings(file.executionIds) ||
         [file.additions, file.deletions].some(value => !Number.isSafeInteger(value) || value < 0)) ||
       [result.summary.totalFiles, result.summary.addedCount, result.summary.modifiedCount,
@@ -628,4 +643,18 @@ export const runtimeService = {
       node: context?.node || undefined,
     });
   },
+  getResidentProcesses: (signal?: AbortSignal) =>
+    request<import("../types").ResidentProcessStatus>("get_resident_processes", {}, signal),
+  releaseResidentProcesses: (
+    options?: { runId?: string; scope?: import("../types").ResidentReleaseScope },
+    signal?: AbortSignal,
+  ) =>
+    request<import("../types").ResidentReleaseResult>(
+      "release_resident_processes",
+      {
+        ...(options?.runId ? { runId: options.runId } : {}),
+        ...(options?.scope ? { scope: options.scope } : {}),
+      },
+      signal,
+    ),
 };

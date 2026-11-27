@@ -251,7 +251,8 @@ test("metadata scoped aggregation preserves capped totals without double-countin
     await expect(trigger).toContainText("120 files changed");
     await trigger.click();
     await expect(page.getByTestId("changed-file-item")).toHaveCount(60);
-    await expect(page.getByTestId("workspace-changes-truncated")).toContainText("60 more file changes omitted");
+    await expect(page.getByTestId("workspace-changes-truncated")).toContainText("60 more file changes not shown");
+    await expect(page.getByTestId("workspace-changes-load-more")).toContainText("Load 60 more");
     assert.ok(requests.length > 0);
     assert.ok(requests.every(body => JSON.stringify(body.executionIds) === '["execution-prior","execution"]'));
     assert.deepEqual(errors, []);
@@ -749,7 +750,10 @@ test("large change sets mount zero rows while closed and render at most 60 rows 
     await expect(panel.getByTestId("changed-file-item")).toHaveCount(60);
     const truncated = panel.getByTestId("workspace-changes-truncated");
     await expect(truncated).toHaveCount(1);
-    await expect(truncated).toContainText("1145 more file changes omitted");
+    await expect(truncated).toContainText("1145 more file changes not shown");
+    await panel.getByTestId("workspace-changes-load-more").click();
+    await expect(panel.getByTestId("changed-file-item")).toHaveCount(120);
+    await expect(truncated).toContainText("1085 more file changes not shown");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

@@ -155,6 +155,7 @@ function sameFileRowProps(prev: ChangedFileRowProps, next: ChangedFileRowProps):
     a.deletions === b.deletions &&
     Boolean(a.isRunning) === Boolean(b.isRunning) &&
     a.source === b.source &&
+    a.contentVersion === b.contentVersion &&
     sameNodes(a.nodes, b.nodes)
   );
 }
@@ -179,7 +180,7 @@ export const ChangedFileRow = React.memo(function ChangedFileRow({
     ? t("重命名自 {0}", item.oldPath)
     : `${meta.label()}: ${item.path}`;
 
-  const cacheKey = `${scopeKey}:${item.path}:${item.oldPath ?? ""}:${item.status}:${item.additions}:${item.deletions}:${item.isRunning ? 1 : 0}:${item.source ?? ""}:${refreshVersion}`;
+  const cacheKey = `${scopeKey}:${item.path}:${item.oldPath ?? ""}:${item.status}:${item.additions}:${item.deletions}:${item.isRunning ? 1 : 0}:${item.source ?? ""}:${item.contentVersion ?? ""}:${refreshVersion}`;
   const [diffState, setDiffState] = useState<{
     status: "idle" | "loading" | "loaded" | "error";
     viewScopeKey: string;
@@ -191,6 +192,7 @@ export const ChangedFileRow = React.memo(function ChangedFileRow({
   });
   const [retryCount, setRetryCount] = useState(0);
   const retryBypassKeyRef = useRef<string | null>(null);
+  const wasRunningRef = useRef(Boolean(item.isRunning));
   const diffContentRef = useRef<HTMLDivElement>(null);
   const [diffHeight, setDiffHeight] = useState(0);
   const [renderBody, setRenderBody] = useState(expanded);
@@ -219,8 +221,10 @@ export const ChangedFileRow = React.memo(function ChangedFileRow({
   }, [expanded, item.path]);
 
   useEffect(() => {
+    const completed = wasRunningRef.current && !item.isRunning;
+    wasRunningRef.current = Boolean(item.isRunning);
     if (!expanded) return;
-    const bypassCache = retryBypassKeyRef.current === cacheKey;
+    const bypassCache = completed || retryBypassKeyRef.current === cacheKey;
     retryBypassKeyRef.current = null;
     if (!bypassCache) {
       const cached = getCachedFileDiff(cacheKey);

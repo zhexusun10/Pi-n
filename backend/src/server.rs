@@ -25,9 +25,11 @@ mod activity;
 mod api_protocol_tests;
 mod api_transport;
 mod composer;
+mod file_changes;
 mod file_diff;
 mod open_file;
 mod project_discovery;
+mod resident;
 mod search;
 mod snapshot_delta;
 mod sse;
@@ -41,6 +43,7 @@ use crate::path_identity::same_repository_binding;
 use crate::path_identity::windows_repository_key;
 use activity::*;
 pub(crate) use activity::{set_prepare_phase, ActivityGuard as RuntimeActivityGuard};
+use file_changes::*;
 use file_diff::*;
 use open_file::*;
 use project_discovery::*;
@@ -6691,134 +6694,6 @@ fn argument<T: serde::de::DeserializeOwned>(
         .map_err(|error| format!("Invalid {key}: {error}"))
 }
 
-fn get_file_changes(
-    body: &serde_json::Value,
-    service: &Arc<Service>,
-) -> Result<serde_json::Value, String> {
-    let requested_run_id = body
-        .get("runId")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let execution_id = body
-        .get("executionId")
-        .and_then(serde_json::Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let execution_ids: Option<Vec<String>> = argument(body, "executionIds")?;
-    if execution_id.is_some() && execution_ids.is_some() {
-        return Err("Specify executionId or executionIds, not both".into());
-    }
-    let scope = execution_ids
-        .clone()
-        .or_else(|| execution_id.clone().map(|id| vec![id]));
-    let (in_memory_state, root) = {
-        let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
-        let state = if requested_run_id.is_empty() || runtime.state.run_id == requested_run_id {
-            // Clone only the lightweight metadata fields needed by file_changes
-            // instead of cloning events (base64 images), graphs, or live outputs.
-            let strip_exec = |exec: &crate::model::Execution| {
-                let mut cloned = exec.clone();
-                cloned.output_bytes = exec.output_bytes.max(exec.output.len());
-                cloned.output = String::new();
-                cloned
-            };
-            let lightweight = Snapshot {
-                run_id: runtime.state.run_id.clone(),
-                config: runtime.state.config.clone(),
-                planning_id: runtime.state.planning_id.clone(),
-                planning: runtime.state.planning.clone(),
-                base: runtime.state.base.clone(),
-                latest_source_base: runtime.state.latest_source_base.clone(),
-                publication: runtime.state.publication.clone(),
-                superseded_execution_ids: runtime.state.superseded_execution_ids.clone(),
-                executions: runtime.state.executions.iter().map(strip_exec).collect(),
-                mergers: runtime.state.mergers.iter().map(strip_exec).collect(),
-                ..Snapshot::default()
-            };
-            let fence = crate::file_changes::capture_warm_fence(&lightweight, scope.as_deref())?;
-            Some((lightweight, fence))
-        } else {
-            None
-        };
-        (state, runtime.root.clone())
-    };
-    // Cold sidecar/log parsing and Git diffs never hold the Run mutex. Use a
-    // read-only connection, and warm only this request's execution scope.
-    // Cache publication is fenced against concurrent live output/invalidation.
-    let reader = crate::store::Store::open_reader(&root.join("events.sqlite"))?;
-    let (state, fence) = match in_memory_state {
-        Some((state, fence)) => (state, fence),
-        None => {
-            let state = reader.load(&requested_run_id)?;
-            let fence = crate::file_changes::capture_warm_fence(&state, scope.as_deref())?;
-            (state, fence)
-        }
-    };
-    crate::file_changes::warm_scoped_changes(
-        &state,
-        &reader,
-        Some(&root),
-        scope.as_deref(),
-        &fence,
-    );
-
-    let summary = if let Some(ids) = &scope {
-        let selected: Vec<_> = state
-            .executions
-            .iter()
-            .chain(state.mergers.iter())
-            .filter(|exec| ids.contains(&exec.id))
-            .collect();
-        let parts: Vec<_> = selected
-            .iter()
-            .map(|exec| {
-                let cached = crate::file_changes::get_cached_execution_changes(&state.run_id, exec)
-                    .unwrap_or_default();
-                if exec.status == "running" && !exec.before.is_empty() && !exec.worktree.is_empty()
-                {
-                    if let Some(live_git) = crate::file_changes::compute_git_changes(
-                        std::path::Path::new(&exec.worktree),
-                        &exec.before,
-                        None,
-                        &exec.node,
-                        &exec.id,
-                    ) {
-                        return crate::file_changes::merge_summaries(&[cached, live_git], true);
-                    }
-                }
-                cached
-            })
-            .collect();
-        // Union complete per-execution paths before capping the response. Adding
-        // already-capped totals in the browser cannot deduplicate shared files.
-        crate::file_changes::merge_summaries(
-            &parts,
-            selected.iter().any(|exec| exec.status == "running"),
-        )
-    } else {
-        crate::file_changes::get_cached_run_changes(&state).unwrap_or_default()
-    };
-    // Bash rows are only leads (`rm x`, `sed -i x`): keep those Git confirms.
-    let summary = crate::file_changes::verify_snapshot_changes(summary, &state);
-    // Hide untracked `.gitignore`d artifacts and rebuildable caches from the
-    // display summary while keeping project-tracked files and snapshot contracts intact.
-    let summary = crate::file_changes::filter_display_ignored(summary, &state);
-    // The browser renders at most a small slice; keep the true totals and cap
-    // the transferred rows so a build-heavy Run stays cheap to display.
-    let summary = crate::file_changes::cap_summary_files(
-        summary,
-        crate::file_changes::MAX_DISPLAYED_FILE_CHANGES,
-    );
-
-    Ok(serde_json::json!({
-        "runId": state.run_id,
-        "executionId": execution_id,
-        "executionIds": execution_ids,
-        "summary": summary,
-    }))
-}
-
 fn get_merger_prompt(
     body: &serde_json::Value,
     service: &Arc<Service>,
@@ -7090,14 +6965,11 @@ pub fn dispatch(
         "pi_extensions" => {
             let changed = body["operation"] == "set_enabled";
             let result = crate::pi_extensions::request(body)?;
-            #[cfg(not(feature = "fixture"))]
             if changed {
-                crate::engine::invalidate_prepared_processes();
-                crate::engine::invalidate_warm_node();
+                crate::engine::invalidate_runtime_resources();
+                #[cfg(not(feature = "fixture"))]
                 warm_selected_engines(service);
             }
-            #[cfg(feature = "fixture")]
-            let _ = changed;
             to_value(result)
         }
         "extension_command" => {
@@ -7112,15 +6984,13 @@ pub fn dispatch(
             }))?)
         }
         "provider_auth" => {
-            #[cfg(not(feature = "fixture"))]
             let operation = body["operation"].as_str().map(str::to_owned);
             let result = crate::provider_auth::request(body)?;
-            #[cfg(not(feature = "fixture"))]
             if operation.as_deref() == Some("logout")
                 || (operation.as_deref() == Some("poll") && result["status"] == "complete")
             {
-                crate::engine::invalidate_prepared_processes();
-                crate::engine::invalidate_warm_node();
+                crate::engine::invalidate_runtime_resources();
+                #[cfg(not(feature = "fixture"))]
                 if operation.as_deref() == Some("poll") {
                     warm_selected_engines(service);
                 }
@@ -7344,6 +7214,8 @@ pub fn dispatch(
                 .store
                 .pending_cleanups()?,
         ),
+        "get_resident_processes" => to_value(resident::get_resident_processes()),
+        "release_resident_processes" => to_value(resident::release_resident_processes(&body)?),
         _ => return Err("Unknown command".into()),
     };
     let mut value = result.map_err(|error| error.to_string())?;
@@ -7825,6 +7697,7 @@ pub fn run_with_options(options: ServerOptions) -> Result<(), String> {
                 thread::sleep(std::time::Duration::from_millis(100));
             }
             if let Some(service) = cleanup_service.upgrade() {
+                crate::engine::reap_idle_lingering();
                 let run_orphan_sweep = last_orphan_sweep
                     .is_none_or(|prev| prev.elapsed() >= ORPHAN_SWEEP_INTERVAL);
                 if run_orphan_sweep {

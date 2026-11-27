@@ -243,6 +243,7 @@ pub const READ_COMMANDS: &[&str] = &[
     "compile_graph",
     "environment_capabilities",
     "get_cleanup_status",
+    "get_resident_processes",
     "result_descriptor",
     "operation_status",
 ];

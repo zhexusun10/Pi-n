@@ -95,14 +95,15 @@ for (const language of ["en", "zh-CN"]) {
       });
       assert.equal(homeModelPlacement, true, "home model selector sits to the left of the mode buttons");
 
-      for (const [width, height] of [[1440, 900], [1280, 768], [1100, 768], [1024, 768], [961, 768], [960, 768], [768, 600], [390, 844], [320, 568], [900, 420]]) {
+      for (const [width, height] of [[1920, 1080], [1440, 900], [1280, 768], [1100, 768], [1024, 768], [961, 768], [960, 768], [768, 600], [390, 844], [320, 568], [900, 420]]) {
         await page.setViewportSize({ width, height });
         await expectHomeLayout(page);
         if (width > 720) {
-          // Wait for the sidebar width transition when returning from <= 720px (e.g. 320 -> 900).
+          const expectedSidebarWidth = Math.round(Math.min(300, Math.max(260, width * 0.19)));
+          // Wait for the sidebar width transition across viewport changes (e.g. 1920 -> 1440, 320 -> 900).
           await expect.poll(() => page.locator(".sidebar").evaluate(el => Math.round(el.getBoundingClientRect().width)), {
-            message: `expanded sidebar stays 260px at ${width}x${height}`,
-          }).toBe(260);
+            message: `expanded sidebar resolves to ${expectedSidebarWidth}px at ${width}x${height}`,
+          }).toBe(expectedSidebarWidth);
           if (width < 1024) {
             const composerWidth = await page.locator(".landing-screen .prompt-box-container").evaluate(el => el.getBoundingClientRect().width);
             assert.ok(composerWidth < 680, `composer narrows instead of sidebar at ${width}px: ${composerWidth}`);

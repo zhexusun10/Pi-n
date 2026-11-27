@@ -34,9 +34,10 @@ import { enableRuntimeEvents } from "./services/runtimeEvents";
 import { invalidateTranscriptCaches } from "./services/transcriptCache";
 import { unregisterImageBlobUrl } from "./services/originalImagePreview";
 import { providerAuth } from "./services/providerAuth";
-import { ComposerModels, type ComposerScope } from "./services/composerCommands";
-import { applyModelConfig, modelRoles, planningModelRoles, providerIdForModel, roleModelConfig, updateRoleModelConfig } from "./modelConfig";
+import { ComposerModels } from "./services/composerCommands";
+import { applyModelConfig, modelRoles, planningModelRoles, providerIdForModel, roleModelConfig } from "./modelConfig";
 import { useRepositoryStatus } from "./hooks/useRepositoryStatus";
+import { useConfigPersistence } from "./hooks/useConfigPersistence";
 import { deduceRouteType, resolveRunRouteType } from "./services/executionRoute";
 import { loadWorkbench, preloadWorkbench } from "./services/workbenchLoader";
 import { createPlanningRecovery, hasCurrentPlanningRun, planningRecoveryDelay, recoveredPlanningForDisplay, runningPlanningFromSnapshot } from "./services/planningRecovery";
@@ -292,12 +293,6 @@ export default function App() {
   // replaced. Persisting it is pointless: pending cards do not survive reload.
   const [runCardKeys, setRunCardKeys] = useState<Record<string, string>>({});
   const acceptedSettingsRef = useRef<Config | null>(null);
-  // A Settings refresh belongs to one opening. Closing, reopening or saving
-  // supersedes its read even when the foreground Run has not changed.
-  const settingsReadGeneration = useRef(0);
-  // Global default saves (Settings modal or home composer) are ordered so a
-  // late earlier response cannot overwrite a newer selection.
-  const defaultSaveGeneration = useRef(0);
   const [runLabels, setRunLabels] = useState<Record<string, string>>({});
   const [runModes, setRunModes] = useState<Record<string, PlanMode>>({});
   const deletedRunIdsRef = useRef(new Set<string>());
@@ -1963,150 +1958,33 @@ export default function App() {
     setError("");
   };
 
-  // Settings is a projection of the selected conversation. Mount the modal
-  // immediately, then re-read the Run in the background: the durable snapshot
-  // endpoint clones the whole Run, so awaiting it before mounting made the
-  // click feel frozen on large conversations. The modal adopts the refreshed
-  // config while its draft is still untouched (see SettingsModal).
-  const handleOpenSettings = () => {
-    // Settings belongs to the currently validated conversation. Opening it
-    // supersedes an unfinished navigation, not the conversation it displays.
-    if (navigationPending) detachForeground(config.repository);
-    const runId = state.runId;
-    const generation = foregroundGeneration.current;
-    const readGeneration = ++settingsReadGeneration.current;
-    setModal("settings");
-    if (runId && !runId.startsWith("pending-")) {
-      void (async () => {
-        try {
-          const snapshot = await runtimeService.snapshotForRun(runId);
-          if (generation !== foregroundGeneration.current || readGeneration !== settingsReadGeneration.current) return;
-          if (snapshot.runId === runId && snapshotBelongsToWorkspace(snapshot, config.repository)) {
-            const conversationConfig = snapshotModelConfig(snapshot, config.repository);
-            if (conversationConfig) {
-              setConfig(prev => applyModelConfig(prev, conversationConfig));
-            }
-          }
-        } catch {
-          // Opening Settings must remain available when a snapshot read fails.
-        }
-      })();
-    }
-  };
-
-  const handleCloseSettings = useCallback(() => {
-    settingsReadGeneration.current += 1;
-    setModal(null);
-  }, []);
-
-  const handleSaveConfig = useCallback(async (draftConfig: Config): Promise<boolean> => {
-    settingsReadGeneration.current += 1;
-    defaultSaveGeneration.current += 1;
-    const generation = foregroundGeneration.current;
-    // Settings change models/defaults, not the selected workspace. Rediscovery
-    // or Git status here can stall saving behind an unrelated large tree scan.
-    const repoPath = normalizeWorkspacePath(config.repository.trim());
-    if (generation !== foregroundGeneration.current) return false;
-    const nextConfig = {
-      ...draftConfig,
-      repository: repoPath,
-      maxFeedback: normalizeMaxFeedback(draftConfig.maxFeedback),
-      maxParallel: normalizeMaxParallel(draftConfig.maxParallel),
-    };
-    let persistedDefaults = defaultSettings;
-    try {
-      // Settings always owns the Run profile, regardless of selected node.
-      // Outside a Run it edits the global defaults for new conversations.
-      const boot = await runtimeService.saveConfig(nextConfig, state.runId || undefined);
-      if (generation !== foregroundGeneration.current) return false;
-      if (boot.snapshot?.runId === state.runId && state.runId) {
-        if (snapshotBelongsToWorkspace(boot.snapshot, config.repository)) {
-          setState(boot.snapshot);
-          observeRunSnapshot(boot.snapshot);
-        }
-      }
-      if (boot.dataPath) {
-        const cleanDataPath = normalizeWorkspacePath(boot.dataPath);
-        setDataPath(cleanDataPath);
-        writeStorageString(STORAGE_KEYS.dataPath, cleanDataPath);
-      }
-      if (boot.envOverrides) setEnvOverrides(boot.envOverrides);
-      persistedDefaults = {
-        ...boot.config,
-        maxFeedback: normalizeMaxFeedback(boot.config.maxFeedback),
-        maxParallel: normalizeMaxParallel(boot.config.maxParallel),
-      };
-      setDefaultSettings(persistedDefaults);
-    } catch (error) {
-      throw new Error(t("保存设置失败：{0}", String(error)));
-    }
-    // Commit the browser draft only after acceptance. A timeout does not prove
-    // the server write was rolled back; its error asks the user to verify first.
-    acceptedSettingsRef.current = nextConfig;
-    setConfig(nextConfig);
-    setIsBootstrapReady(true);
-    writeStorageJson(STORAGE_KEYS.config, applyModelConfig(nextConfig, persistedDefaults));
-    // Saving settings never touches the workspace list or its order.
-    setModal(null);
-    setError("");
-    return true;
-  }, [config.repository, state.runId, observeRunSnapshot, setState, defaultSettings]);
-
-  const saveComposerModels = async (scope: ComposerScope, settings: RoleModelConfig) => {
-    if (!isBootstrapReady) throw new Error(t("正在加载后端设置，请稍后重试；若加载失败，请在侧边栏重试。"));
-    const generation = foregroundGeneration.current;
-    if (scope.runId !== (state.runId || undefined) || displayedRunIdRef.current !== state.runId) throw new Error(t("会话已切换，请重试。"));
-    settingsReadGeneration.current += 1;
-    if (!scope.runId) {
-      // The home composer's choice is remembered as the default for new
-      // conversations, across restarts. Apply immediately so submitting a new
-      // conversation before `saveConfig` returns uses the chosen model, and
-      // keep global defaults/localStorage synced even if the user navigates
-      // into that conversation while persistence is in flight.
-      const saveGeneration = ++defaultSaveGeneration.current;
-      const previousConfig = config;
-      const nextConfig = updateRoleModelConfig(config, scope.role, settings);
-      setConfig(previous => updateRoleModelConfig(previous, scope.role, settings));
-      let boot: Awaited<ReturnType<typeof runtimeService.saveConfig>>;
-      try {
-        boot = await runtimeService.saveConfig(nextConfig);
-      } catch (error) {
-        if (
-          generation === foregroundGeneration.current &&
-          displayedRunIdRef.current === state.runId &&
-          saveGeneration === defaultSaveGeneration.current
-        ) {
-          setConfig(previous => applyModelConfig(previous, previousConfig));
-        }
-        throw error;
-      }
-      if (saveGeneration !== defaultSaveGeneration.current) return;
-      const persisted = {
-        ...boot.config,
-        maxFeedback: normalizeMaxFeedback(boot.config.maxFeedback),
-        maxParallel: normalizeMaxParallel(boot.config.maxParallel),
-      };
-      acceptedSettingsRef.current = persisted;
-      setDefaultSettings(persisted);
-      const storedConfig = readStorageJson(STORAGE_KEYS.config);
-      writeStorageJson(
-        STORAGE_KEYS.config,
-        applyModelConfig(storedConfig ? { ...nextConfig, ...storedConfig } : nextConfig, persisted),
-      );
-      if (
-        generation === foregroundGeneration.current &&
-        displayedRunIdRef.current === state.runId
-      ) {
-        setConfig(previous => applyModelConfig(previous, persisted));
-      }
-      return;
-    }
-    const snapshot = await runtimeService.composerModels({ ...scope, settings });
-    if (generation !== foregroundGeneration.current || displayedRunIdRef.current !== scope.runId) return;
-    setComposerSnapshot(snapshot);
-    observeRunSnapshot(snapshot);
-    if (!scope.node) setConfig(previous => applyModelConfig(previous, snapshotModelConfig(snapshot, config.repository)));
-  };
+  const {
+    handleOpenSettings,
+    handleCloseSettings,
+    handleSaveConfig,
+    saveComposerModels,
+  } = useConfigPersistence({
+    config,
+    setConfig,
+    defaultSettings,
+    setDefaultSettings,
+    acceptedSettingsRef,
+    isBootstrapReady,
+    setIsBootstrapReady,
+    stateRunId: state.runId,
+    displayedRunIdRef,
+    foregroundGeneration,
+    navigationPending,
+    detachForeground,
+    setState,
+    setComposerSnapshot,
+    observeRunSnapshot,
+    snapshotModelConfig,
+    setDataPath,
+    setEnvOverrides,
+    setModal,
+    setError,
+  });
 
   const renameComposerConversation = async (runId: string, title: string) => {
     if (!isBootstrapReady) throw new Error(t("正在加载后端设置，请稍后重试；若加载失败，请在侧边栏重试。"));

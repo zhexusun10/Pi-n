@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 struct Change<'a> {
     status: &'static str,
     old_path: Option<&'a str>,
+    old_oid: &'a str,
+    new_oid: &'a str,
     counts: Option<(usize, usize)>,
 }
 
@@ -21,7 +23,11 @@ fn counts(additions: &str, deletions: &str) -> Option<(usize, usize)> {
     Some((additions.parse().ok()?, deletions.parse().ok()?))
 }
 
-fn raw_status(header: &str) -> Option<(&'static str, bool)> {
+fn is_zero_oid(oid: &str) -> bool {
+    !oid.is_empty() && oid.bytes().all(|byte| byte == b'0')
+}
+
+fn raw_status(header: &str) -> Option<(&'static str, bool, &str, &str)> {
     let mut metadata = header.strip_prefix(':')?.split_ascii_whitespace();
     for _ in 0..2 {
         let mode = metadata.next()?;
@@ -30,14 +36,13 @@ fn raw_status(header: &str) -> Option<(&'static str, bool)> {
         }
     }
     // Object IDs may be abbreviated and use either SHA-1 or SHA-256.
-    for _ in 0..2 {
-        if !metadata
-            .next()?
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return None;
-        }
+    let old_oid = metadata.next()?;
+    if old_oid.is_empty() || !old_oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let new_oid = metadata.next()?;
+    if new_oid.is_empty() || !new_oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
     }
     let code = metadata.next()?;
     if metadata.next().is_some() {
@@ -50,15 +55,16 @@ fn raw_status(header: &str) -> Option<(&'static str, bool)> {
             && suffix.bytes().all(|byte| byte.is_ascii_digit())
             && suffix.parse::<u8>().ok().is_some_and(|value| value <= 100)
     };
-    match code.as_bytes().first()? {
-        b'A' if suffix.is_empty() => Some(("added", false)),
-        b'D' if suffix.is_empty() => Some(("deleted", false)),
-        b'R' if score() => Some(("renamed", true)),
-        b'C' if score() => Some(("added", true)),
-        b'M' if suffix.is_empty() || score() => Some(("modified", false)),
-        b'T' | b'U' | b'X' | b'B' if suffix.is_empty() => Some(("modified", false)),
-        _ => None,
-    }
+    let (status, two_paths) = match code.as_bytes().first()? {
+        b'A' if suffix.is_empty() => ("added", false),
+        b'D' if suffix.is_empty() => ("deleted", false),
+        b'R' if score() => ("renamed", true),
+        b'C' if score() => ("added", true),
+        b'M' if suffix.is_empty() || score() => ("modified", false),
+        b'T' | b'U' | b'X' | b'B' if suffix.is_empty() => ("modified", false),
+        _ => return None,
+    };
+    Some((status, two_paths, old_oid, new_oid))
 }
 
 /// Parse `git diff --raw --numstat -z -M`. Git writes the raw records first,
@@ -77,7 +83,7 @@ pub(super) fn parse(
     let mut reading_stats = false;
     while let Some(header) = fields.next() {
         if !reading_stats && header.starts_with(':') {
-            let (status, two_paths) = raw_status(header)?;
+            let (status, two_paths, old_oid, new_oid) = raw_status(header)?;
             let first = fields.next().filter(|path| !path.is_empty())?;
             let (path, old_path) = if two_paths {
                 (fields.next().filter(|path| !path.is_empty())?, Some(first))
@@ -89,6 +95,8 @@ pub(super) fn parse(
                 Change {
                     status,
                     old_path,
+                    old_oid,
+                    new_oid,
                     counts: None,
                 },
             );
@@ -115,6 +123,11 @@ pub(super) fn parse(
         .into_iter()
         .map(|(path, change)| {
             let (additions, deletions) = change.counts?;
+            let content_version = if change.status == "deleted" || !is_zero_oid(change.new_oid) {
+                Some(format!("git:{}..{}", change.old_oid, change.new_oid))
+            } else {
+                Some(format!("git-wt:{}..wt", change.old_oid))
+            };
             Some((
                 path.to_string(),
                 FileChangeItem {
@@ -135,6 +148,7 @@ pub(super) fn parse(
                         vec![execution_id.into()]
                     },
                     source: Some("git".into()),
+                    content_version,
                 },
             ))
         })

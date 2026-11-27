@@ -13,6 +13,7 @@ fn summary(path: &str, source: &str, additions: usize) -> FileChangeSummary {
             nodes: vec!["worker".into()],
             execution_ids: vec![],
             source: Some(source.into()),
+            content_version: None,
         }],
         false,
         None,

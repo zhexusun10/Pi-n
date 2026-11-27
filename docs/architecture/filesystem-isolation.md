@@ -206,13 +206,18 @@ shutdown) and explicit cleanup reclaim both. The lifecycle guard terminates a
 boundary only when it is the **last owner**, so a boundary kept by either
 registry is not torn down when the turn's guard drops.
 
-A Serial shell or retained Planner service boundary has **no idle TTL and no
-browser-owned deadline**. Workspace reset, history clearing, Run/workspace
-deletion and backend shutdown reclaim both. History edits and incompatible
-model/thinking selections additionally retire Serial shells. There is no
-capacity eviction, so a long-lived backend can accumulate one parked shell per
-Serial conversation and one held process boundary per source Planner reply
-that leaves live descendants; this is bounded only by user activity.
+A parked Serial agent shell is bounded by a **capacity budget (default 8 shells,
+LRU)** and an **idle TTL (default 30 minutes)**, and records the backend's
+monotonic `resourceGeneration` captured at launch. When an agent is evicted for
+capacity, idle expiry, or a stale `resourceGeneration` (for example after
+toggling Pi extensions or updating provider auth), Pi^n closes only the Pi
+agent process and moves any surviving background descendants into the
+Run-scoped background services pool so dev servers keep running while the next
+turn cold-launches with fresh extensions/auth. Retained background service
+trees have no idle TTL; workspace reset, history clearing, Run/workspace
+deletion, explicit resident-process release (`release_resident_processes`), and
+backend shutdown reclaim both parked agents and retained background services.
+History edits additionally retire the Run's parked Serial shell.
 
 Only settled Serial turns park the Pi worker. Planner service retention carries
 no Planner session or snapshot obligation, so the drain-before-seal rule for

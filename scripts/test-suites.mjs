@@ -48,7 +48,7 @@ export const suites = {
     description: 'Fast mocked-API feature browser flows; Chromium/PI_N_BROWSER_CHANNEL, no production build.',
     steps: [uiTests(
       'background-settings-ui.test.mjs', 'workspace-ui.test.mjs', 'workspace-search-ui.test.mjs', 'sidebar-copy-prompt-ui.test.mjs',
-      'manual-node-ui.test.mjs', 'workspace-changes-ui.test.mjs', 'bootstrap-settings-ui.test.mjs',
+      'manual-node-ui.test.mjs', 'workspace-changes-ui.test.mjs', 'diff-cache-version-ui.test.mjs', 'bootstrap-settings-ui.test.mjs',
       'dialog-accessibility.test.mjs', 'steer-order-ui.test.mjs', 'composer-continuation-ui.test.mjs',
       'composer-commands-ui.test.mjs', 'planner-handoff-ui.test.mjs', 'graph-switching.test.mjs',
       'graph-planning-fit.test.mjs', 'responsive-layout.test.mjs', 'workbench-details-ui.test.mjs',

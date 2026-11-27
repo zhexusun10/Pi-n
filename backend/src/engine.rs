@@ -42,8 +42,22 @@ mod lingering;
 pub(crate) mod prewarm;
 #[cfg(not(feature = "fixture"))]
 mod process_prewarm;
+mod resident;
 #[cfg(not(feature = "fixture"))]
 use prewarm::{Pool, ReadyProcess, Ticket, Worker};
+pub use resident::{
+    current_resource_generation, invalidate_runtime_resources, reap_idle_lingering,
+    release_resident_processes, resident_process_status, stop_lingering, stop_lingering_for_run,
+    stop_planner_services, stop_planner_services_for_run, BackgroundServiceStatus,
+    ParkedAgentStatus, ResidentProcessStatus, ResidentReleaseResult, ResidentReleaseScope,
+};
+#[cfg(all(test, not(feature = "fixture")))]
+pub(crate) use resident::{park_test_shell, parked_shell_count, planner_service_count_for_run};
+#[cfg(not(feature = "fixture"))]
+use resident::{
+    claim_matching_serial, lingering_pool, reclaim_agent_preserving_services,
+    retain_source_planner_services, serial_linger_key, serial_selection, ParkedSerial,
+};
 #[cfg(not(feature = "fixture"))]
 type NodeKey = (PathBuf, PathBuf, String, String, String, String);
 
@@ -279,16 +293,8 @@ pub fn warm_node(config: Config, cwd: PathBuf, session_dir: PathBuf, session_id:
     // A Serial conversation that just settled already has its live shell parked
     // in LINGER_POOL. Spawning a second Node.js process for the same session
     // would never be consumed and wastes memory/CPU.
-    if let Some(pool) = LINGER_POOL.get() {
-        if let Ok(repository) = crate::path_identity::actual_path(Path::new(&config.repository)) {
-            let key = lingering::SessionKey {
-                repository,
-                session_id: session_id.clone(),
-            };
-            if pool.has_live(&key) {
-                return;
-            }
-        }
+    if resident::has_live_lingering(Path::new(&config.repository), &session_id) {
+        return;
     }
     match node_key(&config, &cwd, &session_dir, &session_id) {
         Ok((key, hash)) => {
@@ -1344,6 +1350,7 @@ fn run_pi_with_timeout(
     }
     process_control::configure_command(&mut command);
     let started = Instant::now();
+    let launch_resource_generation = current_resource_generation();
     #[cfg(not(feature = "fixture"))]
     let warm_node = (request.role == PiRole::NodeAgent
         && request.extension.is_none()
@@ -1569,32 +1576,27 @@ fn run_pi_with_timeout(
     }
     let parked = Arc::new(AtomicBool::new(false));
     #[cfg(not(feature = "fixture"))]
+    let keep_draining =
+        source_role && (request.role == PiRole::Planner || serial_linger_key(&request).is_some());
+    #[cfg(feature = "fixture")]
+    let keep_draining = source_role && request.role == PiRole::Planner;
+    #[cfg(not(feature = "fixture"))]
     let receiver = if let Some(forwarder) = prewarmed_stderr {
         process_output_channels_with_forwarder(
             stdout,
             forwarder,
             Arc::clone(&parked),
-            source_role && request.role == PiRole::Planner,
+            keep_draining,
         )
     } else {
         let stderr = child.as_mut().stderr.take().ok_or("Pi stderr unavailable")?;
-        process_output_channels(
-            stdout,
-            stderr,
-            Arc::clone(&parked),
-            source_role && request.role == PiRole::Planner,
-        )
+        process_output_channels(stdout, stderr, Arc::clone(&parked), keep_draining)
     };
     #[cfg(feature = "fixture")]
     let receiver = {
         let _ = prewarmed_stderr;
         let stderr = child.as_mut().stderr.take().ok_or("Pi stderr unavailable")?;
-        process_output_channels(
-            stdout,
-            stderr,
-            Arc::clone(&parked),
-            source_role && request.role == PiRole::Planner,
-        )
+        process_output_channels(stdout, stderr, Arc::clone(&parked), keep_draining)
     };
     let mut channels = SessionChannels {
         receiver,
@@ -1631,6 +1633,7 @@ fn run_pi_with_timeout(
         outcome,
         managed,
         source_role,
+        launch_resource_generation,
     );
     if let (Some(session_id), Err(error)) = (request.session_id, &result) {
         if resuming_existing_session && error.contains("failed to resume the existing session") {
@@ -2165,10 +2168,12 @@ fn finish_turn(
     outcome: TurnOutcome,
     managed: bool,
     source_role: bool,
+    resource_generation: u64,
 ) -> Result<String, String> {
     let phase = request.role.name();
     let config = request.config;
     let _ = config;
+    let _ = resource_generation;
     drop(rpc_guard);
     let settled_response =
         outcome.settled && outcome.agent_error.is_none() && !outcome.final_text.trim().is_empty();
@@ -2186,6 +2191,18 @@ fn finish_turn(
         if let Some(key) = serial_linger_key(request) {
             let owner = process_control::current_owner().unwrap_or_default();
             let run_id = owner.split(":node:").next().unwrap_or(&owner).to_string();
+            // If extensions or auth changed while this turn was running, do not
+            // park the stale agent shell: close only the agent while preserving
+            // any background services it started.
+            if resource_generation != current_resource_generation() {
+                on_output(format!(
+                    "{}\n",
+                    serde_json::json!({"type":"pi_n_process_exited", "pid":child.id(), "code":null, "success":true, "timedOut":false, "parked":false, "phase":phase, "elapsedMs":started.elapsed().as_millis(), "firstOutputMs":outcome.first_output_ms, "timestamp":crate::model::now()})
+                ));
+                process_prewarm::request(config, request.role, true);
+                reclaim_agent_preserving_services(child, process_tree, channels, &run_id);
+                return Ok(outcome.final_text);
+            }
             let linger_owner = format!("linger:{}:{}", config.repository, key.session_id);
             let _ = process_control::reassign_owner(&process_tree, &linger_owner);
             // Drain stdout/stderr directly into the void while parked so long-
@@ -2204,12 +2221,14 @@ fn finish_turn(
             process_prewarm::request(config, request.role, true);
             lingering_pool().park(
                 key,
-                run_id,
+                run_id.clone(),
                 ParkedSerial {
                     child,
                     tree: process_tree.clone(),
                     channels,
                     selection: serial_selection(request),
+                    resource_generation,
+                    run_id,
                 },
             );
             return Ok(outcome.final_text);
@@ -2308,412 +2327,6 @@ fn finish_turn(
         eprintln!("[Pi^n] Retaining source Planner background processes");
     }
     Ok(outcome.final_text)
-}
-
-#[cfg(not(feature = "fixture"))]
-struct ParkedSerial {
-    child: std::process::Child,
-    tree: process_control::ProcessTree,
-    channels: SessionChannels,
-    selection: (String, Option<String>),
-}
-
-#[cfg(not(feature = "fixture"))]
-impl Worker for ParkedSerial {
-    fn alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-    fn retire(mut self) {
-        self.tree.terminate();
-        let _ = self.child.wait();
-        self.tree.mark_reaped_if_empty();
-    }
-}
-
-#[cfg(not(feature = "fixture"))]
-static LINGER_POOL: OnceLock<lingering::Lingering<ParkedSerial>> = OnceLock::new();
-
-#[cfg(not(feature = "fixture"))]
-fn lingering_pool() -> &'static lingering::Lingering<ParkedSerial> {
-    LINGER_POOL.get_or_init(lingering::Lingering::new)
-}
-
-#[cfg(not(feature = "fixture"))]
-struct PlannerServiceTree {
-    tree: process_control::ProcessTree,
-}
-
-#[cfg(not(feature = "fixture"))]
-impl Worker for PlannerServiceTree {
-    fn alive(&mut self) -> bool {
-        self.tree.has_live_members()
-    }
-
-    fn retire(self) {
-        if self.tree.has_live_members() {
-            self.tree.terminate();
-        } else {
-            self.tree.mark_reaped_if_empty();
-        }
-    }
-}
-
-#[cfg(not(feature = "fixture"))]
-static PLANNER_SERVICES: OnceLock<lingering::LingeringServices<PlannerServiceTree>> =
-    OnceLock::new();
-
-#[cfg(not(feature = "fixture"))]
-fn planner_services() -> &'static lingering::LingeringServices<PlannerServiceTree> {
-    PLANNER_SERVICES.get_or_init(lingering::LingeringServices::new)
-}
-
-#[cfg(all(test, not(feature = "fixture")))]
-pub(crate) fn planner_service_count_for_run(run_id: &str) -> usize {
-    planner_services().count_for_run(run_id)
-}
-
-/// Park a throwaway shell for a Run/session so runtime tests can observe that a
-/// history edit retires the conversation's parked process.
-#[cfg(all(test, not(feature = "fixture")))]
-pub(crate) fn park_test_shell(run_id: &str, session_id: &str) -> process_control::ProcessTree {
-    let mut command = if cfg!(windows) {
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/C", "ping 127.0.0.1 -n 30 > NUL"]);
-        command
-    } else {
-        let mut command = std::process::Command::new("sh");
-        command.args(["-c", "sleep 30"]);
-        command
-    };
-    process_control::configure_command(&mut command);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = command.spawn().unwrap();
-    let tree = process_control::with_owner(run_id, || process_control::track(&child).unwrap());
-    let (_line_tx, receiver) = mpsc::channel::<(bool, String)>();
-    let (_input_tx, input_receiver) = mpsc::channel::<Result<(), std::io::Error>>();
-    let (rpc_tx, _rpc_rx) = mpsc::channel::<String>();
-    let channels = SessionChannels {
-        receiver,
-        input_receiver,
-        rpc_sender: Some(rpc_tx),
-        rpc_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
-        rpc_ui: Arc::new(Mutex::new(composer::CommandUi::default())),
-        parked: Arc::new(AtomicBool::new(true)),
-    };
-    lingering_pool().park(
-        lingering::SessionKey {
-            repository: PathBuf::new(),
-            session_id: session_id.into(),
-        },
-        run_id.into(),
-        ParkedSerial {
-            child,
-            tree: tree.clone(),
-            channels,
-            selection: (String::new(), None),
-        },
-    );
-    tree
-}
-
-#[cfg(all(test, not(feature = "fixture")))]
-pub(crate) fn parked_shell_count() -> usize {
-    lingering_pool().len()
-}
-
-/// Stop every parked shell and held Planner service. Held services have no idle TTL
-/// and are reclaimed on Run/workspace deletion or backend shutdown.
-#[cfg(not(feature = "fixture"))]
-pub fn stop_lingering() {
-    if let Some(pool) = LINGER_POOL.get() {
-        pool.shutdown();
-    }
-    stop_planner_services();
-}
-
-/// Retire a Run's parked Serial shells (also used when branching its history).
-#[cfg(not(feature = "fixture"))]
-pub fn stop_lingering_for_run(run_id: &str) {
-    if run_id.is_empty() {
-        return;
-    }
-    if let Some(pool) = LINGER_POOL.get() {
-        pool.retire_where(|held| held == run_id);
-    }
-}
-
-#[cfg(not(feature = "fixture"))]
-pub fn stop_planner_services() {
-    if let Some(pool) = PLANNER_SERVICES.get() {
-        pool.shutdown();
-    }
-}
-
-#[cfg(not(feature = "fixture"))]
-pub fn stop_planner_services_for_run(run_id: &str) {
-    if !run_id.is_empty() {
-        if let Some(pool) = PLANNER_SERVICES.get() {
-            pool.retire_run(run_id);
-        }
-    }
-}
-
-#[cfg(not(feature = "fixture"))]
-fn retain_source_planner_services(
-    request: &PiRequest<'_>,
-    process_tree: &process_control::ProcessTree,
-    settled_response: bool,
-    source_role: bool,
-) -> bool {
-    if request.role != PiRole::Planner
-        || !source_role
-        || !settled_response
-        || request.session_id.is_none()
-        || !process_tree.has_live_members()
-    {
-        return false;
-    }
-    let Some(run_id) = request
-        .environment
-        .iter()
-        .find(|(key, _)| *key == "PI_N_ACTIVE_RUN_ID")
-        .map(|(_, run_id)| run_id.clone())
-        .filter(|run_id| !run_id.is_empty())
-    else {
-        return false;
-    };
-    let owner = format!("planner-service:{run_id}:{}", uuid::Uuid::new_v4());
-    if let Err(error) = process_control::reassign_owner(process_tree, &owner) {
-        eprintln!("[Pi^n] Could not retain source Planner background services: {error}");
-        return false;
-    }
-    planner_services().hold(
-        run_id,
-        PlannerServiceTree {
-            tree: process_tree.clone(),
-        },
-    );
-    true
-}
-
-#[cfg(feature = "fixture")]
-pub fn stop_lingering() {}
-#[cfg(feature = "fixture")]
-pub fn stop_lingering_for_run(_run_id: &str) {}
-#[cfg(feature = "fixture")]
-pub fn stop_planner_services() {}
-#[cfg(feature = "fixture")]
-pub fn stop_planner_services_for_run(_run_id: &str) {}
-
-/// Serial Agent sessions are the only parked Pi shells. Their model role is
-/// `NodeAgent`, but only an explicit Serial identity may enter this pool.
-#[cfg(not(feature = "fixture"))]
-fn serial_linger_key(request: &PiRequest<'_>) -> Option<lingering::SessionKey> {
-    // A Serial Agent is never identified by cwd alone: source-direct Graph Node
-    // Agents can also run from the bound source and must not claim parked shells.
-    let agent_kind = request
-        .environment
-        .iter()
-        .find(|(key, _)| *key == "PI_N_AGENT_KIND")
-        .map(|(_, value)| value.as_str());
-    if request.role != PiRole::NodeAgent
-        || agent_kind != Some("serial")
-        || request.config.environment.is_some()
-    {
-        return None;
-    }
-    let session_id = request.session_id?;
-    let cwd = crate::path_identity::actual_path(request.cwd).ok()?;
-    let repository =
-        crate::path_identity::actual_path(Path::new(&request.config.repository)).ok()?;
-    if !crate::path_identity::same_path(&cwd, &repository) {
-        return None;
-    }
-    Some(lingering::SessionKey {
-        repository,
-        session_id: session_id.to_string(),
-    })
-}
-
-// A settled Serial shell can still be parked when later workspace/protocol
-// finalization fails. Do not resume it with stale model settings on retry.
-#[cfg(not(feature = "fixture"))]
-fn serial_selection(request: &PiRequest<'_>) -> (String, Option<String>) {
-    let thinking = request
-        .extra_args
-        .windows(2)
-        .find(|args| args[0] == "--thinking")
-        .map(|args| args[1].to_string());
-    (request.config.model.clone(), thinking)
-}
-
-#[cfg(not(feature = "fixture"))]
-const PARKED_RPC_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[cfg(not(feature = "fixture"))]
-fn send_parked_rpc(
-    host: &mut ParkedSerial,
-    mut payload: serde_json::Value,
-    timeout: Duration,
-) -> Result<serde_json::Value, String> {
-    let sender = host
-        .channels
-        .rpc_sender
-        .as_ref()
-        .ok_or_else(|| "Parked session has no RPC input".to_string())?;
-    let rpc_id = uuid::Uuid::new_v4().to_string();
-    payload["id"] = serde_json::Value::String(rpc_id.clone());
-    sender
-        .send(payload.to_string())
-        .map_err(|error| format!("Cannot send RPC to parked session: {error}"))?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        process_control::check_current_owner_stop()?;
-        if let Ok(Err(error)) = host.channels.input_receiver.try_recv() {
-            return Err(format!("Cannot write RPC to parked session: {error}"));
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("Timed out waiting for parked session RPC response".into());
-        }
-        match host
-            .channels
-            .receiver
-            .recv_timeout(remaining.min(Duration::from_millis(50)))
-        {
-            Ok((true, _)) => continue,
-            Ok((false, line)) => {
-                let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
-                    continue;
-                };
-                if event["type"].as_str() == Some("response")
-                    && event["id"].as_str() == Some(rpc_id.as_str())
-                {
-                    if event["success"].as_bool() == Some(true) {
-                        return Ok(event);
-                    }
-                    let error = event["error"]
-                        .as_str()
-                        .unwrap_or("Parked session rejected RPC command");
-                    return Err(error.to_string());
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("Parked session exited before replying to RPC".into());
-            }
-        }
-    }
-}
-
-#[cfg(not(feature = "fixture"))]
-fn resolve_parked_model_target(
-    host: &mut ParkedSerial,
-    desired_model: &str,
-    timeout: Duration,
-) -> Result<(String, String), String> {
-    let slash_count = desired_model.bytes().filter(|&b| b == b'/').count();
-    if slash_count == 1 {
-        if let Some((provider, model_id)) = desired_model.split_once('/') {
-            if !provider.is_empty() && !model_id.is_empty() {
-                return Ok((provider.to_string(), model_id.to_string()));
-            }
-        }
-    }
-    let response = send_parked_rpc(
-        host,
-        serde_json::json!({ "type": "get_available_models" }),
-        timeout,
-    )?;
-    let models = response["data"]["models"]
-        .as_array()
-        .ok_or_else(|| "Missing models array in get_available_models response".to_string())?;
-    models
-        .iter()
-        .find_map(|entry| {
-            let provider = entry["provider"].as_str()?;
-            let id = entry["id"].as_str()?;
-            if format!("{provider}/{id}") == desired_model
-                || (slash_count == 0 && id == desired_model)
-            {
-                Some((provider.to_string(), id.to_string()))
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| format!("Model not found in parked session: {desired_model}"))
-}
-
-#[cfg(not(feature = "fixture"))]
-fn switch_parked_serial_selection(
-    host: &mut ParkedSerial,
-    desired: &(String, Option<String>),
-    timeout: Duration,
-) -> Result<(), String> {
-    let (desired_model, desired_thinking) = desired;
-    let model_changed = host.selection.0 != *desired_model;
-    let thinking_changed = host.selection.1 != *desired_thinking;
-    if !model_changed && !thinking_changed {
-        return Ok(());
-    }
-    let target_thinking = desired_thinking
-        .as_deref()
-        .map(str::trim)
-        .filter(|level| !level.is_empty());
-    if thinking_changed && target_thinking.is_none() {
-        return Err("Cannot clear thinking level in-place without an explicit target level".into());
-    }
-    process_control::check_current_owner_stop()?;
-    while host.channels.receiver.try_recv().is_ok() {}
-    while host.channels.input_receiver.try_recv().is_ok() {}
-    host.channels.parked.store(false, Ordering::Release);
-    if model_changed {
-        let (provider, model_id) = resolve_parked_model_target(host, desired_model, timeout)?;
-        send_parked_rpc(
-            host,
-            serde_json::json!({
-                "type": "set_model",
-                "provider": provider,
-                "modelId": model_id,
-            }),
-            timeout,
-        )?;
-    }
-    // `set_model` in Pi applies its own per-model/default thinking level, so
-    // always follow up with `set_thinking_level` whenever model or thinking changed.
-    if let Some(level) = target_thinking {
-        send_parked_rpc(
-            host,
-            serde_json::json!({
-                "type": "set_thinking_level",
-                "level": level,
-            }),
-            timeout,
-        )?;
-    }
-    host.selection = desired.clone();
-    Ok(())
-}
-
-#[cfg(not(feature = "fixture"))]
-fn claim_matching_serial(request: &PiRequest<'_>) -> Option<ParkedSerial> {
-    let key = serial_linger_key(request)?;
-    let mut host = lingering_pool().claim(&key)?;
-    let desired = serial_selection(request);
-    if host.selection == desired {
-        return Some(host);
-    }
-    match switch_parked_serial_selection(&mut host, &desired, PARKED_RPC_SWITCH_TIMEOUT) {
-        Ok(()) => Some(host),
-        Err(error) => {
-            eprintln!("[Pi^n] Parked Serial in-place model switch failed ({error}); cold-launching");
-            host.retire();
-            None
-        }
-    }
 }
 
 #[cfg(not(feature = "fixture"))]
@@ -2858,6 +2471,7 @@ fn run_resumed(
         outcome,
         false,
         true,
+        host.resource_generation,
     )
 }
 
@@ -3629,6 +3243,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
                 outcome,
                 false,
                 true,
+                current_resource_generation(),
             )
         })
         .unwrap();
@@ -3810,6 +3425,8 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
                     parked: Arc::new(AtomicBool::new(true)),
                 },
                 selection: ("openai/gpt-5".into(), Some("medium".into())),
+                resource_generation: current_resource_generation(),
+                run_id: run_id.clone(),
             },
         );
 
@@ -4029,6 +3646,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
                 outcome,
                 false,
                 true,
+                current_resource_generation(),
             )
         })
         .unwrap();
@@ -4066,6 +3684,155 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             }
         }
         assert_eq!(stable_samples, 3, "Run cleanup must stop the held service");
+        assert_eq!(planner_service_count_for_run(&run_id), 0);
+    }
+
+    #[cfg(not(feature = "fixture"))]
+    #[test]
+    fn stale_resource_generation_rotates_parked_serial_agent_while_preserving_background_services() {
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                stop_lingering_for_run(&self.0);
+                stop_planner_services_for_run(&self.0);
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let run_id = format!("serial-resource-gen-{}", uuid::Uuid::new_v4());
+        let _cleanup = Cleanup(run_id.clone());
+        let session_dir = temp.path().join("session");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session_id = format!("session-{}", uuid::Uuid::new_v4());
+
+        let marker = temp.path().join("serial-service.log");
+        // Spawn a parent agent shell that starts a continuously logging
+        // background child sharing stdout/stderr, then blocks on stdin EOF like
+        // a parked Pi RPC host.
+        let mut command = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            let script = format!(
+                "start /B cmd /C \"for /L %i in (1,1,60) do (echo tick & echo tick >> \\\"{}\\\" & ping 127.0.0.1 -n 2 > NUL)\" & findstr ^",
+                marker.display()
+            );
+            command.args(["/C", &script]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sh");
+            command.args([
+                "-c",
+                "(while :; do echo tick; echo tick >> \"$1\"; sleep 0.05; done) & cat >/dev/null",
+                "sh",
+                marker.to_str().unwrap(),
+            ]);
+            command
+        };
+        process_control::configure_command(&mut command);
+        command
+            .current_dir(temp.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let tree = process_control::with_owner(&run_id, || process_control::track(&child).unwrap());
+        let (rpc_tx, rpc_rx) = mpsc::channel::<String>();
+        let (_in_tx, in_rx) = mpsc::channel::<Result<(), std::io::Error>>();
+        thread::spawn(move || {
+            let mut stdin = stdin;
+            while let Ok(line) = rpc_rx.recv() {
+                if std::io::Write::write_all(&mut stdin, line.as_bytes()).is_err() {
+                    break;
+                }
+            }
+            drop(stdin);
+        });
+        let parked = Arc::new(AtomicBool::new(true));
+        let out_rx = process_output_channels(stdout, stderr, parked.clone(), true);
+
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "repository": temp.path().to_string_lossy(),
+            "model": "openai/gpt-5",
+        }))
+        .unwrap();
+        let request = PiRequest {
+            role: PiRole::NodeAgent,
+            config: &config,
+            cwd: temp.path(),
+            session_dir: &session_dir,
+            session_id: Some(&session_id),
+            task: "follow up",
+            extra_args: vec![],
+            extension: None,
+            tools: None,
+            environment: vec![("PI_N_AGENT_KIND", "serial".into())],
+            system_prompt: None,
+            images: None,
+        };
+        let key = serial_linger_key(&request).unwrap();
+        let initial_gen = current_resource_generation();
+        lingering_pool().park(
+            key,
+            run_id.clone(),
+            ParkedSerial {
+                child,
+                tree: tree.clone(),
+                channels: SessionChannels {
+                    receiver: out_rx,
+                    input_receiver: in_rx,
+                    rpc_sender: Some(rpc_tx),
+                    rpc_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
+                    rpc_ui: Arc::new(Mutex::new(composer::CommandUi::default())),
+                    parked,
+                },
+                selection: ("openai/gpt-5".into(), None),
+                resource_generation: initial_gen,
+                run_id: run_id.clone(),
+            },
+        );
+
+        let before = resident_process_status();
+        assert!(
+            before.parked_agents.iter().any(|agent| agent.run_id == run_id),
+            "parked agent must be visible in resident status"
+        );
+
+        let wait_start = std::time::Instant::now();
+        while !marker.exists() && wait_start.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(marker.exists(), "background logging child must start");
+
+        // Toggling an extension bumps the unified runtime resource generation.
+        let next_gen = invalidate_runtime_resources();
+        assert!(next_gen > initial_gen);
+
+        // Claiming the parked Serial session must reject the stale generation
+        // (returning None to trigger cold launch with updated extensions) while
+        // preserving the surviving logging background service tree.
+        assert!(
+            claim_matching_serial(&request).is_none(),
+            "stale resource generation must not reuse the parked Serial agent"
+        );
+        assert_eq!(
+            planner_service_count_for_run(&run_id),
+            1,
+            "background service must survive agent rotation"
+        );
+        assert!(tree.has_live_members());
+        let size_after_rotate = fs::metadata(&marker).unwrap().len();
+        std::thread::sleep(Duration::from_millis(200));
+        let size_later = fs::metadata(&marker).unwrap().len();
+        assert!(
+            size_later > size_after_rotate,
+            "logging background service must keep running without SIGPIPE after agent rotation"
+        );
+
+        // Explicit release of services stops the retained background service.
+        let released = release_resident_processes(Some(&run_id), ResidentReleaseScope::Services);
+        assert_eq!(released.released_services, 1);
         assert_eq!(planner_service_count_for_run(&run_id), 0);
     }
 
