@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { fixtureSummaries, fixtureFileChanges, fixtureExecutionPage } from "./fixtures/current-api.mjs";
 import test from "node:test";
-import { chromium, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
 
 async function expectConversationCentered(page, layout) {
@@ -65,7 +66,7 @@ test(`desktop workbench adapts to available width and short windows (${reducedMo
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await connectOrLaunchBrowser();
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US", reducedMotion });
     await context.addInitScript(({ config, projects }) => {
       localStorage.setItem("pi_n_language_v1", "en");

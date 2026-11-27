@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { before, after } from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
 
 // Exercise the real sidebar with mocked API and clipboard; no workspace data is touched.
@@ -16,7 +16,7 @@ before(async () => {
   server = await createServer({ cacheDir: "node_modules/.vite-sidebar-copy", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await connectOrLaunchBrowser();
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 

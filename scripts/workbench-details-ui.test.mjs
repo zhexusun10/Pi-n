@@ -1,8 +1,26 @@
 import assert from "node:assert/strict";
 import { fixtureSummaries, fixtureFileChanges, fixtureExecutionPage } from "./fixtures/current-api.mjs";
-import test from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
+import test, { before, after } from "node:test";
 import { createServer } from "vite";
+
+let server;
+let browser;
+let origin;
+
+before(async () => {
+  server = await createServer({ cacheDir: "node_modules/.vite-workbench-details",
+    server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
+  await server.listen();
+  origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+  browser = await connectOrLaunchBrowser();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 async function assertOverviewVerticalSpacing(page) {
   const spacing = await page.locator(".plan-summary-card").evaluate(card => {
@@ -48,13 +66,9 @@ for (const [language, reducedMotion] of [["en", "no-preference"], ["zh-CN", "red
       progress: "节点完成进度", approve: "批准", reject: "拒绝", name: "标识 (id)",
     };
     const errors = [];
-    const server = await createServer({ cacheDir: "node_modules/.vite-workbench-details",
-      server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-    let browser;
+    let context;
     try {
-      await server.listen();
-      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-      const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: language, reducedMotion });
+      context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: language, reducedMotion });
       await context.addInitScript(({ repository, config, language }) => {
         localStorage.setItem("pi_n_language_v1", language);
         localStorage.setItem("pi_n_execution_overview_v1", "1");
@@ -183,9 +197,7 @@ for (const [language, reducedMotion] of [["en", "no-preference"], ["zh-CN", "red
       await assertOverviewVerticalSpacing(page);
       assert.deepEqual(errors, []);
     } finally {
-      await browser?.close();
-      server.httpServer?.closeAllConnections?.();
-      await server.close();
+      await context?.close();
     }
   });
 }

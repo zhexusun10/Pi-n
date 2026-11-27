@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { fixtureExecutionPage, fixtureFileChanges } from "./fixtures/current-api.mjs";
 import test, { before, after } from "node:test";
-import { chromium, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
 
 let server, browser, origin;
@@ -16,7 +17,7 @@ before(async () => {
     } }] });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await connectOrLaunchBrowser();
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 

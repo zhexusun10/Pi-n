@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { before, after } from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { build, createServer, preview } from "vite";
 
 let directory, server, browser, chunks, origin;
@@ -25,7 +25,7 @@ before(async () => {
   server = await preview({ logLevel: "error", build: { outDir: directory },
     preview: { host: "127.0.0.1", port: 0, strictPort: false } });
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await connectOrLaunchBrowser();
 });
 after(async () => {
   await browser?.close();

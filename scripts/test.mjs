@@ -49,6 +49,7 @@ export function checkInventory({ directory = root, catalog = suites } = {}) {
 
 const PRESERVED_TEST_PI_N_KEYS = new Set([
   'PI_N_BROWSER_CHANNEL',
+  'PI_N_TEST_BROWSER_WS_ENDPOINT',
   'PI_N_UI_SCREENSHOTS',
   'PI_N_ENV_SEAL_PROBE_REPORT',
 ]);

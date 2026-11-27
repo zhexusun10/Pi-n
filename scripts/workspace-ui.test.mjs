@@ -1,8 +1,25 @@
 import assert from "node:assert/strict";
 import { fixtureSummaries, fixtureFileChanges } from "./fixtures/current-api.mjs";
-import test from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
+import test, { before, after } from "node:test";
 import { createServer } from "vite";
+
+let server;
+let browser;
+let origin;
+
+before(async () => {
+  server = await createServer({ cacheDir: "node_modules/.vite-workspace-ui", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
+  await server.listen();
+  origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+  browser = await connectOrLaunchBrowser();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 // Observe the full transition, not just its final rectangle: a position projection
 // can otherwise hide a jump behind an eventually correct composer layout.
@@ -72,13 +89,9 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
   let releasePlanning;
   let planningRequested = false;
   const planningGate = new Promise(resolve => { releasePlanning = resolve; });
-  const server = await createServer({ cacheDir: "node_modules/.vite-workspace-ui", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, locale: "en-US", reducedMotion: "no-preference" });
+    context = await browser.newContext({ viewport: { width: 1280, height: 768 }, locale: "en-US", reducedMotion: "no-preference" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_projects", JSON.stringify([
@@ -378,9 +391,7 @@ test("workspace isolation, accessible home and delayed planning ownership", { ti
     assert.deepEqual(errors, []);
   } finally {
     releasePlanning();
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });
 
@@ -404,13 +415,9 @@ test("workspace removal commits backend deletion before pruning indexes and surv
   let rejectDeletion = true;
   let releaseDeletion;
   const deletionGate = new Promise(resolve => { releaseDeletion = resolve; });
-  const server = await createServer({ cacheDir: "node_modules/.vite-workspace-deletion-ui", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ locale: "en-US", reducedMotion: "no-preference" });
+    context = await browser.newContext({ locale: "en-US", reducedMotion: "no-preference" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
       if (localStorage.getItem("deletion-fixture-seeded")) return;
       localStorage.setItem("deletion-fixture-seeded", "true");
@@ -529,9 +536,7 @@ test("workspace removal commits backend deletion before pruning indexes and surv
     assert.deepEqual(errors, []);
   } finally {
     releaseDeletion();
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });
 
@@ -548,12 +553,9 @@ test("workspace size warning appears only when sending Compile with isolated par
   const info = { path: repository, name: "Alpha", branch: "main", head: "", clean: true };
   const errors = [];
   const planRequests = [];
-  const server = await createServer({ cacheDir: "node_modules/.vite-workspace-size-ui", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
+    context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_plan_mode", "graph");
@@ -657,9 +659,7 @@ test("workspace size warning appears only when sending Compile with isolated par
     assert.equal(await alert.count(), 0);
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });
 
@@ -679,13 +679,9 @@ test("removing active workspace returns to home landing page instead of switchin
   const empty = { ...makeSnapshot("", repositoryA, ""), config: null, phase: "draft" };
   const info = repository => ({ path: repository, name: repository.includes("Beta") ? "Beta" : "Alpha", branch: "main", head: "", clean: true });
   const errors = [];
-  const server = await createServer({ cacheDir: "node_modules/.vite-workspace-home-ui", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
+    context = await browser.newContext({ locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_projects", JSON.stringify([
@@ -759,9 +755,7 @@ test("removing active workspace returns to home landing page instead of switchin
     await page.locator(".chat-messages-stream", { hasText: "Beta conversation" }).waitFor();
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });
 
@@ -782,13 +776,9 @@ test("home composer accepts dragged image attachments and preserves them across 
   const empty = { ...makeSnapshot("", repositoryA, ""), config: null, phase: "draft" };
   const info = repository => ({ path: repository, name: repository.includes("beta") ? "Beta" : "Alpha", branch: "main", head: "", clean: true });
   const errors = [];
-  const server = await createServer({ cacheDir: "node_modules/.vite-workspace-ui-drop", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, locale: "en-US", reducedMotion: "reduce" });
+    context = await browser.newContext({ viewport: { width: 1280, height: 768 }, locale: "en-US", reducedMotion: "reduce" });
     await context.addInitScript(({ repositoryA, repositoryB, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_projects", JSON.stringify([
@@ -886,8 +876,6 @@ test("home composer accepts dragged image attachments and preserves them across 
     assert.equal(dropPrevented, true);
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });

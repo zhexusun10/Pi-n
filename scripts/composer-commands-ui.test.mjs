@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { chromium, expect } from "@playwright/test";
+import test, { before, after } from "node:test";
+import { expect } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
 
-function commandServer() {
-  return createServer({ cacheDir: "node_modules/.vite-composer-commands", server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false, watch: null },
+let server;
+let browser;
+
+before(async () => {
+  server = await createServer({ cacheDir: "node_modules/.vite-composer-commands", server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false, watch: null },
     plugins: [{ name: "composer-commands-fixture", configureServer(vite) {
       vite.middlewares.use(async (req, res, next) => {
         if (!req.url.startsWith("/__commands")) return next();
@@ -12,15 +16,19 @@ function commandServer() {
         res.end(await vite.transformIndexHtml(req.url, '<html><body><div id="root"></div><script type="module" src="/scripts/fixtures/composer-commands.tsx"></script></body></html>'));
       });
     } }] });
-}
+  await server.listen();
+  browser = await connectOrLaunchBrowser();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 test("composer model scope, slash completion, blocking and extension dialogs", async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     let pendingExecute;
     let standaloneCatalogs = 0;
     let events = [];
@@ -249,19 +257,14 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
     assert.equal(standaloneCatalogs, beforeActive, 'an active Agent supplies the command catalog without starting a standalone worker');
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    await server.close();
+    await page.close();
   }
 });
 
 test("standalone extension commands work before a conversation and follow the selected project", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
-  try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    for (const suffix of ["", "?run=1"]) {
-      const page = await browser.newPage();
+  for (const suffix of ["", "?run=1"]) {
+    const page = await browser.newPage();
+    try {
       const jobs = new Map();
       const saved = [];
       const cancelled = [];
@@ -335,18 +338,15 @@ test("standalone extension commands work before a conversation and follow the se
       await expect(page.locator(".suggestion-item-title").filter({ hasText: "/other-project-settings" })).toBeVisible();
       assert.equal(await page.locator(".suggestion-item-title").filter({ hasText: "/custom-settings" }).count(), 0);
       assert.equal(saved.length, 1, "project changes cancel pending entry");
+    } finally {
       await page.close();
     }
-  } finally { await browser?.close(); await server.close(); }
+  }
 });
 
 test("extension catalogs show loading and retry, refresh selections and reject stale results", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     const reads = [];
     page.setDefaultTimeout(5_000);
     let disabled = false;
@@ -399,16 +399,12 @@ test("extension catalogs show loading and retry, refresh selections and reject s
     await expect(page.getByText('/another-extension', { exact: true })).toHaveCount(0);
     await reads[4].fulfill({ json: { result: { instance: 'host', commands: [{ name: 'project-command', source: 'extension' }] } } });
     await expect(page.getByText('/project-command', { exact: true })).toBeVisible();
-  } finally { await browser?.close(); await server.close(); }
+  } finally { await page.close(); }
 });
 
 test("arbitrary extension dialogs support filtering, keyboard selection, IME and cancellation", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     const jobs = new Map();
     const replies = [];
     await page.route('**/api/*', async route => {
@@ -474,17 +470,13 @@ test("arbitrary extension dialogs support filtering, keyboard selection, IME and
     await expect.poll(() => replies.length).toBe(4);
     assert.equal(replies[3].cancelled, true);
     await expect(page.locator('.prompt-command-ui')).toHaveCount(0);
-  } finally { await browser?.close(); await server.close(); }
+  } finally { await page.close(); }
 });
 
 test("a delayed model command cannot overwrite newer settings in the same conversation", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
-  try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    for (const command of ["/thinking low", "/model test/one"]) {
-      const page = await browser.newPage();
+  for (const command of ["/thinking low", "/model test/one"]) {
+    const page = await browser.newPage();
+    try {
       let catalogRequest;
       const errors = [];
       page.on("pageerror", error => errors.push(String(error)));
@@ -515,21 +507,15 @@ test("a delayed model command cannot overwrite newer settings in the same conver
       assert.deepEqual((await read()).calls[0].settings, command === "/thinking low"
         ? { model: "test/two", thinkingLevel: "high" } : { model: "test/one", thinkingLevel: "off" });
       assert.deepEqual(errors, []);
+    } finally {
       await page.close();
     }
-  } finally {
-    await browser?.close();
-    await server.close();
   }
 });
 
 test("returning to a live process cannot let an old command cancel the new command's UI", async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     let owner;
     let slowExecute;
     let dialogExecute;
@@ -598,19 +584,14 @@ test("returning to a live process cannot let an old command cancel the new comma
     await expect(input).toHaveValue("");
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    await server.close();
+    await page.close();
   }
 });
 
 test("scope changes and unmount cancel in-flight and subsequent Pi dialogs on the original instance", async () => {
-  const server = await commandServer();
-  let browser;
-  try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    for (const change of ["Switch node", "Switch run", "Toggle composer"]) {
-      const page = await browser.newPage();
+  for (const change of ["Switch node", "Switch run", "Toggle composer"]) {
+    const page = await browser.newPage();
+    try {
       const errors = [];
       page.on("pageerror", error => errors.push(String(error)));
       let pendingExecute;
@@ -666,21 +647,15 @@ test("scope changes and unmount cancel in-flight and subsequent Pi dialogs on th
       assert.equal(await page.getByText("old scope notice", { exact: true }).count(), 0);
       if (change !== "Toggle composer") await expect(composer).toHaveValue("new scope draft");
       assert.deepEqual(errors, []);
+    } finally {
       await page.close();
     }
-  } finally {
-    await browser?.close();
-    await server.close();
   }
 });
 
 test("slash command confirmation notices auto-dismiss and reset on repeat, while inspection notices stay open", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     const errors = [];
     page.on("pageerror", error => errors.push(String(error)));
     await page.clock.install();
@@ -733,18 +708,13 @@ test("slash command confirmation notices auto-dismiss and reset on repeat, while
 
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    await server.close();
+    await page.close();
   }
 });
 
 test("unrecognized slash prompts work with attachments and catalog failures while real commands still validate", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     const errors = [];
     let catalogFails = false;
     page.on("pageerror", error => errors.push(String(error)));
@@ -799,18 +769,13 @@ test("unrecognized slash prompts work with attachments and catalog failures whil
 
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    await server.close();
+    await page.close();
   }
 });
 
 test("/reload invalidates cached command catalog so newly registered commands are not short-circuited as prompts", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage();
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage();
     const errors = [];
     const executed = [];
     let reloaded = false;
@@ -859,18 +824,13 @@ test("/reload invalidates cached command catalog so newly registered commands ar
     assert.equal((await output()).calls.length, 0);
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    await server.close();
+    await page.close();
   }
 });
 
 test("inline composer model selector uses white rounded cards with a thinking-level submenu and respects mode/node scope", { timeout: 30_000 }, async () => {
-  const server = await commandServer();
-  let browser;
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors = [];
     let hiddenModels = [];
     page.on("pageerror", error => errors.push(String(error)));
@@ -1041,7 +1001,6 @@ test("inline composer model selector uses white rounded cards with a thinking-le
 
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    await server.close();
+    await page.close();
   }
 });

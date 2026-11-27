@@ -1,8 +1,23 @@
 import assert from "node:assert/strict";
 import { fixtureSummaries, fixtureFileChanges } from "./fixtures/current-api.mjs";
-import test from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
+import test, { before, after } from "node:test";
 import { createServer } from "vite";
+
+let server;
+let browser;
+
+before(async () => {
+  server = await createServer({ cacheDir: "node_modules/.vite-manual-node", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
+  await server.listen();
+  browser = await connectOrLaunchBrowser();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 test("returning from node creation keeps Planner history scrollable and restores its reading position", { timeout: 60_000 }, async () => {
   const repository = "/mock/scroll";
@@ -19,12 +34,9 @@ test("returning from node creation keeps Planner history scrollable and restores
   const output = Buffer.from(rows.join(""));
   let olderReads = 0;
   const errors = [];
-  const server = await createServer({ cacheDir: "node_modules/.vite-manual-node", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+    context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
@@ -172,9 +184,7 @@ test("returning from node creation keeps Planner history scrollable and restores
     assert.ok(await scroll.evaluate(el => el.scrollTop) < finalTop - 100, "Planner scrolls after leaving the form through a node");
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });
 
@@ -193,12 +203,9 @@ test("graph background menu creates nodes with explicit completed-result confirm
   const taskEdits = [];
   const errors = [];
   let reject = true;
-  const server = await createServer({ cacheDir: "node_modules/.vite-manual-node", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+    context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
     await context.addInitScript(({ repository, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
@@ -359,8 +366,6 @@ test("graph background menu creates nodes with explicit completed-result confirm
       "a running published result must finish before a node can be added");
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });

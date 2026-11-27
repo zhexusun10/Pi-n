@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { before, after, describe } from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
 
 // Real App/browser, deliberately stalled API transport; no credentials or data.
@@ -25,7 +25,7 @@ const catalog = { providers: [{ id: "test", name: "Test", methods: [], configure
 before(async () => {
   server = await createServer({ cacheDir: "node_modules/.vite-bootstrap-settings", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
   await server.listen(); origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await connectOrLaunchBrowser();
 });
 after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
 

@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { fixtureSummaries, fixtureFileChanges, fixtureExecutionPage } from "./fixtures/current-api.mjs";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import test, { before, after } from "node:test";
-import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 
-let server, browser, origin;
+let server, browser, classicScrollbarBrowser, origin;
+async function getClassicScrollbarBrowser() {
+  if (!classicScrollbarBrowser) {
+    classicScrollbarBrowser = await connectOrLaunchBrowser({ ignoreDefaultArgs: ["--hide-scrollbars"] });
+  }
+  return classicScrollbarBrowser;
+}
 const deferred = () => {
   let resolve;
   const promise = new Promise(completed => { resolve = completed; });
@@ -36,9 +42,14 @@ before(async () => {
   });
   await server.listen();
   origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+  browser = await connectOrLaunchBrowser();
 });
-after(async () => { await browser?.close(); server?.httpServer?.closeAllConnections?.(); await server?.close(); });
+after(async () => {
+  await classicScrollbarBrowser?.close();
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 async function fixture(name, handler = async () => false, reducedMotion = "reduce", autoExpandCot = undefined, clockTime = undefined, browserInstance = browser) {
   const context = await browserInstance.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", reducedMotion });
@@ -2322,11 +2333,8 @@ test("scrolling over a short reasoning card does not leave its future content un
 
 test("a growing reasoning card reserves its scrollbar track instead of rewrapping mid-stream", { timeout: 30_000 }, async () => {
   // Playwright hides scrollbars by default, while Pi^n paints its own 10px
-  // track. Launch with classic scrollbars so the width change is observable.
-  const scrollbarBrowser = await chromium.launch({
-    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
-    headless: true, ignoreDefaultArgs: ["--hide-scrollbars"],
-  });
+  // track. Launch once with classic scrollbars so the width change is observable.
+  const scrollbarBrowser = await getClassicScrollbarBrowser();
   let context;
   try {
     const view = await fixture("thinking", undefined, "reduce", undefined, undefined, scrollbarBrowser);
@@ -2369,7 +2377,7 @@ test("a growing reasoning card reserves its scrollbar track instead of rewrappin
     const gap = await body.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight);
     assert.ok(gap <= 2, `the card still follows its newest reasoning after the gutter click: ${gap}`);
     assert.deepEqual(errors, []);
-  } finally { await context?.close(); await scrollbarBrowser.close(); }
+  } finally { await context?.close(); }
 });
 
 test("fast streaming reasoning preserves upper DOM nodes and stays pinned without height oscillation", { timeout: 30_000 }, async () => {
@@ -2592,10 +2600,7 @@ test("an upward gesture with no conversation scroll range keeps following", { ti
 });
 
 test("symmetric scrollbar gutters do not turn adjacent content into a scrollbar hit", { timeout: 30_000 }, async () => {
-  const scrollbarBrowser = await chromium.launch({
-    channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"),
-    headless: true, ignoreDefaultArgs: ["--hide-scrollbars"],
-  });
+  const scrollbarBrowser = await getClassicScrollbarBrowser();
   let context;
   try {
     const view = await fixture("latestScroll&layout=live-tool&view=node", undefined, "reduce", undefined, undefined, scrollbarBrowser);
@@ -2624,7 +2629,7 @@ test("symmetric scrollbar gutters do not turn adjacent content into a scrollbar 
       await page.waitForFunction(() => document.querySelector(".initial-query-scroll").dataset.transcriptFollowing === "true");
     }
     assert.deepEqual(errors, []);
-  } finally { await context?.close(); await scrollbarBrowser.close(); }
+  } finally { await context?.close(); }
 });
 
 test("a scrollbar-edge click without movement does not disable following", { timeout: 30_000 }, async () => {

@@ -1,9 +1,26 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { before, after } from "node:test";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
+
+let server;
+let browser;
+
+before(async () => {
+  server = await createServer({ cacheDir: "node_modules/.vite-ui-polish",
+    server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
+  await server.listen();
+  browser = await connectOrLaunchBrowser();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 async function expectHomeLayout(page, titleVisible = true) {
   await expect.poll(() => page.evaluate(() => {
@@ -50,13 +67,9 @@ for (const language of ["en", "zh-CN"]) {
       environment_capabilities: { platform: "windows", arch: "x86_64", nativeWorkspace: true },
     };
     const errors = [];
-    const server = await createServer({ cacheDir: "node_modules/.vite-ui-polish",
-      server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false } });
-    let browser;
+    let context;
     try {
-      await server.listen();
-      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: language,
+      context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: language,
         reducedMotion: language === "en" ? "no-preference" : "reduce" });
       await context.addInitScript(({ repository, language }) => {
         localStorage.setItem("pi_n_language_v1", language);
@@ -152,8 +165,7 @@ for (const language of ["en", "zh-CN"]) {
       assert.equal(await input.inputValue(), draft, "closing settings preserves the draft");
       assert.deepEqual(errors, []);
     } finally {
-      await browser?.close();
-      await server.close();
+      await context?.close();
     }
   });
 }

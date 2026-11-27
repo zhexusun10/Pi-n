@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
 import { createServer } from "vite";
 
 test("empty composer continues without submitting a message; drafts and stop retain their behavior", async () => {
@@ -16,7 +16,7 @@ test("empty composer continues without submitting a message; drafts and stop ret
   let browser;
   try {
     await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
+    browser = await connectOrLaunchBrowser();
     const page = await browser.newPage();
     await page.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__composer-continuation`);

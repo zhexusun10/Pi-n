@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
 import zlib from "node:zlib";
 import { fixtureSummaries, fixtureFileChanges } from "./fixtures/current-api.mjs";
-import test from "node:test";
-import { chromium } from "@playwright/test";
+import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
+import test, { before, after } from "node:test";
 import { createServer } from "vite";
+
+let server;
+let browser;
+
+before(async () => {
+  server = await createServer({ cacheDir: "node_modules/.vite-graph-switching", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
+  await server.listen();
+  browser = await connectOrLaunchBrowser();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.httpServer?.closeAllConnections?.();
+  await server?.close();
+});
 
 async function waitForComposerSettled(page, selector) {
   await page.locator(selector).evaluate(box => new Promise((resolve, reject) => {
@@ -108,12 +123,9 @@ for (const reducedMotion of ["no-preference"]) {
     const repositoryInfo = { path: repository, name: "Project", branch: "main", head: "", clean: true };
     const errors = [];
     let rejectNodeMessage = false;
-    const server = await createServer({ cacheDir: "node_modules/.vite-graph-switching", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-    let browser;
+    let context;
     try {
-      await server.listen();
-      browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-      const context = await browser.newContext({ viewport: { width: 1280, height: 768 }, reducedMotion });
+      context = await browser.newContext({ viewport: { width: 1280, height: 768 }, reducedMotion });
       await context.addInitScript(({ repository, config }) => {
         localStorage.setItem("pi_n_language_v1", "en");
         localStorage.setItem("pi_n_execution_overview_v1", "1");
@@ -833,7 +845,7 @@ for (const reducedMotion of ["no-preference"]) {
       await page.locator('.run-item[data-run-id="a"]').click();
       await assertGraphVisible("a");
       assert.deepEqual(errors, []);
-    } finally { await browser?.close(); server.httpServer?.closeAllConnections?.(); await server.close(); }
+    } finally { await context?.close(); }
   });
 }
 
@@ -902,12 +914,9 @@ test("history Markdown images settle before first reveal and returning home stay
   };
   const repositoryInfo = { path: repository, name: "Project", branch: "main", head: "", clean: true };
   const errors = [];
-  const server = await createServer({ cacheDir: "node_modules/.vite-graph-switching", server: { host: "127.0.0.1", port: 0, strictPort: false, open: false, hmr: false, watch: null } });
-  let browser;
+  let context;
   try {
-    await server.listen();
-    browser = await chromium.launch({ channel: process.env.PI_N_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chromium"), headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 768 } });
+    context = await browser.newContext({ viewport: { width: 1280, height: 768 } });
     await context.addInitScript(({ repository, config }) => {
       localStorage.setItem("pi_n_language_v1", "en");
       localStorage.setItem("pi_n_projects", JSON.stringify([{ id: repository, path: repository, name: "Project", lastOpened: 1 }]));
@@ -998,8 +1007,6 @@ test("history Markdown images settle before first reveal and returning home stay
     assert.equal(await page.locator(".workspace-view-wrapper").count(), 0);
     assert.deepEqual(errors, []);
   } finally {
-    await browser?.close();
-    server.httpServer?.closeAllConnections?.();
-    await server.close();
+    await context?.close();
   }
 });

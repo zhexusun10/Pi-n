@@ -3,7 +3,7 @@
 // platform-specific acceptance, browser builds and expensive stress probes.
 const files = names => names.map(name => `scripts/${name}`);
 const nodeTests = (...names) => ['--test', ...files(names)];
-const uiTests = (...names) => ['--test', '--test-concurrency=3', ...files(names)];
+const uiTests = (...names) => ['scripts/run-ui-tests.mjs', '--test-concurrency=3', ...files(names)];
 const sourceTests = (...names) => ['scripts/node-ts.mjs', '--test', ...files(names)];
 const tsxTests = (...names) => ['--import', 'tsx', '--test', ...files(names)];
 const cargo = (command, ...args) => ['scripts/cargo.mjs', command, '--manifest-path', 'backend/Cargo.toml', ...args];

@@ -154,3 +154,23 @@ test('steps use the current Node without a shell and preserve spawn/signal failu
     spawn: () => ({ status: null }), log() {},
   }), 1);
 });
+
+test('frontend UI suites share a single Playwright browser server and never launch per test', () => {
+  for (const name of ['ui', 'ui:audit']) {
+    for (const step of suiteSteps(name)) {
+      assert.equal(step[0], 'scripts/run-ui-tests.mjs', `${name} must use scripts/run-ui-tests.mjs`);
+    }
+  }
+  const uiFiles = ['ui', 'ui:audit', 'ui-polish', 'bundle'].flatMap(name =>
+    suiteSteps(name).flatMap(step => step.filter(arg => arg.startsWith('scripts/') && arg.endsWith('.test.mjs'))),
+  );
+  assert.ok(uiFiles.length > 0);
+  for (const file of uiFiles) {
+    const source = readFileSync(join(root, file), 'utf8');
+    assert.doesNotMatch(source, /\bchromium\.launch\s*\(/,
+      `${file} must use connectOrLaunchBrowser from ./fixtures/ui-browser.mjs instead of chromium.launch`);
+    const defaultConnects = [...source.matchAll(/\bconnectOrLaunchBrowser\s*\(\s*\)/g)];
+    assert.ok(defaultConnects.length <= 1,
+      `${file} must connect/launch the default browser at most once (found ${defaultConnects.length})`);
+  }
+});
