@@ -8,6 +8,7 @@ import { syncOverscrollContainment } from "../services/transcriptScroll";
 import { observeElementResize } from "../services/sharedResizeObserver";
 import { formatTokenCount } from "../utils/tokenUsage";
 import { formatNoticeUsd } from "../services/transcriptNotices";
+import { stripCompactionFileSections } from "../services/compactionEvent";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { CardReveal } from "./CardReveal";
 import { CollapsibleCardBody } from "./CollapsibleCardBody";
@@ -77,12 +78,21 @@ export const CompactedCard: React.FC<CompactedCardProps> = React.memo(
     }, [isExpanded, item.content]);
 
     const info: CompactionItemInfo = item.compaction ?? { summary: item.content ?? "" };
-    const summary = info.summary.trim();
-    const headerSummary = headerSummaryText(info);
+    const stripped = stripCompactionFileSections(info.summary);
+    const summary = stripped.summary;
+    const modifiedFiles = info.modifiedFiles ?? stripped.modifiedFiles ?? [];
+    const readFiles = info.readFiles ?? (
+      stripped.readFiles
+        ? stripped.readFiles.filter((file) => !modifiedFiles.includes(file))
+        : []
+    );
+    const headerSummary = headerSummaryText({
+      ...info,
+      ...(modifiedFiles.length > 0 ? { modifiedFiles } : {}),
+      ...(readFiles.length > 0 ? { readFiles } : {}),
+    });
     const reasonBadge = shortReasonLabel(info.reason);
     const billingBadge = showCost ? billingBadgeText(info) : null;
-    const modifiedFiles = info.modifiedFiles ?? [];
-    const readFiles = info.readFiles ?? [];
     const hasFiles = modifiedFiles.length > 0 || readFiles.length > 0;
 
     const animateAppear = useCardAppear(item.id, false, item.timestamp, item.animateAppear);

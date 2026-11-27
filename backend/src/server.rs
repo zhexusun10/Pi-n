@@ -8378,22 +8378,23 @@ fn handle_http_request_with_options(
                 })
                 .is_ok();
             if !acquired {
+                let (_, body) = api_transport::error(
+                    crate::api_contract::ErrorCode::CapacityExceeded,
+                    "Too many concurrent planning streams",
+                    true,
+                    &request_id,
+                );
                 respond_api_json(
                     request,
                     503,
-                    &serde_json::json!({
-                        "error": "Too many concurrent planning streams",
-                        "code": "busy",
-                        "retryable": true,
-                        "requestId": request_id,
-                    }),
+                    &body,
                     req_origin.as_deref(),
                     &request_id,
                     false,
                 );
                 return;
             }
-            let _plan_stream_slot = PlanStreamSlot;
+            let plan_stream_slot = Arc::new(PlanStreamSlot);
             let stream_receipt = if let Some(token) = &operation_id {
                 match api_transport::begin(token, command, &receipt_body, port, &request_id) {
                     api_transport::Begin::New(guard) => Some(guard),
@@ -8436,7 +8437,11 @@ fn handle_http_request_with_options(
                 }
             };
 
+            // Hold the concurrency slot across both the planning worker and SSE
+            // writer so early client disconnects cannot bypass the limit.
+            let producer_slot = Arc::clone(&plan_stream_slot);
             thread::spawn(move || {
+                let _producer_slot = producer_slot;
                 let tx_part = tx.clone();
                 let tx_route = tx.clone();
                 let tx_plan = tx.clone();
@@ -8532,7 +8537,7 @@ fn handle_http_request_with_options(
             if thread::Builder::new()
                 .name("pi-n-plan-sse".into())
                 .spawn(move || {
-                    let _slot = _plan_stream_slot;
+                    let _slot = plan_stream_slot;
                     let _ = respond_sse(request, stream, origin.as_deref(), true);
                 })
                 .is_err()
@@ -8636,11 +8641,26 @@ fn handle_http_request_with_options(
             respond_closed(request, 404, &[], b"");
             return;
         };
-        let mime = match path.extension().and_then(|s| s.to_str()) {
+        let mime = match path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
             Some("html") => "text/html; charset=utf-8",
-            Some("js") => "text/javascript",
-            Some("css") => "text/css",
+            Some("js" | "mjs") => "text/javascript; charset=utf-8",
+            Some("css") => "text/css; charset=utf-8",
+            Some("json") => "application/json; charset=utf-8",
             Some("svg") => "image/svg+xml",
+            Some("png") => "image/png",
+            Some("jpg" | "jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            Some("ico") => "image/x-icon",
+            Some("woff2") => "font/woff2",
+            Some("woff") => "font/woff",
+            Some("ttf") => "font/ttf",
+            Some("wasm") => "application/wasm",
             _ => "application/octet-stream",
         };
         let cache_control = if url.starts_with("/assets/") {

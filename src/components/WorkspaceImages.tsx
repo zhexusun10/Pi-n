@@ -21,8 +21,10 @@ interface ImageResource {
 function releaseImage(resource: ImageResource) {
   resource.abort.abort();
   if (resource.url) {
-    unregisterImageBlobUrl(resource.url);
-    URL.revokeObjectURL(resource.url);
+    const url = resource.url;
+    resource.url = undefined;
+    unregisterImageBlobUrl(url);
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -131,7 +133,10 @@ export function useWorkspaceImages(root: RefObject<HTMLDivElement | null>, html:
             const url = registerImageBlobUrl(URL.createObjectURL(blob), blob);
             entry.url = url;
             await decodeImageUrl(url, abort.signal);
-            if (abort.signal.aborted || store.entries.get(path) !== entry) throw new Error("Image retired");
+            if (abort.signal.aborted || store.entries.get(path) !== entry) {
+              releaseImage(entry);
+              throw new Error("Image retired");
+            }
             entry.decoded = true;
             return url;
           }),

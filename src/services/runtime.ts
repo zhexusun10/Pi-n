@@ -406,7 +406,8 @@ export const runtimeService = {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ runId, path, ...(executionId ? { executionId } : {}) }), signal: deadline,
       }, { retrySafe: true });
-      if (!response.ok || !/^image\/(?:png|jpeg|gif|webp|bmp)$/i.test(response.headers.get("Content-Type") || "")) {
+      const contentType = (response.headers.get("Content-Type") || "").split(";", 1)[0].trim();
+      if (!response.ok || !/^image\/(?:png|jpeg|gif|webp|bmp|avif|x-icon|svg\+xml)$/i.test(contentType)) {
         throw new Error(t("无法加载图片"));
       }
       return response.blob();
@@ -417,7 +418,8 @@ export const runtimeService = {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path, ...(runId ? { runId } : {}) }), signal: deadline,
       }, { retrySafe: true });
-      if (!response.ok || !/^image\/(?:png|jpeg|gif|webp)$/i.test(response.headers.get("Content-Type") || "")) {
+      const contentType = (response.headers.get("Content-Type") || "").split(";", 1)[0].trim();
+      if (!response.ok || !/^image\/(?:png|jpeg|gif|webp)$/i.test(contentType)) {
         throw new Error(t("无法加载图片"));
       }
       return response.blob();

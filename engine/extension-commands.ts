@@ -70,7 +70,7 @@ class Worker {
     });
   }
   request(body: Event): Promise<any> {
-    if (this.closed) return Promise.reject(new Error('Extension command worker stopped'));
+    if (this.closed || this.closing) return Promise.reject(new Error('Extension command worker stopped'));
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });

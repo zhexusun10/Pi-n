@@ -419,3 +419,108 @@ test("live Planner stream collects reasoning drop, cache miss, and cache warm no
   assert.equal(notices[1].notice?.modelChanged, true);
   assert.equal(s3.items.some(item => item.isError || item.status === "error"), false);
 });
+
+test("compaction strips Pi-appended read-files/modified-files XML blocks without duplicating them in CompactedCard", () => {
+  const state = freshState();
+  const result = parse([
+    {
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: {
+        summary: [
+          "No prior history.",
+          "",
+          "---",
+          "",
+          "**Turn Context (split turn):**",
+          "",
+          "## Original Request",
+          "Inspect repository structure.",
+          "",
+          "<read-files>",
+          "CHANGELOG.md",
+          "src/App.tsx",
+          "</read-files>",
+          "",
+          "<modified-files>",
+          "src/services/compactionEvent.ts",
+          "</modified-files>",
+        ].join("\n"),
+        firstKeptEntryId: "entry-99",
+        tokensBefore: 160000,
+        details: {
+          readFiles: ["CHANGELOG.md", "src/App.tsx"],
+          modifiedFiles: ["src/services/compactionEvent.ts"],
+        },
+      },
+    },
+  ], state);
+
+  assert.equal(result.currentItems.length, 1);
+  const item = result.currentItems[0];
+  assert.doesNotMatch(item.compaction?.summary ?? "", /<read-files>|<modified-files>|CHANGELOG\.md/);
+  assert.match(item.compaction?.summary ?? "", /Inspect repository structure\./);
+
+  const expandedHtml = renderToStaticMarkup(createElement(CompactedCard, { item, defaultExpanded: true }));
+  assert.equal((expandedHtml.match(/CHANGELOG\.md/g) ?? []).length, 1);
+  assert.equal((expandedHtml.match(/src\/App\.tsx/g) ?? []).length, 1);
+  assert.equal((expandedHtml.match(/src\/services\/compactionEvent\.ts/g) ?? []).length, 1);
+});
+
+test("compaction file-section stripping handles split-turn mid-summary blocks, missing details fallback, and fenced code examples", () => {
+  const state = freshState();
+  const result = parse([
+    {
+      type: "compaction",
+      summary: [
+        "Earlier summary.",
+        "",
+        "<read-files>",
+        "old-only.ts",
+        "</read-files>",
+        "",
+        "---",
+        "",
+        "Example inside code fence:",
+        "```xml",
+        "<read-files>",
+        "docs/example.md",
+        "</read-files>",
+        "```",
+        "",
+        "<read-files>",
+        "a.ts",
+        "b.ts",
+        "</read-files>",
+        "",
+        "<modified-files>",
+        "b.ts",
+        "</modified-files>",
+      ].join("\n"),
+      tokensBefore: 42000,
+    },
+  ], state);
+
+  const compaction = result.currentItems[0].compaction;
+  assert.ok(compaction);
+  assert.match(compaction.summary, /docs\/example\.md/);
+  assert.doesNotMatch(compaction.summary, /old-only\.ts/);
+  assert.doesNotMatch(compaction.summary, /\ba\.ts\b/);
+  assert.deepEqual(compaction.modifiedFiles, ["b.ts"]);
+  assert.deepEqual(compaction.readFiles, ["old-only.ts", "a.ts"]);
+
+  // Explicit empty details.readFiles stays authoritative even when summary had a stale tag.
+  const authoritative = parse([
+    {
+      type: "compaction",
+      summary: "Summary text\n\n<read-files>\nstale.ts\n</read-files>",
+      tokensBefore: 10000,
+      details: { readFiles: [], modifiedFiles: ["stale.ts"] },
+    },
+  ], freshState());
+  assert.equal(authoritative.currentItems[0].compaction?.summary, "Summary text");
+  assert.equal(authoritative.currentItems[0].compaction?.readFiles, undefined);
+  assert.deepEqual(authoritative.currentItems[0].compaction?.modifiedFiles, ["stale.ts"]);
+});

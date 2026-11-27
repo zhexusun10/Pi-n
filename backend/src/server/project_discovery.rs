@@ -447,7 +447,14 @@ pub(super) fn list_skills(
     }
 
     let mut visited_skill_dirs = 0usize;
+    let mut seen_roots = HashSet::new();
     for (dir, scope) in &search_dirs {
+        if !dir.exists() {
+            continue;
+        }
+        if !seen_roots.insert(crate::path_identity::path_key(dir)) {
+            continue;
+        }
         scan_skills_dir(
             dir,
             scope,

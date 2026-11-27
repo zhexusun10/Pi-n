@@ -120,7 +120,7 @@ fn acquire_lock_file(
         let key = format!("{windows_prefix}-{:016x}", hasher.finish());
         let locks = PROCESS_LOCKS.get_or_init(|| Mutex::new(HashSet::new()));
         {
-            let mut owned = locks.lock().map_err(|error| error.to_string())?;
+            let mut owned = locks.lock().unwrap_or_else(|e| e.into_inner());
             if !owned.insert(key.clone()) {
                 return Err(busy_message.into());
             }

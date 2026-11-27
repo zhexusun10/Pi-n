@@ -43,7 +43,7 @@ export async function parseActiveArtifacts({
     const child = spawn(process.execPath, args, {
       cwd: installationRoot,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     const onAbort = () => {
       try { child.kill('SIGTERM'); } catch {}
@@ -164,6 +164,7 @@ export async function parseActiveArtifacts({
       for (const hash of activeBinHashes) {
         for (const ext of exts) {
           activeFiles.add(resolve(targetDir, 'deps', `${bin}-${hash}${ext}`));
+          activeFiles.add(resolve(targetDir, 'deps', `${depBin}-${hash}${ext}`));
         }
       }
       resolveArtifacts({ activeFiles, activeBuildDirs, profile, targetDir, failed: !artifactTracked });
@@ -326,6 +327,7 @@ export async function cleanStaleArtifacts({
 
   let deletedCount = 0;
   let skippedCount = 0;
+  let reclaimedBytes = 0;
 
   for (const item of staleDeps) {
     try {
@@ -335,6 +337,7 @@ export async function cleanStaleArtifacts({
         unlinkSync(item.path);
       }
       deletedCount++;
+      reclaimedBytes += item.size;
       if (verbose) log(`  - Deleted file: ${item.name}`);
     } catch (error) {
       skippedCount++;
@@ -346,6 +349,7 @@ export async function cleanStaleArtifacts({
     try {
       rmSync(dir.path, { recursive: true, force: true });
       deletedCount++;
+      reclaimedBytes += dir.size;
       if (verbose) log(`  - Deleted dir: ${dir.name}`);
     } catch (error) {
       skippedCount++;
@@ -357,11 +361,12 @@ export async function cleanStaleArtifacts({
     try {
       rmSync(viteTemp, { recursive: true, force: true });
       deletedCount++;
+      reclaimedBytes += viteTempBytes;
     } catch {}
   }
 
   if (!silent || deletedCount > 0) {
-    log(`[clean-stale] Cleaned ${deletedCount} stale items; reclaimed ${formatMB(totalStaleBytes)}.`);
+    log(`[clean-stale] Cleaned ${deletedCount} stale items; reclaimed ${formatMB(reclaimedBytes)}.`);
     if (skippedCount > 0) {
       log(`[clean-stale] (${skippedCount} active/locked files skipped safely)`);
     }
@@ -373,11 +378,11 @@ export async function cleanStaleArtifacts({
     activeBytes,
     deletedCount,
     skippedCount,
-    reclaimedBytes: totalStaleBytes,
+    reclaimedBytes,
   };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run') || args.includes('-d');
   const release = args.includes('--release');

@@ -147,12 +147,15 @@ pub(super) fn resolve_open_file_target(roots: &[PathBuf], path: &str) -> Result<
 }
 
 fn open_path_with_system(path: &Path) -> Result<(), String> {
+    // Strip Windows `\\?\` verbatim prefixes (returned by `canonicalize()`):
+    // `explorer.exe` ignores verbatim prefixes and opens Documents instead.
+    let target = crate::native::host_path(path);
     // explorer.exe receives the path as one argument, so shell metacharacters
     // and spaces cannot alter a command line. `open` / `xdg-open` use the same
     // argument shape on their platforms.
     let mut command = if cfg!(target_os = "windows") {
         let mut command = std::process::Command::new("explorer.exe");
-        command.arg(path);
+        command.arg(&target);
         command
     } else if cfg!(target_os = "macos") {
         let open_bin = if Path::new("/usr/bin/open").is_file() {
@@ -161,11 +164,11 @@ fn open_path_with_system(path: &Path) -> Result<(), String> {
             "open"
         };
         let mut command = std::process::Command::new(open_bin);
-        command.arg(path);
+        command.arg(&target);
         command
     } else {
         let mut command = std::process::Command::new("xdg-open");
-        command.arg(path);
+        command.arg(&target);
         command
     };
     let mut child = command
@@ -226,5 +229,6 @@ pub(super) fn open_workspace_file(
     let roots = open_file_roots(&context, scope.as_deref(), &nodes)?;
     let target = resolve_open_file_target(&roots, &path)?;
     open_path_with_system(&target)?;
-    Ok(serde_json::json!({ "path": target.to_string_lossy() }))
+    let display = crate::native::host_path(&target);
+    Ok(serde_json::json!({ "path": display.to_string_lossy() }))
 }

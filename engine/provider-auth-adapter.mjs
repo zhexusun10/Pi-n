@@ -1,18 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
-import { toHostInput } from './path-identity.mjs';
 import { readModelVisibility, saveModelVisibility } from './model-visibility.mjs';
-import { KNOWN_PROVIDER_ENV_VARS } from './agent-dir.mjs';
+import { KNOWN_PROVIDER_ENV_VARS, resolveAgentDir } from './agent-dir.mjs';
 
 // Credentials are emitted verbatim as HTTP header values. Non-ASCII input can
 // only fail inside the provider client, after Pi has already stored it.
 const PRINTABLE_ASCII = /^[\x20-\x7E]*$/;
 
 function getDisabledProvidersPath() {
-  const dir = toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi-n", "pi-agent"));
-  return join(dir, "disabled-providers.json");
+  return join(resolveAgentDir(), "disabled-providers.json");
 }
 
 function loadDisabledProviders() {

@@ -663,3 +663,45 @@ test("isMacosTauriDesktop activates only for Tauri desktop on macOS and stays fa
     clearTauriGlobals();
   }
 });
+
+test("getWorkspaceImage accepts all backend-supported image MIME types and rejects unsafe types", async () => {
+  const originalFetch = globalThis.fetch;
+  clearTauriGlobals();
+  try {
+    for (const mime of [
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp",
+      "image/bmp",
+      "image/avif",
+      "image/x-icon",
+      "image/svg+xml",
+      "image/svg+xml; charset=utf-8",
+    ]) {
+      globalThis.fetch = (async () =>
+        new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 200,
+          headers: { "Content-Type": mime },
+        })) as typeof fetch;
+      const blob = await runtimeService.getWorkspaceImage("run-1", "preview.img");
+      assert.equal(blob.size, 4, `expected ${mime} to succeed`);
+    }
+
+    for (const mime of ["text/html", "application/json", "image/tiff", ""]) {
+      globalThis.fetch = (async () =>
+        new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 200,
+          headers: mime ? { "Content-Type": mime } : {},
+        })) as typeof fetch;
+      await assert.rejects(
+        runtimeService.getWorkspaceImage("run-1", "bad.img"),
+        /无法加载图片|Unable to load image/,
+        `expected ${mime || "(empty)"} to be rejected`,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearTauriGlobals();
+  }
+});
