@@ -422,6 +422,8 @@ export function parseTranscriptChunkLines(
 
       const thinkingEvent = event.assistantMessageEvent;
       if (event.type === "message_update" && thinkingEvent?.type === "toolcall_start") {
+        currentItems = closeThinkingItems(currentItems, state.assistantStartIndex);
+        state.inTagThinking = false;
         const tool = thinkingEvent.partial?.content?.[thinkingEvent.contentIndex];
         addToolCall(thinkingEvent.id || tool?.id, thinkingEvent.toolName || tool?.name || "tool", thinkingEvent.arguments || tool?.arguments || {},
           "running", !!(thinkingEvent.argsTruncated || tool?.argsTruncated), thinkingEvent.contentIndex, "generating");
@@ -429,6 +431,8 @@ export function parseTranscriptChunkLines(
       }
 
       if (event.type === "message_update" && thinkingEvent?.type === "toolcall_end" && thinkingEvent.toolCall) {
+        currentItems = closeThinkingItems(currentItems, state.assistantStartIndex);
+        state.inTagThinking = false;
         const tool = thinkingEvent.toolCall;
         addToolCall(tool.id, tool.name || "tool", tool.arguments || {}, "running", !!tool.argsTruncated, thinkingEvent.contentIndex, "pending", {
           rawArgsRange: parseRawRange(event.piNRawRange),
@@ -535,11 +539,9 @@ export function parseTranscriptChunkLines(
           continue;
         }
 
-        // If last item was thinking with running status, close it
+        // If any thinking item in this message is still running, close it
+        currentItems = closeThinkingItems(currentItems, state.assistantStartIndex);
         const lastItem = currentItems[currentItems.length - 1];
-        if (lastItem && lastItem.type === "thinking" && lastItem.status === "running") {
-          lastItem.status = "success";
-        }
 
         if (currentItems.length > state.assistantStartIndex && lastItem && lastItem.type === "text" && lastItem.role === "assistant" && !lastItem.rawOutput) {
           lastItem.content = (lastItem.content || "") + delta;

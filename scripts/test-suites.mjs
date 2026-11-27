@@ -53,6 +53,7 @@ export const suites = {
       'composer-commands-ui.test.mjs', 'planner-handoff-ui.test.mjs', 'graph-switching.test.mjs',
       'graph-planning-fit.test.mjs', 'responsive-layout.test.mjs', 'workbench-details-ui.test.mjs',
       'frontend-performance-ui.test.mjs', 'desktop-transport-ui.test.mjs', 'workspace-terminal-ui.test.mjs',
+      'thinking-summary-expand-ui.test.mjs',
     )],
   },
   'ui:audit': {

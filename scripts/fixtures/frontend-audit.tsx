@@ -508,7 +508,11 @@ function PollingFixture() {
 function ThinkingFixture() {
   const [output, setOutput] = useState("");
   const [items, setItems] = useState<TranscriptItem[]>([]);
+  const [cardsCollapsed, setCardsCollapsed] = useState(false);
+  const [hydratedCards, setHydratedCards] = useState<Map<string, any>>(() => new Map());
   const messageStart = React.useRef(0);
+  audit.setCardsCollapsed = setCardsCollapsed;
+  audit.setHydratedCards = (entries: Array<[string, any]>) => setHydratedCards(new Map(entries));
   audit.append = (event: any) => {
     setOutput(previous => previous + JSON.stringify(event) + "\n");
     setItems(previous => {
@@ -529,7 +533,7 @@ function ThinkingFixture() {
   };
   return <>
     <section data-thinking-view="live">{items.map(item => <div key={item.id} data-transcript-id={item.id}><ThinkingCard item={item} /></div>)}</section>
-    <section data-thinking-view="history"><VirtualizedTranscript output={output} inline /></section>
+    <section data-thinking-view="history"><VirtualizedTranscript output={output} inline cardsCollapsed={cardsCollapsed} hydratedCards={hydratedCards} /></section>
   </>;
 }
 function CardPresentationFixture() {

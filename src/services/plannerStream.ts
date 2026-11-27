@@ -219,7 +219,7 @@ export function applyPlannerToolCallUpdate(
   const toolCallId = aEvent.id || part?.id;
   const toolName = aEvent.toolName || part?.name;
   const args = aEvent.arguments || part?.arguments;
-  const items = upsertToolCall(prev.items, {
+  const items = upsertToolCall(closeThinkingItems(prev.items, prev.plannerMessageStart), {
     toolCallId,
     toolName,
     args,
@@ -227,7 +227,7 @@ export function applyPlannerToolCallUpdate(
     contentIndex: aEvent.contentIndex,
     phase: aEvent.type === "toolcall_start" ? "generating" : "pending",
   }, prev.plannerMessageStart);
-  return { ...prev, items, tools: items.filter(item => item.type === "tool_call") };
+  return { ...prev, items, plannerThinkingActive: false, tools: items.filter(item => item.type === "tool_call") };
 }
 
 export function applyPlannerThinkingUpdate(

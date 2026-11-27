@@ -12,7 +12,7 @@ import { VirtualizedTranscript } from "../src/components/VirtualizedTranscript.t
 import { PlannerTranscript } from "../src/components/PlannerTranscript.tsx";
 import { TranscriptErrorCard } from "../src/components/TranscriptErrorCard.tsx";
 import { closeThinkingItems, finalizeThinkingItems, splitThinkingTagDelta, updateThinkingItems } from "../src/services/thinkingTranscript.ts";
-import { appendPlannerError, applyPartitionerDelta, applyPlannerTextDelta, applyPlannerExtensionError, initialPlannerStream } from "../src/services/plannerStream.ts";
+import { appendPlannerError, applyPartitionerDelta, applyPlannerTextDelta, applyPlannerThinkingUpdate, applyPlannerToolCallUpdate, applyPlannerExtensionError, initialPlannerStream } from "../src/services/plannerStream.ts";
 import { setAutoExpandCot, readAutoExpandCot, autoExpandCotEnabled, AUTO_EXPAND_COT_KEY } from "../src/services/displayPreferences.ts";
 import type { TranscriptItem } from "../src/types.ts";
 import { t } from "../src/i18n/index.ts";
@@ -795,6 +795,43 @@ test("splitThinkingTagDelta and plannerStream reducers handle interleaved <think
   const withErr = appendPlannerError(plannerState, "provider timeout", true);
   assert.equal(withErr.stage, "error");
   assert.equal(appendPlannerError(withErr, "provider timeout").items.length, withErr.items.length);
+});
+
+test("toolcall_start and toolcall_end settle running thinking blocks even when thinking_end is omitted", () => {
+  const parsed = parseTranscriptChunkLines(
+    [
+      JSON.stringify(start()),
+      JSON.stringify(update("thinking_start", 0)),
+      JSON.stringify(update("thinking_delta", 0, { delta: "checking tool arguments" })),
+      JSON.stringify(update("toolcall_start", 1, { id: "call-1", toolName: "read", arguments: { path: "a.ts" } })),
+    ],
+    [],
+    new Map(),
+    {
+      source: "s",
+      byteOffset: 0,
+      leadingFragment: "",
+      inTagThinking: false,
+      inFinalResponse: false,
+      finalResponseSuppressed: false,
+      seenFirstUser: false,
+      pendingUserStart: false,
+      assistantStartIndex: 0,
+      userMessageStarts: [],
+      compacting: false,
+    },
+    {},
+  );
+  const thinking = parsed.currentItems.find(item => item.type === "thinking");
+  assert.equal(thinking?.status, "success");
+
+  let planner = { ...initialPlannerStream, items: [] };
+  planner = applyPlannerThinkingUpdate(planner, { type: "thinking_start", contentIndex: 0 });
+  planner = applyPlannerThinkingUpdate(planner, { type: "thinking_delta", contentIndex: 0, delta: "planning tool call" });
+  assert.equal(planner.plannerThinkingActive, true);
+  planner = applyPlannerToolCallUpdate(planner, { type: "toolcall_start", contentIndex: 1, id: "call-p1", toolName: "read", arguments: {} });
+  assert.equal(planner.plannerThinkingActive, false);
+  assert.equal(planner.items.find(item => item.type === "thinking")?.status, "success");
 });
 
 

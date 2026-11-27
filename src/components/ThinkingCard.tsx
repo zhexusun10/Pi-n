@@ -50,11 +50,11 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(
     const [userToggled, setUserToggled] = useState<boolean | null>(null);
     const isExpanded = expanded ?? (userToggled !== null ? userToggled
       : autoExpandCot && (defaultExpanded || (autoExpandWhileStreaming && isStreaming)));
-    // Collapsed cards keep the body unmounted, so only type while expanded; the
-    // remaining text is revealed when the user opens the card again. Snap large
-    // backfills from empty (such as upgrading a running summary projection to
-    // full output) so the card never shrinks from shimmer to one line and grows
-    // across seconds while expanding.
+    // Collapsed cards keep the body unmounted, so only type while expanded;
+    // expanding snaps to already-received text instead of replaying stale
+    // backlog after reasoning ended. Snap large backfills from empty (such as
+    // upgrading a running summary projection to full output) so the card never
+    // shrinks from shimmer to one line and grows across seconds while expanding.
     const smoothContent = useSmoothStreamText(rawContent, isStreaming, isExpanded, 160, item?.id);
     // Sync continuous pulse keyframes to wall-clock phase on mount so remounting
     // across collapse/expand card transitions never flashes the icon back to 0%.
