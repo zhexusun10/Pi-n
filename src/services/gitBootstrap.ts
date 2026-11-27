@@ -1,4 +1,4 @@
-import { isTauriDesktop } from "./apiBase";
+import { getTauriInvoke, isTauriDesktop } from "./apiBase";
 
 export type GitBootstrapPhase = "not_needed" | "downloading" | "ready" | "failed";
 
@@ -6,31 +6,6 @@ export interface GitBootstrapStatus {
   phase: GitBootstrapPhase;
   gitPath: string | null;
   error: string | null;
-}
-
-type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-
-interface TauriRuntimeGlobal {
-  __TAURI_INTERNALS__?: {
-    invoke?: TauriInvoke;
-  };
-  __TAURI__?: {
-    core?: {
-      invoke?: TauriInvoke;
-    };
-  };
-}
-
-function getTauriInvoke(): TauriInvoke | null {
-  if (!isTauriDesktop() || typeof globalThis === "undefined") return null;
-  const tauri = globalThis as unknown as TauriRuntimeGlobal;
-  if (typeof tauri.__TAURI_INTERNALS__?.invoke === "function") {
-    return tauri.__TAURI_INTERNALS__.invoke;
-  }
-  if (typeof tauri.__TAURI__?.core?.invoke === "function") {
-    return tauri.__TAURI__.core.invoke;
-  }
-  return null;
 }
 
 function normalizeStatus(raw: unknown): GitBootstrapStatus | null {

@@ -432,6 +432,7 @@ export const en: Record<string, string> = {
   "浏览器不支持流式响应读取": "Your browser does not support streaming responses",
   "规划失败": "Planning failed",
   "规划连接已结束，但未收到完成结果。请刷新检查规划记录后重试。": "The planning connection closed without a completion result. Refresh to check the planning record before retrying.",
+  "请选择本地项目文件夹": "Select a local project folder",
   "输入本地项目文件夹绝对路径（支持 Git 仓库或普通文件夹）": "Enter the absolute path to a local project folder (Git repositories and regular folders are supported)",
   "无法加载该路径为有效工作区。": "This path cannot be loaded as a valid workspace.",
   "草稿": "Draft",

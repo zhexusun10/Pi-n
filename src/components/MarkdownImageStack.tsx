@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Layers, Maximize2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 import { t } from "../i18n";
 import type { StackedMarkdownImage } from "../services/markdownImageStack";
 import { ImagePreviewModal, type PreviewImageItem } from "./modals/ImagePreviewModal";
@@ -430,7 +430,6 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
 
           {/* Resting counter pill so the stacked deck signals multiple photos at a glance */}
           <div className="markdown-image-stack-badge" aria-hidden="true">
-            <Layers size={12} strokeWidth={2.1} />
             <span>{activeIndex + 1} / {total}</span>
           </div>
 

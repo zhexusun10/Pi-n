@@ -16,7 +16,7 @@ export interface DesktopBackendState {
   closed: boolean;
 }
 
-type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+export type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
 interface TauriRuntimeGlobal {
   isTauri?: boolean;
@@ -57,7 +57,8 @@ function getTauriGlobal(): TauriRuntimeGlobal | undefined {
     : (globalThis as unknown as TauriRuntimeGlobal);
 }
 
-function getTauriInvoke(): TauriInvoke | null {
+/** Shared Tauri v2 IPC accessor; returns null outside the desktop shell. */
+export function getTauriInvoke(): TauriInvoke | null {
   const host = getTauriGlobal();
   if (!host) return null;
   if (typeof host.__TAURI_INTERNALS__?.invoke === "function") {

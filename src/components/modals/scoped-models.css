@@ -1,11 +1,11 @@
 .modal-backdrop.scoped-models-backdrop { z-index: 1500; }
 .role-model-settings > .scoped-models-button { justify-self: start; margin-top: 8px; }
 .modal.scoped-models-modal { width: min(680px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - var(--desktop-titlebar-inset, 0px) - 48px)); display: flex; flex-direction: column; gap: 12px; padding: 22px; }
-.scoped-models-modal header, .scoped-models-modal footer { display: flex; align-items: center; gap: 12px; }
-.scoped-models-modal header { justify-content: space-between; }
+.modal.scoped-models-modal > header, .modal.scoped-models-modal > footer { display: flex; align-items: center; gap: 12px; }
+.modal.scoped-models-modal > header { justify-content: space-between; margin-bottom: 0; }
 .scoped-models-modal h2, .scoped-models-modal p { margin: 0; }
 .scoped-models-modal p { color: var(--text-secondary); font-size: 12px; }
-.scoped-models-modal footer { justify-content: flex-end; gap: 10px; }
+.modal.scoped-models-modal > footer { justify-content: flex-end; gap: 10px; margin-top: 0; }
 .scoped-models-modal footer > button { height: 36px; line-height: 1.2; }
 .scoped-models-modal button:not(:disabled):hover { filter: none; }
 .scoped-models-modal .settings-cancel-btn {

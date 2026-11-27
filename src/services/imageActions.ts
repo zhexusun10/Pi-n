@@ -1,16 +1,9 @@
-import { isMacosPlatform, isMacosTauriDesktop, isTauriDesktop } from "./apiBase";
+import { getTauriInvoke, isMacosPlatform, isMacosTauriDesktop, isTauriDesktop } from "./apiBase";
 import {
   getCachedOriginalImageUrl,
   getRegisteredImageBlob,
   loadOriginalImageUrl,
 } from "./originalImagePreview";
-
-type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-
-interface TauriRuntimeGlobal {
-  __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
-  __TAURI__?: { core?: { invoke?: TauriInvoke } };
-}
 
 export interface ImageActionTarget {
   src: string;
@@ -38,18 +31,6 @@ const MIME_TO_EXT: Record<string, string> = {
 const KNOWN_IMAGE_EXTS = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico", "svg",
 ]);
-
-function getTauriInvoke(): TauriInvoke | null {
-  if (typeof globalThis === "undefined") return null;
-  const host = globalThis as unknown as TauriRuntimeGlobal;
-  if (typeof host.__TAURI_INTERNALS__?.invoke === "function") {
-    return host.__TAURI_INTERNALS__.invoke.bind(host.__TAURI_INTERNALS__);
-  }
-  if (typeof host.__TAURI__?.core?.invoke === "function") {
-    return host.__TAURI__.core.invoke.bind(host.__TAURI__.core);
-  }
-  return null;
-}
 
 export { isMacosPlatform };
 

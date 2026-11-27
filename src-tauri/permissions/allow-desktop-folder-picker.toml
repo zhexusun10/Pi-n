@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-desktop-folder-picker"
+description = "Allows the main window to open a native window-centered folder picker for selecting a local workspace directory."
+commands.allow = ["pick_desktop_folder"]

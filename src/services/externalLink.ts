@@ -1,11 +1,4 @@
-import { isTauriDesktop } from "./apiBase";
-
-type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-
-interface TauriRuntimeGlobal {
-  __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
-  __TAURI__?: { core?: { invoke?: TauriInvoke } };
-}
+import { getTauriInvoke, isTauriDesktop } from "./apiBase";
 
 const OPEN_EXTERNAL_URL_COMMAND = "open_external_url";
 
@@ -54,18 +47,6 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     // WebView2 and older desktop WebViews may not expose the async clipboard API.
   }
   return copyFallback(text);
-}
-
-function getTauriInvoke(): TauriInvoke | null {
-  if (typeof globalThis === "undefined") return null;
-  const host = globalThis as unknown as TauriRuntimeGlobal;
-  if (typeof host.__TAURI_INTERNALS__?.invoke === "function") {
-    return host.__TAURI_INTERNALS__.invoke.bind(host.__TAURI_INTERNALS__);
-  }
-  if (typeof host.__TAURI__?.core?.invoke === "function") {
-    return host.__TAURI__.core.invoke.bind(host.__TAURI__.core);
-  }
-  return null;
 }
 
 export function resolveExternalHttpUrl(rawHref: string, baseHref?: string): string | null {

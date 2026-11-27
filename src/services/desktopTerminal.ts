@@ -1,4 +1,4 @@
-import { isMacosTauriDesktop, isTauriDesktop, isWindowsTauriDesktop } from "./apiBase";
+import { getTauriInvoke, isMacosTauriDesktop, isTauriDesktop, isWindowsTauriDesktop } from "./apiBase";
 import { createWebTerminal, killWebTerminal, resizeWebTerminal, subscribeWebTerminalEvents, writeWebTerminal } from "./webTerminal";
 
 export const DESKTOP_TERMINAL_OUTPUT_EVENT = "pi-n://terminal-output";
@@ -19,31 +19,6 @@ export interface TerminalOutputEvent {
 export interface TerminalExitEvent {
   sessionId: string;
   exitCode: number | null;
-}
-
-type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-
-interface TauriRuntimeGlobal {
-  __TAURI_INTERNALS__?: {
-    invoke?: TauriInvoke;
-  };
-  __TAURI__?: {
-    core?: {
-      invoke?: TauriInvoke;
-    };
-  };
-}
-
-function getTauriInvoke(): TauriInvoke | null {
-  if (!isTauriDesktop() || typeof globalThis === "undefined") return null;
-  const host = globalThis as unknown as TauriRuntimeGlobal;
-  if (typeof host.__TAURI_INTERNALS__?.invoke === "function") {
-    return host.__TAURI_INTERNALS__.invoke.bind(host.__TAURI_INTERNALS__);
-  }
-  if (typeof host.__TAURI__?.core?.invoke === "function") {
-    return host.__TAURI__.core.invoke.bind(host.__TAURI__.core);
-  }
-  return null;
 }
 
 /** Built-in PTY terminal is supported in the Windows and macOS Tauri desktop clients. */

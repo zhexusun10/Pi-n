@@ -1,14 +1,7 @@
 import type { Execution, Snapshot, TranscriptItem } from "../types";
-import { isTauriDesktop } from "./apiBase";
+import { getTauriInvoke, isTauriDesktop } from "./apiBase";
 import { runtimeService } from "./runtime";
 import { parseTranscriptChunkLines, type ParseTranscriptChunkState } from "./transcriptParser";
-
-type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-
-interface TauriRuntimeGlobal {
-  __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
-  __TAURI__?: { core?: { invoke?: TauriInvoke } };
-}
 
 const SEND_DESKTOP_NOTIFICATION_COMMAND = "send_desktop_notification";
 const DESKTOP_NOTIFICATION_PERMISSION_STATUS_COMMAND = "desktop_notification_permission_status";
@@ -26,18 +19,6 @@ function normalizeNotificationPermission(raw: unknown): NotificationPermissionSt
   if (raw === "denied") return "denied";
   if (raw === "default" || raw === "prompt") return "default";
   return "unsupported";
-}
-
-function getTauriInvoke(): TauriInvoke | null {
-  if (typeof globalThis === "undefined") return null;
-  const host = globalThis as unknown as TauriRuntimeGlobal;
-  if (typeof host.__TAURI_INTERNALS__?.invoke === "function") {
-    return host.__TAURI_INTERNALS__.invoke.bind(host.__TAURI_INTERNALS__);
-  }
-  if (typeof host.__TAURI__?.core?.invoke === "function") {
-    return host.__TAURI__.core.invoke.bind(host.__TAURI__.core);
-  }
-  return null;
 }
 
 /**

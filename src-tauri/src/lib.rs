@@ -15,6 +15,7 @@ pub mod runtime_lock;
 pub mod sidecar;
 #[cfg(desktop)]
 pub mod terminal;
+pub mod windows_dialog;
 
 use managed_git::{
     existing_managed_git, expected_managed_git_path, GitBootstrapManager, GitBootstrapStatus,
@@ -653,9 +654,73 @@ fn launch_local_file_with_system_app(path: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct AtomicFlagReset(&'static AtomicBool);
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl Drop for AtomicFlagReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+#[tauri::command]
+async fn pick_desktop_folder(
+    window: tauri::WebviewWindow,
+    prompt: Option<String>,
+) -> Result<Option<String>, String> {
+    static FOLDER_PICKER_ACTIVE: AtomicBool = AtomicBool::new(false);
+    if FOLDER_PICKER_ACTIVE.swap(true, Ordering::AcqRel) {
+        return Ok(None);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let _reset = AtomicFlagReset(&FOLDER_PICKER_ACTIVE);
+            macos_window::pick_folder(&window, prompt.as_deref())
+                .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
+        })
+        .await;
+        match result {
+            Ok(inner) => inner,
+            Err(error) => {
+                FOLDER_PICKER_ACTIVE.store(false, Ordering::Release);
+                Err(format!("macOS folder picker failed: {error}"))
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let owner_hwnd = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let _reset = AtomicFlagReset(&FOLDER_PICKER_ACTIVE);
+            windows_dialog::pick_folder(owner_hwnd, prompt)
+                .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
+        })
+        .await;
+        match result {
+            Ok(inner) => inner,
+            Err(error) => {
+                FOLDER_PICKER_ACTIVE.store(false, Ordering::Release);
+                Err(format!("Windows folder picker failed: {error}"))
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (window, prompt);
+        FOLDER_PICKER_ACTIVE.store(false, Ordering::Release);
+        Err("Native folder picker is unavailable on this platform".to_string())
+    }
+}
+
 #[tauri::command]
 async fn save_desktop_image(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     data_base64: String,
     filename: Option<String>,
     prompt: Option<bool>,
@@ -673,7 +738,7 @@ async fn save_desktop_image(
         #[cfg(target_os = "macos")]
         if prompt == Some(true) {
             let Some(chosen) =
-                macos_window::choose_save_image_path(&safe_name, download_dir.as_deref())
+                macos_window::choose_save_image_path(&window, &safe_name, download_dir.as_deref())
             else {
                 return Ok(None);
             };
@@ -681,7 +746,7 @@ async fn save_desktop_image(
             return Ok(Some(chosen.to_string_lossy().into_owned()));
         }
 
-        let _ = prompt;
+        let _ = (&window, prompt);
         let dir = download_dir.ok_or_else(|| "Downloads directory is unavailable".to_string())?;
         std::fs::create_dir_all(&dir)
             .map_err(|error| format!("Cannot create Downloads directory: {error}"))?;
@@ -1819,6 +1884,7 @@ pub fn run() {
             {
                 if let Some(window) = app.get_webview_window("main") {
                     set_windows_corner_preference(&window);
+                    windows_dialog::install_webview_dialog_centering(&window);
                 }
                 let start_hidden = launched_from_autostart(&std::env::args().collect::<Vec<_>>());
                 match setup_windows_tray(app) {
@@ -1945,6 +2011,7 @@ pub fn run() {
             git_bootstrap_status,
             retry_git_bootstrap,
             open_external_url,
+            pick_desktop_folder,
             save_desktop_image,
             open_desktop_image,
             send_desktop_notification,
@@ -1971,6 +2038,8 @@ pub fn run() {
             }
         }
         RunEvent::Exit => {
+            #[cfg(target_os = "windows")]
+            windows_dialog::uninstall_webview_dialog_centering();
             #[cfg(desktop)]
             if let Some(terminals) = app_handle.try_state::<Arc<terminal::TerminalManager>>() {
                 terminals.kill_all();

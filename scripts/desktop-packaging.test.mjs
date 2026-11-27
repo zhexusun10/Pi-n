@@ -136,6 +136,7 @@ test('Tauri v2 capability grants least-privilege backend_url, autostart, updater
     'allow-backend-url',
     'allow-git-bootstrap',
     'allow-open-external-url',
+    'allow-desktop-folder-picker',
     'allow-desktop-image',
     'allow-desktop-notification',
     'allow-desktop-terminal',
@@ -176,6 +177,16 @@ test('Tauri v2 capability grants least-privilege backend_url, autostart, updater
   assert.match(
     openExternalPermission,
     /commands\.allow\s*=\s*\["open_external_url"\]/,
+  );
+
+  const desktopFolderPickerPermission = readFileSync(
+    join(root, 'src-tauri', 'permissions', 'allow-desktop-folder-picker.toml'),
+    'utf8',
+  );
+  assert.match(desktopFolderPickerPermission, /identifier\s*=\s*"allow-desktop-folder-picker"/);
+  assert.match(
+    desktopFolderPickerPermission,
+    /commands\.allow\s*=\s*\["pick_desktop_folder"\]/,
   );
 
   const desktopImagePermission = readFileSync(

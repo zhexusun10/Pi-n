@@ -531,6 +531,75 @@ test("pickRepository falls back to window.prompt only when picker is unsupported
   }
 });
 
+test("pickRepository uses native desktop folder picker IPC in Tauri mode", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalInternals = (globalThis as any).__TAURI_INTERNALS__;
+  const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+  let backendPickCalled = false;
+  (globalThis as any).__TAURI_INTERNALS__ = {
+    invoke: async (cmd: string, args?: Record<string, unknown>) => {
+      calls.push({ cmd, args });
+      if (cmd === "pick_desktop_folder") return "/Users/alex/demo-repo";
+      if (cmd === "backend_url") return "http://127.0.0.1:4321";
+      return null;
+    },
+  };
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("pick_repository")) {
+        backendPickCalled = true;
+      }
+      if (url.includes("detect_repository")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        assert.equal(body.path, "/Users/alex/demo-repo");
+        return response({ path: "/Users/alex/demo-repo", name: "demo-repo" });
+      }
+      return response({});
+    };
+    const result = await runtimeService.pickRepository();
+    assert.deepEqual(result, { path: "/Users/alex/demo-repo", name: "demo-repo" });
+    assert.equal(backendPickCalled, false);
+    assert.equal(calls.some((call) => call.cmd === "pick_desktop_folder"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalInternals === undefined) delete (globalThis as any).__TAURI_INTERNALS__;
+    else (globalThis as any).__TAURI_INTERNALS__ = originalInternals;
+  }
+});
+
+test("pickRepository falls back to the backend picker when desktop folder IPC rejects", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalInternals = (globalThis as any).__TAURI_INTERNALS__;
+  const originalWarn = console.warn;
+  let backendPickCalled = false;
+  (globalThis as any).__TAURI_INTERNALS__ = {
+    invoke: async (cmd: string) => {
+      if (cmd === "pick_desktop_folder") throw "Windows folder picker COM init failed: 0x80010106";
+      if (cmd === "backend_url") return "http://127.0.0.1:4321";
+      return null;
+    },
+  };
+  console.warn = () => {};
+  try {
+    globalThis.fetch = async (input) => {
+      if (String(input).includes("pick_repository")) {
+        backendPickCalled = true;
+        return response({ supported: true, cancelled: false, repository: { path: "/tmp/repo", name: "repo" } });
+      }
+      return response({});
+    };
+    const result = await runtimeService.pickRepository();
+    assert.deepEqual(result, { path: "/tmp/repo", name: "repo" });
+    assert.equal(backendPickCalled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+    if (originalInternals === undefined) delete (globalThis as any).__TAURI_INTERNALS__;
+    else (globalThis as any).__TAURI_INTERNALS__ = originalInternals;
+  }
+});
+
 test("deleteWorkspace invalidates cached files and skills for the deleted repository", async () => {
   const originalFetch = globalThis.fetch;
   let fileFetchCount = 0;

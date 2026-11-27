@@ -2910,6 +2910,7 @@ dependencies = [
  "tempfile",
  "uuid",
  "webview2-com",
+ "windows",
  "windows-core",
  "windows-sys 0.61.2",
 ]

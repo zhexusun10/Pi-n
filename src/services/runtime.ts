@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { BoundedLruCache, utf8Bytes } from "../lib/BoundedLruCache";
 import { isManagedAttachmentPath } from "../utils/attachmentPath";
-import { DesktopBackendError, fetchApi, isCurrentApiResponse, isTauriDesktop, probeDesktopBackendError } from "./apiBase";
+import { DesktopBackendError, fetchApi, getTauriInvoke, isCurrentApiResponse, isTauriDesktop, probeDesktopBackendError } from "./apiBase";
 import { invalidateTranscriptCaches } from "./transcriptCache";
 import { ApiRequestError, jsonRequest, observeApiResponse, requestHeaders, responseError, recoverOperationResponse } from "./apiClient";
 import type { SnapshotPollRequest, SnapshotPollResponse, ExecutionOutputPage, PlanningOutputPage, OperationStatus, ConversationSearchResponse } from "./apiContract.generated";
@@ -469,6 +469,30 @@ export const runtimeService = {
     request<Snapshot>("edit_node", input),
   inspectWorkspace: (path?: string | null) => request<WorkspaceDirectory | null>("detect_repository", { path: path || null }),
   async pickRepository(): Promise<WorkspaceDirectory | null> {
+    const invoke = isTauriDesktop() ? getTauriInvoke() : null;
+    if (invoke) {
+      let picked: string | null | undefined;
+      let nativePickerAvailable = true;
+      try {
+        picked = await invoke<string | null>("pick_desktop_folder", {
+          prompt: t("请选择本地项目文件夹"),
+        });
+      } catch (err) {
+        // Any IPC failure (missing command/permission, COM or AppKit error)
+        // means the window-modal picker is unusable; use the backend picker.
+        nativePickerAvailable = false;
+        console.warn("Desktop folder picker failed or unavailable, fallback to backend picker", err);
+      }
+      if (nativePickerAvailable) {
+        const path = picked?.trim();
+        if (!path) return null;
+        const info = await this.inspectWorkspace(path);
+        if (!info) {
+          throw new Error(t("所选目录「{0}」无法初始化为有效工作区。", path));
+        }
+        return info;
+      }
+    }
     try {
       const res = await request<{
         supported: boolean;
