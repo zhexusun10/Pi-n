@@ -43,7 +43,11 @@ export async function auditNpmDependencies({ prefix, level = 'high', omit } = {}
     ? process.execPath
     : process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const args = npmCli && existsSync(npmCli) ? [npmCli, ...npmArgs] : npmArgs;
-  const result = spawnSync(executable, args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const result = spawnSync(executable, args, {
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+    shell: process.platform === 'win32' && /\.cmd$/i.test(executable),
+  });
   const stdout = result.stdout ?? '';
   let report;
   try {

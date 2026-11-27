@@ -155,6 +155,9 @@ pub(crate) fn write_file_no_follow(path: &Path, bytes: &[u8]) -> Result<(), Stri
         if let Ok(meta) = fs::symlink_metadata(path) {
             if crate::workspace_symlinks::is_link(&meta) {
                 crate::workspace_symlinks::remove(path)?;
+            } else {
+                crate::workspace_cleanup::clear_readonly_attribute(path, &meta)
+                    .map_err(|e| e.to_string())?;
             }
         }
         fs::rename(&temp, path).map_err(|e| e.to_string())

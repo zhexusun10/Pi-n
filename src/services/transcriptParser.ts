@@ -259,11 +259,11 @@ export function parseTranscriptChunkLines(
     if (toolCallId) pendingTools.delete(toolCallId);
   };
 
-  const pushSessionMessage = (message: any, entryId?: string, explicitOffset?: number, envelopeRawRange?: [number, number]) => {
+  const pushSessionMessage = (message: any, entryId?: string, explicitOffset?: number, envelopeRawRange?: [number, number], isLeadingFragment = false) => {
     if (!message || typeof message !== "object") return;
     if (message.role === "user") {
       if (!options.showUserTurns) return;
-      if (options.skipLeadingUserTurn && !state.seenFirstUser && !state.leadingFragment && currentItems.length === 0) {
+      if (options.skipLeadingUserTurn && !state.seenFirstUser && !isLeadingFragment && currentItems.length === 0) {
         state.seenFirstUser = true;
         return;
       }
@@ -362,7 +362,7 @@ export function parseTranscriptChunkLines(
         const piNRequestId = typeof event.piNRequestId === "string" && event.piNRequestId
           ? event.piNRequestId
           : undefined;
-        if (!piNRequestId && options.skipLeadingUserTurn && !state.seenFirstUser && !state.leadingFragment && currentItems.length === 0) {
+        if (!piNRequestId && options.skipLeadingUserTurn && !state.seenFirstUser && !leadingFragment && currentItems.length === 0) {
           if (event.type === "message_start") {
             state.pendingUserStart = true;
             if (messageId) state.userMessageStarts.add(messageId);
@@ -410,7 +410,7 @@ export function parseTranscriptChunkLines(
 
       if (event.type === "message") {
         const effectiveOffset = typeof event.piNByteOffset === "number" ? event.piNByteOffset : lineOffset;
-        pushSessionMessage(event.message, event.id, effectiveOffset, parseRawRange(event.piNRawRange));
+        pushSessionMessage(event.message, event.id, effectiveOffset, parseRawRange(event.piNRawRange), leadingFragment);
         continue;
       }
 

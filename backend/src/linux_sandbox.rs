@@ -91,41 +91,49 @@ fn mount_boundaries(
     }
     let staging = engine.join(format!(".pi-n-masks-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
-    // The copied engine is read-only below, but dependency symlinks may
-    // resolve into the original installation. Do not let one node modify
-    // code/dependencies loaded by later nodes or backend roles.
-    command.arg("--ro-bind").arg(installation).arg(installation);
-    for (index, mask) in masks.iter().enumerate() {
-        let empty = staging.join(index.to_string());
-        fs::create_dir_all(&empty).map_err(|e| e.to_string())?;
-        // Recreate the mount points for allowed exceptions under this mask
-        // before the mask itself is made unreadable.
-        let mut carries_exception = false;
-        for path in masks
-            .iter()
-            .map(PathBuf::as_path)
-            .chain([current, session])
-            .chain(borrowed_objects.iter().map(PathBuf::as_path))
-            .chain(read_only_data.iter().map(PathBuf::as_path))
-            .chain(state)
-            .chain(additional.iter().map(PathBuf::as_path))
-            .chain(extra_binds.iter().map(PathBuf::as_path))
-        {
-            if let Ok(relative) = path.strip_prefix(mask) {
-                if !relative.as_os_str().is_empty() {
-                    carries_exception = true;
-                    fs::create_dir_all(empty.join(relative)).map_err(|e| e.to_string())?;
+    let setup = (|| -> Result<(), String> {
+        // The copied engine is read-only below, but dependency symlinks may
+        // resolve into the original installation. Do not let one node modify
+        // code/dependencies loaded by later nodes or backend roles.
+        command.arg("--ro-bind").arg(installation).arg(installation);
+        for (index, mask) in masks.iter().enumerate() {
+            let empty = staging.join(index.to_string());
+            fs::create_dir_all(&empty).map_err(|e| e.to_string())?;
+            // Recreate the mount points for allowed exceptions under this mask
+            // before the mask itself is made unreadable.
+            let mut carries_exception = false;
+            for path in masks
+                .iter()
+                .map(PathBuf::as_path)
+                .chain([current, session])
+                .chain(borrowed_objects.iter().map(PathBuf::as_path))
+                .chain(read_only_data.iter().map(PathBuf::as_path))
+                .chain(state)
+                .chain(additional.iter().map(PathBuf::as_path))
+                .chain(extra_binds.iter().map(PathBuf::as_path))
+            {
+                if let Ok(relative) = path.strip_prefix(mask) {
+                    if !relative.as_os_str().is_empty() {
+                        carries_exception = true;
+                        fs::create_dir_all(empty.join(relative)).map_err(|e| e.to_string())?;
+                    }
                 }
             }
+            // An empty read-only tree is indistinguishable from a genuinely empty
+            // directory: listing it silently succeeds and reads fail as ENOENT. Clear
+            // the read bit so listing and traversing report a permission error instead
+            // of an empty listing. A mask that carries an allowed exception stays
+            // traversable (execute-only) so that exception's mount point is reachable.
+            let mode = if carries_exception { 0o111 } else { 0o000 };
+            fs::set_permissions(&empty, fs::Permissions::from_mode(mode))
+                .map_err(|e| e.to_string())?;
+            command.arg("--ro-bind").arg(&empty).arg(mask);
         }
-        // An empty read-only tree is indistinguishable from a genuinely empty
-        // directory: listing it silently succeeds and reads fail as ENOENT. Clear
-        // the read bit so listing and traversing report a permission error instead
-        // of an empty listing. A mask that carries an allowed exception stays
-        // traversable (execute-only) so that exception's mount point is reachable.
-        let mode = if carries_exception { 0o111 } else { 0o000 };
-        fs::set_permissions(&empty, fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
-        command.arg("--ro-bind").arg(&empty).arg(mask);
+        Ok(())
+    })();
+    if let Err(error) = setup {
+        let _ = crate::native_runtime_storage::remove_dir_all_masked(&staging);
+        return Err(error);
     }
     for objects in borrowed_objects {
         command.arg("--ro-bind").arg(objects).arg(objects);

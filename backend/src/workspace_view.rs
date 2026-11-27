@@ -948,9 +948,18 @@ fn remove_empty_or_host_metadata_dir(
                     .unwrap_or(false)
                 {
                     for file in files {
+                        if let Ok(meta) = fs::symlink_metadata(&file) {
+                            let _ =
+                                crate::workspace_cleanup::clear_macos_immutable_flags(&file, &meta);
+                        }
                         fs::remove_file(file).map_err(|e| e.to_string())?;
                     }
                     for subdir in dirs {
+                        if let Ok(meta) = fs::symlink_metadata(&subdir) {
+                            let _ = crate::workspace_cleanup::clear_macos_immutable_flags(
+                                &subdir, &meta,
+                            );
+                        }
                         fs::remove_dir(subdir).map_err(|e| e.to_string())?;
                     }
                     return fs::remove_dir(path).map_err(|e| e.to_string());

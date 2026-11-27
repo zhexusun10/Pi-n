@@ -419,3 +419,46 @@ test("piNRequestId and authoritative steerOffsets place steers deterministically
   assert.equal(isUncommittedSteer(inWindow, partial), false);
   assert.equal(isUncommittedSteer(unread, partial), true);
 });
+
+test("skipLeadingUserTurn preserves a mid-log user turn when leadingFragment is true", () => {
+  const rpcLines = [
+    JSON.stringify({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "mid-log steer" }] } }),
+    JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "mid-log steer" }] } }),
+    JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "reply" }] } }),
+  ];
+  const parsedRpc = parseTranscriptChunkLines(
+    rpcLines,
+    [],
+    new Map(),
+    {
+      source: "output", byteOffset: 4096, leadingFragment: true, inTagThinking: false,
+      inFinalResponse: false, finalResponseSuppressed: false, seenFirstUser: false,
+      pendingUserStart: false, assistantStartIndex: 0, userMessageStarts: new Set(), compacting: false,
+    },
+    { showUserTurns: true, skipFirstUser: false, skipLeadingUserTurn: true, userTurnTexts: ["mid-log steer"] },
+  );
+  assert.deepEqual(
+    parsedRpc.currentItems.map(item => [item.role, item.content]),
+    [["user", "mid-log steer"], ["assistant", "reply"]],
+  );
+
+  const sessionLines = [
+    JSON.stringify({ type: "message", id: "u1", message: { role: "user", content: [{ type: "text", text: "session steer" }] } }),
+    JSON.stringify({ type: "message", id: "a1", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } }),
+  ];
+  const parsedSession = parseTranscriptChunkLines(
+    sessionLines,
+    [],
+    new Map(),
+    {
+      source: "output", byteOffset: 4096, leadingFragment: true, inTagThinking: false,
+      inFinalResponse: false, finalResponseSuppressed: false, seenFirstUser: false,
+      pendingUserStart: false, assistantStartIndex: 0, userMessageStarts: new Set(), compacting: false,
+    },
+    { showUserTurns: true, skipFirstUser: false, skipLeadingUserTurn: true, userTurnTexts: ["session steer"] },
+  );
+  assert.deepEqual(
+    parsedSession.currentItems.map(item => [item.role, item.content]),
+    [["user", "session steer"], ["assistant", "ok"]],
+  );
+});

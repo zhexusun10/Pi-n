@@ -96,9 +96,13 @@ const until = async callback => {
   throw Error(`acceptance timed out\n${diagnostics}`);
 };
 const stopOwnedBackend = async () => {
-  if (backend && backend.exitCode === null) {
+  if (backend?.pid && backend.exitCode === null && backend.signalCode === null) {
     const exited = once(backend, 'exit');
-    backend.kill('SIGKILL'); // Only this harness's child, never an existing service.
+    if (process.platform === 'win32') {
+      try { execFileSync('taskkill', ['/PID', String(backend.pid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
+    } else {
+      try { backend.kill('SIGKILL'); } catch {} // Only this harness's child, never an existing service.
+    }
     await exited;
   }
 };
@@ -225,6 +229,6 @@ try {
   throw error;
 } finally {
   await stopOwnedBackend();
-  await new Promise(resolve => model.close(resolve));
+  if (model.listening) await new Promise(resolve => model.close(resolve));
   await writeFile(join(directory, 'backend.log'), diagnostics);
 }

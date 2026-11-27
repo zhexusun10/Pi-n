@@ -350,6 +350,7 @@ export function useWorkspaceTerminals(activeWorkspacePath: string): WorkspaceTer
         (error) => {
           pendingCreatesRef.current = Math.max(0, pendingCreatesRef.current - 1);
           if (pendingCreatesRef.current === 0) earlyEventsRef.current.clear();
+          if (!mountedRef.current) return;
           const current = entriesRef.current[key];
           if (!current || current.instanceId !== instanceId) return;
           const message = error instanceof Error ? error.message : String(error ?? "Failed to start terminal");

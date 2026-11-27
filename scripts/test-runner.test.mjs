@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -172,5 +172,45 @@ test('frontend UI suites share a single Playwright browser server and never laun
     const defaultConnects = [...source.matchAll(/\bconnectOrLaunchBrowser\s*\(\s*\)/g)];
     assert.ok(defaultConnects.length <= 1,
       `${file} must connect/launch the default browser at most once (found ${defaultConnects.length})`);
+  }
+});
+
+test('run-ui-tests forwards SIGTERM cleanly and waits for child cleanup', async t => {
+  const dir = fixture(t);
+  const readyFile = join(dir, 'ready.txt');
+  const cleanedFile = join(dir, 'cleaned.txt');
+  const fakeTest = join(dir, 'fake-ui.test.mjs');
+  writeFileSync(fakeTest, `
+import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+process.on('SIGTERM', () => {
+  writeFileSync(${JSON.stringify(cleanedFile)}, 'ok');
+  process.exit(0);
+});
+test('waits for termination', async () => {
+  writeFileSync(${JSON.stringify(readyFile)}, 'ready');
+  await new Promise(resolve => setTimeout(resolve, 15000));
+});
+`);
+  const env = { ...process.env, PI_N_TEST_BROWSER_WS_ENDPOINT: 'ws://127.0.0.1:1/unused' };
+  delete env.NODE_TEST_CONTEXT;
+  const runner = spawn(process.execPath, [join(root, 'scripts/run-ui-tests.mjs'), fakeTest], {
+    env,
+    stdio: 'ignore',
+  });
+  const deadline = Date.now() + 10000;
+  while (!existsSync(readyFile) && Date.now() < deadline) {
+    assert.equal(runner.exitCode, null, 'runner exited before test started');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.ok(existsSync(readyFile), 'fake UI test never started');
+  runner.kill('SIGTERM');
+  const [code] = await new Promise((resolve, reject) => {
+    runner.once('error', reject);
+    runner.once('close', (exitCode, signal) => resolve([exitCode, signal]));
+  });
+  assert.equal(code, 143);
+  if (process.platform !== 'win32') {
+    assert.equal(readFileSync(cleanedFile, 'utf8'), 'ok');
   }
 });

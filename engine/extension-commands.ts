@@ -80,18 +80,19 @@ class Worker {
     });
   }
   respond(response: Event) {
-    if (!this.closed && !this.closing) this.child.stdin.write(`${JSON.stringify(response)}\n`);
+    if (this.closed || this.closing) return;
+    try { this.child.stdin.write(`${JSON.stringify(response)}\n`, () => {}); } catch {}
   }
   close() {
     if (this.closed || this.closing) return this.done;
     this.closing = true;
-    this.child.stdin.end();
+    try { this.child.stdin.end(); } catch {}
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const termTimer = setTimeout(() => {
       if (this.closed) return;
-      this.child.kill();
+      try { this.child.kill(); } catch {}
       killTimer = setTimeout(() => {
-        if (!this.closed) this.child.kill('SIGKILL');
+        if (!this.closed) { try { this.child.kill('SIGKILL'); } catch {} }
       }, 2_000);
       killTimer.unref();
     }, 2_000);
@@ -130,14 +131,18 @@ export class ExtensionCommands {
       if (!match) throw new Error('Unknown extension command');
       const worker = new Worker(job.repository, event => {
         if (job.status !== 'pending') return;
-        if (['select', 'confirm', 'input', 'editor'].includes(event.method)) job.dialogs.set(event.id, event);
+        if (['select', 'confirm', 'input', 'editor'].includes(event.method) && typeof event.id === 'string' && event.id) {
+          job.dialogs.set(event.id, event);
+        }
         job.events.push(event);
         if (job.events.length > 256) this.cancel(job);
       });
       job.worker = worker;
       const catalog = await worker.request({ type: 'get_commands' });
       if (job.status !== 'pending') return;
-      if (!catalog.commands.some((command: Event) => available(command) && command.name === match[1])) throw new Error('Unknown extension command');
+      if (!Array.isArray(catalog?.commands) || !catalog.commands.some((command: Event) => available(command) && command.name === match[1])) {
+        throw new Error('Unknown extension command');
+      }
       await worker.request({ type: 'prompt', message: `/${match[1]}${match[2] ? ` ${match[2]}` : ''}` });
       // Notify is fire-and-forget in Pi's RPC protocol. Wait for the worker
       // to close so the final UI event is delivered before completion is
@@ -158,6 +163,7 @@ export class ExtensionCommands {
 
   async dispatch(request: Event) {
     if (this.closed) throw new Error('Extension command host stopped');
+    if (!request || typeof request !== 'object') throw new Error('Invalid extension command request');
     const repository = typeof request.repository === 'string' && request.repository ? resolve(request.repository) : '';
     if (request.operation === 'catalog') {
       if (this.catalogs.size >= 4) throw new Error('Too many extension catalog requests');
@@ -167,7 +173,8 @@ export class ExtensionCommands {
       timeout.unref();
       try {
         const catalog = await worker.request({ type: 'get_commands' });
-        return { instance: this.instance, commands: catalog.commands.filter(available) };
+        const commands = Array.isArray(catalog?.commands) ? catalog.commands.filter(available) : [];
+        return { instance: this.instance, commands };
       } finally { clearTimeout(timeout); this.catalogs.delete(worker); worker.close(); }
     }
     if (request.instance !== this.instance) throw new Error('Extension command host changed; reopen the menu');
@@ -191,7 +198,9 @@ export class ExtensionCommands {
     if (request.operation === 'poll') return { status: job.status, events: job.events.splice(0), error: job.error };
     if (request.operation === 'respond') {
       const response = request.response;
-      const prompt = job.dialogs.get(response?.id);
+      const prompt = response && typeof response === 'object' && typeof response.id === 'string'
+        ? job.dialogs.get(response.id)
+        : undefined;
       if (job.status !== 'pending' || !prompt) throw new Error('Extension dialog is no longer active');
       const safe: Event = { type: 'extension_ui_response', id: prompt.id };
       if (response.cancelled) safe.cancelled = true;

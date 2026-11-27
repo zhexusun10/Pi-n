@@ -14,7 +14,9 @@ let commandHost: ExtensionCommands | undefined;
 let commandHostLoading: Promise<ExtensionCommands> | undefined;
 async function dispatch(request: Record<string, any>) {
   if (request.operation !== 'extension_command') return adapter.dispatch(request);
-  if (request.version !== 1) throw new Error('Invalid extension command protocol');
+  if (request.version !== 1 || !request.command || typeof request.command !== 'object') {
+    throw new Error('Invalid extension command protocol');
+  }
   commandHostLoading ??= import('./extension-commands.ts')
     .then(({ ExtensionCommands }) => commandHost = new ExtensionCommands())
     .catch((error) => {

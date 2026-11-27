@@ -71,7 +71,7 @@ interface StackCardProps {
   onPointerDownActive: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerMoveActive: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerUpActive: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerCancelActive: () => void;
+  onPointerCancelActive: (event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
 const StackCard: React.FC<StackCardProps> = React.memo(({
@@ -307,6 +307,17 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }, [isBrowse]);
 
+  const releasePointerCaptureSafely = useCallback((el: HTMLElement | null, pointerId: number) => {
+    if (!el) return;
+    try {
+      if (typeof el.hasPointerCapture !== "function" || el.hasPointerCapture(pointerId)) {
+        el.releasePointerCapture?.(pointerId);
+      }
+    } catch {
+      // Safari / WKWebView may have already released capture implicitly.
+    }
+  }, []);
+
   const handlePointerMoveActive = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -316,6 +327,7 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
       if (Math.abs(dx) < DRAG_ACTIVATION_PX) return;
       // If user is clearly dragging vertically (e.g. touch scrolling), abort card drag.
       if (Math.abs(dy) > Math.abs(dx)) {
+        releasePointerCaptureSafely(event.currentTarget, event.pointerId);
         dragRef.current = null;
         setIsDragging(false);
         setDragOffsetX(0);
@@ -327,7 +339,7 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
     const clamped = Math.max(-180, Math.min(180, dx));
     drag.offsetX = clamped;
     setDragOffsetX(clamped);
-  }, []);
+  }, [releasePointerCaptureSafely]);
 
   const finishDrag = useCallback((shouldFlipOrClick: boolean) => {
     const drag = dragRef.current;
@@ -345,13 +357,15 @@ export const MarkdownImageStack: React.FC<MarkdownImageStackProps> = React.memo(
 
   const handlePointerUpActive = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    releasePointerCaptureSafely(event.currentTarget, event.pointerId);
     finishDrag(true);
-  }, [finishDrag]);
+  }, [finishDrag, releasePointerCaptureSafely]);
 
-  const handlePointerCancelActive = useCallback(() => {
+  const handlePointerCancelActive = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    releasePointerCaptureSafely(event.currentTarget, event.pointerId);
     finishDrag(false);
-  }, [finishDrag]);
+  }, [finishDrag, releasePointerCaptureSafely]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented) return;

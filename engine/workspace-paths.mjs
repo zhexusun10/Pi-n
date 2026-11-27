@@ -235,7 +235,6 @@ export function createWorkspacePaths(
   const root = hostPath(realpathSync.native(hostPath(directory)));
   // The source can be inaccessible under macOS/Linux isolation; never stat it.
   const base = hostPath(resolve(originalRoot));
-  const WORKSPACE_PATH = base;
   const workspaceCaseInsensitive = options?.workspaceCaseInsensitive ?? isCaseInsensitive(root);
   const sourceCaseInsensitive = resolveSourceCaseInsensitive(
     workspaceCaseInsensitive,
@@ -406,17 +405,27 @@ export function createWorkspacePaths(
         let to;
         try { to = pathToFileURL(commandRoot).href; } catch { continue; }
         if (from === to) continue;
-        // Do not turn file:///project-other into file:///workspace-other.
+        // Do not turn file:///project-other into file:///workspace-other,
+        // and do not re-map a workspace URL nested inside the source root.
         const boundary = '(?=$|[/\\\\?#"\'`\\s<>),;])';
-        text = text.replace(new RegExp(regexEscape(from) + boundary, sourceCaseInsensitive ? 'gi' : 'g'), () => to);
+        const toFolded = sourceCaseInsensitive ? to.toLowerCase() : to;
+        text = text.replace(new RegExp(regexEscape(from) + boundary, sourceCaseInsensitive ? 'gi' : 'g'), (match, offset) => {
+          const slice = text.slice(offset, offset + to.length);
+          const sliceFolded = sourceCaseInsensitive ? slice.toLowerCase() : slice;
+          if (sliceFolded === toFolded) {
+            const next = text[offset + to.length];
+            if (next === undefined || /[/\\?#"'`\s<>),;]/.test(next)) return match;
+          }
+          return to;
+        });
       }
     }
     return text;
   }
-  function mapCommand(text) {
+  function mapCommand(text, mapUrls = false) {
     // A quoted sh -c argument is parsed again by the child shell. Translate at
     // that level first, then quote the entire script for the outer shell.
-    text = mapFileUrls(text);
+    if (mapUrls) text = mapFileUrls(text);
     const words = shellWords(text);
     const replacements = [];
     const foldedPrefixes = commandPrefixes.map(prefix => foldPath(prefix, sourceCaseInsensitive));
@@ -427,7 +436,7 @@ export function createWorkspacePaths(
         const script = words[j + 1];
         const foldedScript = script ? foldPath(script.value, sourceCaseInsensitive) : '';
         if (script?.literal && foldedPrefixes.some(prefix => foldedScript.includes(prefix))) {
-          replacements.push({ ...script, replacement: shellQuote(mapCommand(script.value)) });
+          replacements.push({ ...script, replacement: shellQuote(mapCommand(script.value, true)) });
           i = j + 1;
         }
         break;
@@ -502,6 +511,7 @@ export function createWorkspacePaths(
       const attached = assignment ? undefined : word.value.match(/^(-[A-Za-z])(.*)$/s);
       const prefix = (assignment?.[1] ?? attached?.[1]) ?? '';
       const value = (assignment?.[2] ?? attached?.[2]) ?? word.value;
+      if (/^file:/i.test(value)) continue;
       const project = projects.find(project => pathPrefix(value, project));
       const host = toHostInput(msysHostInput(value));
       if (!project && (process.platform !== 'win32' || !sourceCaseInsensitive || !isAbsolute(host))) continue;
@@ -561,17 +571,46 @@ export function createWorkspacePaths(
       .replace(/Read-only file system/g, 'Permission denied')
       .replace(/No such file or directory/g, 'Permission denied');
   }
-  function view(value) {
+  const opaqueKeys = new Set(['signature', 'textSignature', 'thinkingSignature', 'id', 'toolCallId']);
+  function viewValue(value, active) {
     if (typeof value === 'string') return visible(classify(value));
-    if (Array.isArray(value)) return value.map(view);
+    if (Array.isArray(value)) {
+      if (active.has(value)) return value;
+      active.add(value);
+      try {
+        let changed = false;
+        const mapped = value.map(item => {
+          const next = viewValue(item, active);
+          if (next !== item) changed = true;
+          return next;
+        });
+        return changed ? mapped : value;
+      } finally {
+        active.delete(value);
+      }
+    }
     if (value && typeof value === 'object') {
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) return value;
       // Opaque provider signatures and image bytes must survive context mapping.
       if (value.type === 'image' || value.type === 'thinking' || value.type === 'redactedThinking') return value;
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [visible(key),
-        ['signature', 'textSignature', 'thinkingSignature', 'id', 'toolCallId'].includes(key) ? item : view(item),
-      ]));
+      if (active.has(value)) return value;
+      active.add(value);
+      try {
+        let changed = false;
+        const entries = Object.entries(value).map(([key, item]) => {
+          const nextKey = visible(key);
+          const nextItem = opaqueKeys.has(key) ? item : viewValue(item, active);
+          if (nextKey !== key || nextItem !== item) changed = true;
+          return [nextKey, nextItem];
+        });
+        return changed ? Object.fromEntries(entries) : value;
+      } finally {
+        active.delete(value);
+      }
     }
     return value;
   }
-  return { root, visible, physical, command, view, WORKSPACE_PATH };
+  const view = value => viewValue(value, new WeakSet());
+  return { root, visible, physical, command, view };
 }

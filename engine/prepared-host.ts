@@ -36,8 +36,7 @@ const switches = new Set([
 // command shares the same pipe chunk. Leave all later bytes for Pi's RPC reader.
 function controlLine(): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    const bytes: Buffer[] = [];
-    let length = 0;
+    const bytes: number[] = [];
     const cleanup = () => {
       process.stdin.off('readable', read);
       process.stdin.off('end', end);
@@ -46,15 +45,15 @@ function controlLine(): Promise<string | null> {
     const error = (cause: Error) => { cleanup(); reject(cause); };
     const end = () => {
       cleanup();
-      if (length) reject(new Error('Incomplete prepared-host command'));
+      if (bytes.length) reject(new Error('Incomplete prepared-host command'));
       else resolve(null);
     };
     const read = () => {
       let byte: Buffer | null;
       while ((byte = process.stdin.read(1)) !== null) {
-        if (byte[0] === 10) { cleanup(); resolve(Buffer.concat(bytes).toString('utf8')); return; }
-        if (++length > 1024 * 1024) { error(new Error('Prepared-host command exceeded 1 MiB')); return; }
-        bytes.push(byte);
+        if (byte[0] === 10) { cleanup(); resolve(Buffer.from(bytes).toString('utf8')); return; }
+        if (bytes.length >= 1024 * 1024) { error(new Error('Prepared-host command exceeded 1 MiB')); return; }
+        bytes.push(byte[0]);
       }
     };
     process.stdin.on('readable', read);
@@ -116,7 +115,7 @@ export async function bindPreparedHost(role: string): Promise<string[] | null> {
   const first = await controlLine();
   if (first === null) return null;
   const prepare = JSON.parse(first);
-  if (prepare.type !== 'pi_n_prepare' || prepare.role !== role) {
+  if (prepare?.type !== 'pi_n_prepare' || prepare?.role !== role) {
     await respond(prepare, false, 'Expected matching pi_n_prepare');
     throw new Error('Invalid preparation handshake');
   }

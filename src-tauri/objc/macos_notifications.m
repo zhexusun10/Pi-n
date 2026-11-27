@@ -139,6 +139,9 @@ bool pi_n_macos_init_notifications(void) {
 }
 
 void pi_n_macos_get_permission_status(void *ctx, PiNStatusCallback cb) {
+    if (cb == NULL) {
+        return;
+    }
     @autoreleasepool {
         UNUserNotificationCenter *center = safe_notification_center();
         if (center == nil) {
@@ -163,10 +166,11 @@ static void request_authorization_on_main(
         [center requestAuthorizationWithOptions:options
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {
             if (error != nil) {
+                NSString *desc = error.localizedDescription;
                 fprintf(
                     stderr,
                     "[Pi^n-desktop] Failed to request macOS notification permission: %s\n",
-                    error.localizedDescription.UTF8String
+                    desc ? desc.UTF8String : "unknown error"
                 );
             }
             if (granted) {
@@ -181,6 +185,9 @@ static void request_authorization_on_main(
 }
 
 void pi_n_macos_request_permission(void *ctx, PiNStatusCallback cb) {
+    if (cb == NULL) {
+        return;
+    }
     @autoreleasepool {
         UNUserNotificationCenter *center = safe_notification_center();
         if (center == nil) {
@@ -239,6 +246,9 @@ void pi_n_macos_send_notification(
     void *ctx,
     PiNDeliverCallback cb
 ) {
+    if (cb == NULL) {
+        return;
+    }
     @autoreleasepool {
         UNUserNotificationCenter *center = safe_notification_center();
         if (center == nil) {

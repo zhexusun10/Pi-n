@@ -329,6 +329,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
   ) => {
     const localDrafts = useRef<ComposerDrafts>(null);
     localDrafts.current ??= new ComposerDrafts();
+    const hasExternalDraftStoreRef = useRef(Boolean(draftStore));
+    hasExternalDraftStoreRef.current = Boolean(draftStore);
     const drafts = draftStore ?? localDrafts.current;
     const key = draftKey ?? JSON.stringify([repository, runId, node]);
     const recall = useSyncExternalStore(drafts.subscribe, () => drafts.recall(key), () => drafts.recall(key));
@@ -462,7 +464,12 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const [commandError, setCommandError] = useState("");
     useEffect(() => {
       mountedRef.current = true;
-      return () => { mountedRef.current = false; };
+      return () => {
+        mountedRef.current = false;
+        if (!hasExternalDraftStoreRef.current) {
+          localDrafts.current?.clearAllAttachments();
+        }
+      };
     }, []);
 
     useEffect(() => {

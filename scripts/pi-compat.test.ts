@@ -90,6 +90,18 @@ test('Pi settings and startup directories reject retired inputs without changing
     mkdirSync(join(project, '.pi/commands'), { recursive: true });
     assert.throws(() => assertCurrentPiDirectories(project, join(root, 'clean-agent')), /commands directory/);
     assert.equal(existsSync(join(project, '.pi/commands')), true);
+
+    // Non-object settings and malformed JSON files do not crash directory checks
+    // (Pi's own SettingsManager / KeybindingsManager handle malformed syntax).
+    assert.doesNotThrow(() => assertCurrentPiSettings(null as any));
+    assert.doesNotThrow(() => assertCurrentPiSettings([] as any));
+    const malformedAgent = join(root, 'malformed-agent');
+    mkdirSync(malformedAgent);
+    writeFileSync(join(malformedAgent, 'settings.json'), '{bad json');
+    writeFileSync(join(malformedAgent, 'keybindings.json'), '{bad json');
+    assert.doesNotThrow(() => assertCurrentPiDirectories(root, malformedAgent));
+    writeFileSync(join(malformedAgent, 'settings.json'), 'null');
+    assert.doesNotThrow(() => assertCurrentPiDirectories(root, malformedAgent));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

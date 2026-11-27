@@ -45,9 +45,9 @@ export function launcherScripts(platform, version) {
     '',
     '## First run',
     '',
-    '1. Open **Settings**, select a local project directory, and authenticate a provider (see the repository\'s Providers guide).',
-    '2. Enter a coding goal; Auto picks Serial or Graph. Approve the Graph plan before execution.',
-    '3. Results are complete only after they are published back into your project.',
+    '1. Open **Settings**, select a local project directory, and authenticate a provider (see the repository\'s User Guide).',
+    '2. Enter a coding goal in **Direct** mode (default) or switch to **Compile** for a multi-node execution graph (Auto Approve defaults on; turn it off in Settings to review plans before execution).',
+    '3. Private Compile results are complete only after they are published back into your project.',
     '',
     platform === 'windows'
       ? '**Use trusted projects only; start with a disposable one.** Planner Bash writes reach your project before approval, and Windows workspaces are not filesystem sandboxes. See the security notes in the repository README.'

@@ -5909,6 +5909,9 @@ fn reset_workspace(service: &Arc<Service>) -> Result<Snapshot, String> {
         return Err("Wait for the current operation to finish".into());
     }
     let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+    if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
+        return Err("Wait for the current operation to finish".into());
+    }
     #[cfg(not(feature = "fixture"))]
     crate::engine::invalidate_warm_node();
     let root = runtime.root.clone();
@@ -5926,6 +5929,9 @@ fn clear_history(service: &Arc<Service>) -> Result<(), String> {
         return Err("Wait for the current operation to finish".into());
     }
     let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+    if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
+        return Err("Wait for the current operation to finish".into());
+    }
     let root = runtime.root.clone();
     // Collect child services while holding the primary runtime lock (preserving
     // the primary-runtime -> RUN_SERVICES lock order), drop RUN_SERVICES, then
@@ -5975,6 +5981,9 @@ fn delete_run(run_id: String, service: &Arc<Service>) -> Result<(), String> {
         return Err("Wait for the current operation to finish".into());
     }
     let mut runtime = service.runtime.lock().map_err(|error| error.to_string())?;
+    if service.driving.load(Ordering::SeqCst) || service.planning.load(Ordering::SeqCst) {
+        return Err("Wait for the current operation to finish".into());
+    }
     #[cfg(not(feature = "fixture"))]
     crate::engine::invalidate_warm_node();
     let root = runtime.root.clone();
@@ -6248,6 +6257,29 @@ fn get_planning_output(
     )
 }
 
+/// Trim only an incomplete trailing multi-byte UTF-8 sequence at a chunk cut,
+/// leaving any interior invalid bytes intact for lossy decoding.
+fn trim_incomplete_utf8_tail(bytes: &[u8]) -> usize {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => bytes.len(),
+        Err(error) if error.error_len().is_none() => error.valid_up_to(),
+        Err(_) => {
+            let tail_start = bytes.len().saturating_sub(3);
+            for i in (tail_start..bytes.len()).rev() {
+                if (bytes[i] & 0xc0) != 0x80 {
+                    if let Err(err) = std::str::from_utf8(&bytes[i..]) {
+                        if err.error_len().is_none() {
+                            return i;
+                        }
+                    }
+                    break;
+                }
+            }
+            bytes.len()
+        }
+    }
+}
+
 fn get_planning_output_with_options(
     planning_id: String,
     role: String,
@@ -6403,27 +6435,7 @@ fn get_planning_output_with_options(
                         // Trim only an incomplete trailing multi-byte UTF-8
                         // sequence at the chunk cut; decode interior invalid
                         // bytes lossily so one bad byte never bricks the log.
-                        let end_trim = match std::str::from_utf8(valid) {
-                            Ok(_) => valid.len(),
-                            Err(error) if error.error_len().is_none() => error.valid_up_to(),
-                            Err(_) => {
-                                // Check whether the very tail (last 1..3 bytes) is
-                                // an incomplete multi-byte prefix.
-                                let tail_start = valid.len().saturating_sub(3);
-                                let mut trim = valid.len();
-                                for i in tail_start..valid.len() {
-                                    if (valid[i] & 0xc0) != 0x80 {
-                                        if let Err(err) = std::str::from_utf8(&valid[i..]) {
-                                            if err.error_len().is_none() {
-                                                trim = i;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                }
-                                trim
-                            }
-                        };
+                        let end_trim = trim_incomplete_utf8_tail(valid);
                         if aligned_end.is_none() {
                             aligned_end = Some((aligned_start + end_trim) as u64);
                         }
@@ -8153,6 +8165,24 @@ fn respond_closed(request: tiny_http::Request, status: u16, headers: &[(&str, &s
     let _ = writer.flush();
 }
 
+fn read_json_request_body(
+    reader: impl std::io::Read,
+    max_bytes: usize,
+) -> (Vec<u8>, Result<serde_json::Value, String>) {
+    let mut raw = Vec::new();
+    let parsed = reader
+        .take((max_bytes + 1) as u64)
+        .read_to_end(&mut raw)
+        .map_err(|e| e.to_string())
+        .and_then(|_| {
+            if raw.len() > max_bytes {
+                return Err("Request too large".into());
+            }
+            serde_json::from_slice::<serde_json::Value>(&raw).map_err(|e| e.to_string())
+        });
+    (raw, parsed)
+}
+
 #[cfg(test)]
 fn handle_http_request(
     request: tiny_http::Request,
@@ -8286,18 +8316,8 @@ fn handle_http_request_with_options(
         const MAX_JSON_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 
         if command == "plan_goal_stream" {
-            let mut input = String::new();
-            let body_res = std::io::Read::read_to_string(
-                &mut request.as_reader().take((MAX_JSON_REQUEST_BYTES + 1) as u64),
-                &mut input,
-            )
-            .map_err(|e| e.to_string())
-            .and_then(|_| {
-                if input.len() > MAX_JSON_REQUEST_BYTES {
-                    return Err("Request too large".into());
-                }
-                serde_json::from_str::<serde_json::Value>(&input).map_err(|e| e.to_string())
-            });
+            let (_, body_res) =
+                read_json_request_body(request.as_reader(), MAX_JSON_REQUEST_BYTES);
 
             struct StreamPlanRequest {
                 receipt_body: serde_json::Value,
@@ -8547,20 +8567,8 @@ fn handle_http_request_with_options(
             return;
         }
 
-        let mut input = String::new();
-        let parsed = std::io::Read::read_to_string(
-            &mut request.as_reader().take((MAX_JSON_REQUEST_BYTES + 1) as u64),
-            &mut input,
-        )
-        .map_err(|e| e.to_string())
-        .and_then(|_| {
-            if input.len() > MAX_JSON_REQUEST_BYTES {
-                return Err("Request too large".into());
-            }
-            let body: serde_json::Value =
-                serde_json::from_str(&input).map_err(|e| e.to_string())?;
-            Ok(body)
-        });
+        let (raw_input, parsed) =
+            read_json_request_body(request.as_reader(), MAX_JSON_REQUEST_BYTES);
         // Raster previews keep the JSON-only POST/Host/Origin boundary. A model
         // <img src="/api/..."> cannot trigger a filesystem read via a GET.
         if command == "get_workspace_image" || command == "get_attachment_image" {
@@ -8619,10 +8627,13 @@ fn handle_http_request_with_options(
         let replayed = replay.is_some();
         let (status, body) = replay.unwrap_or_else(|| match result {
             Ok(value) => (200, serde_json::json!({"result": value})),
-            Err(error) => match busy_snapshot_poll(command, &input, &error) {
-                Some(result) => (200, serde_json::json!({"result": result})),
-                None => api_transport::classify(error, &request_id),
-            },
+            Err(error) => {
+                let input = std::str::from_utf8(&raw_input).unwrap_or_default();
+                match busy_snapshot_poll(command, input, &error) {
+                    Some(result) => (200, serde_json::json!({"result": result})),
+                    None => api_transport::classify(error, &request_id),
+                }
+            }
         });
         let payload = body.to_string();
         if let Some(receipt) = receipt {
@@ -8753,5 +8764,34 @@ mod batch_source_materializer_tests {
         assert!(errors
             .iter()
             .all(|e| e.contains("Source changed while copying project Git (a.txt modified)")));
+    }
+
+    #[test]
+    fn trim_incomplete_utf8_tail_preserves_valid_bytes_and_trims_trailing_partial_after_invalid() {
+        use super::trim_incomplete_utf8_tail;
+        // Valid UTF-8 is untouched.
+        assert_eq!(trim_incomplete_utf8_tail("hello中".as_bytes()), "hello中".len());
+        // Interior invalid byte followed by valid ASCII and an incomplete 3-byte UTF-8 prefix:
+        // must keep `a` and trim only the trailing incomplete prefix `[0xE4, 0xB8]`.
+        let with_ascii = [0xFF, b'x', b'a', 0xE4, 0xB8];
+        assert_eq!(trim_incomplete_utf8_tail(&with_ascii), 3);
+        // Invalid byte immediately before an incomplete UTF-8 prefix: must still trim the prefix.
+        let adjacent_invalid = [0xFF, 0xFF, 0xE4, 0xB8];
+        assert_eq!(trim_incomplete_utf8_tail(&adjacent_invalid), 2);
+        // Complete multi-byte char after an interior invalid byte: nothing trimmed.
+        let complete_tail = [0xFF, b'a', 0xE4, 0xB8, 0xAD];
+        assert_eq!(trim_incomplete_utf8_tail(&complete_tail), complete_tail.len());
+    }
+
+    #[test]
+    fn read_json_request_body_reports_size_limit_even_across_multibyte_utf8_boundary() {
+        use super::read_json_request_body;
+        // Place a 3-byte UTF-8 char so `max_bytes + 1` splits it mid-codepoint.
+        let payload = format!("{{\"text\":\"{}\"}}", "中".repeat(10));
+        let max_bytes = 11; // `{"text":"` is 9 bytes; byte 11 splits the first 3-byte `中`.
+        let (_, res) = read_json_request_body(payload.as_bytes(), max_bytes);
+        assert_eq!(res.unwrap_err(), "Request too large");
+        let (_, ok) = read_json_request_body(payload.as_bytes(), payload.len());
+        assert_eq!(ok.unwrap()["text"], "中".repeat(10));
     }
 }

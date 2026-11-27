@@ -341,3 +341,46 @@ test('sendCompletionNotification uses Web Notification API in browser mode only 
     else host.Notification = prevNotification;
   }
 });
+
+test('resolveFinalAgentOutput returns immediately when AbortSignal is aborted', async () => {
+  const controller = new AbortController();
+  let planningCalls = 0;
+  const snapshot = {
+    runId: 'run-abort',
+    phase: 'completed',
+    planningId: 'plan-1',
+    executions: [
+      {
+        id: 'exec-1',
+        node: 'n1',
+        status: 'completed',
+        attempt: 1,
+        startedAt: 100,
+        completedAt: 200,
+        output: 'Should not return fallback when aborted',
+      },
+    ],
+    mergers: [],
+    events: [],
+    nodes: {},
+    graph: { originalGoal: 'test', nodes: [], edges: [] },
+  } as unknown as Parameters<typeof resolveFinalAgentOutput>[1];
+
+  const result = await resolveFinalAgentOutput(
+    'run-abort',
+    snapshot,
+    {
+      getExecutionOutput: async () => {
+        controller.abort();
+        throw new DOMException('Aborted', 'AbortError');
+      },
+      getPlanningOutput: async () => {
+        planningCalls += 1;
+        return 'Planning output';
+      },
+    },
+    controller.signal,
+  );
+  assert.equal(result, '');
+  assert.equal(planningCalls, 0);
+});

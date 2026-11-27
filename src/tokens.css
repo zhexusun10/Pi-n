@@ -89,7 +89,6 @@
   --user-bubble-bg: var(--brand-subtle);
   --user-bubble-border: var(--brand-border);
   --user-bubble-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
-  --user-bubble-expand-btn-bg: var(--bg-surface);
   --user-bubble-edit-border: var(--brand-default);
   --user-bubble-edit-shadow: 0 0 0 1px var(--brand-default), 0 4px 12px rgba(37, 99, 235, 0.08);
   --sidebar-active-bg: var(--brand-subtle);
@@ -137,7 +136,6 @@
   --user-bubble-bg: rgba(15, 23, 42, 0.055);
   --user-bubble-border: var(--border-default);
   --user-bubble-shadow: var(--card-shadow);
-  --user-bubble-expand-btn-bg: var(--bg-canvas);
   --user-bubble-edit-border: var(--brand-default);
   --user-bubble-edit-shadow: 0 0 0 1px var(--brand-default), 0 4px 12px rgba(24, 24, 27, 0.08);
   --sidebar-active-bg: rgba(15, 23, 42, 0.055);

@@ -262,14 +262,27 @@ export async function copyImageToClipboard(target: ImageActionTarget): Promise<b
   if (typeof navigator === "undefined" || !navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
     return false;
   }
-  try {
+  const pngPromise = (async () => {
     const effectiveSrc = await resolveTargetSrc(target);
     const blob = await resolveImageBlob(effectiveSrc);
-    const pngBlob = await blobToPngBlob(blob);
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+    return blobToPngBlob(blob);
+  })();
+  // Prevent an unhandled rejection if ClipboardItem throws synchronously.
+  pngPromise.catch(() => {});
+  try {
+    // Safari / macOS WKWebView requires navigator.clipboard.write() to be
+    // called synchronously within the user gesture; passing a Promise<Blob>
+    // inside ClipboardItem preserves user activation across async fetch/decode.
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngPromise })]);
     return true;
-  } catch (error) {
-    console.warn("Copy image failed:", error);
-    return false;
+  } catch (syncError) {
+    try {
+      const pngBlob = await pngPromise;
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+      return true;
+    } catch (error) {
+      console.warn("Copy image failed:", error ?? syncError);
+      return false;
+    }
   }
 }

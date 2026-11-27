@@ -276,10 +276,37 @@ test('configurePlannerWorkspace clears stale change listeners from earlier bindi
     switchPlannerWorkspace('b');
     assert.equal(staleCalls, 0);
     assert.equal(freshCalls, 1);
+    assert.throws(() => configurePlannerWorkspace(wsA, project, project, 'null'), /Invalid Planner workspace targets/);
+    assert.throws(() => configurePlannerWorkspace(wsA, project, project, '[]'), /Invalid Planner workspace targets/);
+    assert.doesNotThrow(() => configurePlannerWorkspace(wsA, project, project, `\uFEFF${raw}`));
   } finally {
     process.chdir(original);
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('graph feedback rule handles customPrompt without pre-initialized sections and avoids duplicating forced rules', async () => {
+  const previous = { ...process.env };
+  try {
+    process.env.PI_N_MODE = 'node';
+    process.env.PI_N_AGENT_KIND = 'node';
+    process.env.PI_N_EXECUTION_KIND = 'graph';
+    process.env.PI_N_ORIGINAL_ROOT = process.cwd();
+    process.env.PI_N_FEEDBACK_SOURCE = 'true';
+    const handlers = new Map<string, (event: any) => any>();
+    workspacePolicy({ on(name: string, handler: (event: any) => any) { handlers.set(name, handler); }, registerTool() {} } as any);
+    const beforeStart = handlers.get('before_agent_start')!;
+    const customOptions: any = { customPrompt: 'Custom identity', appendSystemPrompt: '' };
+    await beforeStart({ systemPromptOptions: customOptions });
+    assert.match(customOptions.sections?.rules ?? '', /<ACCEPT>/);
+    const forcedOptions: any = { forceSystemPrompt: 'Forced base', appendSystemPrompt: '' };
+    await beforeStart({ systemPromptOptions: forcedOptions });
+    await beforeStart({ systemPromptOptions: forcedOptions });
+    assert.equal(forcedOptions.forceSystemPrompt.split('<ACCEPT>').length - 1, 1);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
   }
 });

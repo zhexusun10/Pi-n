@@ -183,6 +183,10 @@ export function foldPath(value, caseInsensitive) {
 export function pathStartsWith(value, prefix, caseInsensitive) {
   const foldedValue = foldPath(value, caseInsensitive);
   const foldedPrefix = foldPath(prefix, caseInsensitive);
+  if (!foldedPrefix) return false;
+  if (foldedPrefix.endsWith('/') || foldedPrefix.endsWith('\\')) {
+    return foldedValue.startsWith(foldedPrefix);
+  }
   return foldedValue === foldedPrefix
     || foldedValue.startsWith(foldedPrefix + '/')
     || foldedValue.startsWith(foldedPrefix + '\\');
@@ -226,7 +230,7 @@ export function pathKey(value) {
 export function toHostInput(value) {
   if (typeof value !== 'string') return value;
   let text = value;
-  if (text.startsWith('file:')) {
+  if (/^file:/i.test(text)) {
     try { text = fileURLToPath(text); } catch { return value; }
   }
   if (process.platform === 'win32') {

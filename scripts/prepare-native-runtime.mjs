@@ -202,6 +202,6 @@ try {
   execFileSync(process.execPath, [gitPath(join(destination, 'scripts/pi-baseline.mjs')), 'verify'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
   process.stdout.write(destination);
 } catch (error) {
-  rmSync(destination, { recursive: true, force: true });
+  try { rmSync(destination, { recursive: true, force: true }); } catch {}
   throw error;
 }

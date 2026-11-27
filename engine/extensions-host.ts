@@ -8,7 +8,7 @@ try {
   const directory = configureAgentDir();
   const { extensionCatalog, setExtensionEnabled } = await import('./global-extensions.ts');
   const request = JSON.parse(readFileSync(0, 'utf8'));
-  if (request.version !== 1) throw new Error('Invalid extension request');
+  if (!request || typeof request !== 'object' || request.version !== 1) throw new Error('Invalid extension request');
   let result;
   if (request.operation === 'catalog') result = await extensionCatalog(directory);
   else if (request.operation === 'set_enabled' && typeof request.id === 'string' && typeof request.enabled === 'boolean') {

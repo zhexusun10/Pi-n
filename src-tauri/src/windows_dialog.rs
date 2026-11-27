@@ -24,36 +24,47 @@ pub fn center_dialog_origin(
     dialog: ScreenRect,
     work_area: ScreenRect,
 ) -> (i32, i32) {
-    let owner_w = (owner.right - owner.left).max(0);
-    let owner_h = (owner.bottom - owner.top).max(0);
-    let dialog_w = (dialog.right - dialog.left).max(0);
-    let dialog_h = (dialog.bottom - dialog.top).max(0);
+    let owner_left = owner.left as i64;
+    let owner_top = owner.top as i64;
+    let owner_w = (owner.right as i64 - owner_left).max(0);
+    let owner_h = (owner.bottom as i64 - owner_top).max(0);
+    let dialog_w = (dialog.right as i64 - dialog.left as i64).max(0);
+    let dialog_h = (dialog.bottom as i64 - dialog.top as i64).max(0);
+    let work_left = work_area.left as i64;
+    let work_top = work_area.top as i64;
+    let work_right = work_area.right as i64;
+    let work_bottom = work_area.bottom as i64;
 
-    let mut x = owner.left + (owner_w - dialog_w) / 2;
-    let mut y = owner.top + (owner_h - dialog_h) / 2;
+    let mut x = owner_left + (owner_w - dialog_w) / 2;
+    let mut y = owner_top + (owner_h - dialog_h) / 2;
 
-    let max_x = work_area.right - dialog_w;
-    if max_x >= work_area.left {
-        x = x.clamp(work_area.left, max_x);
+    let max_x = work_right - dialog_w;
+    if max_x >= work_left {
+        x = x.clamp(work_left, max_x);
     } else {
-        x = work_area.left;
+        x = work_left;
     }
 
-    let max_y = work_area.bottom - dialog_h;
-    if max_y >= work_area.top {
-        y = y.clamp(work_area.top, max_y);
+    let max_y = work_bottom - dialog_h;
+    if max_y >= work_top {
+        y = y.clamp(work_top, max_y);
     } else {
-        y = work_area.top;
+        y = work_top;
     }
 
-    (x, y)
+    (
+        x.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        y.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+    )
 }
 
 #[cfg(target_os = "windows")]
 mod native {
     use super::{center_dialog_origin, ScreenRect};
     use std::cell::Cell;
-    use std::ffi::c_void;
+    use std::ffi::{c_void, OsString};
+    use std::os::windows::ffi::OsStringExt;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicIsize, Ordering};
     use windows::core::{HRESULT, PCWSTR};
@@ -155,22 +166,36 @@ mod native {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if code == HCBT_ACTIVATE as i32 {
-            if let Some(mut state) = CBT_CENTER_STATE.get() {
-                if !state.centered {
-                    let dialog_hwnd = HWND(wparam.0 as *mut c_void);
-                    let owner_hwnd = HWND(state.owner_hwnd as *mut c_void);
-                    if dialog_hwnd != owner_hwnd
-                        && GetWindow(dialog_hwnd, GW_OWNER).ok() == Some(owner_hwnd)
-                        && center_hwnd_on_owner(dialog_hwnd, owner_hwnd)
-                    {
-                        state.centered = true;
-                        CBT_CENTER_STATE.set(Some(state));
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            if code == HCBT_ACTIVATE as i32 {
+                if let Some(mut state) = CBT_CENTER_STATE.get() {
+                    if !state.centered {
+                        let dialog_hwnd = HWND(wparam.0 as *mut c_void);
+                        let owner_hwnd = HWND(state.owner_hwnd as *mut c_void);
+                        if dialog_hwnd != owner_hwnd
+                            && GetWindow(dialog_hwnd, GW_OWNER).ok() == Some(owner_hwnd)
+                            && center_hwnd_on_owner(dialog_hwnd, owner_hwnd)
+                        {
+                            state.centered = true;
+                            CBT_CENTER_STATE.set(Some(state));
+                        }
                     }
                 }
             }
-        }
+        }));
         CallNextHookEx(None, code, wparam, lparam)
+    }
+
+    struct CoTaskMemGuard(*const c_void);
+
+    impl Drop for CoTaskMemGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    CoTaskMemFree(Some(self.0));
+                }
+            }
+        }
     }
 
     struct CbtHookGuard {
@@ -244,9 +269,15 @@ mod native {
                 )
                 .map_err(|error| format!("Windows folder picker failed: {error}"))?;
 
-            if let Some(title) = prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-                let _ = dialog.SetTitle(PCWSTR(wide.as_ptr()));
+            if let Some(title) = prompt
+                .as_deref()
+                .map(|s| s.replace('\0', ""))
+            {
+                let trimmed = title.trim();
+                if !trimmed.is_empty() {
+                    let wide: Vec<u16> = trimmed.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = dialog.SetTitle(PCWSTR(wide.as_ptr()));
+                }
             }
 
             let owner = if owner_hwnd != 0 {
@@ -295,18 +326,27 @@ mod native {
             let path_pwstr = item
                 .GetDisplayName(SIGDN_FILESYSPATH)
                 .map_err(|error| format!("Windows folder picker failed: {error}"))?;
-            let path_result = path_pwstr.to_string();
-            CoTaskMemFree(Some(path_pwstr.0 as *const c_void));
-            let path_string =
-                path_result.map_err(|error| format!("Windows folder picker failed: {error}"))?;
-
-            if path_string.trim().is_empty() {
+            let _pwstr_guard = CoTaskMemGuard(path_pwstr.0 as *const c_void);
+            if path_pwstr.is_null() {
+                return Ok(None);
+            }
+            let path_os = OsString::from_wide(path_pwstr.as_wide());
+            if path_os.to_string_lossy().trim().is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(PathBuf::from(path_string)))
+                Ok(Some(PathBuf::from(path_os)))
             }
         }
     }
+
+    const STANDARD_DIALOG_CLASS: [u16; 6] = [
+        b'#' as u16,
+        b'3' as u16,
+        b'2' as u16,
+        b'7' as u16,
+        b'7' as u16,
+        b'0' as u16,
+    ];
 
     unsafe extern "system" fn webview_dialog_win_event_proc(
         _hook: HWINEVENTHOOK,
@@ -317,48 +357,49 @@ mod native {
         _id_event_thread: u32,
         _dwms_event_time: u32,
     ) {
-        if id_object != OBJID_WINDOW.0 || id_child != CHILDID_SELF as i32 || hwnd.0.is_null() {
-            return;
-        }
-        let dialog_raw = hwnd.0 as isize;
-        if event == EVENT_SYSTEM_DIALOGEND {
-            let _ = LAST_CENTERED_DIALOG_HWND.compare_exchange(
-                dialog_raw,
-                0,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-            return;
-        }
-        if event != EVENT_SYSTEM_DIALOGSTART {
-            return;
-        }
-        let main_raw = WEBVIEW_MAIN_HWND.load(Ordering::Acquire);
-        if main_raw == 0 {
-            return;
-        }
-        let main_hwnd = HWND(main_raw as *mut c_void);
-        if hwnd == main_hwnd {
-            return;
-        }
-        if GetWindow(hwnd, GW_OWNER).ok() != Some(main_hwnd) {
-            return;
-        }
-        let mut class_buf = [0u16; 32];
-        let len = GetClassNameW(hwnd, &mut class_buf);
-        if len <= 0 {
-            return;
-        }
-        let class_name = String::from_utf16_lossy(&class_buf[..len as usize]);
-        if class_name != "#32770" {
-            return;
-        }
-        if LAST_CENTERED_DIALOG_HWND.load(Ordering::Acquire) == dialog_raw {
-            return;
-        }
-        if center_hwnd_on_owner(hwnd, main_hwnd) {
-            LAST_CENTERED_DIALOG_HWND.store(dialog_raw, Ordering::Release);
-        }
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            if id_object != OBJID_WINDOW.0 || id_child != CHILDID_SELF as i32 || hwnd.0.is_null() {
+                return;
+            }
+            let dialog_raw = hwnd.0 as isize;
+            if event == EVENT_SYSTEM_DIALOGEND {
+                let _ = LAST_CENTERED_DIALOG_HWND.compare_exchange(
+                    dialog_raw,
+                    0,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+                return;
+            }
+            if event != EVENT_SYSTEM_DIALOGSTART {
+                return;
+            }
+            let main_raw = WEBVIEW_MAIN_HWND.load(Ordering::Acquire);
+            if main_raw == 0 {
+                return;
+            }
+            let main_hwnd = HWND(main_raw as *mut c_void);
+            if hwnd == main_hwnd {
+                return;
+            }
+            if GetWindow(hwnd, GW_OWNER).ok() != Some(main_hwnd) {
+                return;
+            }
+            let mut class_buf = [0u16; 32];
+            let len = GetClassNameW(hwnd, &mut class_buf);
+            if len <= 0 || (len as usize) > class_buf.len() {
+                return;
+            }
+            if class_buf[..len as usize] != STANDARD_DIALOG_CLASS {
+                return;
+            }
+            if LAST_CENTERED_DIALOG_HWND.load(Ordering::Acquire) == dialog_raw {
+                return;
+            }
+            if center_hwnd_on_owner(hwnd, main_hwnd) {
+                LAST_CENTERED_DIALOG_HWND.store(dialog_raw, Ordering::Release);
+            }
+        }));
     }
 
     pub fn install_webview_dialog_centering(window: &tauri::WebviewWindow) {
@@ -482,5 +523,31 @@ mod tests {
             bottom: 620,
         };
         assert_eq!(center_dialog_origin(owner, dialog, work_area), (40, 20));
+    }
+
+    #[test]
+    fn center_dialog_origin_handles_extreme_and_inverted_rects_without_overflow() {
+        let extreme_owner = ScreenRect {
+            left: i32::MIN,
+            top: i32::MIN,
+            right: i32::MAX,
+            bottom: i32::MAX,
+        };
+        let inverted_dialog = ScreenRect {
+            left: 500,
+            top: 400,
+            right: 100,
+            bottom: 50,
+        };
+        let work_area = ScreenRect {
+            left: -1000,
+            top: -500,
+            right: 1000,
+            bottom: 500,
+        };
+        assert_eq!(
+            center_dialog_origin(extreme_owner, inverted_dialog, work_area),
+            (-1, -1)
+        );
     }
 }

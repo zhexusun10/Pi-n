@@ -450,14 +450,8 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 fn download_file(url: &str, destination: &Path) -> Result<(), String> {
-    let curl = if cfg!(windows) {
-        "curl.exe"
-    } else if Path::new("/usr/bin/curl").is_file() {
-        "/usr/bin/curl"
-    } else {
-        "curl"
-    };
-    let mut command = Command::new(curl);
+    let curl = resolve_curl_executable();
+    let mut command = Command::new(&curl);
     command
         .args([
             "-fsSL",
@@ -499,6 +493,28 @@ fn download_file(url: &str, destination: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn resolve_curl_executable() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            let inbox = PathBuf::from(system_root).join(r"System32\curl.exe");
+            if inbox.is_file() {
+                return inbox;
+            }
+        }
+        PathBuf::from("curl.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        let system = Path::new("/usr/bin/curl");
+        if system.is_file() {
+            system.to_path_buf()
+        } else {
+            PathBuf::from("curl")
+        }
+    }
 }
 
 fn extract_archive(

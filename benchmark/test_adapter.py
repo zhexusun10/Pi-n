@@ -84,12 +84,13 @@ class AdapterTests(unittest.TestCase):
             root = Path(temp)
             session = root / "trace/sessions/node/session.jsonl"
             session.parent.mkdir(parents=True)
-            session.write_text(''.join([
-                json.dumps({"type": "message", "message": {"role": "assistant",
-                            "usage": {"input": 2, "output": 3, "cacheRead": 7}}}) + '\n',
-                json.dumps({"type": "message", "message": {"role": "assistant",
-                            "usage": {"input": 4, "output": 8, "reasoning": 6}}}) + '\n',
-                '{"type":"message","message":\n',  # interrupted final record
+            session.write_bytes(b''.join([
+                (json.dumps({"type": "message", "message": {"role": "assistant",
+                            "usage": {"input": 2, "output": 3, "cacheRead": 7}}}) + '\n').encode('utf-8'),
+                (json.dumps({"type": "message", "message": {"role": "assistant",
+                            "usage": {"input": 4, "output": 8, "reasoning": 6}}}) + '\n').encode('utf-8'),
+                b'123\n',  # non-object JSON record
+                b'{"type":"message","message":\xe4\xb8\n',  # interrupted multi-byte UTF-8 record
             ]))
             (root / "trace/planning/first").mkdir(parents=True)
             (root / "trace/planning/first/partition.jsonl").write_text(
@@ -97,7 +98,7 @@ class AdapterTests(unittest.TestCase):
                             "usage": {"input": 1000}}}) + '\n')
             data = observed_trace_usage(root)
             self.assertEqual(data["assistantMessages"], 2)
-            self.assertEqual(data["invalidJsonlLines"], 1)
+            self.assertEqual(data["invalidJsonlLines"], 2)
             self.assertEqual(data["usage"]["input"], 6)
             self.assertEqual(data["usage"]["cacheRead"], 7)
             self.assertEqual(data["usage"]["reasoning"], 6)
@@ -107,6 +108,10 @@ class AdapterTests(unittest.TestCase):
             "input": 10, "cacheRead": 7, "cacheWrite": 3, "output": 4,
         }}}
         self.assertEqual(harbor_usage(result), {"input": 20, "cache": 7, "output": 4})
+        self.assertEqual(
+            harbor_usage({"runMetrics": {"totalUsage": {"input": None, "cacheRead": 2, "cacheWrite": None, "output": 5}}}),
+            {"input": 2, "cache": 2, "output": 5},
+        )
         self.assertIsNone(harbor_usage({"phase": "failed"}))
 
     def test_trace_keeps_sessions_and_sqlite_wal_but_not_shadow_repos_or_symlinks(self):
@@ -319,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
    assert body['config']['autoApprove'] is True
    assert os.getcwd() != body['config']['repository']
    assert all(os.environ[k] == body['config']['model'] for k in ('PLANNER_MODEL','PARTITIONER_MODEL','NODE_AGENT_MODEL','MERGER_MODEL'))
+   assert all(k not in os.environ for k in ('PLANNER_THINKING','PARTITIONER_THINKING','NODE_AGENT_THINKING','MERGER_THINKING'))
    result = {'runId':'trial', 'approved':True, 'phase':'running', 'planType':'serial'}
   elif self.path.endswith('snapshot'):
    result = {'runId':'trial', 'approved':True, 'phase':'completed', 'planType':'serial', 'nodes':{'task':{'status':'completed'}}}
@@ -340,7 +346,8 @@ HTTPServer(('127.0.0.1',int(os.environ['PI_N_PORT'])),Handler).serve_forever()
                 "--instruction-file", str(root / "instruction.txt"),
                 "--model", "openai/gpt-test", "--logs", str(root / "logs"),
                 "--timeout", "10",
-            ], capture_output=True, text=True, timeout=20)
+            ], env={**os.environ, "PLANNER_THINKING": "off", "NODE_AGENT_THINKING": "high"},
+               capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads((root / "logs/result.json").read_text())["phase"], "completed")
             self.assertTrue((root / "logs/backend.log").exists())

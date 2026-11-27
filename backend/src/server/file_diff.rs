@@ -9,6 +9,7 @@ use crate::{
 };
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -186,16 +187,31 @@ fn read_planner_transcript(context: &FileDiffContext) -> Option<String> {
     {
         return None;
     }
-    let log = context
-        .store_root
-        .join("planning")
-        .join(planning_id)
-        .join("planner.jsonl");
-    let meta = fs::metadata(&log).ok()?;
-    if meta.len() == 0 || meta.len() as usize > MAX_TRANSCRIPT_DIFF_LOG_BYTES {
+    let planning_root = context.store_root.join("planning").canonicalize().ok()?;
+    let candidate = planning_root.join(planning_id).join("planner.jsonl");
+    let log = crate::path_safety::real_child_path(&planning_root, &candidate, true)
+        .ok()
+        .flatten()?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(&log).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_TRANSCRIPT_DIFF_LOG_BYTES as u64 {
         return None;
     }
-    fs::read_to_string(&log).ok()
+    let mut bytes = Vec::new();
+    file.take((MAX_TRANSCRIPT_DIFF_LOG_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_TRANSCRIPT_DIFF_LOG_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
 }
 
 fn extract_transcript_diff_for_target(
@@ -618,5 +634,43 @@ mod tests {
             .map(|line| line.text.as_str())
             .collect();
         assert_eq!(added, vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn read_planner_transcript_rejects_oversized_and_non_regular_files() {
+        let dir = TempDir::new().unwrap();
+        let planning_dir = dir.path().join("planning").join("plan-1");
+        fs::create_dir_all(&planning_dir).unwrap();
+        let log = planning_dir.join("planner.jsonl");
+        fs::write(&log, "{\"type\":\"message_end\"}\n").unwrap();
+
+        let context = FileDiffContext {
+            run_id: "run-1".into(),
+            base: String::new(),
+            repository: dir.path().to_path_buf(),
+            publication: None,
+            planning_id: Some("plan-1".into()),
+            planning_worktree: None,
+            executions: Vec::new(),
+            open_file: open_file_context(&Snapshot::default()),
+            store_root: dir.path().to_path_buf(),
+        };
+        assert!(read_planner_transcript(&context).is_some());
+
+        // Oversized file is rejected without allocating it into memory.
+        let file = fs::File::create(&log).unwrap();
+        file.set_len((MAX_TRANSCRIPT_DIFF_LOG_BYTES + 1) as u64)
+            .unwrap();
+        assert!(read_planner_transcript(&context).is_none());
+
+        // Symlinked planner transcript is rejected.
+        fs::remove_file(&log).unwrap();
+        let outside = dir.path().join("outside.jsonl");
+        fs::write(&outside, "{\"type\":\"message_end\"}\n").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, &log).unwrap();
+            assert!(read_planner_transcript(&context).is_none());
+        }
     }
 }

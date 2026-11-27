@@ -1,5 +1,5 @@
 // Discover resources without loading extension code or changing the user's Pi config.
-import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
@@ -43,39 +43,46 @@ export const globalAgentDir = () => {
 const identity = (path: string) => pathKey(path);
 const keyCase = (value: string, path: string) =>
   isCaseInsensitive(dirname(path)) ? value.toLowerCase() : value;
-function isBundled(resource: { path: string; metadata: { source: string; packageRoot?: string } }) {
+type PackageNameCache = Map<string, string | undefined>;
+function readPackageJsonName(packageRoot: string, cache?: PackageNameCache): string | undefined {
+  if (cache?.has(packageRoot)) return cache.get(packageRoot);
+  let name: string | undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8').replace(/^\uFEFF/, ''))?.name;
+    if (typeof parsed === 'string' && parsed) name = parsed;
+  } catch {}
+  cache?.set(packageRoot, name);
+  return name;
+}
+function isBundled(resource: { path: string; metadata: { source: string; packageRoot?: string } }, cache?: PackageNameCache) {
   if (bundledExtensions.some(extension => resource.metadata.source === extension.id ||
     resource.metadata.source.startsWith(`${extension.id}@`) || identity(resource.path) === identity(extension.path))) return true;
   if (resource.metadata.packageRoot) {
-    try {
-      const name = JSON.parse(readFileSync(join(resource.metadata.packageRoot, 'package.json'), 'utf8')).name;
-      return bundledExtensions.some(extension => extension.name === name);
-    } catch {}
+    const name = readPackageJsonName(resource.metadata.packageRoot, cache);
+    return name !== undefined && bundledExtensions.some(extension => extension.name === name);
   }
   return false;
 }
 // Scoped packages must keep their full identity (including the directory name
 // fallback) or @a/tools and @b/tools would shadow each other's skills.
-function packageName(packageRoot: string | undefined): string | undefined {
+function packageName(packageRoot: string | undefined, cache?: PackageNameCache): string | undefined {
   if (!packageRoot) return undefined;
-  try {
-    const name = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).name;
-    if (typeof name === 'string' && name) return name;
-  } catch {}
+  const name = readPackageJsonName(packageRoot, cache);
+  if (name) return name;
   const parent = basename(dirname(packageRoot));
   const base = basename(packageRoot);
   return parent.startsWith('@') ? `${parent}/${base}` : base;
 }
-function extensionName(resource: { path: string; metadata: { source: string; packageRoot?: string } }) {
-  return packageName(resource.metadata.packageRoot) ?? basename(resource.path);
+function extensionName(resource: { path: string; metadata: { source: string; packageRoot?: string } }, cache?: PackageNameCache) {
+  return packageName(resource.metadata.packageRoot, cache) ?? basename(resource.path);
 }
-export function extensionPackageName(resource: { path: string; metadata: { source: string; packageRoot?: string } }): string | undefined {
-  return packageName(resource.metadata.packageRoot);
+export function extensionPackageName(resource: { path: string; metadata: { source: string; packageRoot?: string } }, cache?: PackageNameCache): string | undefined {
+  return packageName(resource.metadata.packageRoot, cache);
 }
-export function resourceKey(resource: { path: string; metadata: { source: string; packageRoot?: string; baseDir?: string } }): string {
+export function resourceKey(resource: { path: string; metadata: { source: string; packageRoot?: string; baseDir?: string } }, cache?: PackageNameCache): string {
   if (resource.path.startsWith('builtin:')) return resource.path;
   if (resource.metadata.packageRoot) {
-    const name = extensionName(resource);
+    const name = extensionName(resource, cache);
     const subpath = relative(resource.metadata.packageRoot, resource.path).replace(/\\/g, '/');
     const key = `pkg:${name}:${subpath}`;
     return keyCase(key, resource.path);
@@ -88,9 +95,9 @@ export function resourceKey(resource: { path: string; metadata: { source: string
   const key = `file:${basename(resource.path)}`;
   return keyCase(key, resource.path);
 }
-export function skillKey(resource: { path: string; metadata?: { packageRoot?: string; baseDir?: string } }): string {
+export function skillKey(resource: { path: string; metadata?: { packageRoot?: string; baseDir?: string } }, cache?: PackageNameCache): string {
   if (resource.metadata?.packageRoot) {
-    const pkg = packageName(resource.metadata.packageRoot) ?? basename(resource.metadata.packageRoot);
+    const pkg = packageName(resource.metadata.packageRoot, cache) ?? basename(resource.metadata.packageRoot);
     const rel = relative(resource.metadata.packageRoot, resource.path).replace(/\\/g, '/');
     const key = `pkg:${pkg}:${rel}`;
     return keyCase(key, resource.path);
@@ -149,23 +156,27 @@ export interface PiExtension {
   bundled: boolean;
   required: boolean;
 }
+function getOverride(state: Record<string, boolean>, id: string): boolean | undefined {
+  return Object.hasOwn(state, id) ? state[id] : undefined;
+}
 export async function extensionCatalog(directory: string) {
   const persisted = readExtensionState(directory);
   const state = persisted.overrides;
   const resources = await resolveGlobal();
+  const pkgCache: PackageNameCache = new Map();
   const extensions: PiExtension[] = bundledExtensions.map(({ defaultEnabled, ...extension }) => ({ ...extension, source: extension.id,
-    enabled: extension.required || (state[extension.id] ?? defaultEnabled), bundled: true }));
+    enabled: extension.required || (getOverride(state, extension.id) ?? defaultEnabled), bundled: true }));
   const seen = new Set(extensions.map(extension => extension.id));
   for (const resource of resources.extensions) {
-    if (resource.path.startsWith('builtin:') || isBundled(resource)) continue;
+    if (resource.path.startsWith('builtin:') || isBundled(resource, pkgCache)) continue;
     const id = identity(resource.path);
     if (seen.has(id)) continue;
     seen.add(id);
-    extensions.push({ id, name: extensionName(resource), source: resource.metadata.source,
-      path: resource.path, enabled: state[id] === true, bundled: false, required: false });
+    extensions.push({ id, name: extensionName(resource, pkgCache), source: resource.metadata.source,
+      path: resource.path, enabled: getOverride(state, id) === true, bundled: false, required: false });
   }
   const globalDirectory = globalAgentDir();
-  const webSearchEnabled = state[webSearchId] ?? bundledDefault(webSearchId);
+  const webSearchEnabled = getOverride(state, webSearchId) ?? bundledDefault(webSearchId);
   return {
     globalDirectory,
     extensions,
@@ -201,7 +212,7 @@ export async function setExtensionEnabled(
     writeFileSync(temporary, JSON.stringify(payload, null, 2), { mode: 0o600 });
     renameSync(temporary, target);
   } finally {
-    if (existsSync(temporary)) unlinkSync(temporary);
+    try { rmSync(temporary, { force: true }); } catch {}
   }
   return extensionCatalog(directory);
 }
@@ -211,7 +222,7 @@ export async function executionResources(args: string[], directory: string, role
   const discoverExtensions = !args.includes('--no-extensions') && !args.includes('-ne');
   const discoverSkills = !args.includes('--no-skills') && !args.includes('-ns');
   const simpleTimeoutAllowed = role === 'planner' || role === 'node' || role === 'merger';
-  const simpleTimeoutEnabled = simpleTimeoutAllowed && discoverExtensions && (state[simpleTimeoutId] ?? bundledDefault(simpleTimeoutId));
+  const simpleTimeoutEnabled = simpleTimeoutAllowed && discoverExtensions && (getOverride(state, simpleTimeoutId) ?? bundledDefault(simpleTimeoutId));
   const bashTimeoutBridge = simpleTimeoutEnabled ? createBashTimeoutBridge() : undefined;
   const extensionFactories: InlineExtension[] = [{
     name: workspacePolicyName,
@@ -229,9 +240,15 @@ export async function executionResources(args: string[], directory: string, role
     // Independent discovery only. Both inputs remain fresh for this binding;
     // precedence and factory initialization are applied after both complete.
     const [global, local] = await Promise.all([resolveGlobal(), manager.resolve(async () => 'skip')]);
+    const pkgCache: PackageNameCache = new Map();
     const sameGlobalAndDedicated = identity(directory) === identity(globalAgentDir());
-    const globalById = new Map(global.extensions.filter(r => !r.path.startsWith('builtin:') && !isBundled(r)).map(r => [identity(r.path), r]));
-    const globalByKey = new Map(global.extensions.filter(r => !r.path.startsWith('builtin:') && !isBundled(r)).map(r => [resourceKey(r), r]));
+    const globalById = new Map<string, typeof global.extensions[number]>();
+    const globalByKey = new Map<string, typeof global.extensions[number]>();
+    for (const r of global.extensions) {
+      if (r.path.startsWith('builtin:') || isBundled(r, pkgCache)) continue;
+      globalById.set(identity(r.path), r);
+      globalByKey.set(resourceKey(r, pkgCache), r);
+    }
     const seenExtensions = new Set<string>();
     const seenKeys = new Set<string>();
     const localPackages = new Set<string>();
@@ -239,10 +256,10 @@ export async function executionResources(args: string[], directory: string, role
 
     const normalizePkg = (pkg: string) => process.platform === 'win32' ? pkg.toLowerCase() : pkg;
     for (const resource of local.extensions) {
-      if (isBundled(resource)) continue;
-      const pkg = extensionPackageName(resource);
+      if (isBundled(resource, pkgCache)) continue;
+      const pkg = extensionPackageName(resource, pkgCache);
       if (pkg) localPackages.add(normalizePkg(pkg));
-      localKeys.add(resourceKey(resource));
+      localKeys.add(resourceKey(resource, pkgCache));
     }
 
     const candidateList = discoverExtensions
@@ -253,11 +270,11 @@ export async function executionResources(args: string[], directory: string, role
       : [];
 
     for (const { resource, isLocal } of candidateList) {
-      if (isBundled(resource)) continue; // Use only the selected bundled copies, never global/project duplicates.
+      if (isBundled(resource, pkgCache)) continue; // Use only the selected bundled copies, never global/project duplicates.
       const builtin = resource.path.startsWith('builtin:');
       const id = builtin ? resource.path : identity(resource.path);
-      const key = resourceKey(resource);
-      const pkg = extensionPackageName(resource);
+      const key = resourceKey(resource, pkgCache);
+      const pkg = extensionPackageName(resource, pkgCache);
       const normalizedPkg = pkg ? normalizePkg(pkg) : undefined;
 
       if (!isLocal) {
@@ -267,7 +284,7 @@ export async function executionResources(args: string[], directory: string, role
 
       const original = builtin ? global.extensions.find(r => r.path === id) : (globalById.get(id) ?? globalByKey.get(key));
       const originalId = original ? identity(original.path) : undefined;
-      const explicitOverride = state[id] ?? (originalId ? state[originalId] : undefined);
+      const explicitOverride = getOverride(state, id) ?? (originalId ? getOverride(state, originalId) : undefined);
       // Discovered external Pi extensions are opt-in: users must explicitly add
       // them in Pi^n Settings before they are mounted. Trusted project-local
       // and dedicated-only Pi^n extensions keep their local enable state.
@@ -289,7 +306,7 @@ export async function executionResources(args: string[], directory: string, role
       const localSkillKeys = new Set<string>();
 
       for (const resource of local.skills) {
-        localSkillKeys.add(skillKey(resource));
+        localSkillKeys.add(skillKey(resource, pkgCache));
       }
 
       const candidateSkills = [
@@ -299,7 +316,7 @@ export async function executionResources(args: string[], directory: string, role
 
       for (const { resource, isLocal } of candidateSkills) {
         const id = identity(resource.path);
-        const key = skillKey(resource);
+        const key = skillKey(resource, pkgCache);
 
         if (!isLocal && localSkillKeys.has(key)) continue;
         if (resource.enabled && !seenSkills.has(id) && !seenSkillKeys.has(key)) {
@@ -311,7 +328,7 @@ export async function executionResources(args: string[], directory: string, role
     }
     // Web search is enabled by default for Planner/Node and only augments roles
     // that already receive user extensions.
-    if (discoverExtensions && (state[webSearchId] ?? bundledDefault(webSearchId))) {
+    if (discoverExtensions && (getOverride(state, webSearchId) ?? bundledDefault(webSearchId))) {
       extensionFactories.push(webSearchExtension);
     }
     // Keep credentials in Pi^n's dedicated agent directory; read global MCP
@@ -332,7 +349,7 @@ export async function executionResources(args: string[], directory: string, role
     });
   }
   const continuityAllowed = role === 'planner' || role === 'node' || role === 'merger';
-  if (continuityAllowed && discoverExtensions && (state[continuityId] ?? bundledDefault(continuityId))) {
+  if (continuityAllowed && discoverExtensions && (getOverride(state, continuityId) ?? bundledDefault(continuityId))) {
     extensions.push(bundledContinuity);
   }
   extensions.push(bundledTrim);

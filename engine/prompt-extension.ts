@@ -92,8 +92,11 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
   const partition = process.env.PI_N_MODE === 'partition';
   const graph = process.env.PI_N_EXECUTION_KIND === 'graph';
   const project = process.env.PI_N_ORIGINAL_ROOT || (planner && !graph ? cwd : undefined);
-  const plannerTargets = planner && process.env.PI_N_PLANNER_FOLLOWUP === 'true'
-    ? JSON.parse(process.env.PI_N_PLANNER_WORKSPACES || '{}') as Record<string, unknown>
+  const plannerTargetsRaw = planner && process.env.PI_N_PLANNER_FOLLOWUP === 'true'
+    ? JSON.parse(process.env.PI_N_PLANNER_WORKSPACES || '{}')
+    : {};
+  const plannerTargets = plannerTargetsRaw && typeof plannerTargetsRaw === 'object' && !Array.isArray(plannerTargetsRaw)
+    ? plannerTargetsRaw as Record<string, unknown>
     : {};
   const hasPlannerWorkspaces = Boolean(planner && project && process.env.PI_N_PLANNER_FOLLOWUP === 'true' && Object.keys(plannerTargets).length > 0);
   // Planner uses the same model-facing namespace before, during and after
@@ -167,13 +170,17 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
         // preamble is the default. Inject there rather than into guidelines
         // that Pi would discard. Forced prompts are opaque and need a block.
         if (options.forceSystemPrompt !== undefined) {
-          options.forceSystemPrompt = `${options.forceSystemPrompt.trimEnd()}\n\n<rules>\n- ${FEEDBACK_RULE}\n</rules>`;
+          if (!options.forceSystemPrompt.includes(FEEDBACK_RULE)) {
+            options.forceSystemPrompt = `${options.forceSystemPrompt.trimEnd()}\n\n<rules>\n- ${FEEDBACK_RULE}\n</rules>`;
+          }
         } else if (options.customPrompt || options.sections?.rules) {
+          options.sections ??= {};
           const existing = options.sections.rules?.trimEnd();
           if (!existing?.includes(FEEDBACK_RULE)) {
             options.sections.rules = `${existing ? `${existing}\n` : ''}- ${FEEDBACK_RULE}`;
           }
         } else {
+          options.promptGuidelines ??= [];
           options.promptGuidelines.push(FEEDBACK_RULE);
         }
       }
@@ -202,7 +209,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
         const preceding = options.forceSystemPrompt.trimEnd();
         options.forceSystemPrompt = `${preceding}${preceding ? '\n' : ''}${guidance}`;
       } else {
-        const preceding = options.appendSystemPrompt.trimEnd();
+        const preceding = (options.appendSystemPrompt ?? '').trimEnd();
         options.appendSystemPrompt = `${preceding}${preceding ? '\n' : ''}${guidance}`;
       }
     });
@@ -300,6 +307,10 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
 
           const exitCode = callExitCode;
           const isTruncated = !!(result?.details?.truncation?.truncated || result?.details?.truncated);
+          if (toolCallExitCodes.size >= 1000) {
+            const oldest = toolCallExitCodes.keys().next().value;
+            if (oldest !== undefined) toolCallExitCodes.delete(oldest);
+          }
           toolCallExitCodes.set(toolCallId, { exitCode, command: rawCmd, truncated: isTruncated });
 
           if (execError) {
@@ -333,7 +344,7 @@ export function createWorkspacePolicy(bashTimeoutBridge?: BashTimeoutBridge) {
       const recorded = toolCallExitCodes.get(event.toolCallId);
       if (recorded) toolCallExitCodes.delete(event.toolCallId);
       // Strictly preserve null when unknown; NEVER guess 0 without provenance
-      const details = ((event.details || {}) as Record<string, unknown>);
+      const details: Record<string, unknown> = { ...((event.details || {}) as Record<string, unknown>) };
       details.exitCode = recorded ? recorded.exitCode : null;
       details.command = recorded?.command ?? event.input?.command;
       details.truncated = recorded?.truncated ?? !!(details.truncation as any)?.truncated;

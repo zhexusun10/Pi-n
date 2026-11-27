@@ -225,7 +225,7 @@ function annotateSegmentItems(
   const previousIds = mode === "live" ? new Set(previousItems.map(item => item.id)) : null;
   return items.map(item => {
     const isNewInLiveChunk = previousIds !== null && !previousIds.has(item.id);
-    if ((item.type === "thinking" || item.type === "tool_call" || item.type === "compaction") && item.animateAppear === undefined) {
+    if ((item.type === "thinking" || item.type === "tool_call" || item.type === "compaction" || item.type === "notice") && item.animateAppear === undefined) {
       const shouldAnimate = !settled && (inline || suppressInitialAppear ? isNewInLiveChunk : (item.status === "running" || isNewInLiveChunk));
       item = { ...item, animateAppear: shouldAnimate };
     }
@@ -575,7 +575,8 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
         }
         pushSegment(segment, segmentItems(state));
       });
-      const shared = shareJson(itemsRef.current, combined);
+      const previousCombined = itemsRef.current;
+      const shared = shareJson(previousCombined, combined);
       segmentStartsRef.current = starts;
       itemsRef.current = shared;
       lastRawOutputRef.current = rawOutput;
@@ -584,7 +585,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
       // Compaction is per-session and each planning revision owns a session, so
       // only the newest revision can be compacting right now.
       lastSegmentSourceRef.current = segments.at(-1)?.source ?? "";
-      return changed || shared !== itemsRef.current;
+      return changed || shared !== previousCombined;
     }
     if (segmentedRef.current) {
       // A non-composed output cannot reuse per-revision state.
@@ -648,7 +649,7 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
       let currentItems = [...closedPrependedItems, ...currentTailItems];
 
       currentItems = currentItems.map(item => {
-        if ((item.type === "thinking" || item.type === "tool_call" || item.type === "compaction") && item.animateAppear === undefined) {
+        if ((item.type === "thinking" || item.type === "tool_call" || item.type === "compaction" || item.type === "notice") && item.animateAppear === undefined) {
           item = { ...item, animateAppear: false };
         }
         if (item.type !== "thinking") return item;

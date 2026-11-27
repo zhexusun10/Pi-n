@@ -486,9 +486,10 @@ pub(crate) fn remove_dir_all_masked(path: &Path) -> std::io::Result<()> {
 #[cfg(unix)]
 fn restore_dir_permissions(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
-    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+    if !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+        return;
     }
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             if fs::symlink_metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir()) {
@@ -511,7 +512,7 @@ pub(crate) fn remove(runtime: &NativeRuntime) -> Result<(), String> {
             if matches!(entry.file_name().to_str(), Some(MARKER | LEASE)) {
                 continue;
             }
-            if entry.path().is_dir() {
+            if entry.file_type()?.is_dir() {
                 remove_dir_all_masked(&entry.path())?;
             } else {
                 fs::remove_file(entry.path())?;
@@ -869,5 +870,32 @@ mod tests {
             fs::read_to_string(outside.join("keep")).unwrap(),
             "external"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_dir_permissions_and_remove_never_follow_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let outside = temp.path().join("outside");
+        let nested = outside.join("locked");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("keep"), "intact").unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let link = temp.path().join("link-to-outside");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        restore_dir_permissions(&link);
+        assert_eq!(
+            fs::symlink_metadata(&nested).unwrap().permissions().mode() & 0o777,
+            0o555,
+            "restore_dir_permissions must never follow a top-level symlink"
+        );
+
+        let runtime = create(temp.path()).unwrap();
+        std::os::unix::fs::symlink(&outside, runtime.directory.join("linked-dir")).unwrap();
+        remove(&runtime).unwrap();
+        assert_eq!(fs::read_to_string(nested.join("keep")).unwrap(), "intact");
+        let _ = fs::set_permissions(&nested, fs::Permissions::from_mode(0o755));
     }
 }

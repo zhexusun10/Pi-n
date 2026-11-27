@@ -255,8 +255,10 @@ export async function resolveFinalAgentOutput(
   fetcher: FinalOutputFetcher = defaultFetcher,
   signal?: AbortSignal,
 ): Promise<string> {
+  if (signal?.aborted) return "";
   const sources = selectFinalOutputSources(snapshot);
   for (const source of sources) {
+    if (signal?.aborted) return "";
     try {
       let content = "";
       let leadingFragment = false;
@@ -273,10 +275,12 @@ export async function resolveFinalAgentOutput(
         content = chunk.content;
         leadingFragment = chunk.leadingFragment;
       }
+      if (signal?.aborted) return "";
       const extracted = extractLastAssistantTextFromTranscript(content, leadingFragment);
       const formatted = formatNotificationBody(extracted);
       if (formatted) return formatted;
     } catch {
+      if (signal?.aborted) return "";
       if (source.kind === "execution" && source.execution.output) {
         const extracted = extractLastAssistantTextFromTranscript(source.execution.output);
         const formatted = formatNotificationBody(extracted);

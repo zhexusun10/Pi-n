@@ -168,4 +168,5 @@ test('non-slash text fails immediately without spawning a worker', { timeout: 5_
   const invalid = await start(host, paths.a, 'plain text without leading slash');
   const failed = await poll(host, invalid, state => state.status === 'failed');
   assert.match(failed.error, /active session|unavailable/);
+  await assert.rejects(() => host.dispatch(null as any), /Invalid extension command request/);
 }));

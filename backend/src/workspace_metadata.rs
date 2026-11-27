@@ -259,6 +259,9 @@ mod platform {
                 value.display()
             ));
         }
+        if size == 0 {
+            return Ok(Vec::new());
+        }
         let mut names = vec![0u8; size as usize];
         let count = unsafe { list(p.as_ptr(), names.as_mut_ptr().cast(), names.len()) };
         if count < 0 {

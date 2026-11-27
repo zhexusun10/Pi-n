@@ -363,7 +363,7 @@ export default function ComposerModelMenu({
       window.removeEventListener("contextmenu", onOutsidePointer, true);
       window.removeEventListener("resize", onResize);
     };
-  }, [triggerRef, onClose, placeSubmenu]);
+  }, [triggerRef, onClose]);
 
   const isHeadingTowardSubmenu = useCallback((currX: number, currY: number): boolean => {
     const prev = lastPointerRef.current;

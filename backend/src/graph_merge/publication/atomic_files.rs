@@ -664,77 +664,92 @@ fn install_file_with_tracked(
         }
         crate::workspace_symlinks::remove(&temporary)?;
     }
-    if mode == "120000" {
-        // Git's 120000 blob only stores normalized link target text; preserve
-        // `project_absolute` and Windows `Kind::Junction` from `view.json`
-        // when its normalized target matches the staged Git blob.
-        let metadata = fs::symlink_metadata(staged).map_err(|e| e.to_string())?;
-        let staged_link = crate::workspace_symlinks::capture(repository, staged, &metadata)?;
-        let link = match recorded_link {
-            Some(recorded) if recorded.value == staged_link.value => recorded.clone(),
-            _ => staged_link,
-        };
-        crate::workspace_symlinks::materialize(repository, &temporary, &link)?;
-    } else if matches!(mode, "100644" | "100755") {
-        copy_and_sync_regular(staged, &temporary)?;
-    } else {
-        return Err(format!("Unsupported publication entry mode: {mode}"));
-    }
-    before_rename(&temporary)?;
-    if parent != repository {
-        crate::path_safety::real_child_path(repository, &parent, false)?
-            .ok_or("Publication parent disappeared")?;
-    }
-    // A directory-to-file transition may remove only an empty directory.
-    // Never recursively remove excluded environments or unrecorded user files.
-    if fs::symlink_metadata(&target)
-        .is_ok_and(|m| m.is_dir() && !crate::workspace_symlinks::is_link(&m))
-    {
-        remove_publication_dir(repository, &target, tracked).map_err(|e| e.to_string())?;
-    }
     let replacing_marker = journal.join("replacing.json");
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(unused_mut))]
-    let mut recorded_replace = false;
-    #[cfg(target_os = "macos")]
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        crate::workspace_cleanup::clear_macos_immutable_flags(&target, &metadata)
-            .map_err(|e| e.to_string())?;
-        if !disk_relative_matches(repository, &target, relative) {
-            let bytes = serde_json::to_vec(&PendingReplace {
-                relative: relative.to_string(),
-                temporary_name: temp_name.clone(),
-            })
-            .map_err(|e| e.to_string())?;
-            save_atomic_replace(&replacing_marker, &bytes)?;
-            recorded_replace = true;
-            crate::workspace_symlinks::remove(&target)?;
-        }
-    }
-    #[cfg(windows)]
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if crate::workspace_symlinks::is_link(&metadata)
-            || !disk_relative_matches(repository, &target, relative)
-            || mode == "120000"
-                && fs::symlink_metadata(&temporary)
-                    .is_ok_and(|temp| crate::workspace_symlinks::is_link(&temp) && temp.is_dir())
-        {
-            let bytes = serde_json::to_vec(&PendingReplace {
-                relative: relative.to_string(),
-                temporary_name: temp_name.clone(),
-            })
-            .map_err(|e| e.to_string())?;
-            save_atomic_replace(&replacing_marker, &bytes)?;
-            recorded_replace = true;
-            crate::workspace_symlinks::remove(&target)?;
+    let mut preserve_temporary_for_recovery = false;
+    let install_result = (|| -> Result<(), String> {
+        if mode == "120000" {
+            // Git's 120000 blob only stores normalized link target text; preserve
+            // `project_absolute` and Windows `Kind::Junction` from `view.json`
+            // when its normalized target matches the staged Git blob.
+            let metadata = fs::symlink_metadata(staged).map_err(|e| e.to_string())?;
+            let staged_link = crate::workspace_symlinks::capture(repository, staged, &metadata)?;
+            let link = match recorded_link {
+                Some(recorded) if recorded.value == staged_link.value => recorded.clone(),
+                _ => staged_link,
+            };
+            crate::workspace_symlinks::materialize(repository, &temporary, &link)?;
+        } else if matches!(mode, "100644" | "100755") {
+            copy_and_sync_regular(staged, &temporary)?;
         } else {
-            crate::workspace_cleanup::clear_readonly_attribute(&target, &metadata)
-                .map_err(|e| e.to_string())?;
+            return Err(format!("Unsupported publication entry mode: {mode}"));
         }
-    }
-    fs::rename(&temporary, &target)
-        .map_err(|e| format!("Cannot atomically install '{relative}': {e}"))?;
-    if recorded_replace {
-        let _ = fs::remove_file(&replacing_marker);
+        before_rename(&temporary)?;
+        if parent != repository {
+            crate::path_safety::real_child_path(repository, &parent, false)?
+                .ok_or("Publication parent disappeared")?;
+        }
+        // A directory-to-file transition may remove only an empty directory.
+        // Never recursively remove excluded environments or unrecorded user files.
+        if fs::symlink_metadata(&target)
+            .is_ok_and(|m| m.is_dir() && !crate::workspace_symlinks::is_link(&m))
+        {
+            remove_publication_dir(repository, &target, tracked).map_err(|e| e.to_string())?;
+        }
+        #[cfg(target_os = "macos")]
+        if let Ok(metadata) = fs::symlink_metadata(&target) {
+            crate::workspace_cleanup::clear_macos_immutable_flags(&target, &metadata)
+                .map_err(|e| e.to_string())?;
+            if !disk_relative_matches(repository, &target, relative) {
+                let bytes = serde_json::to_vec(&PendingReplace {
+                    relative: relative.to_string(),
+                    temporary_name: temp_name.clone(),
+                })
+                .map_err(|e| e.to_string())?;
+                save_atomic_replace(&replacing_marker, &bytes)?;
+                if let Err(error) = crate::workspace_symlinks::remove(&target) {
+                    let _ = fs::remove_file(&replacing_marker);
+                    return Err(error);
+                }
+                preserve_temporary_for_recovery = true;
+            }
+        }
+        #[cfg(windows)]
+        if let Ok(metadata) = fs::symlink_metadata(&target) {
+            if crate::workspace_symlinks::is_link(&metadata)
+                || !disk_relative_matches(repository, &target, relative)
+                || mode == "120000"
+                    && fs::symlink_metadata(&temporary)
+                        .is_ok_and(|temp| crate::workspace_symlinks::is_link(&temp) && temp.is_dir())
+            {
+                let bytes = serde_json::to_vec(&PendingReplace {
+                    relative: relative.to_string(),
+                    temporary_name: temp_name.clone(),
+                })
+                .map_err(|e| e.to_string())?;
+                save_atomic_replace(&replacing_marker, &bytes)?;
+                if let Err(error) = crate::workspace_symlinks::remove(&target) {
+                    let _ = fs::remove_file(&replacing_marker);
+                    return Err(error);
+                }
+                preserve_temporary_for_recovery = true;
+            } else {
+                crate::workspace_cleanup::clear_readonly_attribute(&target, &metadata)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        fs::rename(&temporary, &target)
+            .map_err(|e| format!("Cannot atomically install '{relative}': {e}"))?;
+        if preserve_temporary_for_recovery {
+            let _ = fs::remove_file(&replacing_marker);
+        }
+        Ok(())
+    })();
+    if let Err(error) = install_result {
+        if !preserve_temporary_for_recovery {
+            let _ = crate::workspace_symlinks::remove(&temporary);
+        }
+        return Err(error);
     }
     if let Some(dirty) = dirty_parents {
         dirty.insert(parent);
@@ -1336,6 +1351,10 @@ mod tests {
             fs::read_to_string(source.join("file.txt")).unwrap(),
             "new user work"
         );
+        assert!(
+            !temporary_path(&source, &journal, "file.txt").exists(),
+            "failed install must not leave stray publish temporary in source"
+        );
     }
 
     #[test]
@@ -1591,17 +1610,23 @@ mod tests {
                 relative,
                 "100644",
                 &mut |temporary| {
-                    // Simulate death during the adjacent temporary's copy.
+                    // Simulate interruption before rename.
                     fs::write(temporary, []).unwrap();
                     Err("interrupted".into())
                 },
             );
             assert!(failed.is_err());
+            assert!(
+                !temporary_path(&source, &journal, relative).exists(),
+                "graceful interruption before rename must remove its temporary"
+            );
             if existing {
                 assert_eq!(fs::read(&target).unwrap(), b"original");
             } else {
                 assert!(!target.exists());
             }
+            // Also simulate hard crash (SIGKILL) leaving a truncated owned temporary on disk.
+            fs::write(temporary_path(&source, &journal, relative), []).unwrap();
             install_file(&source, &journal, &staged, relative, "100644", &mut |_| {
                 Ok(())
             })

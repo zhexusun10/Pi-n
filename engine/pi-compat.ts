@@ -13,7 +13,7 @@ export {
 } from '../pi/packages/coding-agent/src/index.ts';
 export type { ExtensionAPI, BashOperations } from '../pi/packages/coding-agent/src/index.ts';
 
-export { obj, opt, str } from '../pi/packages/schema/src/index.ts';
+export { obj, str } from '../pi/packages/schema/src/index.ts';
 import { contentText, clampThinkingLevel, getSupportedThinkingLevels, type Api, type Model, type ModelThinkingLevel } from '../pi/packages/ai/src/index.ts';
 
 // This is the protocol vocabulary, not a list of levels every model supports.
@@ -46,11 +46,11 @@ import { join } from 'node:path';
 import { existsSync, lstatSync, readFileSync, readdirSync, mkdirSync, openSync, readSync, writeFileSync, closeSync } from 'node:fs';
 import { migrateKeybindingsConfig } from '../pi/packages/coding-agent/src/core/keybindings.ts';
 import { resolvePath as resolvePiPath } from '../pi/packages/coding-agent/src/utils/paths.ts';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { withPiNSearchPreferences, withInheritedSearchCredentials } from './search-credentials.mjs';
 import { samePath } from './path-identity.mjs';
+import { resolveAgentDir } from './agent-dir.mjs';
 
 const bundledTrimPath = fileURLToPath(new URL('../node_modules/pi-trim/extensions/index.ts', import.meta.url));
 const PI_TRIM_MODE_ENTRY = 'pi-trim-mode';
@@ -143,8 +143,7 @@ export function installDefaultAggressiveTrim() {
 
 const parseModels = (content: string) => JSON.parse(stripJsonComments(content.replace(/^\uFEFF/, '')));
 export function modelRuntimeOptions(options: Parameters<typeof ModelRuntime.create>[0] = {}) {
-  const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent');
-  return overlayRuntimeOptions(options, agentDir, parseModels, async (path: string) => !(await ModelConfig.load(path)).getError());
+  return overlayRuntimeOptions(options, resolveAgentDir(), parseModels, async (path: string) => !(await ModelConfig.load(path)).getError());
 }
 export async function loadBundledWebSearch() {
   // Reuse Pi's loader and SDK modules for the one bundled compatibility shim.
@@ -408,8 +407,13 @@ export function installQueueIdentity() {
       deferredInputs.set(options, { agent: this.agent, requestId, text: input });
       args[0] = options;
     }
-    return context.run(scope, () => original.call(this, input, ...args))
-      .finally(() => { if (scope) scope.active = false; });
+    try {
+      return context.run(scope, () => original.call(this, input, ...args))
+        .finally(() => { if (scope) scope.active = false; });
+    } catch (error) {
+      if (scope) scope.active = false;
+      throw error;
+    }
   } as T;
   const prompt = AgentSession.prototype.prompt;
   const sessionSteer = AgentSession.prototype.steer;
@@ -467,7 +471,10 @@ export function preparePiCli() {
   return preparedCli ??= Promise.all([
     import('../pi/packages/coding-agent/src/cli/setup.ts'),
     import('../pi/packages/coding-agent/src/index.ts'),
-  ]);
+  ]).catch(error => {
+    preparedCli = undefined;
+    throw error;
+  });
 }
 export async function runPiCommandCli(args: string[], options: MainOptions = {}) {
   const needsSession = () => { throw new Error('This operation requires an active conversation.'); };
@@ -511,9 +518,10 @@ export function createEditToolDefinition(...args: Parameters<typeof piEditTool>)
 }
 
 export function assertCurrentPiSettings(settings: Record<string, any>) {
-  if (['queueMode', 'websockets', 'apiKeys', 'showCacheMissNotices'].some(key => key in settings) ||
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return;
+  if (['queueMode', 'websockets', 'apiKeys', 'showCacheMissNotices'].some(key => Object.hasOwn(settings, key)) ||
       (settings.skills !== null && typeof settings.skills === 'object' && !Array.isArray(settings.skills)) ||
-      (settings.retry && typeof settings.retry === 'object' && 'maxDelayMs' in settings.retry)) {
+      (settings.retry && typeof settings.retry === 'object' && Object.hasOwn(settings.retry, 'maxDelayMs'))) {
     throw new Error('Unsupported Pi settings format; update settings explicitly before using Pi^n');
   }
 }
@@ -528,7 +536,15 @@ export function assertCurrentPiDirectories(cwd: string, agentDir: string, projec
     // input when the SDK is allowed to load their scope.
     if (existsSync(join(directory, 'commands'))) throw new Error('Unsupported Pi commands directory; use prompts/');
     const settings = join(directory, 'settings.json');
-    if (readSettings && existsSync(settings)) assertCurrentPiSettings(JSON.parse(readFileSync(settings, 'utf8').replace(/^\uFEFF/, '')));
+    if (readSettings && existsSync(settings)) {
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(settings, 'utf8').replace(/^\uFEFF/, '')); }
+      catch (error) {
+        if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code) continue;
+        throw error;
+      }
+      assertCurrentPiSettings(parsed);
+    }
   }
   if (existsSync(agentDir)) for (const name of readdirSync(agentDir).filter(name => name.endsWith('.jsonl'))) {
     let value;
@@ -549,7 +565,11 @@ export function assertCurrentPiDirectories(cwd: string, agentDir: string, projec
   }
   const keybindings = join(agentDir, 'keybindings.json');
   if (existsSync(keybindings)) {
-    const config = JSON.parse(readFileSync(keybindings, 'utf8').replace(/^\uFEFF/, ''));
+    let config;
+    try { config = JSON.parse(readFileSync(keybindings, 'utf8').replace(/^\uFEFF/, '')); }
+    catch (error) {
+      if (!(error instanceof SyntaxError || (error as NodeJS.ErrnoException).code)) throw error;
+    }
     if (config && typeof config === 'object' && !Array.isArray(config) && migrateKeybindingsConfig(config).migrated) {
       throw new Error('Unsupported Pi keybinding names; use current names');
     }
@@ -673,7 +693,7 @@ piSettings.migrateSettings = function (settings: Record<string, any>) {
   return migrateSettings.call(this, settings);
 };
 const createSettings = SettingsManager.create;
-SettingsManager.create = function (cwd, agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'), ...args) {
+SettingsManager.create = function (cwd, agentDir = resolveAgentDir(), ...args) {
   assertCurrentPiDirectories(cwd, agentDir, args[0]?.projectTrusted !== false);
   return createSettings.call(this, cwd, agentDir, ...args);
 };
@@ -683,7 +703,7 @@ packagePrototype.getNpmInstallPath = function (source: unknown, scope: unknown) 
 };
 
 export async function runPiCli(args: string[], options: MainOptions = {}) {
-  assertCurrentPiDirectories(process.cwd(), process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
+  assertCurrentPiDirectories(process.cwd(), resolveAgentDir());
   const [{ setupCli }, { main }] = await preparePiCli();
   setupCli();
   // Pi's CLI creates its own runtime. Retarget its default models path while

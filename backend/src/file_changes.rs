@@ -320,8 +320,12 @@ pub fn clear_all() {
 
 fn normalize_slashes(input: &str) -> String {
     let mut s = input.trim().replace('\\', "/");
-    // Strip Windows extended-length prefix if present
-    if let Some(rest) = s.strip_prefix("//?/") {
+    // Strip Windows extended-length prefix (preserving UNC `//server/share`).
+    if s.get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("//?/unc/"))
+    {
+        s = format!("//{}", &s[8..]);
+    } else if let Some(rest) = s.strip_prefix("//?/") {
         s = rest.to_string();
     }
     while s.ends_with('/') && s.len() > 1 {
@@ -3021,5 +3025,25 @@ mod tests {
         let items3 = parse_bash_command_changes(cmd3, &repo_str, &repo_str, "n", "e3");
         let paths3: Vec<&str> = items3.iter().map(|i| i.path.as_str()).collect();
         assert_eq!(paths3, vec!["sub/c.ts"]);
+    }
+
+    #[test]
+    fn normalizes_windows_extended_unc_paths_without_leaking_external_roots() {
+        assert_eq!(
+            normalize_workspace_path(
+                r"\\?\UNC\server\share\repo\src\app.ts",
+                r"\\server\share\repo",
+                r"\\server\share\repo"
+            ),
+            Some("src/app.ts".into())
+        );
+        assert_eq!(
+            normalize_workspace_path(
+                r"\\?\UNC\other\share\secret.txt",
+                r"\\server\share\repo",
+                r"\\server\share\repo"
+            ),
+            None
+        );
     }
 }

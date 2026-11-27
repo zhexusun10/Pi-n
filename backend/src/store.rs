@@ -752,54 +752,65 @@ impl Store {
     }
 
     pub fn load(&self, run_id: &str) -> Result<Snapshot, String> {
-        if !self.contains_run(run_id)? {
-            return Err(format!("Run does not exist: {run_id}"));
-        }
-        let (sequence, mut state) = self.load_valid_checkpoint(run_id).unwrap_or_else(|| {
-            (
-                0,
-                Snapshot {
-                    run_id: run_id.into(),
-                    ..Snapshot::default()
-                },
-            )
-        });
-        state.events.clear();
-        for execution in state.executions.iter_mut().chain(state.mergers.iter_mut()) {
-            execution.output.clear();
-        }
-        let mut statement = self
-            .connection
-            .prepare_cached(
-                "SELECT sequence, timestamp, payload FROM events WHERE run_id=?1 ORDER BY sequence",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([run_id], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, u64>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(|error| error.to_string())?;
-        for row in rows {
-            let (event_sequence, timestamp, payload) = row.map_err(|error| error.to_string())?;
-            let kind = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
-            let event = Event {
-                sequence: event_sequence,
-                timestamp,
-                kind,
-            };
-            if event_sequence > sequence {
-                crate::model::apply_without_metrics(&mut state, &event);
-            } else {
-                state.events.push(event);
+        let (mut state, log_totals) = {
+            // Keep `contains_run`, checkpoint lookup, event replay, and log
+            // totals on one WAL read snapshot so concurrent writers or deletes
+            // cannot produce a torn or half-deleted projection.
+            let _tx = self
+                .connection
+                .unchecked_transaction()
+                .map_err(|error| error.to_string())?;
+            if !self.contains_run(run_id)? {
+                return Err(format!("Run does not exist: {run_id}"));
             }
-        }
+            let (sequence, mut state) = self.load_valid_checkpoint(run_id).unwrap_or_else(|| {
+                (
+                    0,
+                    Snapshot {
+                        run_id: run_id.into(),
+                        ..Snapshot::default()
+                    },
+                )
+            });
+            state.events.clear();
+            for execution in state.executions.iter_mut().chain(state.mergers.iter_mut()) {
+                execution.output.clear();
+            }
+            let mut statement = self
+                .connection
+                .prepare_cached(
+                    "SELECT sequence, timestamp, payload FROM events WHERE run_id=?1 ORDER BY sequence",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, u64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|error| error.to_string())?;
+            for row in rows {
+                let (event_sequence, timestamp, payload) =
+                    row.map_err(|error| error.to_string())?;
+                let kind = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+                let event = Event {
+                    sequence: event_sequence,
+                    timestamp,
+                    kind,
+                };
+                if event_sequence > sequence {
+                    crate::model::apply_without_metrics(&mut state, &event);
+                } else {
+                    state.events.push(event);
+                }
+            }
+            let log_totals = self.all_log_bytes(run_id)?;
+            (state, log_totals)
+        };
         state.rebuild_planning_turns();
         state.backfill_consumed_tokens();
-        let log_totals = self.all_log_bytes(run_id)?;
         for execution in state.executions.iter_mut().chain(state.mergers.iter_mut()) {
             if let Some(&bytes) = log_totals.get(&execution.id) {
                 execution.output_bytes = execution.output_bytes.max(bytes);
@@ -996,5 +1007,48 @@ mod macos_tests {
         assert!(!store
             .has_other_run_for_repository("run-1", &nfd_alias)
             .unwrap());
+    }
+}
+
+#[cfg(test)]
+mod load_snapshot_tests {
+    use super::*;
+    use crate::model::{Config, Graph};
+
+    #[test]
+    fn load_rejects_deleted_run_and_preserves_consistent_checkpoint_and_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join("events.sqlite");
+        let store = Store::open(&db).unwrap();
+        let reader = Store::open_reader(&db).unwrap();
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "repository": temp.path(),
+            "model": "test/model",
+        }))
+        .unwrap();
+        let mut state = Snapshot {
+            run_id: "run-snap".into(),
+            ..Snapshot::default()
+        };
+        store
+            .append(
+                &mut state,
+                EventKind::Created {
+                    graph: Graph {
+                        original_goal: "snap".into(),
+                        nodes: vec![],
+                        edges: vec![],
+                    },
+                    config,
+                    planning_id: None,
+                    planning: None,
+                },
+            )
+            .unwrap();
+        let loaded = reader.load("run-snap").unwrap();
+        assert_eq!(loaded.run_id, "run-snap");
+        assert_eq!(loaded.events.len(), 1);
+        store.delete_run("run-snap").unwrap();
+        assert!(reader.load("run-snap").is_err());
     }
 }

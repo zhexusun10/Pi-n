@@ -11,8 +11,11 @@ export function readModelVisibility(dir = directory()) {
   let content;
   try { content = readFileSync(join(dir, 'model-visibility.json'), 'utf8'); }
   catch (error) { if (error.code === 'ENOENT') return { hiddenModels: [] }; throw error; }
-  const value = JSON.parse(content);
-  if (!Array.isArray(value.hiddenModels) || !value.hiddenModels.every(validId)) throw new Error('Invalid model visibility settings');
+  const value = JSON.parse(content.replace(/^\uFEFF/, ''));
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !Array.isArray(value.hiddenModels) || !value.hiddenModels.every(validId)) {
+    throw new Error('Invalid model visibility settings');
+  }
   return { hiddenModels: [...new Set(value.hiddenModels)] };
 }
 
@@ -28,12 +31,14 @@ export function saveModelVisibility(changes, reset = false, dir = directory()) {
     if (change.hidden) hidden.add(change.model); else hidden.delete(change.model);
   }
   const result = { hiddenModels: [...hidden].sort() };
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, 'model-visibility.json');
   const temporary = `${target}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, JSON.stringify(result, null, 2), { mode: 0o600 });
     renameSync(temporary, target);
-  } finally { rmSync(temporary, { force: true }); }
+  } finally {
+    try { rmSync(temporary, { force: true }); } catch {}
+  }
   return result;
 }

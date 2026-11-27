@@ -10,6 +10,7 @@
 //! `NSWindow`.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
@@ -18,6 +19,7 @@ type PathPanelCallback = unsafe extern "C" fn(*mut c_void, *const c_char);
 extern "C" {
     fn pi_n_macos_configure_traffic_lights(ns_window_ptr: *mut c_void);
     fn pi_n_macos_configure_webview_open_panel(wk_webview_ptr: *mut c_void);
+    fn pi_n_macos_is_main_thread() -> bool;
     fn pi_n_macos_preferred_menu_language() -> c_int;
     fn pi_n_macos_begin_save_image_panel(
         ns_window_ptr: *mut c_void,
@@ -35,20 +37,31 @@ extern "C" {
 }
 
 unsafe extern "C" fn path_panel_complete(context: *mut c_void, path_utf8: *const c_char) {
-    if context.is_null() {
-        return;
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if context.is_null() {
+            return;
+        }
+        let tx = Box::from_raw(context as *mut mpsc::SyncSender<Option<PathBuf>>);
+        let path = if path_utf8.is_null() {
+            None
+        } else {
+            CStr::from_ptr(path_utf8)
+                .to_str()
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        };
+        let _ = tx.send(path);
+    }));
+}
+
+fn cstring_stripped_nul(raw: &str) -> Option<CString> {
+    let clean = raw.replace('\0', "");
+    let trimmed = clean.trim();
+    if trimmed.is_empty() {
+        return None;
     }
-    let tx = Box::from_raw(context as *mut mpsc::SyncSender<Option<PathBuf>>);
-    let path = if path_utf8.is_null() {
-        None
-    } else {
-        CStr::from_ptr(path_utf8)
-            .to_str()
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-    };
-    let _ = tx.send(path);
+    CString::new(trimmed).ok()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,8 +111,14 @@ pub fn choose_save_image_path<R: tauri::Runtime>(
     default_name: &str,
     default_dir: Option<&Path>,
 ) -> Option<PathBuf> {
+    if unsafe { pi_n_macos_is_main_thread() } {
+        eprintln!(
+            "[Pi^n-desktop] Refusing to block the macOS main thread waiting on NSSavePanel"
+        );
+        return None;
+    }
     let (tx, rx) = mpsc::sync_channel::<Option<PathBuf>>(1);
-    let name_c = CString::new(default_name).ok();
+    let name_c = cstring_stripped_nul(default_name);
     let dir_c = default_dir
         .and_then(|dir| dir.to_str())
         .and_then(|dir| CString::new(dir).ok());
@@ -132,11 +151,11 @@ pub fn pick_folder<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
     prompt: Option<&str>,
 ) -> Result<Option<PathBuf>, String> {
+    if unsafe { pi_n_macos_is_main_thread() } {
+        return Err("macOS folder picker must not be invoked on the main thread".to_string());
+    }
     let (tx, rx) = mpsc::sync_channel::<Option<PathBuf>>(1);
-    let prompt_c = prompt
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .and_then(|s| CString::new(s).ok());
+    let prompt_c = prompt.and_then(cstring_stripped_nul);
     let win = window.clone();
     window
         .run_on_main_thread(move || {
@@ -176,5 +195,31 @@ mod tests {
                 | MacosMenuLanguage::SimplifiedChinese
                 | MacosMenuLanguage::TraditionalChinese
         ));
+    }
+
+    #[test]
+    fn panel_helpers_strip_nul_and_handle_null_callback_context() {
+        assert_eq!(
+            cstring_stripped_nul("  Pick\0 folder  ").unwrap().to_str().unwrap(),
+            "Pick folder"
+        );
+        assert!(cstring_stripped_nul("  \0  ").is_none());
+
+        unsafe {
+            path_panel_complete(std::ptr::null_mut(), std::ptr::null());
+        }
+
+        let (tx, rx) = mpsc::sync_channel::<Option<PathBuf>>(1);
+        let ctx = Box::into_raw(Box::new(tx)) as *mut c_void;
+        let path_c = CString::new("/tmp/pi-n-folder").unwrap();
+        unsafe {
+            path_panel_complete(ctx, path_c.as_ptr());
+        }
+        assert_eq!(rx.recv().unwrap(), Some(PathBuf::from("/tmp/pi-n-folder")));
+
+        let on_worker = std::thread::spawn(|| unsafe { pi_n_macos_is_main_thread() })
+            .join()
+            .unwrap();
+        assert!(!on_worker);
     }
 }

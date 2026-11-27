@@ -1008,8 +1008,10 @@ pub fn compute_transcript_file_diff(
 /// Read an untracked or newly added file safely within `root` and format all
 /// its lines as additions (or mark it binary when NUL bytes / >512 KiB).
 pub fn read_added_file_diff(root: &Path, path: &str) -> Option<ParsedFileDiff> {
+    use std::io::Read;
     let target = crate::path_safety::real_child_path(root, &root.join(path), true).ok()??;
-    let metadata = fs::metadata(&target).ok()?;
+    let file = fs::File::open(&target).ok()?;
+    let metadata = file.metadata().ok()?;
     if !metadata.is_file() {
         return None;
     }
@@ -1019,7 +1021,17 @@ pub fn read_added_file_diff(root: &Path, path: &str) -> Option<ParsedFileDiff> {
             ..Default::default()
         });
     }
-    let bytes = fs::read(&target).ok()?;
+    // Bound reads even if the file grows concurrently after `metadata()`.
+    let mut bytes = Vec::new();
+    file.take(MAX_UNTRACKED_DIFF_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_UNTRACKED_DIFF_BYTES {
+        return Some(ParsedFileDiff {
+            binary: true,
+            ..Default::default()
+        });
+    }
     if bytes.iter().take(8_000).any(|byte| *byte == 0) {
         return Some(ParsedFileDiff {
             binary: true,
@@ -1262,5 +1274,33 @@ index 1111111,2222222..0000000
             .lines
             .iter()
             .any(|l| l.kind == DiffLineKind::Added && l.text == "final line"));
+    }
+
+    #[test]
+    fn read_added_file_diff_bounds_size_and_rejects_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("ok.txt"), "hello\nworld\n").unwrap();
+        let ok = read_added_file_diff(&root, "ok.txt").unwrap();
+        assert!(!ok.binary);
+        assert_eq!(ok.lines.len(), 2);
+
+        fs::write(
+            root.join("large.txt"),
+            vec![b'a'; (MAX_UNTRACKED_DIFF_BYTES + 1) as usize],
+        )
+        .unwrap();
+        let large = read_added_file_diff(&root, "large.txt").unwrap();
+        assert!(large.binary);
+        assert!(large.lines.is_empty());
+
+        #[cfg(unix)]
+        {
+            let outside = temp.path().join("secret.txt");
+            fs::write(&outside, "secret\n").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("link.txt")).unwrap();
+            assert!(read_added_file_diff(&root, "link.txt").is_none());
+        }
     }
 }

@@ -190,6 +190,55 @@ pub fn validate_external_url(raw: &str) -> Result<String, String> {
     Ok(parsed.into())
 }
 
+#[cfg(target_os = "windows")]
+fn shell_execute_open(target: &str, failure_prefix: &str) -> Result<(), String> {
+    use windows_sys::Win32::{
+        Foundation::{S_FALSE, S_OK},
+        System::Com::{
+            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        },
+        UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+    };
+    struct ComUninitGuard(bool);
+    impl Drop for ComUninitGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe {
+                    CoUninitialize();
+                }
+            }
+        }
+    }
+    let operation: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let target_wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    // ShellExecuteW delegates URL/file handling to the user's registered handler
+    // and may invoke COM verb handlers, so initialize STA COM on this worker thread.
+    let hr = unsafe {
+        CoInitializeEx(
+            std::ptr::null(),
+            (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+        )
+    };
+    let _com_guard = ComUninitGuard(hr == S_OK || hr == S_FALSE);
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target_wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err(format!(
+            "{failure_prefix} (ShellExecuteW: {})",
+            result as isize
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn open_external_url(url: String) -> Result<(), String> {
     let validated = validate_external_url(&url)?;
@@ -198,46 +247,7 @@ async fn open_external_url(url: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
         {
-            use windows_sys::Win32::{
-                System::Com::{
-                    CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-                    COINIT_DISABLE_OLE1DDE,
-                },
-                UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-            };
-            let operation: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
-            let target: Vec<u16> = validated.encode_utf16().chain(std::iter::once(0)).collect();
-            // ShellExecuteW delegates URL handling to the user's registered browser
-            // (and may invoke COM verb handlers, so initialize STA COM on this worker).
-            // explorer.exe treats some URL forms as filesystem paths in WebView contexts.
-            let hr = unsafe {
-                CoInitializeEx(
-                    std::ptr::null(),
-                    (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
-                )
-            };
-            let result = unsafe {
-                ShellExecuteW(
-                    std::ptr::null_mut(),
-                    operation.as_ptr(),
-                    target.as_ptr(),
-                    std::ptr::null(),
-                    std::ptr::null(),
-                    SW_SHOWNORMAL,
-                )
-            };
-            if hr == 0 || hr == 1 {
-                unsafe {
-                    CoUninitialize();
-                }
-            }
-            if result as isize <= 32 {
-                return Err(format!(
-                    "Failed to open external URL in system browser (ShellExecuteW: {})",
-                    result as isize
-                ));
-            }
-            Ok(())
+            shell_execute_open(&validated, "Failed to open external URL in system browser")
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -439,6 +449,47 @@ pub fn detect_desktop_image_extension(bytes: &[u8]) -> Result<&'static str, Stri
     }
 }
 
+fn is_windows_reserved_filename_stem(stem: &str) -> bool {
+    let base = stem.split('.').next().unwrap_or(stem);
+    matches!(
+        base.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
+fn finalize_desktop_image_stem(raw_stem: &str) -> String {
+    let truncated: String = raw_stem.chars().take(110).collect();
+    let trimmed = truncated.trim_matches(|c: char| c.is_whitespace() || c == '.');
+    if trimmed.is_empty() {
+        "image".to_string()
+    } else if is_windows_reserved_filename_stem(trimmed) {
+        format!("image-{trimmed}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 pub fn sanitize_desktop_image_filename(raw: Option<&str>, ext: &str) -> String {
     let base = raw
         .unwrap_or_default()
@@ -450,7 +501,7 @@ pub fn sanitize_desktop_image_filename(raw: Option<&str>, ext: &str) -> String {
         .chars()
         .filter(|c| !c.is_control() && !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
         .collect();
-    let cleaned = cleaned.trim().trim_matches('.');
+    let cleaned = cleaned.trim_matches(|c: char| c.is_whitespace() || c == '.');
     let valid_exts: &[&str] = match ext {
         "jpg" => &["jpg", "jpeg"],
         "png" => &["png"],
@@ -462,27 +513,28 @@ pub fn sanitize_desktop_image_filename(raw: Option<&str>, ext: &str) -> String {
         "svg" => &["svg"],
         _ => &[ext],
     };
-    if cleaned.is_empty() || matches!(cleaned, "." | "..") {
+    if cleaned.is_empty() {
         return format!("image.{ext}");
     }
     if let Some((stem, existing_ext)) = cleaned.rsplit_once('.') {
         let lower = existing_ext.to_ascii_lowercase();
-        if !stem.is_empty() && valid_exts.contains(&lower.as_str()) {
-            let truncated_stem: String = stem.chars().take(110).collect();
-            return format!("{truncated_stem}.{existing_ext}");
+        let trimmed_stem = stem.trim_matches(|c: char| c.is_whitespace() || c == '.');
+        if !trimmed_stem.is_empty() && valid_exts.contains(&lower.as_str()) {
+            let safe_stem = finalize_desktop_image_stem(trimmed_stem);
+            return format!("{safe_stem}.{existing_ext}");
         }
-        if !stem.is_empty()
+        if !trimmed_stem.is_empty()
             && matches!(
                 lower.as_str(),
                 "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" | "ico" | "svg"
             )
         {
-            let truncated_stem: String = stem.chars().take(110).collect();
-            return format!("{truncated_stem}.{ext}");
+            let safe_stem = finalize_desktop_image_stem(trimmed_stem);
+            return format!("{safe_stem}.{ext}");
         }
     }
-    let truncated: String = cleaned.chars().take(110).collect();
-    format!("{truncated}.{ext}")
+    let safe_stem = finalize_desktop_image_stem(cleaned);
+    format!("{safe_stem}.{ext}")
 }
 
 pub fn unique_destination_path(dir: &Path, filename: &str) -> PathBuf {
@@ -552,46 +604,10 @@ fn prune_stale_preview_images(dir: &Path) {
 fn launch_local_file_with_system_app(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use windows_sys::Win32::{
-            System::Com::{
-                CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
-            },
-            UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-        };
-        let operation: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
-        let target: Vec<u16> = path
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let hr = unsafe {
-            CoInitializeEx(
-                std::ptr::null(),
-                (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
-            )
-        };
-        let result = unsafe {
-            ShellExecuteW(
-                std::ptr::null_mut(),
-                operation.as_ptr(),
-                target.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                SW_SHOWNORMAL,
-            )
-        };
-        if hr == 0 || hr == 1 {
-            unsafe {
-                CoUninitialize();
-            }
-        }
-        if result as isize <= 32 {
-            return Err(format!(
-                "Failed to open image in system viewer (ShellExecuteW: {})",
-                result as isize
-            ));
-        }
-        Ok(())
+        shell_execute_open(
+            &path.to_string_lossy(),
+            "Failed to open image in system viewer",
+        )
     }
     #[cfg(target_os = "macos")]
     {
@@ -723,6 +739,11 @@ async fn save_desktop_image(
 
         #[cfg(target_os = "macos")]
         if prompt == Some(true) {
+            static SAVE_IMAGE_PANEL_ACTIVE: AtomicBool = AtomicBool::new(false);
+            if SAVE_IMAGE_PANEL_ACTIVE.swap(true, Ordering::AcqRel) {
+                return Ok(None);
+            }
+            let _reset = AtomicFlagReset(&SAVE_IMAGE_PANEL_ACTIVE);
             let Some(chosen) =
                 macos_window::choose_save_image_path(&window, &safe_name, download_dir.as_deref())
             else {
@@ -1080,7 +1101,11 @@ fn decode_base64_std(input: &str) -> Result<Vec<u8>, &'static str> {
         return Err("invalid base64 length");
     }
     let mut out = Vec::with_capacity((compact.len() / 4) * 3);
+    let mut saw_padding = false;
     for chunk in compact.chunks_exact(4) {
+        if saw_padding {
+            return Err("invalid base64 padding");
+        }
         let mut vals = [0u8; 4];
         let mut pad = 0usize;
         for (i, &b) in chunk.iter().enumerate() {
@@ -1113,6 +1138,9 @@ fn decode_base64_std(input: &str) -> Result<Vec<u8>, &'static str> {
         }
         if pad < 1 {
             out.push((n & 0xff) as u8);
+        }
+        if pad > 0 {
+            saw_padding = true;
         }
     }
     Ok(out)
@@ -1652,14 +1680,15 @@ pub struct MacosMenuLabels {
 pub fn macos_menu_labels_for_language_tag(tag: &str) -> MacosMenuLabels {
     let lower = tag.trim().to_ascii_lowercase();
     if lower.starts_with("zh") {
-        if lower.contains("hant")
-            || lower.contains("-tw")
-            || lower.contains("_tw")
-            || lower.contains("-hk")
-            || lower.contains("_hk")
-            || lower.contains("-mo")
-            || lower.contains("_mo")
-        {
+        let is_traditional = lower.contains("hant")
+            || (!lower.contains("hans")
+                && (lower.contains("-tw")
+                    || lower.contains("_tw")
+                    || lower.contains("-hk")
+                    || lower.contains("_hk")
+                    || lower.contains("-mo")
+                    || lower.contains("_mo")));
+        if is_traditional {
             return MacosMenuLabels {
                 about: "關於 Pi^n",
                 services: "服務",
@@ -2334,6 +2363,11 @@ mod tests {
         assert_eq!(zh_tw.edit, "編輯");
         assert_eq!(zh_tw.quit, "結束 Pi^n");
 
+        // Explicit Hans script subtag takes precedence over regional HK/TW subtags.
+        let zh_hans_hk = macos_menu_labels_for_language_tag("zh-Hans-HK");
+        assert_eq!(zh_hans_hk.file, "文件");
+        assert_eq!(zh_hans_hk.quit, "退出 Pi^n");
+
         let en = macos_menu_labels_for_language_tag("en-US");
         assert_eq!(en.file, "File");
         assert_eq!(en.edit, "Edit");
@@ -2369,11 +2403,28 @@ mod tests {
             "photo.jpg"
         );
         assert_eq!(sanitize_desktop_image_filename(None, "webp"), "image.webp");
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("foo   .png"), "png"),
+            "foo.png"
+        );
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("CON.png"), "png"),
+            "image-CON.png"
+        );
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("nul"), "webp"),
+            "image-nul.webp"
+        );
+        assert_eq!(
+            sanitize_desktop_image_filename(Some("COM1.preview.png"), "png"),
+            "image-COM1.preview.png"
+        );
         let long_name = format!("{}.png", "a".repeat(140));
         let sanitized_long = sanitize_desktop_image_filename(Some(&long_name), "png");
         assert!(sanitized_long.ends_with(".png"));
         assert!(sanitized_long.chars().count() <= 114);
         assert!(decode_base64_image("AA==AAAA").is_err());
+        assert!(decode_base64_std("AA==AAAA").is_err());
 
         let temp = tempfile::tempdir().unwrap();
         let first = unique_destination_path(temp.path(), "shot.png");

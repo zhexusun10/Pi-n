@@ -703,6 +703,7 @@ fn persist(path: &Path, bytes: &[u8]) -> Result<(), String> {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
             .map_err(|e| e.to_string())?;
+        drop(file);
         fs::rename(&temporary, path).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         fs::File::open(parent)

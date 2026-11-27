@@ -36,6 +36,10 @@ test('invalid visibility updates and corrupt files fail without erasing saved ch
   assert.throws(() => readModelVisibility(dir));
   assert.throws(() => saveModelVisibility([{ model: 'b/model', hidden: true }], false, dir));
   assert.equal(readFileSync(join(dir, 'model-visibility.json'), 'utf8'), 'broken');
+  writeFileSync(join(dir, 'model-visibility.json'), 'null');
+  assert.throws(() => readModelVisibility(dir), /Invalid model visibility settings/);
+  writeFileSync(join(dir, 'model-visibility.json'), `\uFEFF${JSON.stringify({ hiddenModels: ['a/bom'] })}`);
+  assert.deepEqual(readModelVisibility(dir), { hiddenModels: ['a/bom'] });
 }));
 
 test('provider catalog projects hidden models without changing credential availability, across adapter restarts', async () => {
@@ -55,6 +59,7 @@ test('provider catalog projects hidden models without changing credential availa
     assert.equal(catalog.models[0].hidden, true);
     assert.equal(catalog.models[1].hidden, false);
     assert.deepEqual(await second.dispatch({ version: 1, operation: 'model_visibility' }), { hiddenModels: ['a/one'] });
+    await assert.rejects(() => second.dispatch(null), /Unsupported Provider\/Auth Adapter protocol version/);
     second.close();
   } finally {
     first.close();

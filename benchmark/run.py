@@ -5,6 +5,7 @@ This file runs INSIDE the Harbor task environment. It has no Harbor/Python deps.
 """
 
 import argparse
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -22,6 +23,7 @@ from urllib import error, request
 
 
 ROLE_MODELS = ("PARTITIONER_MODEL", "PLANNER_MODEL", "NODE_AGENT_MODEL", "MERGER_MODEL")
+ROLE_THINKING = ("PARTITIONER_THINKING", "PLANNER_THINKING", "NODE_AGENT_THINKING", "MERGER_THINKING")
 TERMINAL_FAILURES = {"needs_attention", "publication_failed", "rejected", "paused"}
 
 
@@ -47,13 +49,19 @@ def _parent_death_signal(parent_pid):
 
 def harbor_usage(result):
     """Map Pi's uncached/cache token buckets to Harbor's inclusive input count."""
+    if not isinstance(result, dict):
+        return None
     usage = (result.get("runMetrics") or {}).get("totalUsage")
     if not isinstance(usage, dict):
         return None
+    uncached = usage.get("input") or 0
+    cache_read = usage.get("cacheRead") or 0
+    cache_write = usage.get("cacheWrite") or 0
+    output = usage.get("output") or 0
     return {
-        "input": usage.get("input", 0) + usage.get("cacheRead", 0) + usage.get("cacheWrite", 0),
-        "cache": usage.get("cacheRead", 0),
-        "output": usage.get("output", 0),
+        "input": uncached + cache_read + cache_write,
+        "cache": cache_read,
+        "output": output,
     }
 
 
@@ -161,8 +169,8 @@ def retain_trace(data_dir, logs):
     database = source / "events.sqlite"
     if database.is_file() and not database.is_symlink():
         dest = trace / "events.sqlite"
-        with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as original, \
-             sqlite3.connect(dest) as backup:
+        with contextlib.closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)) as original, \
+             contextlib.closing(sqlite3.connect(dest)) as backup:
             original.backup(backup)
         manifest.append(dest)
     # Do not archive config.json, shadow_repos, runtime.lock or the private Pi
@@ -192,11 +200,14 @@ def observed_trace_usage(logs):
     for file in (logs / "trace").rglob("*.jsonl"):
         if file.is_symlink() or not file.is_file():
             continue
-        with file.open(encoding="utf-8") as stream:
+        with file.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 try:
                     record = json.loads(line)
                 except ValueError:
+                    invalid_lines += 1
+                    continue
+                if not isinstance(record, dict):
                     invalid_lines += 1
                     continue
                 if record.get("type") != "message":
@@ -252,8 +263,10 @@ def main(argv=None):
                     "PI_CODING_AGENT_DIR": pi_dir,
                     "PI_N_ISOLATED_PI_MODELS": "1"})
         # Avoid hidden .env or role-specific overrides silently changing the
-        # provider/model for the Partitioner, Planner, nodes or merger.
+        # provider/model or thinking level for Partitioner, Planner, nodes or merger.
         env.update({key: args.model for key in ROLE_MODELS})
+        for key in ROLE_THINKING:
+            env.pop(key, None)
         with (logs / "backend.log").open("w", encoding="utf-8") as output:
             process = subprocess.Popen([args.binary], cwd=data_dir, env=env,
                                        stdout=output, stderr=subprocess.STDOUT,
@@ -297,17 +310,23 @@ def main(argv=None):
                 signal.signal(signal.SIGTERM, signal.SIG_IGN)
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
                 if process.poll() is None:
-                    if os.name == "posix":
-                        os.killpg(process.pid, signal.SIGTERM)
-                    else:
-                        process.terminate()
+                    try:
+                        if os.name == "posix":
+                            os.killpg(process.pid, signal.SIGTERM)
+                        else:
+                            process.terminate()
+                    except ProcessLookupError:
+                        pass
                     try:
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        if os.name == "posix":
-                            os.killpg(process.pid, signal.SIGKILL)
-                        else:
-                            process.kill()
+                        try:
+                            if os.name == "posix":
+                                os.killpg(process.pid, signal.SIGKILL)
+                            else:
+                                process.kill()
+                        except ProcessLookupError:
+                            pass
                         process.wait()
                 # The runtime directory is deleted at the end of the trial.
                 # Fail closed if archiving fails rather than report an

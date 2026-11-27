@@ -171,11 +171,20 @@ pub(crate) fn clear_owner_stop(owner: &str) {
         stopped.remove(owner);
     }
 }
+fn owner_matches_scope(owner: &str, scope: &str) -> bool {
+    owner == scope
+        || (!scope.is_empty()
+            && owner
+                .strip_prefix(scope)
+                .is_some_and(|rest| rest.starts_with(':')))
+}
+
 fn check_owner_stop(owner: &str) -> Result<(), String> {
     if stopped_owners()
         .lock()
         .map_err(|e| e.to_string())?
-        .contains(owner)
+        .iter()
+        .any(|stopped| owner_matches_scope(owner, stopped))
     {
         return Err("Execution paused by user".into());
     }
@@ -360,8 +369,8 @@ pub fn track(child: &Child) -> Result<ProcessTree, String> {
     if results()
         .lock()
         .map_err(|e| e.to_string())?
-        .get(&owner)
-        .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        .iter()
+        .any(|(run, flag)| owner_matches_scope(&owner, run) && flag.load(Ordering::SeqCst))
     {
         tree.terminate();
         return Err("Native result execution cancelled before process registration".into());
@@ -1590,5 +1599,18 @@ const ready=setInterval(()=>{if(fs.existsSync(started)){clearInterval(ready);cle
         tree.terminate();
         let status = child.wait().unwrap();
         assert!(!status.success());
+    }
+
+    #[test]
+    fn parent_owner_stop_blocks_child_scoped_owners_without_affecting_siblings() {
+        let run = format!("hier-stop-{}", uuid::Uuid::new_v4());
+        let child = execution_owner(&run, "node-a", "exec-1");
+        let sibling = format!("{run}0:node:node-a:execution:exec-1");
+        stop_owner(&run).unwrap();
+        let child_res = with_owner(&child, check_current_owner_stop);
+        let sibling_res = with_owner(&sibling, check_current_owner_stop);
+        clear_owner_stop(&run);
+        assert!(child_res.is_err());
+        assert!(sibling_res.is_ok());
     }
 }

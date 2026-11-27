@@ -484,7 +484,7 @@ fn home_dir_for_expansion() -> Option<PathBuf> {
     let value = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
     #[cfg(not(windows))]
     let value = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-    value.map(PathBuf::from)
+    value.map(|value| normalize_windows_path(PathBuf::from(value)))
 }
 
 /// Bind temporary files to the session for private execution processes. Source
@@ -1198,6 +1198,8 @@ pub(crate) fn execution_command_scoped(
     read_only_data: &[PathBuf],
 ) -> Result<Command, String> {
     validate_workspace(role, repository, cwd)?;
+    let source = crate::path_identity::actual_path(repository).map_err(|e| e.to_string())?;
+    let current = crate::path_identity::actual_path(cwd).map_err(|e| e.to_string())?;
     let mut allowances = Vec::new();
     for workspace in workspaces {
         if role != PiRole::Planner {
@@ -1205,7 +1207,6 @@ pub(crate) fn execution_command_scoped(
         }
         validate_workspace(role, repository, workspace)?;
         let target = crate::path_identity::actual_path(workspace).map_err(|e| e.to_string())?;
-        let current = crate::path_identity::actual_path(cwd).map_err(|e| e.to_string())?;
         if target.parent() != current.parent() {
             return Err("Planner workspace belongs to a different physical Run owner".into());
         }
@@ -1217,16 +1218,13 @@ pub(crate) fn execution_command_scoped(
             allowances.push(target);
         }
     }
-    let bound_source = crate::path_identity::actual_path(repository).map_err(|e| e.to_string())?;
     let bound_data = crate::path_identity::actual_path(data).map_err(|e| e.to_string())?;
     let bound_session = crate::path_identity::actual_path(session).map_err(|e| e.to_string())?;
-    if crate::workspace::scope_contains(&bound_data, &bound_source)
-        || crate::workspace::scope_contains(&bound_session, &bound_source)
+    if crate::workspace::scope_contains(&bound_data, &source)
+        || crate::workspace::scope_contains(&bound_session, &source)
     {
         return Err("Agent runtime/session data must be outside the source project; existing data is retained, not migrated".into());
     }
-    let source = crate::path_identity::actual_path(repository).map_err(|e| e.to_string())?;
-    let current = crate::path_identity::actual_path(cwd).map_err(|e| e.to_string())?;
     if crate::path_identity::same_path(&source, &current) {
         return command(role, &source, &current);
     }

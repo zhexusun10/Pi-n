@@ -3,6 +3,7 @@
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -42,7 +43,8 @@ static char kPiNTrafficLightControllerKey;
 }
 
 - (void)dealloc {
-    [self unregisterObservers];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    _observedTitlebarView = nil;
 }
 
 - (void)registerObservers {
@@ -230,6 +232,11 @@ static char kPiNTrafficLightControllerKey;
     [minBtn setBoundsSize:self.origBoundsSize];
     [zoomBtn setFrame:self.origZoomFrame];
     [zoomBtn setBoundsSize:self.origBoundsSize];
+    NSView *themeFrame = window.contentView.superview;
+    if (themeFrame != nil && self.customGroupTrackingArea != nil) {
+        [themeFrame removeTrackingArea:self.customGroupTrackingArea];
+        self.customGroupTrackingArea = nil;
+    }
     self.isApplying = NO;
 }
 
@@ -272,15 +279,18 @@ static char kPiNTrafficLightControllerKey;
     );
 
     CGFloat titlebarHeight = titlebarView.bounds.size.height;
+    if (titlebarHeight <= 0.0) {
+        return;
+    }
     CGFloat centerY = titlebarView.isFlipped
         ? kPiNTrafficLightCenterYFromTop
         : (titlebarHeight - kPiNTrafficLightCenterYFromTop);
     CGFloat frameY = centerY - scaledFrameSize.height * 0.5;
-    if (frameY < 0.0) {
-        frameY = 0.0;
-    }
     if (frameY + scaledFrameSize.height > titlebarHeight) {
         frameY = titlebarHeight - scaledFrameSize.height;
+    }
+    if (frameY < 0.0) {
+        frameY = 0.0;
     }
 
     CGFloat firstCenterX = kPiNTrafficLightLeftMargin + kPiNTargetTrafficLightDiameter * 0.5;
@@ -347,6 +357,10 @@ void pi_n_macos_configure_traffic_lights(void *ns_window_ptr) {
     }
 }
 
+bool pi_n_macos_is_main_thread(void) {
+    return [NSThread isMainThread] ? true : false;
+}
+
 // Returns 1 for Simplified Chinese, 2 for Traditional Chinese, 0 otherwise,
 // following macOS System Settings -> Language & Region preferred languages.
 int pi_n_macos_preferred_menu_language(void) {
@@ -357,8 +371,13 @@ int pi_n_macos_preferred_menu_language(void) {
         }
         NSString *primary = [languages.firstObject lowercaseString];
         if ([primary hasPrefix:@"zh"]) {
-            if ([primary containsString:@"hant"] ||
-                [primary containsString:@"-tw"] ||
+            if ([primary containsString:@"hant"]) {
+                return 2;
+            }
+            if ([primary containsString:@"hans"]) {
+                return 1;
+            }
+            if ([primary containsString:@"-tw"] ||
                 [primary containsString:@"_tw"] ||
                 [primary containsString:@"-hk"] ||
                 [primary containsString:@"_hk"] ||
@@ -415,29 +434,42 @@ static void pi_n_run_open_panel_as_sheet(
         return;
     }
     @autoreleasepool {
-        NSOpenPanel *panel = [NSOpenPanel openPanel];
-        if (panel == nil) {
-            completionHandler(nil);
-            return;
-        }
-        panel.canChooseFiles = YES;
-        panel.allowsMultipleSelection = parameters.allowsMultipleSelection;
-        panel.canChooseDirectories = parameters.allowsDirectories;
+        __block BOOL completed = NO;
+        void (^completeOnce)(NSArray<NSURL *> * _Nullable) = ^(NSArray<NSURL *> * _Nullable urls) {
+            if (completed) {
+                return;
+            }
+            completed = YES;
+            completionHandler(urls);
+        };
+        @try {
+            NSOpenPanel *panel = [NSOpenPanel openPanel];
+            if (panel == nil) {
+                completeOnce(nil);
+                return;
+            }
+            panel.canChooseFiles = YES;
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection;
+            panel.canChooseDirectories = parameters.allowsDirectories;
 
-        NSWindow *hostWindow = pi_n_resolve_host_window(webView.window);
-        if (hostWindow != nil) {
-            [panel beginSheetModalForWindow:hostWindow
-                          completionHandler:^(NSModalResponse response) {
-                if (response == NSModalResponseOK) {
-                    completionHandler(panel.URLs);
-                } else {
-                    completionHandler(nil);
-                }
-            }];
-        } else if ([panel runModal] == NSModalResponseOK) {
-            completionHandler(panel.URLs);
-        } else {
-            completionHandler(nil);
+            NSWindow *hostWindow = pi_n_resolve_host_window(webView.window);
+            if (hostWindow != nil) {
+                [panel beginSheetModalForWindow:hostWindow
+                              completionHandler:^(NSModalResponse response) {
+                    completeOnce(response == NSModalResponseOK ? panel.URLs : nil);
+                }];
+            } else if ([panel runModal] == NSModalResponseOK) {
+                completeOnce(panel.URLs);
+            } else {
+                completeOnce(nil);
+            }
+        } @catch (NSException *exception) {
+            fprintf(
+                stderr,
+                "[Pi^n-desktop] macOS WebView open panel exception: %s\n",
+                exception.reason ? exception.reason.UTF8String : "unknown"
+            );
+            completeOnce(nil);
         }
     }
 }
@@ -512,38 +544,47 @@ static void pi_n_begin_save_image_panel_on_main(
     PiNPathPanelCallback callback
 ) {
     @autoreleasepool {
-        NSSavePanel *panel = [NSSavePanel savePanel];
-        if (panel == nil) {
-            pi_n_invoke_path_callback(callback, context, nil);
-            return;
-        }
-        panel.canCreateDirectories = YES;
-        if (defaultName != nil && defaultName.length > 0) {
-            panel.nameFieldStringValue = defaultName;
-        }
-        if (defaultDir != nil && defaultDir.length > 0) {
-            BOOL isDir = NO;
-            if ([[NSFileManager defaultManager] fileExistsAtPath:defaultDir isDirectory:&isDir] && isDir) {
-                panel.directoryURL = [NSURL fileURLWithPath:defaultDir isDirectory:YES];
+        __block BOOL completed = NO;
+        void (^completeOnce)(NSURL * _Nullable) = ^(NSURL * _Nullable url) {
+            if (completed) {
+                return;
             }
-        }
-        NSWindow *hostWindow = pi_n_resolve_host_window(preferredWindow);
-        if (hostWindow != nil) {
-            [panel beginSheetModalForWindow:hostWindow
-                          completionHandler:^(NSModalResponse response) {
-                pi_n_invoke_path_callback(
-                    callback,
-                    context,
-                    response == NSModalResponseOK ? panel.URL : nil
-                );
-            }];
-        } else {
-            NSModalResponse response = [panel runModal];
-            pi_n_invoke_path_callback(
-                callback,
-                context,
-                response == NSModalResponseOK ? panel.URL : nil
+            completed = YES;
+            pi_n_invoke_path_callback(callback, context, url);
+        };
+        @try {
+            NSSavePanel *panel = [NSSavePanel savePanel];
+            if (panel == nil) {
+                completeOnce(nil);
+                return;
+            }
+            panel.canCreateDirectories = YES;
+            if (defaultName != nil && defaultName.length > 0) {
+                panel.nameFieldStringValue = defaultName;
+            }
+            if (defaultDir != nil && defaultDir.length > 0) {
+                BOOL isDir = NO;
+                if ([[NSFileManager defaultManager] fileExistsAtPath:defaultDir isDirectory:&isDir] && isDir) {
+                    panel.directoryURL = [NSURL fileURLWithPath:defaultDir isDirectory:YES];
+                }
+            }
+            NSWindow *hostWindow = pi_n_resolve_host_window(preferredWindow);
+            if (hostWindow != nil) {
+                [panel beginSheetModalForWindow:hostWindow
+                              completionHandler:^(NSModalResponse response) {
+                    completeOnce(response == NSModalResponseOK ? panel.URL : nil);
+                }];
+            } else {
+                NSModalResponse response = [panel runModal];
+                completeOnce(response == NSModalResponseOK ? panel.URL : nil);
+            }
+        } @catch (NSException *exception) {
+            fprintf(
+                stderr,
+                "[Pi^n-desktop] macOS save panel exception: %s\n",
+                exception.reason ? exception.reason.UTF8String : "unknown"
             );
+            completeOnce(nil);
         }
     }
 }
@@ -579,35 +620,44 @@ static void pi_n_begin_pick_folder_panel_on_main(
     PiNPathPanelCallback callback
 ) {
     @autoreleasepool {
-        NSOpenPanel *panel = [NSOpenPanel openPanel];
-        if (panel == nil) {
-            pi_n_invoke_path_callback(callback, context, nil);
-            return;
-        }
-        panel.canChooseFiles = NO;
-        panel.canChooseDirectories = YES;
-        panel.allowsMultipleSelection = NO;
-        panel.canCreateDirectories = YES;
-        if (prompt != nil && prompt.length > 0) {
-            panel.message = prompt;
-        }
-        NSWindow *hostWindow = pi_n_resolve_host_window(preferredWindow);
-        if (hostWindow != nil) {
-            [panel beginSheetModalForWindow:hostWindow
-                          completionHandler:^(NSModalResponse response) {
-                pi_n_invoke_path_callback(
-                    callback,
-                    context,
-                    response == NSModalResponseOK ? panel.URL : nil
-                );
-            }];
-        } else {
-            NSModalResponse response = [panel runModal];
-            pi_n_invoke_path_callback(
-                callback,
-                context,
-                response == NSModalResponseOK ? panel.URL : nil
+        __block BOOL completed = NO;
+        void (^completeOnce)(NSURL * _Nullable) = ^(NSURL * _Nullable url) {
+            if (completed) {
+                return;
+            }
+            completed = YES;
+            pi_n_invoke_path_callback(callback, context, url);
+        };
+        @try {
+            NSOpenPanel *panel = [NSOpenPanel openPanel];
+            if (panel == nil) {
+                completeOnce(nil);
+                return;
+            }
+            panel.canChooseFiles = NO;
+            panel.canChooseDirectories = YES;
+            panel.allowsMultipleSelection = NO;
+            panel.canCreateDirectories = YES;
+            if (prompt != nil && prompt.length > 0) {
+                panel.message = prompt;
+            }
+            NSWindow *hostWindow = pi_n_resolve_host_window(preferredWindow);
+            if (hostWindow != nil) {
+                [panel beginSheetModalForWindow:hostWindow
+                              completionHandler:^(NSModalResponse response) {
+                    completeOnce(response == NSModalResponseOK ? panel.URL : nil);
+                }];
+            } else {
+                NSModalResponse response = [panel runModal];
+                completeOnce(response == NSModalResponseOK ? panel.URL : nil);
+            }
+        } @catch (NSException *exception) {
+            fprintf(
+                stderr,
+                "[Pi^n-desktop] macOS folder picker exception: %s\n",
+                exception.reason ? exception.reason.UTF8String : "unknown"
             );
+            completeOnce(nil);
         }
     }
 }

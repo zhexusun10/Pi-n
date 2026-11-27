@@ -738,27 +738,39 @@
 .chat-bubble-user-expand-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--user-bubble-border);
+  gap: 4px;
+  margin: 6px 0 -2px -6px;
 }
 
 .chat-bubble-user-expand-btn {
-  padding: 2px 8px;
-  border: 1px solid var(--user-bubble-border);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 0;
   border-radius: 6px;
-  background: var(--user-bubble-expand-btn-bg);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 500;
   line-height: 1.5;
   cursor: pointer;
   transition: background-color 0.14s ease, color 0.14s ease;
 }
 
+.chat-bubble-user-expand-btn svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
 .chat-bubble-user-expand-btn:hover {
-  background: var(--bg-surface-hover);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: var(--text-primary);
+}
+
+.chat-bubble-user-expand-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
 }
 
 .planner-steer-list {

@@ -13,6 +13,7 @@
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     future::Future,
+    panic::{catch_unwind, AssertUnwindSafe},
     pin::Pin,
     sync::{Arc, Mutex, OnceLock},
     task::{Context, Poll, Waker},
@@ -85,22 +86,24 @@ extern "C" {
 
 #[no_mangle]
 pub extern "C" fn pi_n_macos_notification_clicked(run_id_utf8: *const c_char) {
-    let run_id = if run_id_utf8.is_null() {
-        None
-    } else {
-        let raw = unsafe { CStr::from_ptr(run_id_utf8) }
-            .to_string_lossy()
-            .trim()
-            .to_string();
-        if raw.is_empty() {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let run_id = if run_id_utf8.is_null() {
             None
         } else {
-            Some(raw)
+            let raw = unsafe { CStr::from_ptr(run_id_utf8) }
+                .to_string_lossy()
+                .trim()
+                .to_string();
+            if raw.is_empty() {
+                None
+            } else {
+                Some(raw)
+            }
+        };
+        if let Some(app_handle) = APP_HANDLE.get() {
+            crate::handle_desktop_notification_clicked(app_handle, run_id);
         }
-    };
-    if let Some(app_handle) = APP_HANDLE.get() {
-        crate::handle_desktop_notification_clicked(app_handle, run_id);
-    }
+    }));
 }
 
 struct CallbackState<T> {
@@ -153,29 +156,33 @@ impl<T> Future for CallbackFuture<T> {
 }
 
 extern "C" fn on_status_callback(ctx: *mut c_void, status: i32) {
-    CallbackFuture::<MacosNotificationPermission>::complete(
-        ctx,
-        MacosNotificationPermission::from_code(status),
-    );
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        CallbackFuture::<MacosNotificationPermission>::complete(
+            ctx,
+            MacosNotificationPermission::from_code(status),
+        );
+    }));
 }
 
 extern "C" fn on_deliver_callback(ctx: *mut c_void, result: i32, error_msg: *const c_char) {
-    let outcome = match result {
-        DELIVER_SENT => MacosNotificationDelivery::Delivered,
-        DELIVER_DENIED => MacosNotificationDelivery::PermissionDenied,
-        DELIVER_UNAVAILABLE => MacosNotificationDelivery::Unavailable,
-        DELIVER_ERROR | _ => {
-            let message = if error_msg.is_null() {
-                "Failed to deliver macOS notification".to_string()
-            } else {
-                unsafe { CStr::from_ptr(error_msg) }
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            MacosNotificationDelivery::Failed(message)
-        }
-    };
-    CallbackFuture::<MacosNotificationDelivery>::complete(ctx, outcome);
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let outcome = match result {
+            DELIVER_SENT => MacosNotificationDelivery::Delivered,
+            DELIVER_DENIED => MacosNotificationDelivery::PermissionDenied,
+            DELIVER_UNAVAILABLE => MacosNotificationDelivery::Unavailable,
+            DELIVER_ERROR | _ => {
+                let message = if error_msg.is_null() {
+                    "Failed to deliver macOS notification".to_string()
+                } else {
+                    unsafe { CStr::from_ptr(error_msg) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                MacosNotificationDelivery::Failed(message)
+            }
+        };
+        CallbackFuture::<MacosNotificationDelivery>::complete(ctx, outcome);
+    }));
 }
 
 /// Installs the `UNUserNotificationCenterDelegate` early during app startup and

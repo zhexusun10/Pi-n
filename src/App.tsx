@@ -2087,7 +2087,19 @@ export default function App() {
     if (scope.runId !== (state.runId || undefined) || displayedRunIdRef.current !== state.runId) throw new Error(t("会话已切换，请重试。"));
     settingsReadGeneration.current += 1;
     if (!scope.runId) {
+      // The home composer's choice is remembered as the default for new
+      // conversations, across restarts.
+      const nextConfig = updateRoleModelConfig(config, scope.role, settings);
+      const boot = await runtimeService.saveConfig(nextConfig);
+      if (generation !== foregroundGeneration.current || displayedRunIdRef.current !== state.runId) return;
+      const persisted = {
+        ...boot.config,
+        maxFeedback: normalizeMaxFeedback(boot.config.maxFeedback),
+        maxParallel: normalizeMaxParallel(boot.config.maxParallel),
+      };
+      setDefaultSettings(persisted);
       setConfig(previous => updateRoleModelConfig(previous, scope.role, settings));
+      writeStorageJson(STORAGE_KEYS.config, applyModelConfig(nextConfig, persisted));
       return;
     }
     const snapshot = await runtimeService.composerModels({ ...scope, settings });

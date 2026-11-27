@@ -170,7 +170,7 @@ export function SearchModal({
   );
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "ArrowDown") {
       if (matches.length === 0) return;
       event.preventDefault();

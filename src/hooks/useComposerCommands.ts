@@ -74,7 +74,7 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
   const active = useRef<CommandSession | null>(null);
   const generation = useRef(0);
-  const effectiveConfig = context && modelNode && context.snapshot.nodes[modelNode]?.modelOverride
+  const effectiveConfig = context && modelNode && context.snapshot.nodes[modelNode]?.modelOverride && context.snapshot.nodes[modelNode]?.modelConfig
     ? updateRoleModelConfig(context.config, role, context.snapshot.nodes[modelNode].modelConfig!) : context?.config;
   const settings = effectiveConfig ? roleModelConfig(effectiveConfig, role, context?.envOverrides)
     : { model: "", thinkingLevel: "low" as ThinkingLevel };

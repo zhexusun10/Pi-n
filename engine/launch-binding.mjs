@@ -205,7 +205,8 @@ export function applyLaunchBinding(file = process.env.PI_N_LAUNCH_BINDING) {
   const protectedKeys = key => /^(PI_N_|PI_|GIT_)/i.test(key)
     || key.toUpperCase() === 'PYTHONDONTWRITEBYTECODE'
     || /^(PATH|NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|OLDPWD|GLOBIGNORE)$/i.test(key);
-  if (!isNativeAbsolute(launch.entry) ||
+  if (!launch || typeof launch !== 'object' || Array.isArray(launch) ||
+      !isNativeAbsolute(launch.entry) ||
       !isNativeAbsolute(launch.shell) || !existsSync(launch.shell) ||
       !Array.isArray(launch.path) || !launch.path.length || !launch.path.every(value => typeof value === 'string' && !value.includes('\0') && (launch.unboundPath != null || isNativeAbsolute(value))) ||
       launch.unboundPath != null && (!Array.isArray(launch.unboundPath) || !launch.unboundPath.length || !launch.unboundPath.every(value => typeof value === 'string' && !value.includes('\0'))) ||
@@ -222,8 +223,9 @@ export function applyLaunchBinding(file = process.env.PI_N_LAUNCH_BINDING) {
   process.env.PATH = joinNativePath(launch.path);
   const loaders = JSON.parse(process.env.PI_N_BUSINESS_LOADER_ENV || '{}');
   delete process.env.PI_N_BUSINESS_LOADER_ENV;
+  if (!loaders || typeof loaders !== 'object' || Array.isArray(loaders)) throw new Error('Invalid transient business loader binding');
   for (const [key, value] of Object.entries(loaders)) {
-    if (!/^(LD_|DYLD_)/i.test(key) || typeof value !== 'string') throw new Error('Invalid transient business loader binding');
+    if (!/^(LD_|DYLD_)/i.test(key) || typeof value !== 'string' || value.includes('\0')) throw new Error('Invalid transient business loader binding');
     process.env[key] = value;
   }
   const nodeEnvironment = JSON.parse(process.env.PI_N_BUSINESS_NODE_ENV || '{}');
@@ -338,13 +340,34 @@ function modelShellScratch(env) {
   }
   return undefined;
 }
+const tempEnvKeys = ['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR'];
+const tempEnvKeySet = new Set(tempEnvKeys);
+function assignEnv(target, ...sources) {
+  if (process.platform === 'win32') {
+    const incoming = new Set();
+    for (const source of sources) {
+      for (const key of Object.keys(source)) incoming.add(key.toUpperCase());
+    }
+    if (incoming.size) {
+      for (const key of Object.keys(target)) {
+        if (incoming.has(key.toUpperCase())) delete target[key];
+      }
+    }
+  }
+  Object.assign(target, ...sources);
+}
 /** Strip Pi^n-owned and selected Pi paths; returns an optional temp scratch to create. */
 export function scrubModelShellEnvironment(env, { useCacheScratch = true } = {}) {
   const scratch = useCacheScratch ? modelShellScratch(env) : undefined;
   for (const key of Object.keys(env)) {
-    if (piNInternalKey.test(key) || hiddenModelKeys.has(key.toUpperCase())) delete env[key];
+    const upper = key.toUpperCase();
+    if (piNInternalKey.test(key) || hiddenModelKeys.has(upper)) {
+      delete env[key];
+    } else if (process.platform === 'win32' && tempEnvKeySet.has(upper)) {
+      if (scratch || hasDataPathComponent(env[key])) delete env[key];
+    }
   }
-  for (const key of ['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR']) {
+  for (const key of tempEnvKeys) {
     if (scratch) env[key] = scratch;
     else if (hasDataPathComponent(env[key])) delete env[key];
   }
@@ -374,8 +397,12 @@ export function managedBashOptions(options, managed = false) {
     for (const key of Object.keys(env)) if (/^PATH$/i.test(key)) delete env[key];
     env.PATH = activePath;
   }
-  Object.assign(env, runtimeEnvironment, deviceEnvironment);
-  const originalTemp = Object.fromEntries(['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR'].map(key => [key, env[key]]));
+  assignEnv(env, runtimeEnvironment, deviceEnvironment);
+  const originalTemp = Object.fromEntries(tempEnvKeys.map(key => {
+    if (process.platform !== 'win32' || Object.hasOwn(env, key)) return [key, env[key]];
+    const match = Object.keys(env).find(name => name.toUpperCase() === key);
+    return [key, match ? env[match] : undefined];
+  }));
   const sourceNativeNode = process.env.PI_N_MODE === 'node'
     && process.env.PI_N_AGENT_KIND === 'node'
     && process.env.PI_N_EXECUTION_KIND === 'source';
@@ -390,7 +417,7 @@ export function managedBashOptions(options, managed = false) {
     // the leaf is created here.
     try { mkdirSync(toHostInput(scratch), { recursive: true, mode: 0o700 }); }
     catch {
-      for (const key of ['TMPDIR', 'TMP', 'TEMP', 'XDG_RUNTIME_DIR']) {
+      for (const key of tempEnvKeys) {
         const value = originalTemp[key];
         if (typeof value === 'string' && !hasDataPathComponent(value)) env[key] = value;
         else delete env[key];

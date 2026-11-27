@@ -14,12 +14,14 @@ import {
   prepareVisionImageAttachment,
 } from '../src/utils/imageCompress.ts';
 import {
+  copyImageToClipboard,
   downloadImage,
   openImageInNewWindow,
   saveImageAs,
   suggestImageFilename,
 } from '../src/services/imageActions.ts';
 import {
+  getRegisteredImageBlob,
   registerImageBlobUrl,
   unregisterImageBlobUrl,
 } from '../src/services/originalImagePreview.ts';
@@ -585,5 +587,110 @@ test('imageActions suggests clean filenames and delegates download/save-as/open 
     if (prevFetch === undefined) delete host.fetch;
     else host.fetch = prevFetch;
     if (prevNavigator) Object.defineProperty(host, 'navigator', prevNavigator);
+  }
+});
+
+test('copyImageToClipboard invokes navigator.clipboard.write synchronously for WebKit gesture preservation and falls back cleanly', async () => {
+  const host = globalThis as Record<string, unknown>;
+  const prevNavigator = Object.getOwnPropertyDescriptor(host, 'navigator');
+  const prevClipboardItem = host.ClipboardItem;
+  const prevFetch = host.fetch;
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  let resolveFetch!: (response: Response) => void;
+  let clipboardWriteCalledSync = false;
+  let writtenItems: unknown[] = [];
+
+  class FakeClipboardItem {
+    items: Record<string, Blob | Promise<Blob>>;
+    constructor(items: Record<string, Blob | Promise<Blob>>) {
+      this.items = items;
+    }
+  }
+
+  try {
+    host.ClipboardItem = FakeClipboardItem;
+    const fetchStarted = new Promise<void>((resolve) => {
+      host.fetch = () => {
+        resolve();
+        return new Promise<Response>((res) => { resolveFetch = res; });
+      };
+    });
+    Object.defineProperty(host, 'navigator', {
+      configurable: true,
+      value: {
+        clipboard: {
+          write: async (items: unknown[]) => {
+            clipboardWriteCalledSync = true;
+            writtenItems = items;
+            const entry = (items[0] as FakeClipboardItem).items['image/png'];
+            const blob = await entry;
+            assert.equal(blob.type, 'image/png');
+          },
+        },
+      },
+    });
+
+    const copyPromise = copyImageToClipboard({ src: 'https://example.test/shot.png' });
+    // Must call navigator.clipboard.write before fetch resolves so Safari/WKWebView retains user activation.
+    assert.equal(clipboardWriteCalledSync, true);
+    assert.equal(writtenItems.length, 1);
+    assert.ok((writtenItems[0] as FakeClipboardItem).items['image/png'] instanceof Promise);
+
+    await fetchStarted;
+    resolveFetch(new Response(pngBytes, { headers: { 'Content-Type': 'image/png' } }));
+    assert.equal(await copyPromise, true);
+
+    // Fallback path when ClipboardItem rejects a Promise value.
+    let attempts = 0;
+    class SyncOnlyClipboardItem {
+      items: Record<string, Blob>;
+      constructor(items: Record<string, Blob | Promise<Blob>>) {
+        attempts += 1;
+        if (items['image/png'] instanceof Promise) {
+          throw new TypeError('Promise not supported');
+        }
+        this.items = items as Record<string, Blob>;
+      }
+    }
+    host.ClipboardItem = SyncOnlyClipboardItem;
+    host.fetch = async () => new Response(pngBytes, { headers: { 'Content-Type': 'image/png' } });
+    assert.equal(await copyImageToClipboard({ src: 'https://example.test/shot.png' }), true);
+    assert.equal(attempts, 2);
+  } finally {
+    if (prevNavigator) Object.defineProperty(host, 'navigator', prevNavigator);
+    else delete host.navigator;
+    if (prevClipboardItem === undefined) delete host.ClipboardItem;
+    else host.ClipboardItem = prevClipboardItem;
+    if (prevFetch === undefined) delete host.fetch;
+    else host.fetch = prevFetch;
+  }
+});
+
+test('ComposerDrafts.clearAllAttachments revokes object URLs and unregisters blobs across all keys', () => {
+  const prevRevoke = URL.revokeObjectURL;
+  const revoked: string[] = [];
+  URL.revokeObjectURL = (url: string) => { revoked.push(url); };
+  try {
+    const drafts = new ComposerDrafts();
+    const fileA = new File(['a'], 'a.png', { type: 'image/png' });
+    const fileB = new File(['b'], 'b.png', { type: 'image/png' });
+    const urlA = registerImageBlobUrl('blob:test/clear-all-a', fileA);
+    const urlB = registerImageBlobUrl('blob:test/clear-all-b', fileB);
+    drafts.addAttachments('k1', [{ file: fileA, imagePreview: urlA, previewIsObjectUrl: true, attachmentId: 'a1' }]);
+    drafts.addAttachments('k2', [{ file: fileB, imagePreview: urlB, previewIsObjectUrl: true, attachmentId: 'b1' }]);
+
+    assert.equal(getRegisteredImageBlob(urlA), fileA);
+    assert.equal(getRegisteredImageBlob(urlB), fileB);
+
+    drafts.clearAllAttachments();
+
+    assert.deepEqual(revoked.sort(), [urlA, urlB]);
+    assert.equal(getRegisteredImageBlob(urlA), null);
+    assert.equal(getRegisteredImageBlob(urlB), null);
+    assert.equal(drafts.attachments('k1').length, 0);
+    assert.equal(drafts.attachments('k2').length, 0);
+  } finally {
+    URL.revokeObjectURL = prevRevoke;
   }
 });

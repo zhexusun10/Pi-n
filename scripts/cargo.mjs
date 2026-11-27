@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { constants, homedir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APPLE_COMMAND_LINE_TOOLS = "/Library/Developer/CommandLineTools";
@@ -175,7 +175,7 @@ export function cargoTestEnv(base = process.env) {
   return env;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const args = process.argv.slice(2);
   const child = spawn(cargoExecutable(), args, {
     env: args[0] === "test" ? cargoTestEnv() : toolchainEnv(),
@@ -195,6 +195,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exitCode = 1;
   });
   child.on("exit", (code, signal) => {
-    process.exitCode = code ?? (signal === "SIGINT" ? 130 : 143);
+    if (signal) process.exitCode = 128 + (constants.signals[signal] ?? 1);
+    else process.exitCode = code ?? 1;
   });
 }

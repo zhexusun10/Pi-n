@@ -4,6 +4,7 @@ import { runPiCli, preparePiCli } from './pi-compat.ts';
 import { flushRuntimeCompileCache } from '../scripts/pi-baseline.mjs';
 import { executionResources } from './global-extensions.ts';
 import { applyLaunchBinding, managedLaunch, managedBashOptions } from './launch-binding.mjs';
+import { resolveAgentDir } from './agent-dir.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 
 configureExecutionRetries();
@@ -33,7 +34,7 @@ if (args[0] === '--pi-n-run-result') {
       if (process.platform === 'win32' && child.pid) {
         try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
       } else {
-        child.kill(signal);
+        try { child.kill(signal); } catch {}
       }
     });
   }
@@ -46,5 +47,5 @@ if (args[0] === '--pi-n-run-result') {
 const standalone = args.some(arg => ['--version', '-v', '--help', '-h'].includes(arg)) ||
   ['install', 'remove', 'update', 'list', 'config', 'mcp', 'auth'].includes(args[0]);
 if (!standalone) applyLaunchBinding();
-const resources = standalone ? { args } : await executionResources(args, process.env.PI_CODING_AGENT_DIR!, process.env.PI_N_MODE || 'node');
+const resources = standalone ? { args } : await executionResources(args, resolveAgentDir(), process.env.PI_N_MODE || 'node');
 await runPiCli(resources.args, { extensionFactories: 'extensionFactories' in resources ? resources.extensionFactories : [] });

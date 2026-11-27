@@ -46,8 +46,11 @@ async function until(check, message, timeout = 120_000) {
 async function stop(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const exited = once(child, 'exit');
-  if (process.platform === 'win32') command('taskkill', ['/PID', String(child.pid), '/T', '/F']);
-  else { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
+  if (process.platform === 'win32') {
+    try { command('taskkill', ['/PID', String(child.pid), '/T', '/F']); } catch {}
+  } else {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+  }
   await Promise.race([exited, sleep(10_000)]);
   assert.ok(child.exitCode !== null || child.signalCode !== null, 'backend failed to stop');
   children.delete(child);

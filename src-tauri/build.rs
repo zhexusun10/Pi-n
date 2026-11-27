@@ -7,7 +7,11 @@ fn decode_base64_std(input: &str) -> Result<Vec<u8>, &'static str> {
         return Err("invalid base64 length");
     }
     let mut out = Vec::with_capacity((compact.len() / 4) * 3);
+    let mut saw_padding = false;
     for chunk in compact.chunks_exact(4) {
+        if saw_padding {
+            return Err("invalid base64 padding");
+        }
         let mut vals = [0u8; 4];
         let mut pad = 0usize;
         for (i, &b) in chunk.iter().enumerate() {
@@ -40,6 +44,9 @@ fn decode_base64_std(input: &str) -> Result<Vec<u8>, &'static str> {
         }
         if pad < 1 {
             out.push((n & 0xff) as u8);
+        }
+        if pad > 0 {
+            saw_padding = true;
         }
     }
     Ok(out)

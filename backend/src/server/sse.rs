@@ -136,7 +136,7 @@ fn run_sse_coalescer(rx: std::sync::mpsc::Receiver<RuntimeSignal>) {
 }
 
 pub(super) fn notify_planning_output(run_id: &str, planning_id: &str) {
-    if ACTIVE_SSE_CLIENTS.load(Ordering::Relaxed) == 0 {
+    if ACTIVE_SSE_CLIENTS.load(Ordering::Acquire) == 0 {
         return;
     }
     let _ = sse_signal_sender().send(RuntimeSignal::PlanningOutputAvailable {
@@ -169,7 +169,7 @@ fn broadcast_sse_bytes(bytes: &[u8]) {
 }
 
 pub(crate) fn notify_snapshot_changed(run_id: &str, version: &str) {
-    if ACTIVE_SSE_CLIENTS.load(Ordering::Relaxed) == 0 {
+    if ACTIVE_SSE_CLIENTS.load(Ordering::Acquire) == 0 {
         return;
     }
     let _ = sse_signal_sender().send(RuntimeSignal::SnapshotChanged {
@@ -184,7 +184,7 @@ pub(crate) fn notify_output_available(
     total_bytes: usize,
     settled: bool,
 ) {
-    if ACTIVE_SSE_CLIENTS.load(Ordering::Relaxed) == 0 {
+    if ACTIVE_SSE_CLIENTS.load(Ordering::Acquire) == 0 {
         return;
     }
     let _ = sse_signal_sender().send(RuntimeSignal::OutputAvailable {

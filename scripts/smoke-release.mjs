@@ -137,7 +137,15 @@ try {
     }
     assert.fail(`${label}: the launcher must refuse to start without its prerequisites`);
   };
-  const launcherEnv = pathValue => ({ ...env, PATH: pathValue, PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+  const launcherEnv = pathValue => {
+    const next = { ...env };
+    for (const key of Object.keys(next)) {
+      if (/^(?:path|pathext)$/i.test(key)) delete next[key];
+    }
+    next.PATH = pathValue;
+    next.PATHEXT = '.COM;.EXE;.BAT;.CMD';
+    return next;
+  };
   if (platform === 'windows') {
     await failClosed('missing Node', launcherEnv(join(systemRoot, 'System32')), /\[ERROR\] Node\.js 22\.19\+ was not found on PATH\./);
     const nodeShim = shimDirectory('node');

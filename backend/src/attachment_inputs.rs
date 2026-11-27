@@ -318,12 +318,19 @@ fn verify_managed_path(
         return Err(reject_message.into());
     }
     let candidate = Path::new(target_path);
-    if !candidate.is_absolute() {
+    if !candidate.is_absolute()
+        || candidate.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
         return Err(reject_message.into());
     }
-    let normalized = target_path.replace('\\', "/");
+    let normalized = display_path(candidate);
     let marker = format!("/{BUCKET}/");
-    let Some((_, suffix)) = normalized.rsplit_once(&marker) else {
+    let Some((prefix, suffix)) = normalized.rsplit_once(&marker) else {
         return Err(reject_message.into());
     };
     let parts: Vec<&str> = suffix.split('/').collect();
@@ -345,17 +352,17 @@ fn verify_managed_path(
     let directory = attachment_directory(root, scope_run, id)?;
     let expected = directory.join(name);
     // Verify the supplied absolute path points at the exact managed location
-    // under `root` rather than another directory sharing an `attachment-inputs/` suffix.
-    let actual_root = crate::path_identity::actual_path(root).unwrap_or_else(|_| root.to_path_buf());
-    let expected_display = display_path(&actual_root.join(BUCKET).join(suffix));
-    let candidate_display = display_path(candidate);
-    let root_insensitive = crate::path_identity::case_insensitive_volume(&actual_root);
-    let matches = if root_insensitive {
-        expected_display.eq_ignore_ascii_case(&candidate_display)
+    // under `root` (honoring platform aliases such as macOS `/var` ->
+    // `/private/var`, NFC/NFD, and Windows 8.3/case spellings) rather than
+    // another directory sharing an `attachment-inputs/` suffix.
+    let prefix_root = if prefix.is_empty() {
+        PathBuf::from("/")
+    } else if prefix.len() == 2 && prefix.as_bytes()[1] == b':' {
+        PathBuf::from(format!("{prefix}/"))
     } else {
-        expected_display == candidate_display
+        PathBuf::from(prefix)
     };
-    if !matches {
+    if !crate::path_identity::same_path(&prefix_root, root) {
         return Err(reject_message.into());
     }
     Ok(VerifiedManagedPath {
@@ -738,5 +745,53 @@ mod tests {
             1,
             "only the published file remains"
         );
+    }
+
+    #[test]
+    fn managed_path_resolution_accepts_root_aliases_and_rejects_traversal_or_foreign_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Caf\u{00e9}Data");
+        let other = temp.path().join("OtherData");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&other).unwrap();
+        let alias = temp.path().join("alias-data");
+        crate::path_safety::directory_link(&root, &alias);
+
+        let id = Uuid::new_v4().to_string();
+        let stored = store(&root, None, &id, "shot.png", b"png-bytes").unwrap();
+        let aliased = alias.join(BUCKET).join(&id).join("shot.png");
+        let resolved = resolve_managed_path(&root, None, &aliased.to_string_lossy()).unwrap();
+        assert_eq!(resolved, stored.canonicalize().unwrap());
+
+        #[cfg(target_os = "macos")]
+        {
+            let nfd_path = temp
+                .path()
+                .join("Cafe\u{0301}Data")
+                .join(BUCKET)
+                .join(&id)
+                .join("shot.png");
+            let nfd_resolved =
+                resolve_managed_path(&root, None, &nfd_path.to_string_lossy()).unwrap();
+            assert_eq!(nfd_resolved, stored.canonicalize().unwrap());
+        }
+
+        let traversal = temp
+            .path()
+            .join("OtherData/../Caf\u{00e9}Data")
+            .join(BUCKET)
+            .join(&id)
+            .join("shot.png");
+        assert!(resolve_managed_path(&root, None, &traversal.to_string_lossy()).is_err());
+
+        let foreign = other.join(BUCKET).join(&id).join("shot.png");
+        assert!(resolve_managed_path(&root, None, &foreign.to_string_lossy()).is_err());
+
+        assert_eq!(
+            remove(&root, None, &aliased.to_string_lossy()).unwrap(),
+            "shot.png"
+        );
+        assert!(!stored.exists());
+        crate::path_safety::remove_directory_link(&alias);
     }
 }

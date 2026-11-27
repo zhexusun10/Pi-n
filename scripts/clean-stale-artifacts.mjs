@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, lstatSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +46,12 @@ export async function parseActiveArtifacts({
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const onAbort = () => {
-      try { child.kill('SIGTERM'); } catch {}
+      if (!child.pid) return;
+      if (process.platform === 'win32') {
+        try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
+      } else {
+        try { child.kill('SIGTERM'); } catch {}
+      }
     };
     signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -260,8 +265,8 @@ export async function cleanStaleArtifacts({
       const fullPath = join(depsDir, file);
       if (!activeFiles.has(fullPath)) {
         try {
-          const s = statSync(fullPath);
-          const isDirectory = s.isDirectory();
+          const s = lstatSync(fullPath);
+          const isDirectory = s.isDirectory() && !s.isSymbolicLink();
           const size = isDirectory ? calculateDirSize(fullPath) : s.size;
           staleDeps.push({ path: fullPath, name: file, size, isDirectory });
           staleDepsBytes += size;
@@ -277,8 +282,8 @@ export async function cleanStaleArtifacts({
     for (const name of readdirSync(buildDir)) {
       const fullPath = join(buildDir, name);
       try {
-        const s = statSync(fullPath);
-        if (s.isDirectory() && !activeBuildDirs.has(fullPath)) {
+        const s = lstatSync(fullPath);
+        if (s.isDirectory() && !s.isSymbolicLink() && !activeBuildDirs.has(fullPath)) {
           const dirSize = calculateDirSize(fullPath);
           staleBuildDirs.push({ path: fullPath, name, size: dirSize });
           staleBuildBytes += dirSize;

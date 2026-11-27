@@ -96,6 +96,8 @@ test('file tools preserve suffix case and honor sourceCaseInsensitive independen
       sensitiveSource(join(root, 'workspaceroot', 'NestedDir', 'MyClass.ts')),
       join(workspace, 'NestedDir', 'MyClass.ts'),
     );
+    assert.throws(() => sensitiveSource(null as any), /Invalid file path/);
+    assert.throws(() => sensitiveSource(123 as any), /Invalid file path/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -592,8 +592,16 @@ fn send_steer(
 }
 
 struct NodeRpcGuard(String);
+impl NodeRpcGuard {
+    fn disarm(mut self) {
+        self.0.clear();
+    }
+}
 impl Drop for NodeRpcGuard {
     fn drop(&mut self) {
+        if self.0.is_empty() {
+            return;
+        }
         if let Ok(mut map) = NODE_RPC.get_or_init(Default::default).lock() {
             if let Some(rpc) = map.remove(&self.0) {
                 if let Ok(mut pending) = rpc.pending.lock() {
@@ -606,6 +614,40 @@ impl Drop for NodeRpcGuard {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Ensures a spawned child is terminated and reaped if an early `?` error
+/// unwinds `run_pi_with_timeout` before `finish_turn` takes ownership.
+struct ChildReaper {
+    child: Option<std::process::Child>,
+    tree: process_control::ProcessTree,
+}
+
+impl ChildReaper {
+    fn new(child: std::process::Child, tree: process_control::ProcessTree) -> Self {
+        Self {
+            child: Some(child),
+            tree,
+        }
+    }
+
+    fn as_mut(&mut self) -> &mut std::process::Child {
+        self.child.as_mut().expect("child still owned")
+    }
+
+    fn into_inner(mut self) -> std::process::Child {
+        self.child.take().expect("child still owned")
+    }
+}
+
+impl Drop for ChildReaper {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            self.tree.terminate();
+            let _ = child.wait();
+            self.tree.mark_reaped_if_empty();
         }
     }
 }
@@ -1570,7 +1612,7 @@ fn run_pi_with_timeout(
     #[cfg(not(feature = "fixture"))]
     let prewarmed = warm_node.is_some() || prepared.is_some();
     #[cfg(not(feature = "fixture"))]
-    let (mut child, stdout, prewarmed_stderr, process_tree) = if let Some(worker) = warm_node {
+    let (child, stdout, prewarmed_stderr, process_tree) = if let Some(worker) = warm_node {
         (worker.child, worker.stdout, worker.stderr, worker.tree)
     } else if let Some(process) = prepared {
         let (child, stdout, stderr, tree, _, _) = process.commit();
@@ -1587,7 +1629,7 @@ fn run_pi_with_timeout(
         (child, stdout, None, tree)
     };
     #[cfg(feature = "fixture")]
-    let (mut child, stdout, prewarmed_stderr, process_tree) = {
+    let (child, stdout, prewarmed_stderr, process_tree) = {
         let mut child = command
             .spawn()
             .map_err(|error| format!("Cannot start Execution Instance Engine: {error}"))?;
@@ -1599,17 +1641,18 @@ fn run_pi_with_timeout(
         (child, stdout, None::<()>, tree)
     };
     let _guard = ProcessGuard(process_tree.clone());
+    let mut child = ChildReaper::new(child, process_tree.clone());
     #[cfg(feature = "fixture")]
     let prewarmed = false;
     on_output(format!(
         "{}\n",
-        serde_json::json!({"type":"pi_n_process_started", "pid":child.id(), "sessionId":request.session_id, "cwd":request.cwd, "prewarmed":prewarmed, "prewarmStage":prewarm_stage, "prewarmReadyMs":prewarm_ready_ms, "taskBindingMs":task_binding_ms, "launchPreparationMs":launch_preparation_ms, "timestamp":crate::model::now()})
+        serde_json::json!({"type":"pi_n_process_started", "pid":child.as_mut().id(), "sessionId":request.session_id, "cwd":request.cwd, "prewarmed":prewarmed, "prewarmStage":prewarm_stage, "prewarmReadyMs":prewarm_ready_ms, "taskBindingMs":task_binding_ms, "launchPreparationMs":launch_preparation_ms, "timestamp":crate::model::now()})
     ));
     #[cfg(not(feature = "fixture"))]
     for line in warm_startup_output {
         on_output(line);
     }
-    let mut stdin = child.stdin.take().ok_or("Pi stdin unavailable")?;
+    let mut stdin = child.as_mut().stdin.take().ok_or("Pi stdin unavailable")?;
     let (input_sender, input_receiver) = mpsc::channel::<Result<(), std::io::Error>>();
     let mut rpc_sender = None;
     let mut rpc_guard = None;
@@ -1716,7 +1759,7 @@ fn run_pi_with_timeout(
             source_role && request.role == PiRole::Planner,
         )
     } else {
-        let stderr = child.stderr.take().ok_or("Pi stderr unavailable")?;
+        let stderr = child.as_mut().stderr.take().ok_or("Pi stderr unavailable")?;
         process_output_channels(
             stdout,
             stderr,
@@ -1727,7 +1770,7 @@ fn run_pi_with_timeout(
     #[cfg(feature = "fixture")]
     let receiver = {
         let _ = prewarmed_stderr;
-        let stderr = child.stderr.take().ok_or("Pi stderr unavailable")?;
+        let stderr = child.as_mut().stderr.take().ok_or("Pi stderr unavailable")?;
         process_output_channels(
             stdout,
             stderr,
@@ -1752,7 +1795,7 @@ fn run_pi_with_timeout(
         timeout,
         started,
         &process_tree,
-        &mut child,
+        child.as_mut(),
         &mut channels,
         &mut rpc_guard,
         source_write_tracker(&request),
@@ -1763,7 +1806,7 @@ fn run_pi_with_timeout(
         &mut on_output,
         timeout,
         started,
-        child,
+        child.into_inner(),
         process_tree,
         channels,
         rpc_guard,
@@ -1961,7 +2004,7 @@ fn run_turn(
                 if pending_empty {
                     if let Some(guard) = rpc_guard.take() {
                         rpc_map.remove(&guard.0);
-                        std::mem::forget(guard);
+                        guard.disarm();
                     }
                     drop(rpc_map);
                     break;
@@ -5072,5 +5115,51 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
             output.contains("No project session found with id"),
             "{output}"
         );
+    }
+
+    #[test]
+    fn disarmed_node_rpc_guard_does_not_remove_reused_key() {
+        let id = format!("test-disarm-{}", uuid::Uuid::new_v4());
+        let (tx, _rx) = mpsc::channel();
+        let entry = NodeRpc {
+            sender: tx,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            instance: "inst-1".into(),
+            ui: Arc::new(Mutex::new(composer::CommandUi::default())),
+            revision_run_id: None,
+            run_id: None,
+        };
+        NODE_RPC
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(id.clone(), entry);
+        let guard = NodeRpcGuard(id.clone());
+        guard.disarm();
+        assert!(NODE_RPC.get().unwrap().lock().unwrap().remove(&id).is_some());
+    }
+
+    #[test]
+    fn child_reaper_terminates_and_reaps_unclaimed_child_on_drop() {
+        let mut command = if cfg!(windows) {
+            let mut c = std::process::Command::new("cmd");
+            c.args(["/C", "ping 127.0.0.1 -n 30 > NUL"]);
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.args(["-c", "sleep 30"]);
+            c
+        };
+        process_control::configure_command(&mut command);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        let tree = process_control::track(&child).unwrap();
+        {
+            let _reaper = ChildReaper::new(child, tree.clone());
+        }
+        assert!(tree.ensure_drained().is_ok());
     }
 }

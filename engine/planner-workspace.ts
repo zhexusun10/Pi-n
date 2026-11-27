@@ -27,13 +27,21 @@ function workspaceRoots(current: Map<string, WorkspaceTarget>): string[] {
   return [...new Set([...current.values()].map(target => target.workspace).filter(Boolean))];
 }
 
+function parseWorkspaceTargets(raw: string): Record<string, WorkspaceTarget> {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid Planner workspace targets');
+  }
+  return parsed as Record<string, WorkspaceTarget>;
+}
+
 export function configurePlannerWorkspace(
   workspace: string,
   project: string,
   alias: string,
   rawTargets = process.env.PI_N_PLANNER_WORKSPACES || '{}',
 ) {
-  const parsed = JSON.parse(rawTargets) as Record<string, WorkspaceTarget>;
+  const parsed = parseWorkspaceTargets(rawTargets);
   targetFile = process.env.PI_N_PLANNER_WORKSPACES_FILE;
   targets = new Map(Object.entries(parsed));
   listeners.clear();
@@ -54,7 +62,7 @@ export function plannerWorkspaceState(): WorkspaceState {
 export function switchPlannerWorkspace(requestedNode: string): WorkspaceTarget {
   if (!state) throw new Error('Planner workspace switching is unavailable');
   const currentTargets = targetFile
-    ? JSON.parse(readFileSync(targetFile, 'utf8')) as Record<string, WorkspaceTarget>
+    ? parseWorkspaceTargets(readFileSync(targetFile, 'utf8'))
     : Object.fromEntries(targets);
   // Arbitrary node IDs may match Object.prototype keys; only backend entries count.
   const target = Object.hasOwn(currentTargets, requestedNode) ? currentTargets[requestedNode] : undefined;

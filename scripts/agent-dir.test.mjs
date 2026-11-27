@@ -129,16 +129,50 @@ test('reuses executable managed tools without replacing local tools or importing
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('applyDisabledProviders ignores inherited prototype property names without throwing', () => {
+test('applyDisabledProviders ignores inherited prototype property names and handles UTF-8 BOM', () => {
   const root = mkdtempSync(join(tmpdir(), 'pi-n-disabled-proto-'));
   try {
-    writeFileSync(join(root, 'disabled-providers.json'), JSON.stringify(['toString', 'constructor', 'openai']));
+    writeFileSync(join(root, 'disabled-providers.json'), `\uFEFF${JSON.stringify(['toString', 'constructor', 'openai'])}`);
     const env = { PI_CODING_AGENT_DIR: root, OPENAI_API_KEY: 'secret', ANTHROPIC_API_KEY: 'keep' };
     applyDisabledProviders(env);
     assert.equal(env.OPENAI_API_KEY, undefined);
     assert.equal(env.ANTHROPIC_API_KEY, 'keep');
     assert.equal(env.PYTHONDONTWRITEBYTECODE, '1');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('model overlay handles symlinked default modelsPath and recovers from removed temp directories', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-overlay-resilience-'));
+  const saved = process.env.PI_N_ISOLATED_PI_MODELS;
+  const savedUpstream = process.env.PI_N_UPSTREAM_PI_MODELS;
+  delete process.env.PI_N_ISOLATED_PI_MODELS;
+  try {
+    const source = join(root, 'pi-models.json');
+    const agent = join(root, 'agent');
+    const agentLink = join(root, 'agent-link');
+    mkdirSync(agent);
+    writeFileSync(join(agent, 'models.json'), JSON.stringify({
+      providers: { custom: { models: [{ id: 'local' }] } },
+    }));
+    writeFileSync(source, JSON.stringify({
+      providers: { upstream: { models: [{ id: 'remote' }] } },
+    }));
+    process.env.PI_N_UPSTREAM_PI_MODELS = source;
+    const { symlinkSync } = await import('node:fs');
+    symlinkSync(agent, agentLink, process.platform === 'win32' ? 'junction' : 'dir');
+    const overlaid = await overlayRuntimeOptions({ modelsPath: join(agentLink, 'models.json') }, agent, JSON.parse);
+    assert.notEqual(overlaid.modelsPath, join(agentLink, 'models.json'), 'symlinked default path still receives overlay');
+    const mergedDir = join(overlaid.modelsPath, '..');
+    rmSync(mergedDir, { recursive: true, force: true });
+    const recreated = await prepareModelOverlay(agent, JSON.parse, { source });
+    assert.equal(existsSync(recreated), true, 'removed temp overlay directory is recreated cleanly');
+  } finally {
+    if (saved === undefined) delete process.env.PI_N_ISOLATED_PI_MODELS;
+    else process.env.PI_N_ISOLATED_PI_MODELS = saved;
+    if (savedUpstream === undefined) delete process.env.PI_N_UPSTREAM_PI_MODELS;
+    else process.env.PI_N_UPSTREAM_PI_MODELS = savedUpstream;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('model overlay merges inherited prototype property names safely', async () => {

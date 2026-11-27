@@ -757,7 +757,16 @@ pub fn continue_merger_for_node(
                     &exclusions,
                     true,
                     ResolutionIndex::Imported,
-                )
+                )?;
+                if crate::workspace_view::is_bound(repository) {
+                    crate::workspace_view::seal_prepared_scoped(
+                        repository,
+                        Path::new(&config.repository),
+                        &exclusions,
+                        None,
+                    )?;
+                }
+                Ok(())
             } else if crate::workspace_view::is_bound(repository) {
                 workspace::snapshot_node_scoped(
                     repository,
@@ -941,5 +950,117 @@ mod tests {
             3,
             "amended merge must keep both parents: {parents}"
         );
+    }
+
+    #[cfg(all(unix, feature = "fixture"))]
+    #[test]
+    fn continue_merger_seals_resolved_pending_merge_in_bound_workspace() {
+        use std::fs;
+        crate::ensure_test_data_root();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        crate::workspace::git(&source, &["init", "-q"]).unwrap();
+        fs::write(source.join("f.txt"), "base\n").unwrap();
+        crate::workspace::git(&source, &["add", "-A"]).unwrap();
+        crate::workspace::git(&source, &["commit", "-qm", "base"]).unwrap();
+        let base = crate::workspace::snapshot_repository(&source).unwrap();
+
+        let run = uuid::Uuid::new_v4().to_string();
+        let worktrees = temp.path().join(".pi-n-worktrees").join(&run);
+        let left_dir = worktrees.join("left");
+        let right_dir = worktrees.join("right");
+        let target_dir = worktrees.join("target");
+
+        crate::workspace::prepare(&source, &left_dir, &base, &[]).unwrap();
+        fs::write(left_dir.join("f.txt"), "left\n").unwrap();
+        let left_head =
+            crate::workspace::snapshot_node_for_run(&left_dir, &source, "left", Some(&run))
+                .unwrap();
+
+        crate::workspace::prepare(&source, &right_dir, &base, &[]).unwrap();
+        fs::write(right_dir.join("f.txt"), "right\n").unwrap();
+        let right_head =
+            crate::workspace::snapshot_node_for_run(&right_dir, &source, "right", Some(&run))
+                .unwrap();
+
+        // Fail initial conflict resolution so `target_dir` keeps a pending merge.
+        let prep_err = crate::workspace::prepare_with_merger_expected_for_run(
+            &source,
+            &target_dir,
+            &base,
+            &[left_head.clone(), right_head.clone()],
+            "merge task",
+            Some(&run),
+            || Err("initial merger failed".into()),
+        );
+        assert!(prep_err.is_err());
+        assert!(super::pending(&target_dir).is_some());
+
+        let script = temp.path().join("resolve.sh");
+        fs::write(
+            &script,
+            "cat >/dev/null\nprintf 'resolved\\n' > f.txt\ngit add -f -- f.txt\nprintf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"resolved\"}]}}'\n",
+        )
+        .unwrap();
+        let config: crate::model::Config = serde_json::from_value(serde_json::json!({
+            "repository": source,
+            "model": "fixture",
+            "maxParallel": 1,
+            "piCommand": "/bin/sh",
+            "piArgs": [script],
+        }))
+        .unwrap();
+        let before = crate::workspace::git(&target_dir, &["rev-parse", "HEAD"]).unwrap();
+        let prev_id = uuid::Uuid::new_v4().to_string();
+        let next_id = uuid::Uuid::new_v4().to_string();
+        let session_dir = temp.path().join("mergers").join(&prev_id);
+        fs::create_dir_all(&session_dir).unwrap();
+        let make_exec = |id: &str| crate::model::Execution {
+            id: id.into(),
+            node: "merge:target".into(),
+            revision: 1,
+            attempt: 1,
+            session_id: prev_id.clone(),
+            worktree: target_dir.to_string_lossy().into_owned(),
+            before: before.clone(),
+            workspace_lineage: vec![],
+            after: None,
+            input: None,
+            result: None,
+            status: "running".into(),
+            output: String::new(),
+            output_bytes: 0,
+            pid: None,
+            started_at: crate::model::now(),
+            completed_at: None,
+            metrics: None,
+        };
+        let previous = make_exec(&prev_id);
+        let execution = make_exec(&next_id);
+        let mut finished_head = None;
+        super::continue_merger_for_node(
+            &previous,
+            &execution,
+            "resolve conflict",
+            None,
+            &config,
+            &session_dir,
+            |event| {
+                if let crate::model::EventKind::MergerFinished { head, .. } = event {
+                    finished_head = Some(head);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let resolved_head = finished_head.expect("MergerFinished must report resolved HEAD");
+        assert!(
+            crate::workspace_view::has_record(&source, &resolved_head),
+            "continued merger must seal its resolved merge commit view"
+        );
+        crate::workspace_view::validate_ready(&target_dir, &source)
+            .expect("continued merger must advance project-ready to the sealed HEAD");
     }
 }

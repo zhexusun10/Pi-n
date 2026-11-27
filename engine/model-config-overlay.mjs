@@ -1,18 +1,25 @@
 import { chmodSync, copyFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { samePath } from './path-identity.mjs';
 
 let temporaryDirectory;
+let temporaryCleanupRegistered = false;
 let temporarySequence = 0;
 const snapshots = new Map();
 function temporaryModelsPath(content) {
   const digest = createHash('sha256').update(content).digest('hex');
   const existing = snapshots.get(digest);
   if (existing && existsSync(existing)) return existing;
-  if (!temporaryDirectory) {
+  if (!temporaryDirectory || !existsSync(temporaryDirectory)) {
     temporaryDirectory = mkdtempSync(join(tmpdir(), 'pi-n-models-'));
-    process.once('exit', () => { try { rmSync(temporaryDirectory, { recursive: true, force: true }); } catch {} });
+    if (!temporaryCleanupRegistered) {
+      temporaryCleanupRegistered = true;
+      process.once('exit', () => {
+        if (temporaryDirectory) try { rmSync(temporaryDirectory, { recursive: true, force: true }); } catch {}
+      });
+    }
   }
   const path = join(temporaryDirectory, `models-${++temporarySequence}.json`);
   writeFileSync(path, content, { mode: 0o600, flag: 'wx' });
@@ -50,7 +57,7 @@ function isEmptyModelsConfig(value) {
 /** Prepare a private, process-local model overlay. The source files are never modified. */
 export async function prepareModelOverlay(agentDir, parse, options = {}) {
   if (process.env.PI_N_ISOLATED_PI_MODELS === '1') return undefined;
-  const source = options.source ?? process.env.PI_N_UPSTREAM_PI_MODELS ?? join(homedir(), '.pi', 'agent', 'models.json');
+  const source = options.source || process.env.PI_N_UPSTREAM_PI_MODELS || join(homedir(), '.pi', 'agent', 'models.json');
   const target = join(agentDir, 'models.json');
   let sourceContent, targetContent;
   try { sourceContent = readFileSync(source, 'utf8'); }
@@ -63,7 +70,7 @@ export async function prepareModelOverlay(agentDir, parse, options = {}) {
   let sourceReal, targetReal;
   try { sourceReal = realpathSync(source); } catch { return source; }
   try { targetReal = realpathSync(target); } catch { return target; }
-  if (sourceReal === targetReal) return undefined;
+  if (samePath(sourceReal, targetReal)) return undefined;
 
   // On malformed JSON let Pi report its usual warning and continue serving
   // built-ins. Never let a valid file mask errors in the other file.
@@ -96,7 +103,7 @@ export async function prepareModelOverlay(agentDir, parse, options = {}) {
 /** Retarget only Pi's default agent models file, not explicitly supplied files. */
 export async function overlayRuntimeOptions(options, agentDir, parse, validate) {
   const defaultPath = join(agentDir, 'models.json');
-  if (options.modelsPath === null || (options.modelsPath && resolve(options.modelsPath) !== resolve(defaultPath))) return options;
+  if (options.modelsPath === null || (options.modelsPath && !samePath(options.modelsPath, defaultPath))) return options;
   const modelsPath = await prepareModelOverlay(agentDir, parse, { validate });
   return modelsPath ? { ...options, modelsPath, modelsStorePath: options.modelsStorePath ?? join(agentDir, 'models-store.json') } : options;
 }

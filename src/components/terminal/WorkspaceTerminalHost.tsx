@@ -433,10 +433,11 @@ export const WorkspaceTerminalHost: React.FC<WorkspaceTerminalHostProps> = React
 
     const startVerticalResize = useCallback(
       (key: string, initialHeight: number, event: React.PointerEvent<HTMLDivElement>) => {
-        if (event.button !== 0) return;
+        if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();
         dragCleanupRef.current?.();
 
+        const pointerId = event.pointerId;
         const startY = event.clientY;
         const mainEl = event.currentTarget.closest(".main");
         const maxAllowed = mainEl
@@ -446,23 +447,31 @@ export const WorkspaceTerminalHost: React.FC<WorkspaceTerminalHostProps> = React
         setResizingKey(key);
 
         const handlePointerMove = (moveEvent: PointerEvent) => {
+          if (moveEvent.pointerId !== pointerId) return;
           const delta = startY - moveEvent.clientY;
           const nextHeight = Math.max(160, Math.min(maxAllowed, initialHeight + delta));
           onSetHeight(key, nextHeight);
         };
 
+        const handlePointerEnd = (endEvent: PointerEvent) => {
+          if (endEvent.pointerId !== pointerId) return;
+          cleanup();
+        };
+
         const cleanup = () => {
           window.removeEventListener("pointermove", handlePointerMove);
-          window.removeEventListener("pointerup", cleanup);
-          window.removeEventListener("pointercancel", cleanup);
+          window.removeEventListener("pointerup", handlePointerEnd);
+          window.removeEventListener("pointercancel", handlePointerEnd);
+          window.removeEventListener("blur", cleanup);
           dragCleanupRef.current = null;
           setResizingKey(null);
         };
 
         dragCleanupRef.current = cleanup;
         window.addEventListener("pointermove", handlePointerMove);
-        window.addEventListener("pointerup", cleanup);
-        window.addEventListener("pointercancel", cleanup);
+        window.addEventListener("pointerup", handlePointerEnd);
+        window.addEventListener("pointercancel", handlePointerEnd);
+        window.addEventListener("blur", cleanup);
       },
       [onSetHeight],
     );

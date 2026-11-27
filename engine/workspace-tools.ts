@@ -38,7 +38,7 @@ export function workspacePathMapper(
   const workspaceCaseInsensitive = options.workspaceCaseInsensitive ?? isCaseInsensitive(mappedWorkspace);
   const sourceCaseInsensitive = resolveSourceCaseInsensitive(workspaceCaseInsensitive, options.sourceCaseInsensitive);
   return (input: string) => {
-    if (!input || input.includes('\0')) throw new Error('Invalid file path');
+    if (typeof input !== 'string' || !input || input.includes('\0')) throw new Error('Invalid file path');
     // Accept file URLs, /c/... and registered Git Bash mounts such as /tmp
     // before Pi resolves the value against the workspace.
     const path = resolveToCwd(toHostInput(msysHostInput(input)), mappedWorkspace);
@@ -76,7 +76,7 @@ export function registerWorkspaceTools(
       async execute(id: string, params: any, signal?: AbortSignal, update?: any, ctx?: any) {
         if (signal?.aborted) throw new Error('Operation aborted');
         const currentWorkspace = workspaceGetter();
-        const mapped = { ...params, path: physical(params.path ?? '.') };
+        const mapped = { ...params, path: physical(params?.path ?? '.') };
         // Mapping before native path resolution also covers Pi's own read
         // existence/Unicode checks. Native results stay intact.
         try {

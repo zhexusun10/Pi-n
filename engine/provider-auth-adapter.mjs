@@ -14,7 +14,7 @@ function getDisabledProvidersPath() {
 
 function loadDisabledProviders() {
   try {
-    const raw = readFileSync(getDisabledProvidersPath(), "utf8");
+    const raw = readFileSync(getDisabledProvidersPath(), "utf8").replace(/^\uFEFF/, "");
     const arr = JSON.parse(raw);
     return Array.isArray(arr) ? new Set(arr) : new Set();
   } catch {
@@ -30,7 +30,7 @@ function saveDisabledProviders(set) {
     writeFileSync(temporary, JSON.stringify([...set], null, 2), { encoding: "utf8", mode: 0o600 });
     renameSync(temporary, target);
   } catch {} finally {
-    rmSync(temporary, { force: true });
+    try { rmSync(temporary, { force: true }); } catch {}
   }
 }
 
@@ -182,7 +182,12 @@ export class ProviderAuthAdapter {
   }
 
   prompt(job, prompt) {
-    if (!["text", "secret", "select", "manual_code"].includes(prompt.type)) return Promise.reject(new Error("Unsupported upstream auth prompt"));
+    if (!prompt || typeof prompt !== "object" || !["text", "secret", "select", "manual_code"].includes(prompt.type)) {
+      return Promise.reject(new Error("Unsupported upstream auth prompt"));
+    }
+    if (prompt.type === "select" && !Array.isArray(prompt.options)) {
+      return Promise.reject(new Error("Unsupported upstream auth prompt"));
+    }
     const signal = prompt.signal ? AbortSignal.any([job.controller.signal, prompt.signal]) : job.controller.signal;
     if (signal.aborted) return Promise.reject(new Error("Cancelled"));
     if (job.pending) return Promise.reject(new Error("Concurrent prompts are unsupported"));
@@ -233,7 +238,9 @@ export class ProviderAuthAdapter {
   }
 
   async dispatch(request) {
-    if (request.version !== 1) throw new Error("Unsupported Provider/Auth Adapter protocol version.");
+    if (!request || typeof request !== "object" || request.version !== 1) {
+      throw new Error("Unsupported Provider/Auth Adapter protocol version.");
+    }
     switch (request.operation) {
       case "catalog": return this.catalog(request.refresh === true);
       case "model_visibility": return readModelVisibility();

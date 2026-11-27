@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { toHostInput } from './path-identity.mjs';
+import { samePath, toHostInput } from './path-identity.mjs';
 import { mkdirSync, symlinkSync, copyFileSync, accessSync, statSync, readFileSync, writeFileSync, constants } from 'node:fs';
 
 const EMPTY_MODELS_CONFIG = '{\n  "providers": {}\n}\n';
@@ -30,13 +30,23 @@ export function applyDisabledProviders(env = process.env) {
   const dir = resolveAgentDir(env);
   let disabled = [];
   try {
-    disabled = JSON.parse(readFileSync(join(dir, 'disabled-providers.json'), 'utf8'));
+    disabled = JSON.parse(readFileSync(join(dir, 'disabled-providers.json'), 'utf8').replace(/^\uFEFF/, ''));
   } catch {}
   env.PYTHONDONTWRITEBYTECODE = '1';
   if (Array.isArray(disabled)) {
+    const purge = new Set();
     for (const p of disabled) {
       if (typeof p === 'string' && Object.hasOwn(KNOWN_PROVIDER_ENV_VARS, p)) {
-        for (const v of KNOWN_PROVIDER_ENV_VARS[p]) delete env[v];
+        for (const v of KNOWN_PROVIDER_ENV_VARS[p]) purge.add(v);
+      }
+    }
+    if (purge.size) {
+      if (process.platform === 'win32' && env !== process.env) {
+        for (const key of Object.keys(env)) {
+          if (purge.has(key.toUpperCase())) delete env[key];
+        }
+      } else {
+        for (const v of purge) delete env[v];
       }
     }
   }
@@ -45,6 +55,7 @@ export function applyDisabledProviders(env = process.env) {
 // Reuse only Pi's known managed executables, not its configuration or plugins.
 // No downloads on the planning critical path and no replacement of local tools.
 export function reuseManagedTools(directory, upstreamDirectory) {
+  if (samePath(directory, upstreamDirectory)) return;
   for (const tool of ['rg', 'fd']) {
     const name = process.platform === 'win32' ? `${tool}.exe` : tool;
     const source = join(upstreamDirectory, 'bin', name);

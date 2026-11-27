@@ -1,6 +1,6 @@
 import { t } from "../../i18n";
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
-import { ArrowUp, Check, Copy, Pencil, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronUp, Copy, Pencil, X } from "lucide-react";
 import type { ChatMessageVersion, ImageAttachment, FileAttachment } from "../../types";
 import { MarkdownRenderer } from "../MarkdownRenderer";
 import { useSmoothStreamText } from "../../hooks/useSmoothStreamText";
@@ -418,6 +418,7 @@ export function EditableUserBubble({
                             }
                           }}
                         >
+                          <ChevronDown size={13} aria-hidden="true" />
                           {cleanText.length <= USER_BUBBLE_FULL_EXPAND_LIMIT
                             ? t("展开全部（共 {0} 字符）", cleanText.length.toLocaleString())
                             : t("继续展开（已显示 {0} / {1} 字符）", effectiveLimit.toLocaleString(), cleanText.length.toLocaleString())}
@@ -429,6 +430,7 @@ export function EditableUserBubble({
                           className="chat-bubble-user-expand-btn"
                           onClick={() => setVisibleChars(null)}
                         >
+                          <ChevronUp size={13} aria-hidden="true" />
                           {t("收起内容")}
                         </button>
                       ) : null}

@@ -11,6 +11,7 @@ import {
   isCaseInsensitive,
   mapPhysicalPath,
   pathKey,
+  pathStartsWith,
   pathWithin,
   relativePreservingCase,
   samePath,
@@ -352,6 +353,46 @@ test('case/Unicode command mapping preserves suffix case and separates source vs
         );
       }
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pathStartsWith handles root/trailing-separator prefixes and view preserves non-plain/cyclic values', () => {
+  assert.equal(pathStartsWith('/etc/hosts', '/', false), true);
+  assert.equal(pathStartsWith('/', '/', false), true);
+  assert.equal(pathStartsWith('', '/', false), false);
+  assert.equal(pathStartsWith('/proj/sub', '/proj/', false), true);
+  assert.equal(pathStartsWith('/proj-other/sub', '/proj', false), false);
+
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'pi-n-view-safety-')));
+  try {
+    const source = join(root, 'source');
+    const nestedWorkspace = join(source, '.worktrees', 'node');
+    mkdirSync(nestedWorkspace, { recursive: true });
+    const paths = createWorkspacePaths(nestedWorkspace, source);
+
+    // Nested workspace under source must not double-map file:// URLs.
+    const sourceUrl = pathToFileURL(join(source, 'marker')).href;
+    const expectedUrl = pathToFileURL(join(nestedWorkspace, 'marker')).href;
+    assert.equal(paths.command(`cat ${sourceUrl}`), `cat ${expectedUrl}`);
+    assert.equal(paths.command(`cat ${expectedUrl}`), `cat ${expectedUrl}`);
+
+    // view() preserves non-plain objects, handles cycles, avoids redundant clones, and works with Array.map.
+    const date = new Date('2026-01-01T00:00:00Z');
+    const bytes = Uint8Array.from([1, 2, 3]);
+    const unchanged = { plain: 'no-path', date, bytes };
+    assert.strictEqual(paths.view(unchanged), unchanged);
+    const withPath = { msg: `at ${nestedWorkspace}/a`, date, bytes };
+    const mapped = paths.view(withPath);
+    assert.equal(mapped.msg, 'at ./a');
+    assert.strictEqual(mapped.date, date);
+    assert.strictEqual(mapped.bytes, bytes);
+    const cyclic = { label: `${nestedWorkspace}/loop` };
+    cyclic.self = cyclic;
+    const mappedCyclic = paths.view(cyclic);
+    assert.equal(mappedCyclic.label, './loop');
+    assert.deepEqual([`${nestedWorkspace}/x`, 'plain'].map(paths.view), ['./x', 'plain']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

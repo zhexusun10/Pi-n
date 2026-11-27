@@ -122,6 +122,16 @@ export class ComposerDrafts extends Map<string, string> {
   clearAttachments(key: string, options?: { revoke?: boolean }) {
     this.clearAttachment(key, options);
   }
+  clearAllAttachments(options?: { revoke?: boolean }) {
+    if (this.attachmentLists.size === 0) return;
+    if (options?.revoke !== false) {
+      for (const items of this.attachmentLists.values()) {
+        for (const item of items) revokePreview(item);
+      }
+    }
+    this.attachmentLists.clear();
+    this.notify();
+  }
   withdraw(key: string, work: (requestId: string) => Promise<RecalledMessage[]>): Promise<void> {
     const request = this.requests.get(key) ?? { id: createUuid() };
     if (request.promise) return request.promise;
