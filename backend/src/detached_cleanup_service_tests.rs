@@ -328,3 +328,124 @@ fn automatic_lazy_bound_environment_retains_workspaces_until_deleted() {
     assert!(!workspace.exists());
     assert!(source.join("user.txt").is_file());
 }
+
+#[test]
+fn online_deletion_queues_files_and_recovers_cleanup_after_restart() {
+    for command in ["delete_run", "clear_history"] {
+        let (temp, source, workspace, service) = fixture(false);
+        service.driving.store(false, Ordering::SeqCst);
+        let (root, run_id) = {
+            let mut runtime = service.runtime.lock().unwrap();
+            // Exercise Compile ownership rather than the serial fixture route.
+            runtime
+                .emit(EventKind::Routed {
+                    plan_type: "graph".into(),
+                    images: None,
+                })
+                .unwrap();
+            (runtime.root.clone(), runtime.state.run_id.clone())
+        };
+        // A multi-file execution tree must remain untouched by the request.
+        for index in 0..64 {
+            fs::write(workspace.join(format!("artifact-{index}")), "output").unwrap();
+        }
+        let body = serde_json::json!({"runId": run_id});
+        dispatch(&service, command, body).unwrap();
+        assert_eq!(fs::read_dir(&workspace).unwrap().count(), 65);
+        assert!(service.runtime.try_lock().unwrap().state.run_id.is_empty());
+        assert!(service_for_run(&service, &run_id, false).is_err());
+        {
+            let store = crate::store::Store::open(&root.join("events.sqlite")).unwrap();
+            assert!(store.run_was_deleted(&run_id).unwrap());
+            assert!(!store.contains_run(&run_id).unwrap());
+            let task = store.cleanup_task(&run_id).unwrap().unwrap();
+            assert!(task.manifest.sequence.is_none());
+        }
+        drop(service);
+
+        // Reopen with no in-memory task state: new work can start before the
+        // durable queue is drained, and its files/source must survive cleanup.
+        let mut runtime = Runtime::open_lazy(&root).unwrap();
+        runtime
+            .create(
+                Graph {
+                    nodes: vec![crate::model::Node {
+                        id: "task".into(),
+                        task: "new work".into(),
+                    }],
+                    ..Default::default()
+                },
+                serde_json::from_value(serde_json::json!({
+                    "repository": source, "model": "test", "maxParallel": 1
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let next_id = runtime.state.run_id.clone();
+        let next_workspace = temp.path().join(".pi-n-worktrees").join(&next_id);
+        fs::create_dir_all(&next_workspace).unwrap();
+        fs::write(next_workspace.join("keep.txt"), "new work").unwrap();
+        let resumed = Arc::new(Service {
+            runtime: Mutex::new(runtime),
+            driving: AtomicBool::new(false),
+            drive_signal: (Mutex::new(0), Condvar::new()),
+            planning: AtomicBool::new(false),
+            extension: temp.path().join("unused"),
+        });
+        remember_service_root(&resumed, &root);
+        let history = dispatch(&resumed, "history", serde_json::json!({"runId": next_id})).unwrap();
+        assert_eq!(history["runId"], next_id);
+        assert_eq!(
+            dispatch(&resumed, "snapshot", serde_json::json!({})).unwrap()["runId"],
+            next_id
+        );
+        retry_cleanup_tasks_with_gc(&resumed, false).unwrap();
+        assert!(!workspace.exists());
+        assert!(next_workspace.join("keep.txt").is_file());
+        assert!(source.join("user.txt").is_file());
+        assert!(resumed
+            .runtime
+            .lock()
+            .unwrap()
+            .store
+            .pending_cleanups()
+            .unwrap()
+            .is_empty());
+        invalidate_service_cache(&root, None);
+    }
+}
+
+#[test]
+fn deletion_supersedes_a_previously_selected_workspace_cleanup_task() {
+    let (_temp, source, workspace, service) = fixture(false);
+    service.driving.store(false, Ordering::SeqCst);
+    let (root, run_id, stale) = {
+        let runtime = service.runtime.lock().unwrap();
+        let id = runtime.state.run_id.clone();
+        runtime
+            .store
+            .remember_cleanup_targets(
+                &id,
+                &BTreeSet::from([crate::cleanup::Target::data("planner-sessions", &id)]),
+            )
+            .unwrap();
+        (
+            runtime.root.clone(),
+            id.clone(),
+            runtime.store.cleanup_task(&id).unwrap().unwrap(),
+        )
+    };
+    let session = root.join("planner-sessions").join(&run_id);
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("history.jsonl"), "history").unwrap();
+    delete_run(run_id.clone(), &service).unwrap();
+    assert!(session.exists());
+    // The maintenance worker may have read the workspace-only task before the
+    // delete committed. It must use the new manifest, including histories.
+    let store = crate::store::Store::open(&root.join("events.sqlite")).unwrap();
+    crate::cleanup::attempt(&root, &store, &stale).unwrap();
+    assert!(!session.exists());
+    assert!(!workspace.exists());
+    assert!(store.cleanup_task(&run_id).unwrap().is_none());
+    assert!(source.join("user.txt").is_file());
+}

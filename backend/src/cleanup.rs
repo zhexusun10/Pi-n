@@ -761,6 +761,20 @@ fn execute_inner(root: &Path, store: &Store, task: &Task, detach: bool) -> Resul
 }
 
 pub(crate) fn attempt(root: &Path, store: &Store, task: &Task) -> Result<(), String> {
+    // Maintenance can select a workspace-only task just before deletion replaces
+    // it with full cleanup ownership. Never finish that newer task using the old
+    // manifest, or histories/attachments would be orphaned. Tombstoned Run IDs
+    // cannot be reused, so reloading their task needs no live Run mutex.
+    let current;
+    let task = if task.manifest.sequence.is_some() && store.run_was_deleted(&task.run_id)? {
+        current = store.cleanup_task(&task.run_id)?;
+        let Some(task) = current.as_ref() else {
+            return Ok(());
+        };
+        task
+    } else {
+        task
+    };
     match execute(root, store, task) {
         Ok(()) => Ok(()),
         Err(error) => {

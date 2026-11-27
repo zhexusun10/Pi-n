@@ -63,6 +63,11 @@ fn ticket(root: &Path, id: &str) -> Result<Arc<Mutex<()>>, String> {
     Ok(guard)
 }
 
+/// Wake the shared maintenance worker for detached receipts or deleted Runs.
+pub(crate) fn wake_worker() {
+    WAKE.store(true, Ordering::SeqCst);
+}
+
 pub(crate) fn take_wakeup() -> bool {
     WAKE.swap(false, Ordering::SeqCst)
 }
@@ -114,7 +119,7 @@ pub(crate) fn retire(
     // Signal only after releasing the ticket. Otherwise the worker could
     // consume the wakeup, skip this still-locked receipt, and wait 30 seconds.
     drop(guard);
-    WAKE.store(true, Ordering::SeqCst);
+    wake_worker();
     result
 }
 

@@ -1602,6 +1602,16 @@ impl Runtime {
     }
 
     pub fn clear_history(&mut self) -> Result<(), String> {
+        self.clear_history_deferred()?;
+        if let Err(error) = self.retry_deleted_cleanups() {
+            eprintln!("[Pi^n] History cleared; filesystem cleanup remains queued: {error}");
+        }
+        Ok(())
+    }
+
+    /// Online callers commit deletion under the Run locks, then let the
+    /// maintenance worker remove files without blocking API requests.
+    pub(crate) fn clear_history_deferred(&mut self) -> Result<(), String> {
         if self.active() {
             return Err("Pause and wait for the current executions to finish first".into());
         }
@@ -1631,9 +1641,6 @@ impl Runtime {
             ..Snapshot::default()
         };
         self.touch();
-        if let Err(error) = self.retry_deleted_cleanups() {
-            eprintln!("[Pi^n] History cleared; filesystem cleanup remains queued: {error}");
-        }
         Ok(())
     }
 
@@ -1642,6 +1649,22 @@ impl Runtime {
     }
 
     pub fn delete_runs(&mut self, run_ids: &[String]) -> Result<(), String> {
+        self.delete_runs_deferred(run_ids)?;
+        // Logical deletion has committed. Filesystem failures remain retryable
+        // without making the browser retain a conversation that no longer exists.
+        for run_id in run_ids {
+            if let Err(error) = self.retry_cleanup(run_id) {
+                eprintln!(
+                    "[Pi^n] Run {run_id} deleted; filesystem cleanup remains queued: {error}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Persist cleanup ownership atomically with deletion, but do no recursive
+    /// filesystem cleanup while the server holds one or more Run locks.
+    pub(crate) fn delete_runs_deferred(&mut self, run_ids: &[String]) -> Result<(), String> {
         let mut cleanups = Vec::new();
         for run_id in run_ids {
             let stored;
@@ -1662,15 +1685,6 @@ impl Runtime {
         // Validate the whole batch before either SQL deletion or filesystem I/O.
         self.store.delete_runs_with_cleanup(&cleanups)?;
         self.forget_deleted_runs(run_ids);
-        // Logical deletion has committed. Filesystem failures remain retryable
-        // without making the browser retain a conversation that no longer exists.
-        for run_id in run_ids {
-            if let Err(error) = self.retry_cleanup(run_id) {
-                eprintln!(
-                    "[Pi^n] Run {run_id} deleted; filesystem cleanup remains queued: {error}"
-                );
-            }
-        }
         Ok(())
     }
 

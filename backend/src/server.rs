@@ -5965,7 +5965,7 @@ fn clear_history(service: &Arc<Service>) -> Result<(), String> {
     #[cfg(not(feature = "fixture"))]
     crate::engine::invalidate_warm_node();
     let run_ids = runtime.store.runs()?;
-    runtime.clear_history()?;
+    runtime.clear_history_deferred()?;
     for run_id in &run_ids {
         crate::engine::stop_lingering_for_run(run_id);
         crate::engine::stop_planner_services_for_run(run_id);
@@ -5973,6 +5973,7 @@ fn clear_history(service: &Arc<Service>) -> Result<(), String> {
     drop(child_guards);
     drop(runtime);
     invalidate_service_cache(&root, None);
+    crate::cleanup::detached::wake_worker();
     Ok(())
 }
 
@@ -5987,13 +5988,14 @@ fn delete_run(run_id: String, service: &Arc<Service>) -> Result<(), String> {
     #[cfg(not(feature = "fixture"))]
     crate::engine::invalidate_warm_node();
     let root = runtime.root.clone();
-    runtime.delete_run(&run_id)?;
+    runtime.delete_runs_deferred(std::slice::from_ref(&run_id))?;
     // Retire services only after deletion commits; a rejected request must
     // preserve the existing conversation and its processes.
     crate::engine::stop_lingering_for_run(&run_id);
     crate::engine::stop_planner_services_for_run(&run_id);
     drop(runtime);
     invalidate_service_cache(&root, Some(&run_id));
+    crate::cleanup::detached::wake_worker();
     Ok(())
 }
 
@@ -6046,7 +6048,7 @@ fn delete_workspace(repository: String, service: &Arc<Service>) -> Result<Vec<St
     }
     #[cfg(not(feature = "fixture"))]
     crate::engine::invalidate_warm_node();
-    runtimes[0].delete_runs(&ids)?;
+    runtimes[0].delete_runs_deferred(&ids)?;
     for id in &ids {
         crate::engine::stop_lingering_for_run(id);
         crate::engine::stop_planner_services_for_run(id);
@@ -6058,6 +6060,7 @@ fn delete_workspace(repository: String, service: &Arc<Service>) -> Result<Vec<St
     for id in &ids {
         invalidate_service_cache(&root, Some(id));
     }
+    crate::cleanup::detached::wake_worker();
     Ok(ids)
 }
 

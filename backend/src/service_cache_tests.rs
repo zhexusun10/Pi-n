@@ -287,7 +287,7 @@ fn workspace_deletion_uses_backend_ownership_and_invalidates_every_affected_serv
     for (id, stale) in ids[..2].iter().zip([first, second]) {
         assert!(service_for_run(&primary, id, false).is_err());
         assert!(stale.runtime.lock().unwrap().state.run_id.is_empty());
-        assert!(!primary
+        assert!(primary
             .runtime
             .lock()
             .unwrap()
@@ -316,9 +316,16 @@ fn workspace_deletion_uses_backend_ownership_and_invalidates_every_affected_serv
             .unwrap(),
         "retained transcript".len()
     );
-    assert!(runtime.store.pending_cleanups().unwrap().is_empty());
+    assert_eq!(runtime.store.pending_cleanups().unwrap().len(), 2);
     let root = runtime.root.clone();
     drop(runtime);
+    retry_cleanup_tasks_with_gc(&primary, false).unwrap();
+    let store = crate::store::Store::open(&root.join("events.sqlite")).unwrap();
+    assert!(store.pending_cleanups().unwrap().is_empty());
+    for id in &ids[..2] {
+        assert!(!root.join("sessions").join(id).exists());
+    }
+    assert!(root.join("sessions").join(&ids[2]).exists());
     assert_eq!(
         fs::read_to_string(source.join("user.txt")).unwrap(),
         "published source"

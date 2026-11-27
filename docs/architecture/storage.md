@@ -58,7 +58,7 @@ Run slots live beneath the parent's `.pi-n-worktrees/` directory. `PI_N_CACHE_DI
 
 Successful publication/reset cleans owned workspaces but keeps Pi histories for follow-ups. Git reconstruction and ownership constraints follow [Cleanup and reproducibility](workspace-snapshots-and-feedback.md#cleanup-and-reproducibility); do not infer a node's current workspace from its allocation name.
 
-Conversation deletion/clearing history cleans owned Node/Planner/Merger histories, attachments and all historical planning attempts, preserving shared resources and source projects.
+Conversation deletion/clearing history cleans owned Node/Planner/Merger histories, attachments and all historical planning attempts, preserving shared resources and source projects. Online deletion (including workspace removal) commits the logical deletion and durable cleanup task together, then wakes the maintenance worker after retiring services and releasing Run locks. Recursive filesystem cleanup runs in that worker, so large Compile workspaces do not hold up the deletion response or subsequent API requests. Pending cleanup survives restart; offline Runtime deletion retains synchronous cleanup.
 
 ## Detached workspace cleanup
 
