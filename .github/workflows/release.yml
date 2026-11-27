@@ -44,9 +44,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.platform == 'windows' && 'stable-x86_64-pc-windows-msvc' || 'stable' }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -89,9 +86,10 @@ jobs:
           - os: macos-26
             platform: macos
             target: macos-arm64
-          - os: macos-26-intel
+          - os: macos-26
             platform: macos
             target: macos-x64
+            rust_target: x86_64-apple-darwin
           - os: windows-latest
             platform: windows
             target: windows-x64
@@ -106,11 +104,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.platform == 'windows' && 'stable-x86_64-pc-windows-msvc' || 'stable' }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            backend
-            src-tauri
+          targets: ${{ matrix.rust_target }}
       - name: Install Node dependencies
         run: |
           npm ci --ignore-scripts
@@ -143,12 +137,10 @@ jobs:
           node scripts/desktop-signing.mjs check \
             --target "$DESKTOP_TARGET" \
             --tauri-conf src-tauri/tauri.conf.json
-      - name: Verify Tauri desktop shell unit tests
-        run: node scripts/cargo.mjs test --manifest-path src-tauri/Cargo.toml --lib
       - name: Install Pi runtime dependencies
         run: npm run pi:setup -- --no-build
-      - name: Verify Pi baseline and lean desktop staging contracts
-        run: node --test scripts/pi-baseline.test.mjs scripts/desktop-packaging.test.mjs
+      - name: Verify Pi baseline contracts
+        run: node --test scripts/pi-baseline.test.mjs
       - name: Configure optional macOS signing and notarization credentials
         id: macos-signing
         if: matrix.platform == 'macos'

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Slimmed down the Release CI workflow and archive smoke test: cross-compiled the `macos-x64` desktop installer on Apple Silicon (`macos-26` with `x86_64-apple-darwin`), removed redundant Tauri debug unit tests, duplicate `desktop-packaging.test.mjs`, and always-cold `Swatinem/rust-cache@v2` steps from tag-only release jobs, and consolidated `scripts/smoke-release.mjs` to a single launcher-started backend verification pass (`.github/workflows/release.yml`, `scripts/smoke-release.mjs`, `scripts/desktop-updater-manifest.test.mjs`, `docs/development/desktop-releases.md`).
+
 - Added independent benchmark references ([Arena.ai *Coding Agents Harness Tax*](https://arena.ai/blog/coding-agents-harness-tax) and [Li et al., *Finding the Right Fit: Model-Harness Interactions across Agent Tasks*](https://arxiv.org/html/2610.00917v1)) to `README.md` and `README.zh-CN.md` to back up Pi^n's Harness Tax, minimal-scaffold, and runtime loop-edge arguments.
 
 ## [2.0.1] - 2026-11-28

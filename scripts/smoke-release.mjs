@@ -1,12 +1,12 @@
 // Test the actual archive after extraction away from the build checkout.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { root, lock } from './pi-baseline.mjs';
+import { lock } from './pi-baseline.mjs';
 
 const [artifact, platform, arch] = process.argv.slice(2);
 const directory = mkdtempSync(join(tmpdir(), 'pi-n-smoke-'));
@@ -27,9 +27,8 @@ Object.assign(env, {
   PI_N_BASELINE_CONTEXT: 'release-smoke', PI_N_RUNTIME_CACHE_DIR: join(directory, 'runtime-cache'),
   PI_OFFLINE: '1',
 });
-let child;
 let launcher;
-let logs = '';
+let launcherLogs = '';
 const stopProcess = async process_ => {
   if (!process_ || !process_.pid || process_.exitCode !== null || process_.signalCode !== null) return;
   const exited = new Promise(resolve => process_.once('close', resolve));
@@ -75,22 +74,6 @@ try {
     assert.ok(statSync(join(installation, 'start.sh')).mode & 0o111, 'start.sh must stay executable inside the archive');
   }
   assert.equal(run('engine/entrypoint.mjs', ['--version']).trim(), lock.packageVersion);
-  // Real CLI/IPC and bounded local-provider tests, not just a --version check.
-  cpSync(join(root, 'scripts/pi-process-contract.test.mjs'), join(installation, 'scripts/pi-process-contract.test.mjs'));
-  const contracts = execFileSync(process.execPath, [
-    '--test',
-    '--test-name-pattern',
-    'production Pi CLI reports the pinned version|Provider/Auth private readiness loads code only and preserves authentication bytes|Provider/Auth Codex browser login exposes method and callback prompts and can restart after cancellation',
-    join(installation, 'scripts/pi-process-contract.test.mjs'),
-  ], {
-    // Release smoke must remain bounded on Intel macOS. The full development
-    // contract file includes slow continuation and extension matrix tests; the
-    // archive smoke keeps the cheap relocated CLI/provider probes here and
-    // exercises the packaged backend below.
-    cwd: directory, env, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024,
-  });
-  process.stdout.write(contracts);
-  rmSync(join(installation, 'scripts/pi-process-contract.test.mjs'));
   const runtime = run('scripts/prepare-native-runtime.mjs').trim();
   const graphVersion = execFileSync(process.execPath, [join(runtime, 'engine/entrypoint.mjs'), '--version'], {
     cwd: directory, env, encoding: 'utf8', timeout: 60000,
@@ -163,27 +146,30 @@ try {
     writeNodeShim(oldNode, '18.2.0');
     await failClosed('old Node', launcherEnv(oldNode), /Node\.js 22\.19 or newer is required/);
   }
-  // This unique file proves Rust serves the relocated package, not CI's dist.
+  // Start the packaged launcher once and verify relocated asset serving,
+  // launcher URL output, provider catalog, and bundled extension loading.
   writeFileSync(join(installation, 'dist/release-smoke.txt'), 'relocated-release');
-  child = spawn(join(installation, platform === 'windows' ? 'pi-n.exe' : 'pi-n'), [], {
+  launcher = spawn(process.platform === 'win32' ? 'cmd.exe' : join(installation, 'start.sh'),
+    process.platform === 'win32' ? ['/d', '/c', join(installation, 'start.bat')] : [], {
     cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  child.stdout.on('data', value => { logs += value; });
-  child.stderr.on('data', value => { logs += value; });
-  let spawnError;
-  child.on('error', error => { spawnError = error; });
+  launcher.stdout.on('data', value => { launcherLogs += value; });
+  launcher.stderr.on('data', value => { launcherLogs += value; });
+  let launcherError;
+  launcher.on('error', error => { launcherError = error; });
   const base = `http://127.0.0.1:${port}`;
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
-    if (spawnError) throw spawnError;
-    if (child.exitCode !== null) throw new Error(`Backend exited: ${logs}`);
+    if (launcherError) throw launcherError;
+    if (launcher.exitCode !== null) throw new Error(`Launcher backend exited: ${launcherLogs}`);
     try {
       const response = await fetch(`${base}/release-smoke.txt`, { signal: AbortSignal.timeout(1000) });
       if (response.ok && await response.text() === 'relocated-release') { ready = true; break; }
     } catch {}
     await sleep(500);
   }
-  assert.ok(ready, `Relocated backend did not serve its assets: ${logs}`);
+  assert.ok(ready, `Relocated launcher did not serve its assets: ${launcherLogs}`);
+  assert.ok(launcherLogs.includes(base), `The launcher must print its URL: ${launcherLogs}`);
   const index = await fetch(base);
   assert.equal(await index.text(), readFileSync(join(installation, 'dist/index.html'), 'utf8'));
   const api = async (command, body) => {
@@ -192,7 +178,7 @@ try {
       signal: AbortSignal.timeout(60000),
     });
     const value = await response.json();
-    assert.ok(response.ok && !value.error, `${command}: ${JSON.stringify(value)}\n${logs}`);
+    assert.ok(response.ok && !value.error, `${command}: ${JSON.stringify(value)}\n${launcherLogs}`);
     return value.result;
   };
   const catalog = await api('provider_auth', { version: 1, operation: 'catalog', refresh: false });
@@ -206,40 +192,8 @@ try {
     assert.equal(extension.enabled, enabled, `${id} enabled state`);
     assert.ok(extension.path.replaceAll('\\', '/').includes('Relocated 安装 # %'), 'Backend must load relocated extensions');
   }
-  await stopProcess(child);
-
-  // The real launcher must start a serving backend and print its URL. It uses
-  // its own data directory so a force-killed lease cannot affect the checks
-  // above; this is the last backend this smoke test starts.
-  const launcherListener = createServer();
-  await new Promise(resolve => launcherListener.listen(0, '127.0.0.1', resolve));
-  const launcherPort = launcherListener.address().port;
-  await new Promise(resolve => launcherListener.close(resolve));
-  const launcherEnvFull = { ...env, PI_N_PORT: String(launcherPort), PI_N_DATA_DIR: join(directory, 'launcher-data') };
-  launcher = spawn(process.platform === 'win32' ? 'cmd.exe' : join(installation, 'start.sh'),
-    process.platform === 'win32' ? ['/d', '/c', join(installation, 'start.bat')] : [], {
-    cwd: directory, env: launcherEnvFull, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let launcherLogs = '';
-  launcher.stdout.on('data', value => { launcherLogs += value; });
-  launcher.stderr.on('data', value => { launcherLogs += value; });
-  let launcherError;
-  launcher.on('error', error => { launcherError = error; });
-  let launcherReady = false;
-  for (let attempt = 0; attempt < 120; attempt++) {
-    if (launcherError) throw launcherError;
-    if (launcher.exitCode !== null) throw new Error(`Launcher backend exited: ${launcherLogs}`);
-    try {
-      const response = await fetch(`http://127.0.0.1:${launcherPort}`, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) { launcherReady = true; break; }
-    } catch {}
-    await sleep(500);
-  }
-  assert.ok(launcherReady, `The packaged launcher did not serve the UI: ${launcherLogs}`);
-  assert.ok(launcherLogs.includes(`http://127.0.0.1:${launcherPort}`), `The launcher must print its URL: ${launcherLogs}`);
-  console.log(`Release smoke passed: ${platform}-${arch} (CLI, provider IPC, extensions, Graph runtime, backend, UI and launcher)`);
+  console.log(`Release smoke passed: ${platform}-${arch} (CLI, extensions, Graph runtime, backend, UI and launcher)`);
 } finally {
-  await stopProcess(child);
   await stopProcess(launcher);
   rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }

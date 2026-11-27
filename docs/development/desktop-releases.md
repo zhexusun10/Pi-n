@@ -23,7 +23,7 @@ Before building locally, install prerequisites for your host OS (Node.js 22.19+,
   ```sh
   npm run desktop:build -- --target macos-arm64 --output-dir .tmp/desktop-dist
   ```
-  On Apple Silicon macOS, cross-building Intel `macos-x64` also works once `rustup target add x86_64-apple-darwin` is installed; production Intel releases build natively on `macos-26-intel` in CI. Windows NSIS installers must be built on Windows (`windows-latest` in CI).
+  On Apple Silicon macOS (including CI on `macos-26`), cross-building Intel `macos-x64` works once `rustup target add x86_64-apple-darwin` is installed. Windows NSIS installers must be built on Windows (`windows-latest` in CI).
 
 ### Data migration, host requirements, launch at login & macOS titlebar
 
@@ -43,7 +43,7 @@ Before building locally, install prerequisites for your host OS (Node.js 22.19+,
 - **Least-privilege permissions:** Top-level workflow permissions default to `contents: read`. Only the final `create-release` aggregation job elevates to `contents: write`.
 - **Jobs:**
   1. `build-release` — builds and smoke-tests the relocatable archives (`pi-n-linux-x64.tar.gz`, `pi-n-macos-arm64.tar.gz`, `pi-n-macos-x64.tar.gz`, `pi-n-windows-x64.zip`) plus `.sha256` checksums.
-  2. `build-desktop` — runs on separate native runners (`macos-26` for Apple Silicon `macos-arm64`, `macos-26-intel` for Intel `macos-x64`, and `windows-latest` for `windows-x64`) so macOS builds link against the macOS 26+ SDK while preserving `minimumSystemVersion: "12.0"`. Each job runs [`scripts/desktop-build.mjs`](../../scripts/desktop-build.mjs), which stages the frontend `dist/`, release Rust `pi-n` binary, verified pinned Pi/engine runtime, and pinned Node.js `22.19.0` binary (SHA-256 verified) via [`scripts/desktop-stage.mjs`](../../scripts/desktop-stage.mjs), builds the native installer, and optionally signs Tauri updater artifacts.
+  2. `build-desktop` — builds Apple Silicon `macos-arm64` natively on `macos-26`, cross-compiles Intel `macos-x64` (`--target x86_64-apple-darwin`) on `macos-26` (so both macOS builds run on fast Apple Silicon runners and link against the macOS 26+ SDK while preserving `minimumSystemVersion: "12.0"`), and builds `windows-x64` natively on `windows-latest`. Each job runs [`scripts/desktop-build.mjs`](../../scripts/desktop-build.mjs), which stages the frontend `dist/`, release Rust `pi-n` binary, verified pinned Pi/engine runtime, and pinned Node.js `22.19.0` binary (SHA-256 verified) via [`scripts/desktop-stage.mjs`](../../scripts/desktop-stage.mjs), builds the native installer, and optionally signs Tauri updater artifacts.
   3. `create-release` — waits for both `build-release` and `build-desktop`, downloads all artifacts into `release-assets/`, runs [`scripts/desktop-updater-manifest.mjs`](../../scripts/desktop-updater-manifest.mjs) to build and verify `latest.json` when signed updater artifacts are present, consolidates all asset checksums into a single `SHA256SUMS.txt` while pruning per-file `.sha256` and standalone `.sig` files (whose signatures are already embedded in `latest.json`), and creates or refreshes a **draft** GitHub Release.
 
 ## Windows in-place upgrade cleanup
