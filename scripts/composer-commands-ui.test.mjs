@@ -905,13 +905,18 @@ test("inline composer model selector uses white rounded cards with a thinking-le
     const cardStyle = await page.evaluate(() => {
       const box = document.querySelector(".prompt-box-container");
       const menuEl = document.querySelector('[data-testid="composer-model-menu"]');
+      const expectedShadow = getComputedStyle(document.documentElement).getPropertyValue("--shell-card-shadow").trim();
       return {
         boxRadius: getComputedStyle(box).borderTopLeftRadius,
         menuRadius: getComputedStyle(menuEl).borderTopLeftRadius,
+        menuShadow: getComputedStyle(menuEl).boxShadow,
+        expectedShadow,
         text: menuEl.innerText,
       };
     });
     assert.equal(cardStyle.menuRadius, cardStyle.boxRadius, "menu card border-radius aligns with input box");
+    assert.ok(cardStyle.expectedShadow, "--shell-card-shadow token is defined");
+    assert.equal(cardStyle.menuShadow, "rgba(15, 23, 42, 0.04) 0px 0px 16px 0px", "menu card shadow matches unfocused input box (--shell-card-shadow)");
     assert.ok(!/Planner|Node Agent|\bNode\b/i.test(cardStyle.text), "minimalist menu does not display role headings");
 
     // Compile mode (default graph): hovering a model opens Level-2 thinking submenu; choosing max saves both to planner.
@@ -925,11 +930,14 @@ test("inline composer model selector uses white rounded cards with a thinking-le
       return {
         subRadius: getComputedStyle(subEl).borderTopLeftRadius,
         menuRadius: getComputedStyle(menuEl).borderTopLeftRadius,
+        subShadow: getComputedStyle(subEl).boxShadow,
+        menuShadow: getComputedStyle(menuEl).boxShadow,
         subBottom: subEl.getBoundingClientRect().bottom,
         menuBottom: menuEl.getBoundingClientRect().bottom,
       };
     });
     assert.equal(subGeometry.subRadius, subGeometry.menuRadius, "submenu card border-radius matches Level-1 card");
+    assert.equal(subGeometry.subShadow, subGeometry.menuShadow, "submenu card shadow matches Level-1 card");
     assert.ok(subGeometry.subBottom <= subGeometry.menuBottom + 2, "submenu stays aligned above composer controls");
 
     await submenu.locator('[data-thinking-level="max"]').click();

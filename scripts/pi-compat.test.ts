@@ -19,6 +19,7 @@ import {
   createBashTimeoutBridge, createBashToolDefinition, createLocalBashOperations, loadBundledSimpleTimeout,
   createReadToolDefinition, createWriteToolDefinition, createEditToolDefinition,
   assertCurrentPiDirectories, assertCurrentPiSettings, DefaultPackageManager, installDefaultAggressiveTrim, installQueueIdentity,
+  runPiCli,
 } from '../engine/pi-compat.ts';
 
 test('retired Pi sessions are rejected before migration and current sessions retain Run identity', () => {
@@ -102,6 +103,27 @@ test('Pi settings and startup directories reject retired inputs without changing
     assert.doesNotThrow(() => assertCurrentPiDirectories(root, malformedAgent));
     writeFileSync(join(malformedAgent, 'settings.json'), 'null');
     assert.doesNotThrow(() => assertCurrentPiDirectories(root, malformedAgent));
+
+    // Pi 1.7.0 removed install telemetry without rewriting settings.json; existing
+    // user files containing enableInstallTelemetry must remain readable untouched.
+    const telemetryAgent = join(root, 'telemetry-agent');
+    mkdirSync(telemetryAgent);
+    const telemetrySettings = '{"enableInstallTelemetry":false}';
+    writeFileSync(join(telemetryAgent, 'settings.json'), telemetrySettings);
+    assert.doesNotThrow(() => assertCurrentPiDirectories(root, telemetryAgent));
+    assert.equal(readFileSync(join(telemetryAgent, 'settings.json'), 'utf8'), telemetrySettings);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('runPiCli validates --agent-dir overrides before upstream startup migrations', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-cli-agent-dir-'));
+  try {
+    const legacyAgent = join(root, 'legacy-agent');
+    mkdirSync(legacyAgent);
+    writeFileSync(join(legacyAgent, 'oauth.json'), '{}');
+    await assert.rejects(() => runPiCli(['--agent-dir', legacyAgent, 'auth', 'list']), /Unsupported Pi oauth\.json/);
+    assert.equal(existsSync(join(legacyAgent, 'auth.json')), false);
+    assert.equal(readFileSync(join(legacyAgent, 'oauth.json'), 'utf8'), '{}');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -785,6 +807,38 @@ test('refreshed catalog exposes reviewed API changes and does not resurrect reti
     ['azure', 'gpt-4'],
   ]) {
     assert.equal(runtime.getModel(provider, id), undefined, `${provider}/${id}: retired in Pi 1.6.1`);
+  }
+  // Pi 1.7.0 moves ant-ling to models.dev Ling 3.x (deepseek thinking toggle),
+  // updates Cloudflare defaults off retired Kimi K2.6/K2.7, swaps Qwen Individual
+  // to qwen4-max, and fixes Bedrock Kimi K3.1 / GLM 5.3 thinking & replay compat.
+  const antLingDefault = runtime.getModel('ant-ling', 'Ling-3.1-flash');
+  assert.equal(antLingDefault?.api, 'openai-completions');
+  assert.equal((antLingDefault?.compat as any)?.thinkingFormat, 'deepseek');
+  assert.deepEqual(getModelThinkingCapabilities(antLingDefault!).thinkingLevels, ['off', 'high']);
+  assert.equal(runtime.getModel('cloudflare-workers-ai', '@cf/zai-org/glm-5.3')?.api, 'openai-completions');
+  assert.equal(runtime.getModel('cloudflare-ai-gateway', 'workers-ai/@cf/zai-org/glm-5.3')?.api, 'openai-completions');
+  for (const provider of ['qwen-token-plan-individual', 'qwen-token-plan-individual-cn']) {
+    assert.equal(runtime.getModel(provider, 'qwen4-max')?.api, 'openai-completions');
+    assert.equal(runtime.getModel(provider, 'qwen4-max-preview'), undefined, `${provider}/qwen4-max-preview: retired in Pi 1.7.0`);
+  }
+  const bedrockKimi = runtime.getModel('amazon-bedrock', 'us.moonshotai.kimi-k3.1');
+  assert.ok(bedrockKimi, 'amazon-bedrock/us.moonshotai.kimi-k3.1');
+  assert.equal((bedrockKimi.compat as any)?.supportsReasoningReplay, false);
+  assert.deepEqual(getModelThinkingCapabilities(bedrockKimi).thinkingLevels, ['off', 'low', 'medium', 'high', 'xhigh', 'max']);
+  const bedrockGlm = runtime.getModel('amazon-bedrock', 'us.zai.glm-5.3');
+  assert.ok(bedrockGlm, 'amazon-bedrock/us.zai.glm-5.3');
+  assert.deepEqual(getModelThinkingCapabilities(bedrockGlm).thinkingLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  for (const [provider, id] of [
+    ['ant-ling', 'Ling-2.6-flash'],
+    ['ant-ling', 'Ling-2.6-1T'],
+    ['ant-ling', 'Ring-2.6-1T'],
+    ['cloudflare-workers-ai', '@cf/moonshotai/kimi-k2.6'],
+    ['cloudflare-workers-ai', '@cf/moonshotai/kimi-k2.7-code'],
+    ['cloudflare-ai-gateway', 'workers-ai/@cf/moonshotai/kimi-k2.7-code'],
+    ['together', 'openai/gpt-oss-120b'],
+    ['together', 'deepseek-ai/DeepSeek-V4-Pro-0813'],
+  ]) {
+    assert.equal(runtime.getModel(provider, id), undefined, `${provider}/${id}: retired in Pi 1.7.0`);
   }
 });
 

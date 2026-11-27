@@ -81,7 +81,7 @@
   white-space: nowrap;
 }
 
-/* White card matching the input box corner radius (26px default, 16px compact) */
+/* White card matching the input box corner radius (26px default, 16px compact) and resting shadow */
 .composer-model-menu,
 .composer-thinking-submenu {
   position: fixed;
@@ -89,7 +89,7 @@
   background: var(--bg-canvas, #ffffff);
   border: 1px solid var(--border-default, #e2e8f0);
   border-radius: 26px;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.11), 0 2px 6px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shell-card-shadow, 0 0 16px rgba(15, 23, 42, 0.04));
   overflow: hidden;
   user-select: none;
 }

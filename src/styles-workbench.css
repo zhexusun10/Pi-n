@@ -3066,13 +3066,13 @@ button.session-label-toggle:focus-visible {
 
 .settings-background-option:hover,
 .settings-accent-option:hover {
-  border-color: var(--text-secondary);
+  border-color: var(--border-hover);
 }
 
 .settings-background-option.is-selected,
 .settings-accent-option.is-selected {
-  border-color: var(--brand-default);
-  box-shadow: 0 0 0 1px var(--brand-default);
+  border-color: color-mix(in srgb, var(--brand-default) 55%, var(--border-default));
+  box-shadow: 0 0 0 2px var(--brand-ring);
 }
 
 .settings-background-options:disabled .settings-background-option,

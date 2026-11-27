@@ -7,9 +7,10 @@
 //! end exactly as before.
 //!
 //! A parked shell has no idle TTL: a Serial conversation that ran in this backend
-//! stays warm for the whole backend process, and is retired only on explicit Run
-//! or workspace deletion, a different model selection on resume, or backend
-//! shutdown.
+//! stays warm for the whole backend process. Model and thinking-level changes
+//! on resume are applied in-place via Pi RPC so background services survive; a
+//! parked shell is retired only on explicit Run or workspace deletion, a failed
+//! in-place model switch, or backend shutdown.
 //!
 //! This pool owns only the bookkeeping. The concrete parked host (child, process
 //! tree, RPC channels) and its termination live in the engine; the pool calls

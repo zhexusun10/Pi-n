@@ -702,8 +702,17 @@ packagePrototype.getNpmInstallPath = function (source: unknown, scope: unknown) 
   return this.getManagedNpmInstallPath(source, scope);
 };
 
+function resolveCliAgentDir(args: string[]): string | undefined {
+  let agentDir: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--') break;
+    if (args[i] === '--agent-dir') agentDir = args[++i] || undefined;
+  }
+  return agentDir;
+}
+
 export async function runPiCli(args: string[], options: MainOptions = {}) {
-  assertCurrentPiDirectories(process.cwd(), resolveAgentDir());
+  assertCurrentPiDirectories(process.cwd(), resolveCliAgentDir(args) ?? resolveAgentDir());
   const [{ setupCli }, { main }] = await preparePiCli();
   setupCli();
   // Pi's CLI creates its own runtime. Retarget its default models path while

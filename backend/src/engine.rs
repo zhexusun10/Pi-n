@@ -2551,16 +2551,168 @@ fn serial_selection(request: &PiRequest<'_>) -> (String, Option<String>) {
 }
 
 #[cfg(not(feature = "fixture"))]
+const PARKED_RPC_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[cfg(not(feature = "fixture"))]
+fn send_parked_rpc(
+    host: &mut ParkedSerial,
+    mut payload: serde_json::Value,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
+    let sender = host
+        .channels
+        .rpc_sender
+        .as_ref()
+        .ok_or_else(|| "Parked session has no RPC input".to_string())?;
+    let rpc_id = uuid::Uuid::new_v4().to_string();
+    payload["id"] = serde_json::Value::String(rpc_id.clone());
+    sender
+        .send(payload.to_string())
+        .map_err(|error| format!("Cannot send RPC to parked session: {error}"))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        process_control::check_current_owner_stop()?;
+        if let Ok(Err(error)) = host.channels.input_receiver.try_recv() {
+            return Err(format!("Cannot write RPC to parked session: {error}"));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("Timed out waiting for parked session RPC response".into());
+        }
+        match host
+            .channels
+            .receiver
+            .recv_timeout(remaining.min(Duration::from_millis(50)))
+        {
+            Ok((true, _)) => continue,
+            Ok((false, line)) => {
+                let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                if event["type"].as_str() == Some("response")
+                    && event["id"].as_str() == Some(rpc_id.as_str())
+                {
+                    if event["success"].as_bool() == Some(true) {
+                        return Ok(event);
+                    }
+                    let error = event["error"]
+                        .as_str()
+                        .unwrap_or("Parked session rejected RPC command");
+                    return Err(error.to_string());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("Parked session exited before replying to RPC".into());
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "fixture"))]
+fn resolve_parked_model_target(
+    host: &mut ParkedSerial,
+    desired_model: &str,
+    timeout: Duration,
+) -> Result<(String, String), String> {
+    let slash_count = desired_model.bytes().filter(|&b| b == b'/').count();
+    if slash_count == 1 {
+        if let Some((provider, model_id)) = desired_model.split_once('/') {
+            if !provider.is_empty() && !model_id.is_empty() {
+                return Ok((provider.to_string(), model_id.to_string()));
+            }
+        }
+    }
+    let response = send_parked_rpc(
+        host,
+        serde_json::json!({ "type": "get_available_models" }),
+        timeout,
+    )?;
+    let models = response["data"]["models"]
+        .as_array()
+        .ok_or_else(|| "Missing models array in get_available_models response".to_string())?;
+    models
+        .iter()
+        .find_map(|entry| {
+            let provider = entry["provider"].as_str()?;
+            let id = entry["id"].as_str()?;
+            if format!("{provider}/{id}") == desired_model
+                || (slash_count == 0 && id == desired_model)
+            {
+                Some((provider.to_string(), id.to_string()))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("Model not found in parked session: {desired_model}"))
+}
+
+#[cfg(not(feature = "fixture"))]
+fn switch_parked_serial_selection(
+    host: &mut ParkedSerial,
+    desired: &(String, Option<String>),
+    timeout: Duration,
+) -> Result<(), String> {
+    let (desired_model, desired_thinking) = desired;
+    let model_changed = host.selection.0 != *desired_model;
+    let thinking_changed = host.selection.1 != *desired_thinking;
+    if !model_changed && !thinking_changed {
+        return Ok(());
+    }
+    let target_thinking = desired_thinking
+        .as_deref()
+        .map(str::trim)
+        .filter(|level| !level.is_empty());
+    if thinking_changed && target_thinking.is_none() {
+        return Err("Cannot clear thinking level in-place without an explicit target level".into());
+    }
+    process_control::check_current_owner_stop()?;
+    while host.channels.receiver.try_recv().is_ok() {}
+    while host.channels.input_receiver.try_recv().is_ok() {}
+    host.channels.parked.store(false, Ordering::Release);
+    if model_changed {
+        let (provider, model_id) = resolve_parked_model_target(host, desired_model, timeout)?;
+        send_parked_rpc(
+            host,
+            serde_json::json!({
+                "type": "set_model",
+                "provider": provider,
+                "modelId": model_id,
+            }),
+            timeout,
+        )?;
+    }
+    // `set_model` in Pi applies its own per-model/default thinking level, so
+    // always follow up with `set_thinking_level` whenever model or thinking changed.
+    if let Some(level) = target_thinking {
+        send_parked_rpc(
+            host,
+            serde_json::json!({
+                "type": "set_thinking_level",
+                "level": level,
+            }),
+            timeout,
+        )?;
+    }
+    host.selection = desired.clone();
+    Ok(())
+}
+
+#[cfg(not(feature = "fixture"))]
 fn claim_matching_serial(request: &PiRequest<'_>) -> Option<ParkedSerial> {
     let key = serial_linger_key(request)?;
-    let host = lingering_pool().claim(&key)?;
-    if host.selection == serial_selection(request) {
-        Some(host)
-    } else {
-        // Reopen the same persisted Pi session with the requested model; never
-        // send a new turn to a process that still owns the previous selection.
-        host.retire();
-        None
+    let mut host = lingering_pool().claim(&key)?;
+    let desired = serial_selection(request);
+    if host.selection == desired {
+        return Some(host);
+    }
+    match switch_parked_serial_selection(&mut host, &desired, PARKED_RPC_SWITCH_TIMEOUT) {
+        Ok(()) => Some(host),
+        Err(error) => {
+            eprintln!("[Pi^n] Parked Serial in-place model switch failed ({error}); cold-launching");
+            host.retire();
+            None
+        }
     }
 }
 
@@ -3400,7 +3552,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             process_control::with_owner("linger-run", || process_control::track(&child).unwrap());
         let (_line_tx, receiver) = mpsc::channel::<(bool, String)>();
         let (_input_tx, input_receiver) = mpsc::channel::<Result<(), std::io::Error>>();
-        let (rpc_tx, _rpc_rx) = mpsc::channel::<String>();
+        let (rpc_tx, rpc_rx) = mpsc::channel::<String>();
         let channels = SessionChannels {
             receiver,
             input_receiver,
@@ -3494,7 +3646,7 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
         assert_ne!(
             claimed.selection,
             serial_selection(&request),
-            "thinking-only changes also require a fresh shell"
+            "thinking-only changes must be detected by selection comparison"
         );
         request.extra_args = vec!["--thinking", "medium"];
         lingering_pool().park(key, "linger-run".into(), claimed);
@@ -3504,12 +3656,257 @@ const ready=setInterval(()=>{if(fs.existsSync(pidfile)){clearInterval(ready);cle
             config: &replacement,
             ..request
         };
+        drop(rpc_rx);
         assert!(
             claim_matching_serial(&changed).is_none(),
-            "a changed model must cold-launch the saved session"
+            "when in-place RPC switch fails, a changed model must fall back to cold launch"
         );
         stop_lingering_for_run("linger-run");
         assert_eq!(lingering_pool().len(), 0);
+    }
+
+    #[cfg(not(feature = "fixture"))]
+    #[test]
+    fn parked_serial_switches_model_and_thinking_in_place_via_rpc() {
+        let temp = tempfile::tempdir().unwrap();
+        let run_id = format!("linger-rpc-switch-{}", uuid::Uuid::new_v4());
+        let session_id = format!("linger-rpc-session-{}", uuid::Uuid::new_v4());
+        let session_dir = temp.path().join("session");
+
+        let mut command = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", "ping 127.0.0.1 -n 30 > NUL"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        process_control::configure_command(&mut command);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let tree = process_control::with_owner(&run_id, || process_control::track(&child).unwrap());
+
+        let (out_tx, out_rx) = mpsc::channel::<(bool, String)>();
+        let (_in_tx, in_rx) = mpsc::channel::<Result<(), std::io::Error>>();
+        let (rpc_tx, rpc_rx) = mpsc::channel::<String>();
+        let seen_commands = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let seen_clone = Arc::clone(&seen_commands);
+        let responder = thread::spawn(move || {
+            for raw in rpc_rx {
+                let cmd: serde_json::Value = serde_json::from_str(&raw).unwrap();
+                seen_clone.lock().unwrap().push(cmd.clone());
+                let id = cmd["id"].as_str().unwrap_or_default();
+                let kind = cmd["type"].as_str().unwrap_or_default();
+                let reply = match kind {
+                    "get_available_models" => serde_json::json!({
+                        "id": id,
+                        "type": "response",
+                        "command": "get_available_models",
+                        "success": true,
+                        "data": {
+                            "models": [
+                                { "provider": "anthropic", "id": "claude-sonnet-4-5" },
+                                { "provider": "http://127.0.0.1:8080/v1", "id": "local-model" }
+                            ]
+                        }
+                    }),
+                    "set_model" => {
+                        let provider = cmd["provider"].as_str().unwrap_or_default();
+                        let model_id = cmd["modelId"].as_str().unwrap_or_default();
+                        if provider == "missing" {
+                            serde_json::json!({
+                                "id": id,
+                                "type": "response",
+                                "command": "set_model",
+                                "success": false,
+                                "error": format!("No API key for {provider}/{model_id}")
+                            })
+                        } else {
+                            serde_json::json!({
+                                "id": id,
+                                "type": "response",
+                                "command": "set_model",
+                                "success": true,
+                                "data": { "provider": provider, "id": model_id }
+                            })
+                        }
+                    }
+                    "set_thinking_level" => serde_json::json!({
+                        "id": id,
+                        "type": "response",
+                        "command": "set_thinking_level",
+                        "success": true
+                    }),
+                    _ => serde_json::json!({
+                        "id": id,
+                        "type": "response",
+                        "command": kind,
+                        "success": false,
+                        "error": "unexpected"
+                    }),
+                };
+                if out_tx.send((false, reply.to_string())).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let config = Config {
+            feedback_enabled: false,
+            isolate_parallel_nodes: true,
+            repository: temp.path().to_string_lossy().into(),
+            model: "openai/gpt-5".into(),
+            thinking_level: "medium".into(),
+            role_models: Default::default(),
+            max_parallel: 1,
+            max_feedback: 0,
+            auto_approve: false,
+            post_task_review: false,
+            planner_write_tools: true,
+            environment: None,
+        };
+        fn build_request<'a>(
+            cfg: &'a Config,
+            cwd: &'a Path,
+            session_dir: &'a Path,
+            session_id: &'a str,
+            thinking: &'a str,
+        ) -> PiRequest<'a> {
+            PiRequest {
+                role: PiRole::NodeAgent,
+                config: cfg,
+                cwd,
+                task: "task",
+                session_dir,
+                extension: None,
+                tools: None,
+                session_id: Some(session_id),
+                extra_args: vec!["--thinking", thinking],
+                environment: vec![("PI_N_AGENT_KIND", "serial".into())],
+                system_prompt: None,
+                images: None,
+            }
+        }
+        let key =
+            serial_linger_key(&build_request(&config, temp.path(), &session_dir, &session_id, "medium"))
+                .unwrap();
+        lingering_pool().park(
+            key.clone(),
+            run_id.clone(),
+            ParkedSerial {
+                child,
+                tree,
+                channels: SessionChannels {
+                    receiver: out_rx,
+                    input_receiver: in_rx,
+                    rpc_sender: Some(rpc_tx),
+                    rpc_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
+                    rpc_ui: Arc::new(Mutex::new(composer::CommandUi::default())),
+                    parked: Arc::new(AtomicBool::new(true)),
+                },
+                selection: ("openai/gpt-5".into(), Some("medium".into())),
+            },
+        );
+
+        // 1. Thinking-only change: reuses the exact same PID via `set_thinking_level`.
+        let host = claim_matching_serial(&build_request(
+            &config,
+            temp.path(),
+            &session_dir,
+            &session_id,
+            "high",
+        ))
+            .expect("thinking change must switch in-place without killing the parked process");
+        assert_eq!(host.child.id(), pid);
+        assert_eq!(host.selection, ("openai/gpt-5".into(), Some("high".into())));
+        {
+            let cmds = seen_commands.lock().unwrap();
+            assert_eq!(cmds.len(), 1);
+            assert_eq!(cmds[0]["type"], "set_thinking_level");
+            assert_eq!(cmds[0]["level"], "high");
+        }
+        lingering_pool().park(key.clone(), run_id.clone(), host);
+
+        // 2. Standard `provider/model` change: sends `set_model` then `set_thinking_level`.
+        let mut next_config = config.clone();
+        next_config.model = "anthropic/claude-sonnet-4-5".into();
+        let host = claim_matching_serial(&build_request(
+            &next_config,
+            temp.path(),
+            &session_dir,
+            &session_id,
+            "low",
+        ))
+            .expect("model change must switch in-place without killing the parked process");
+        assert_eq!(host.child.id(), pid);
+        assert_eq!(
+            host.selection,
+            ("anthropic/claude-sonnet-4-5".into(), Some("low".into()))
+        );
+        {
+            let cmds = seen_commands.lock().unwrap();
+            assert_eq!(cmds.len(), 3);
+            assert_eq!(cmds[1]["type"], "set_model");
+            assert_eq!(cmds[1]["provider"], "anthropic");
+            assert_eq!(cmds[1]["modelId"], "claude-sonnet-4-5");
+            assert_eq!(cmds[2]["type"], "set_thinking_level");
+            assert_eq!(cmds[2]["level"], "low");
+        }
+        lingering_pool().park(key.clone(), run_id.clone(), host);
+
+        // 3. Provider ID containing slashes: queries `get_available_models` then `set_model`.
+        let mut slash_config = config.clone();
+        slash_config.model = "http://127.0.0.1:8080/v1/local-model".into();
+        let host = claim_matching_serial(&build_request(
+            &slash_config,
+            temp.path(),
+            &session_dir,
+            &session_id,
+            "off",
+        ))
+            .expect("slash-containing provider ID must resolve via get_available_models");
+        assert_eq!(host.child.id(), pid);
+        assert_eq!(
+            host.selection,
+            (
+                "http://127.0.0.1:8080/v1/local-model".into(),
+                Some("off".into())
+            )
+        );
+        {
+            let cmds = seen_commands.lock().unwrap();
+            assert_eq!(cmds.len(), 6);
+            assert_eq!(cmds[3]["type"], "get_available_models");
+            assert_eq!(cmds[4]["type"], "set_model");
+            assert_eq!(cmds[4]["provider"], "http://127.0.0.1:8080/v1");
+            assert_eq!(cmds[4]["modelId"], "local-model");
+            assert_eq!(cmds[5]["type"], "set_thinking_level");
+            assert_eq!(cmds[5]["level"], "off");
+        }
+        lingering_pool().park(key, run_id.clone(), host);
+
+        // 4. Failed `set_model` cleanly retires the parked shell and falls back to cold launch.
+        let mut bad_config = config.clone();
+        bad_config.model = "missing/model".into();
+        assert!(
+            claim_matching_serial(&build_request(
+                &bad_config,
+                temp.path(),
+                &session_dir,
+                &session_id,
+                "medium",
+            ))
+            .is_none(),
+            "rejected set_model must retire the parked shell and fall back to cold launch"
+        );
+        drop(seen_commands);
+        let _ = responder.join();
+        stop_lingering_for_run(&run_id);
     }
 
     #[cfg(not(feature = "fixture"))]

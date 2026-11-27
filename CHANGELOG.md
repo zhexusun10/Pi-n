@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-11-28
+
 ### Changed
+
+- Switched parked Serial conversations' model and thinking level in-place via Pi RPC (`set_model`, `get_available_models` for slash-containing provider IDs, and `set_thinking_level`) instead of retiring the parked process tree on selection changes, so background services (e.g., dev servers) survive model/thinking switches while still falling back to cold launch if the RPC switch fails (`backend/src/engine.rs`, `backend/src/engine/lingering.rs`).
+
+- Softened the selected border and outer ring on the Accent color (`.settings-accent-option.is-selected`) and Home background (`.settings-background-option.is-selected`) cards in Settings (`src/styles-workbench.css`).
+
+- Upgraded the pinned Pi baseline, reviewed model catalog (`engine/model-data/`), dependency profile (`engine/pi-dependencies/`), and root peer packages (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`) from `1.6.1` to `1.7.0` (`fb0fe823539f6d04850f6e34748c01f01f212e1f`), validated `--agent-dir` overrides before upstream CLI startup migrations in `engine/pi-compat.ts`, and added Pi 1.7.0 catalog and compatibility boundary regressions (`pi`, `engine/pi-lock.json`, `engine/model-data/`, `engine/pi-dependencies/`, `engine/pi-compat.ts`, `package.json`, `package-lock.json`, `scripts/pi-compat.test.ts`).
+
+- Aligned the composer model and thinking selector menu cards (`.composer-model-menu`, `.composer-thinking-submenu`) box-shadow with the unfocused composer input box (`var(--shell-card-shadow)`) (`src/components/ui/composer-model-selector.css`, `scripts/composer-commands-ui.test.mjs`).
 
 - Slimmed down the Release CI workflow and archive smoke test: cross-compiled the `macos-x64` desktop installer on Apple Silicon (`macos-26` with `x86_64-apple-darwin`), removed redundant Tauri debug unit tests, duplicate `desktop-packaging.test.mjs`, and always-cold `Swatinem/rust-cache@v2` steps from tag-only release jobs, and consolidated `scripts/smoke-release.mjs` to a single launcher-started backend verification pass (`.github/workflows/release.yml`, `scripts/smoke-release.mjs`, `scripts/desktop-updater-manifest.test.mjs`, `docs/development/desktop-releases.md`).
 
