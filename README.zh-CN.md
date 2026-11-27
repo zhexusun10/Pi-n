@@ -45,7 +45,7 @@
   <thead>
     <tr>
       <th align="center">Codex — <code>18k tokens</code>（已占 7% 上下文）</th>
-      <th align="center">Pi<sup>n</sup> + <code>pi-trim</code> — <code>1.08k tokens</code>（占 0% 上下文）</th>
+      <th align="center">Pi<sup>n</sup> — <code>1.08k tokens</code>（占 0% 上下文）</th>
     </tr>
   </thead>
   <tbody>

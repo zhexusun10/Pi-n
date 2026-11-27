@@ -45,7 +45,7 @@ Just sending a single `"Hi"` on the same repo and the same model shows the diffe
   <thead>
     <tr>
       <th align="center">Codex — <code>18k tokens</code> (7% context used)</th>
-      <th align="center">Pi<sup>n</sup> + <code>pi-trim</code> — <code>1.08k tokens</code> (0% context used)</th>
+      <th align="center">Pi<sup>n</sup> — <code>1.08k tokens</code> (0% context used)</th>
     </tr>
   </thead>
   <tbody>
