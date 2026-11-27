@@ -4,8 +4,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { VirtualizedTranscript } from "../src/components/VirtualizedTranscript.tsx";
 import { CompactedCard } from "../src/components/CompactedCard.tsx";
+import { ActivitySummaryRow } from "../src/components/ActivitySummaryRow.tsx";
 import { TranscriptNoticeCard } from "../src/components/TranscriptNoticeCard.tsx";
 import { parseTranscriptChunkLines, type ParseTranscriptChunkState } from "../src/services/transcriptParser.ts";
+import { visibleTranscriptRows } from "../src/services/transcriptLayout.ts";
+import { summarizeActivityGroup } from "../src/services/activitySummary.ts";
 import {
   applyPlannerAssistantMessageEnd,
   applyPlannerCompaction,
@@ -523,4 +526,67 @@ test("compaction file-section stripping handles split-turn mid-summary blocks, m
   assert.equal(authoritative.currentItems[0].compaction?.summary, "Summary text");
   assert.equal(authoritative.currentItems[0].compaction?.readFiles, undefined);
   assert.deepEqual(authoritative.currentItems[0].compaction?.modifiedFiles, ["stale.ts"]);
+});
+
+test("collapsed-cards mode folds compaction cards into ActivitySummaryRow and renders CompactedCard inside", () => {
+  const compactionItem = parse([
+    {
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: {
+        summary: "Earlier history compacted.",
+        firstKeptEntryId: "entry-12",
+        tokensBefore: 120000,
+        estimatedTokensAfter: 20000,
+        usage: {
+          input: 10000,
+          output: 1000,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0.03, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.04 },
+        },
+      },
+    },
+  ], freshState()).currentItems[0];
+
+  const rows = [
+    { id: "tool_1", type: "tool_call" as const, role: "assistant" as const, toolCallId: "tc-1", toolName: "read", args: { path: "src/a.ts" }, status: "success" as const },
+    compactionItem,
+    { id: "tool_2", type: "tool_call" as const, role: "assistant" as const, toolCallId: "tc-2", toolName: "read", args: { path: "src/b.ts" }, status: "success" as const },
+    { id: "text_1", type: "text" as const, role: "assistant" as const, content: "Done.", status: "success" as const },
+  ];
+
+  const collapsed = visibleTranscriptRows(rows, undefined, { collapseCards: true, live: false, canPrepend: false });
+  assert.equal(collapsed.rows.length, 2);
+  assert.equal(collapsed.rows[0].type, "activity_summary");
+  assert.equal(collapsed.rows[1].id, "text_1");
+  assert.deepEqual(collapsed.rows[0].summaryItems?.map(item => item.type), ["tool_call", "compaction", "tool_call"]);
+
+  const zh = (key: string, ...values: unknown[]) => key.replace(/\{(\d+)\}/g, (_, i) => String(values[Number(i)] ?? ""));
+  const mixedSummary = summarizeActivityGroup(collapsed.rows[0].summaryItems ?? [], zh);
+  assert.equal(mixedSummary.text, "已浏览 2 个文件 · 已压缩上下文");
+  assert.equal(summarizeActivityGroup(collapsed.rows[0].summaryItems ?? []).text, "Viewed 2 files · Compacted context");
+
+  const soloSummary = summarizeActivityGroup([compactionItem], zh);
+  assert.equal(soloSummary.icon, "compaction");
+  assert.equal(soloSummary.text, "已压缩上下文");
+  assert.equal(summarizeActivityGroup([compactionItem]).text, "Compacted context");
+
+  const expandedHiddenCost = renderToStaticMarkup(createElement(ActivitySummaryRow, {
+    item: collapsed.rows[0],
+    expanded: true,
+    showNotices: false,
+  }));
+  assert.match(expandedHiddenCost, /compacted-card/);
+  assert.match(expandedHiddenCost, /120k → 20k tokens/);
+  assert.doesNotMatch(expandedHiddenCost, /compacted-billing/);
+
+  const expandedShownCost = renderToStaticMarkup(createElement(ActivitySummaryRow, {
+    item: collapsed.rows[0],
+    expanded: true,
+    showNotices: true,
+  }));
+  assert.match(expandedShownCost, /compacted-billing/);
 });

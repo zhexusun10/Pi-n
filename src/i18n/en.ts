@@ -677,6 +677,8 @@ export const en: Record<string, string> = {
   "调用了 {0} 个工具": "Called {0} tools",
   "已调用 {0}": "Called {0}",
   "正在调用 {0}": "Calling {0}",
+  "已压缩上下文": "Compacted context",
+  "已压缩 {0} 次上下文": "Compacted context {0} times",
   "发生 1 个错误": "1 error",
   "发生 {0} 个错误": "{0} errors",
   "已思考": "Thought",

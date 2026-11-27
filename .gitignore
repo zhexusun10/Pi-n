@@ -41,8 +41,6 @@ src-tauri/resources/
 desktop-dist/
 target*/
 .pi-n/
-# Legacy (pre-rename) data directory
-.grapher/
 .pi-n-verify*/
 .pi-n-path-audit/
 .pi/

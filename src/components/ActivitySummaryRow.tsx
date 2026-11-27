@@ -8,6 +8,7 @@ import {
   FileText,
   Folder,
   Globe,
+  Layers,
   Loader2,
   Network,
   Search,
@@ -20,6 +21,7 @@ import { summarizeActivityGroup, type ActivitySummaryIcon } from "../services/ac
 import { CollapsibleCardBody } from "./CollapsibleCardBody";
 import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingCard } from "./ThinkingCard";
+import { CompactedCard } from "./CompactedCard";
 import { TranscriptErrorCard } from "./TranscriptErrorCard";
 
 export type CardsTransitionPhase = "idle" | "collapsing" | "expanding";
@@ -29,6 +31,7 @@ interface ActivitySummaryRowProps {
   expanded?: boolean;
   transitionPhase?: CardsTransitionPhase;
   defaultThinkingExpanded?: boolean;
+  showNotices?: boolean;
   getChildExpanded?: (id: string) => boolean | undefined;
   onExpandedChange?: (expanded: boolean, card?: HTMLElement) => void;
   onChildResize?: (expanded: boolean, card?: HTMLElement) => void;
@@ -580,6 +583,8 @@ function renderSummaryIcon(icon: ActivitySummaryIcon, isRunning: boolean) {
       return <Globe size={14} strokeWidth={1.85} className="activity-summary-icon" />;
     case "graph":
       return <Network size={14} strokeWidth={1.85} className="activity-summary-icon" />;
+    case "compaction":
+      return <Layers size={14} strokeWidth={1.85} className="activity-summary-icon" />;
     case "error":
       return <AlertCircle size={14} strokeWidth={1.85} className="activity-summary-icon" />;
     case "thinking":
@@ -593,11 +598,13 @@ const SummaryChildCard = memo(function SummaryChildCard({
   item,
   expanded,
   defaultThinkingExpanded = false,
+  showNotices = false,
   onExpandedChange,
 }: {
   item: TranscriptItem;
   expanded?: boolean;
   defaultThinkingExpanded?: boolean;
+  showNotices?: boolean;
   onExpandedChange: (id: string, expanded: boolean, card?: HTMLElement) => void;
 }) {
   const expand = useCallback(
@@ -606,6 +613,9 @@ const SummaryChildCard = memo(function SummaryChildCard({
   );
   if (item.type === "tool_call") {
     return <ToolCallCard item={item} expanded={expanded} onExpandedChange={expand} animateAppear={false} />;
+  }
+  if (item.type === "compaction") {
+    return <CompactedCard item={item} showCost={showNotices} expanded={expanded} onExpandedChange={expand} animateAppear={false} />;
   }
   if (item.type === "thinking") {
     return (
@@ -632,6 +642,7 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
   expanded,
   transitionPhase = "idle",
   defaultThinkingExpanded = false,
+  showNotices = false,
   getChildExpanded,
   onExpandedChange,
   onChildResize,
@@ -751,6 +762,7 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
           item={child}
           expanded={childExpanded.get(child.id) ?? getChildExpanded?.(child.id)}
           defaultThinkingExpanded={defaultThinkingExpanded}
+          showNotices={showNotices}
           onExpandedChange={handleChildExpanded}
         />
       ))}

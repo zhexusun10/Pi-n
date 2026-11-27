@@ -19,6 +19,7 @@ interface CompactedCardProps {
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean, card?: HTMLElement) => void;
   showCost?: boolean;
+  animateAppear?: boolean;
   className?: string;
 }
 
@@ -53,7 +54,7 @@ function headerSummaryText(info: CompactionItemInfo): string | null {
 }
 
 export const CompactedCard: React.FC<CompactedCardProps> = React.memo(
-  ({ item, defaultExpanded = false, expanded, onExpandedChange, showCost = true, className = "" }) => {
+  ({ item, defaultExpanded = false, expanded, onExpandedChange, showCost = true, animateAppear: animateAppearProp, className = "" }) => {
     const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
     const isExpanded = expanded ?? internalExpanded;
     const [isCopied, setIsCopied] = useState(false);
@@ -95,7 +96,7 @@ export const CompactedCard: React.FC<CompactedCardProps> = React.memo(
     const billingBadge = showCost ? billingBadgeText(info) : null;
     const hasFiles = modifiedFiles.length > 0 || readFiles.length > 0;
 
-    const animateAppear = useCardAppear(item.id, false, item.timestamp, item.animateAppear);
+    const animateAppear = useCardAppear(item.id, false, item.timestamp, animateAppearProp ?? item.animateAppear);
 
     const toggleExpand = () => {
       const nextExpanded = !isExpanded;

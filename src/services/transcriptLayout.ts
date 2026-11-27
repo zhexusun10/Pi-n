@@ -42,7 +42,7 @@ export function matchActivitySummary(
 }
 
 export function isCollapsibleTranscriptCard(item: TranscriptItem): boolean {
-  if (item.type === "thinking" || item.type === "tool_call") return true;
+  if (item.type === "thinking" || item.type === "tool_call" || item.type === "compaction") return true;
   if (item.errorItems?.length) return true;
   return (item.type === "system" || (item.type === "text" && item.role === "assistant")) &&
     Boolean(item.isError || item.status === "error");

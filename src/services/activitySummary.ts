@@ -10,6 +10,7 @@ export type ActivitySummaryIcon =
   | "web"
   | "graph"
   | "tool"
+  | "compaction"
   | "error"
   | "thinking";
 
@@ -60,7 +61,7 @@ function isErrorRow(item: TranscriptItem): boolean {
 }
 
 /** Build a compact, Codex-style one-line summary for a contiguous group of
- * collapsed transcript cards (thinking, tool calls, and errors). */
+ * collapsed transcript cards (thinking, tool calls, compactions, and errors). */
 export function summarizeActivityGroup(
   items: readonly TranscriptItem[],
   tr: TranslateFn = t,
@@ -76,6 +77,7 @@ export function summarizeActivityGroup(
   let readGraphCount = 0;
   let editGraphCount = 0;
   let otherToolCount = 0;
+  let compactionCount = 0;
   let errorCount = 0;
   let bashRunning = false;
   let isRunning = false;
@@ -139,6 +141,11 @@ export function summarizeActivityGroup(
       continue;
     }
 
+    if (item.type === "compaction") {
+      compactionCount += 1;
+      continue;
+    }
+
     if (isErrorRow(item)) {
       errorCount += item.errorItems?.length || 1;
     }
@@ -154,7 +161,7 @@ export function summarizeActivityGroup(
   // can still append a second tool makes the summary bar stretch horizontally
   // and then abruptly snap back to a short aggregate label.
   const groupOpen = Boolean(options?.isOpen || isRunning);
-  if (!groupOpen && totalTools === 1 && errorCount === 0 && singleTool) {
+  if (!groupOpen && totalTools === 1 && errorCount === 0 && compactionCount === 0 && singleTool) {
     const toolName = (singleTool.toolName || "tool").trim();
     const normalizedToolName = toolName.toLowerCase();
     const args = singleTool.args || {};
@@ -277,6 +284,12 @@ export function summarizeActivityGroup(
     segments.push({
       icon: "tool",
       label: otherToolCount === 1 ? tr("调用了 1 个工具") : tr("调用了 {0} 个工具", otherToolCount),
+    });
+  }
+  if (compactionCount > 0) {
+    segments.push({
+      icon: "compaction",
+      label: compactionCount === 1 ? tr("已压缩上下文") : tr("已压缩 {0} 次上下文", compactionCount),
     });
   }
   if (errorCount > 0) {
