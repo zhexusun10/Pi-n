@@ -56,10 +56,15 @@ Just sending a single `"Hi"` on the same repo and the same model shows the diffe
   </tbody>
 </table>
 
+Independent benchmarks confirm both the **Harness Tax** and the strength of Pi's minimal scaffold:
+
+- **[Coding Agents Harness Tax](https://arena.ai/blog/coding-agents-harness-tax)** *(Arena.ai, 2026)* evaluated 21 model–harness pairs across Claude Code, Codex CLI, and Pi on SWE-bench Lite and Terminal-Bench 2.0: Claude Code started with **>10× Pi's mean initial context** and cost **1.5–2.0× as much as Pi** for comparable task success, while an alternative harness outperformed the model's native vendor harness in **9 of 12** Anthropic/OpenAI comparisons (e.g., GPT-5.6 Sol hit **83.3% in Pi vs. 78.9% in Codex** on Terminal-Bench 2.0 at roughly half the cost).
+- **[Finding the Right Fit: Model-Harness Interactions across Agent Tasks](https://arxiv.org/html/2610.00917v1)** *(Li et al., arXiv:2610.00917, 2026)* evaluated 66 configurations across TUA-Bench, ALE-CLI, and Terminal-Bench 4: GPT-6 Astra achieved its best ALE-CLI and Terminal-Bench 4 scores under **Pi's lean scaffold**—beating native Codex on both (`+2.15` and `+4.76` pts) and outperforming DeepSeek Harness on Terminal-Bench 4 (`60.32%` vs. `52.38%`) at **under a quarter of the cost per task** (`$4.66` vs. `$19.94`).
+
 **But Pi is a minimal runtime, not an out-of-the-box product.** By design, Pi keeps anything outside the minimal agent loop out of its core repository—and in day-to-day engineering, four real gaps show up fast:
 
 - **No built-in web search** — Real tasks constantly require checking current docs, RFCs, or breaking API changes, yet bare Pi ships without a `web_search` tool.
-- **Fragile loop edges** — Models that forget command timeouts can stall a test run forever; hitting an output-token limit or a dropped stream fails the turn outright instead of resuming cleanly.
+- **Fragile loop edges** — Bare Pi's shell has no default timeout and ends a run outright on output-token caps or dropped streams. In [Li et al. (2026)](https://arxiv.org/html/2610.00917v1), **34 Pi runs** stalled silently in an unbounded shell command until deadline, penalizing models that don't always set manual timeouts or that hit output limits—failure modes the authors note are best fixed at runtime with bounded command timeouts and scoped continuation.
 - **Redundant system-prompt prose** — Pi's default system prompt repeats tool descriptions already present in tool schemas and carries Pi self-documentation that 99% of coding tasks never need.
 - **CLI-only ergonomics** — Visual diffs, collapsible reading, docked terminals, auth, and cross-project organization are left for every user to wire up themselves.
 
@@ -250,6 +255,11 @@ npm run dev
 | **[Benchmarks](docs/benchmarks/harbor.md)** | Harbor evaluation harness and benchmark methodology |
 | **[Contributing](CONTRIBUTING.md)** & **[Testing](docs/development/testing.md)** | Development setup, ownership boundaries, and targeted test suites |
 | **[Docs Index](docs/index.md)** & **[Security](SECURITY.md)** | Full documentation map, agent rules ([AGENTS.md](AGENTS.md)), and vulnerability reporting |
+
+## References
+
+- Pan, M. Z., Yang, S., Arabzadeh, N., Chiang, W.-L., Stoica, I., & Zaharia, M. (2026). *Coding Agents Harness Tax* (*HarnessTax: How Much Does Harness Matter for Coding Agents?*). Arena.ai. <https://arena.ai/blog/coding-agents-harness-tax>
+- Li, Y., Zhou, Y., Teng, Y. L., Yang, F., Deng, Y., Lyu, Z., Dong, X., Chen, F., & An, B. (2026). *Finding the Right Fit: Model-Harness Interactions across Agent Tasks*. arXiv:2610.00917v1. <https://arxiv.org/html/2610.00917v1>
 
 ## License
 

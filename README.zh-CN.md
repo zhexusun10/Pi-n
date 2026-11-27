@@ -56,10 +56,15 @@
   </tbody>
 </table>
 
+多项独立基准研究同样印证了 **Harness Tax** 的存在以及 Pi 极简框架的优势：
+
+- **[Coding Agents Harness Tax](https://arena.ai/blog/coding-agents-harness-tax)** *（Arena.ai, 2026）* 在 SWE-bench Lite 与 Terminal-Bench 2.0 上评测了 Claude Code、Codex CLI 与 Pi 的 21 组模型–Harness 组合：Claude Code 的平均初始上下文超过 Pi 的 **10×**，在任务成功率基本持平的前提下成本高达 Pi 的 **1.5–2.0×**；在 12 组 Anthropic/OpenAI 对比中，非原生 Harness 在 **9 组**里取得了更高成功率（例如 GPT-5.6 Sol 在 Terminal-Bench 2.0 上用 Pi 达到 **83.3% vs. Codex 78.9%**，而成本仅约一半）。
+- **[Finding the Right Fit: Model-Harness Interactions across Agent Tasks](https://arxiv.org/html/2610.00917v1)** *（Li et al., arXiv:2610.00917, 2026）* 在 TUA-Bench、ALE-CLI 与 Terminal-Bench 4 上评测了 66 组配置：GPT-6 Astra 凭借 **Pi 的极简框架**拿下 ALE-CLI 与 Terminal-Bench 4 最高分——两项均超越原生 Codex（`+2.15` 与 `+4.76` 分），并在 Terminal-Bench 4 上以**不到 1/4 的单任务成本**（`$4.66` vs. `$19.94`）反超 DeepSeek Harness（`60.32%` vs. `52.38%`）。
+
 **但 Pi 是一个极简运行时，而不是能直接开箱即用的产品。** Pi 仓库有着极其克制的边界——任何不属于最简 Agent Loop 的能力都不进入核心源码。这让 Pi 保持纯净，却也在真实工程中留下了四处高频痛点：
 
 - **缺少开箱即用的 `web_search`** — 真实开发离不开查最新文档、RFC 与 API 变更，但裸 Pi 出厂不带联网搜索工具。
-- **Loop 边界的鲁棒性隐患** — 对不爱写超时参数的模型，一条测试命令就可能直接卡死整轮运行；输出触及模型 output limit、流式断连或瞬时异常时会直接失败，无法自动断点续跑。
+- **Loop 边界的鲁棒性隐患** — 裸 Pi 的 Shell 没有默认超时，遇到 output limit 截断或流式断连也会直接中止。在 [Li et al. (2026)](https://arxiv.org/html/2610.00917v1) 的轨迹分析中，共有 **34 次 Pi 运行**因无界命令静默挂起直至超时失败，不习惯手写超时或触发输出上限的模型因此受损严重——论文也指出，这类默认边界缺陷最适合在运行时通过有界命令超时与克制的续跑机制来修补。
 - **冗余的系统提示词噪音** — Pi 默认系统提示词里的 tool section 与各工具的 description 完全重复，附带的 Pi 自身文档对 99% 的工程任务毫无用处。
 - **缺少开箱即用的工作台体验** — 内联 Diff、过程折叠阅读、停靠终端、多工作区管理与零配置安装包，都需要开发者自己拼装。
 
@@ -251,6 +256,11 @@ npm run dev
 | **[基准评测（Benchmarks）](docs/benchmarks/harbor.md)** | Harbor 评测框架接入与基准测试方法 |
 | **[贡献指南](CONTRIBUTING.md)** 与 **[测试指南](docs/development/testing.md)** | 开发环境搭建、模块归属边界与按需验证测试套件 |
 | **[文档索引](docs/index.md)** 与 **[安全政策](SECURITY.md)** | 完整文档路由、Agent 仓库约束（[AGENTS.md](AGENTS.md)）与漏洞报告 |
+
+## 参考文献
+
+- Pan, M. Z., Yang, S., Arabzadeh, N., Chiang, W.-L., Stoica, I., & Zaharia, M. (2026). *Coding Agents Harness Tax* (*HarnessTax: How Much Does Harness Matter for Coding Agents?*). Arena.ai. <https://arena.ai/blog/coding-agents-harness-tax>
+- Li, Y., Zhou, Y., Teng, Y. L., Yang, F., Deng, Y., Lyu, Z., Dong, X., Chen, F., & An, B. (2026). *Finding the Right Fit: Model-Harness Interactions across Agent Tasks*. arXiv:2610.00917v1. <https://arxiv.org/html/2610.00917v1>
 
 ## 许可证
 
