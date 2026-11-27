@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { stripPlannerContext } from "../services/plannerText";
 import type { ChatMessage, TranscriptItem } from "../types";
 import { VirtualizedList } from "./VirtualizedList";

@@ -36,7 +36,7 @@ function Fixture() {
       effectiveMessages={[]} isPlanning={planning}
       plannerStream={{ runId: snapshot.runId, stage: planning ? "planning" : "completed", plannerText: "",
         items: [{ id: "graph-tool", type: "tool_call", toolName: "edit_graph", args: {}, status: "success" }] }}
-      onSendMessage={noop} onRequestConfirmation={noop} onControl={noop} onSave={noop}
+      onSendMessage={noop} onRequestConfirmation={noop} onControl={noop}
       onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config}
       active={false} locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
       nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} tokens={tokens} />

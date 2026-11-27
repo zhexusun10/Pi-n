@@ -7,7 +7,7 @@ import { ApiRequestError, jsonRequest, observeApiResponse, requestHeaders, respo
 import type { SnapshotPollRequest, SnapshotPollResponse, ExecutionOutputPage, PlanningOutputPage, OperationStatus, ConversationSearchResponse } from "./apiContract.generated";
 import { applySnapshotDelta, validateSnapshot } from "./snapshotDelta";
 import { RequestTimeoutError, withRequestTimeout } from "./requestTimeout";
-import type { Bootstrap, Config, FileChangeSummary, Graph, HostPreflight, ManualNodeRequest, OpenWorkspaceFileRequest, Plan, PlanningSummary, WorkspaceDirectory, SkillItem, Snapshot, RuntimeActivity } from "../types";
+import type { Bootstrap, Config, FileChangeSummary, Graph, HostPreflight, ManualNodeRequest, OpenWorkspaceFileRequest, Plan, PlanningSummary, WorkspaceDirectory, SkillItem, Snapshot } from "../types";
 
 const filesCache = new Map<string, string[]>();
 const skillsCache = new Map<string, SkillItem[]>();

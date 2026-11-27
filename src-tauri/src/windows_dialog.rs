@@ -74,8 +74,8 @@ mod native {
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetClassNameW, GetWindow, GetWindowRect, IsIconic, IsWindow,
         IsWindowVisible, SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx, CHILDID_SELF,
-        EVENT_SYSTEM_DIALOGSTART, GW_OWNER, HCBT_ACTIVATE, HHOOK, OBJID_WINDOW, SWP_NOACTIVATE,
-        SWP_NOSIZE, SWP_NOZORDER, WH_CBT, WINEVENT_OUTOFCONTEXT,
+        EVENT_SYSTEM_DIALOGEND, EVENT_SYSTEM_DIALOGSTART, GW_OWNER, HCBT_ACTIVATE, HHOOK,
+        OBJID_WINDOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WH_CBT, WINEVENT_OUTOFCONTEXT,
     };
 
     #[derive(Clone, Copy)]
@@ -295,10 +295,10 @@ mod native {
             let path_pwstr = item
                 .GetDisplayName(SIGDN_FILESYSPATH)
                 .map_err(|error| format!("Windows folder picker failed: {error}"))?;
-            let path_string = path_pwstr
-                .to_string()
-                .map_err(|error| format!("Windows folder picker failed: {error}"))?;
+            let path_result = path_pwstr.to_string();
             CoTaskMemFree(Some(path_pwstr.0 as *const c_void));
+            let path_string =
+                path_result.map_err(|error| format!("Windows folder picker failed: {error}"))?;
 
             if path_string.trim().is_empty() {
                 Ok(None)
@@ -317,11 +317,20 @@ mod native {
         _id_event_thread: u32,
         _dwms_event_time: u32,
     ) {
-        if event != EVENT_SYSTEM_DIALOGSTART
-            || id_object != OBJID_WINDOW.0
-            || id_child != CHILDID_SELF as i32
-            || hwnd.0.is_null()
-        {
+        if id_object != OBJID_WINDOW.0 || id_child != CHILDID_SELF as i32 || hwnd.0.is_null() {
+            return;
+        }
+        let dialog_raw = hwnd.0 as isize;
+        if event == EVENT_SYSTEM_DIALOGEND {
+            let _ = LAST_CENTERED_DIALOG_HWND.compare_exchange(
+                dialog_raw,
+                0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            return;
+        }
+        if event != EVENT_SYSTEM_DIALOGSTART {
             return;
         }
         let main_raw = WEBVIEW_MAIN_HWND.load(Ordering::Acquire);
@@ -344,11 +353,12 @@ mod native {
         if class_name != "#32770" {
             return;
         }
-        let dialog_raw = hwnd.0 as isize;
-        if LAST_CENTERED_DIALOG_HWND.swap(dialog_raw, Ordering::AcqRel) == dialog_raw {
+        if LAST_CENTERED_DIALOG_HWND.load(Ordering::Acquire) == dialog_raw {
             return;
         }
-        let _ = center_hwnd_on_owner(hwnd, main_hwnd);
+        if center_hwnd_on_owner(hwnd, main_hwnd) {
+            LAST_CENTERED_DIALOG_HWND.store(dialog_raw, Ordering::Release);
+        }
     }
 
     pub fn install_webview_dialog_centering(window: &tauri::WebviewWindow) {
@@ -373,7 +383,7 @@ mod native {
             }
             let hook = SetWinEventHook(
                 EVENT_SYSTEM_DIALOGSTART,
-                EVENT_SYSTEM_DIALOGSTART,
+                EVENT_SYSTEM_DIALOGEND,
                 None,
                 Some(webview_dialog_win_event_proc),
                 browser_pid,

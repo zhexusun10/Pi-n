@@ -5,7 +5,6 @@ import { MarkdownRenderer } from "../MarkdownRenderer";
 import { copyTextToClipboard } from "../../services/externalLink";
 
 export interface NodeTaskCardProps {
-  nodeName: string;
   taskText: string;
   badgeText?: string;
   /** Reserve the task's space until history is ready; never hide it again on this mount. */
@@ -20,7 +19,6 @@ export interface NodeTaskCardProps {
 }
 
 export const NodeTaskCard: React.FC<NodeTaskCardProps> = React.memo(({
-  nodeName,
   taskText,
   badgeText,
   historyReady = true,

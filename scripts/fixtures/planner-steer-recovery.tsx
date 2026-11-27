@@ -28,7 +28,7 @@ createRoot(document.getElementById("root")!).render(<div style={{ height: 800, d
   <GraphWorkbench state={state} routeType="graph" selected="" setSelected={noop} selectedMergerId="" setSelectedMergerId={noop}
     effectiveMessages={[{ id: "initial", role: "user", text: goal }]} plannerStream={{ items: [] }}
     isPlanning={running} recoveredPlanningId={running ? "recovery-plan" : undefined}
-    onSendMessage={() => false} onRequestConfirmation={noop} onControl={noop} onSave={noop} onAddManualNode={async () => false}
+    onSendMessage={() => false} onRequestConfirmation={noop} onControl={noop} onAddManualNode={async () => false}
     onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config} active={false}
     locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
     nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />

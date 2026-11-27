@@ -66,7 +66,7 @@ function Fixture() {
       onSendMessage={text => { setCalls(previous => [...previous, `send:${text}`]); return true; }}
       onContinuePlanner={() => setCalls(previous => [...previous, "resume_planner"])}
       onRequestConfirmation={noop} onControl={(action, extra) => setCalls(previous => [...previous, extra?.node ? `${action}:${extra.node}` : action])}
-      onSave={noop} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
+      onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
       repoInfo={null} config={config} active={finalizing || mergerRunning} locked={false} pendingRequest={false}
       publishing={publicationMerger && mergerRunning} publicationFailed={publicationMerger && mergerStatus === "failed"}
       nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} /></div></>;

@@ -3911,10 +3911,12 @@ pub(crate) fn is_generated_artifact(relative: &Path) -> bool {
 }
 
 /// Return the subset of `paths` that match the project's own Git ignore rules
-/// (`.gitignore`, `.git/info/exclude`, global excludes) and are NOT tracked in
-/// the project's own Git index. Plain folders (without `.git`) or unreadable
-/// repositories return an empty set so display filtering never fails closed.
-pub(crate) fn project_ignored_paths(
+/// (`.gitignore`, `.git/info/exclude`, global excludes) without filtering out
+/// tracked files yet so callers that also check tracked generated artifacts
+/// only invoke `git ls-files` once. Plain folders (without `.git`) or
+/// unreadable repositories return an empty set so display filtering never
+/// fails closed.
+pub(crate) fn project_ignored_paths_raw(
     cwd: &Path,
     paths: &[&str],
 ) -> std::collections::HashSet<String> {
@@ -3950,21 +3952,12 @@ pub(crate) fn project_ignored_paths(
     ) else {
         return Default::default();
     };
-    let mut ignored: std::collections::HashSet<String> = output
+    output
         .split(|byte| *byte == 0)
         .filter(|entry| !entry.is_empty())
         .filter_map(|entry| std::str::from_utf8(entry).ok())
         .map(str::to_owned)
-        .collect();
-    if ignored.is_empty() {
-        return ignored;
-    }
-    let tracked = project_tracked_paths(cwd);
-    if !tracked.is_empty() {
-        let index = TrackedPathIndex::new(cwd, &tracked);
-        ignored.retain(|path| !index.matches(path));
-    }
-    ignored
+        .collect()
 }
 
 /// The project's own Git-tracked paths (never the force-collected graph index).

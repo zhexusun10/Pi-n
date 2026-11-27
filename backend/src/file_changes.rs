@@ -1512,24 +1512,19 @@ pub fn filter_display_ignored(
     };
     let repo = Path::new(repo_str);
     let paths: Vec<&str> = summary.files.iter().map(|item| item.path.as_str()).collect();
-    let ignored = crate::workspace::project_ignored_paths(repo, &paths);
+    let raw_ignored = crate::workspace::project_ignored_paths_raw(repo, &paths);
     let has_generated = summary
         .files
         .iter()
         .any(|item| crate::workspace::is_generated_artifact(Path::new(&item.path)));
-    let tracked = if has_generated {
-        crate::workspace::project_tracked_paths(repo)
-    } else {
-        Default::default()
-    };
-    let tracked_index = crate::workspace::TrackedPathIndex::new(repo, &tracked);
-    if ignored.is_empty() && !has_generated {
+    if raw_ignored.is_empty() && !has_generated {
         return summary;
     }
+    let tracked = crate::workspace::project_tracked_paths(repo);
+    let tracked_index = crate::workspace::TrackedPathIndex::new(repo, &tracked);
     let is_hidden = |path: &str| {
-        ignored.contains(path)
-            || (crate::workspace::is_generated_artifact(Path::new(path))
-                && !tracked_index.matches(path))
+        (raw_ignored.contains(path) || crate::workspace::is_generated_artifact(Path::new(path)))
+            && !tracked_index.matches(path)
     };
     let active_file_path = summary
         .active_file_path

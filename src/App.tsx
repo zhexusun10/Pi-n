@@ -3680,7 +3680,7 @@ export default function App() {
     archiveRun: useStableCallback(handleArchiveRun), unarchiveRun: useStableCallback(handleUnarchiveRun),
     newConversation: useStableCallback(handleNewConversation), send: useStableCallback(handleSendMessage),
     edit: useStableCallback(handleEditMessageSubmit), switchVersion: useStableCallback(handleSwitchMessageVersion),
-    control: useStableCallback(control), save: useStableCallback(save), addManualNode: useStableCallback(addManualNode),
+    control: useStableCallback(control), addManualNode: useStableCallback(addManualNode),
     updateUnstartedNodeTask: useStableCallback(updateUnstartedNodeTask),
     openSettings: useStableCallback(handleOpenSettings), openEditor: useStableCallback(() => setModal("editor")),
     openApproval: useStableCallback(() => setModal("approval")),
@@ -4123,7 +4123,6 @@ export default function App() {
                     onContinuePlanner={continuePlanner}
                     onRequestConfirmation={setConfirmModal}
                     onControl={actions.control}
-                    onSave={actions.save}
                     onUpdateUnstartedNodeTask={actions.updateUnstartedNodeTask}
                     onAddManualNode={actions.addManualNode}
                     onOpenEditor={actions.openEditor}

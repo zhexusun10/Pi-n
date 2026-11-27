@@ -1,4 +1,3 @@
-import React from "react";
 import { Copy, Download, ExternalLink, FolderDown, Maximize2 } from "lucide-react";
 import { t } from "../../i18n";
 import { isMacosTauriDesktop } from "../../services/apiBase";

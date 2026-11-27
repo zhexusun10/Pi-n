@@ -654,10 +654,8 @@ fn launch_local_file_with_system_app(path: &Path) -> Result<(), String> {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 struct AtomicFlagReset(&'static AtomicBool);
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl Drop for AtomicFlagReset {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
@@ -673,46 +671,34 @@ async fn pick_desktop_folder(
     if FOLDER_PICKER_ACTIVE.swap(true, Ordering::AcqRel) {
         return Ok(None);
     }
+    let reset = AtomicFlagReset(&FOLDER_PICKER_ACTIVE);
 
     #[cfg(target_os = "macos")]
     {
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            let _reset = AtomicFlagReset(&FOLDER_PICKER_ACTIVE);
+        tauri::async_runtime::spawn_blocking(move || {
+            let _reset = reset;
             macos_window::pick_folder(&window, prompt.as_deref())
                 .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
         })
-        .await;
-        match result {
-            Ok(inner) => inner,
-            Err(error) => {
-                FOLDER_PICKER_ACTIVE.store(false, Ordering::Release);
-                Err(format!("macOS folder picker failed: {error}"))
-            }
-        }
+        .await
+        .map_err(|error| format!("macOS folder picker failed: {error}"))?
     }
 
     #[cfg(target_os = "windows")]
     {
         let owner_hwnd = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            let _reset = AtomicFlagReset(&FOLDER_PICKER_ACTIVE);
+        tauri::async_runtime::spawn_blocking(move || {
+            let _reset = reset;
             windows_dialog::pick_folder(owner_hwnd, prompt)
                 .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
         })
-        .await;
-        match result {
-            Ok(inner) => inner,
-            Err(error) => {
-                FOLDER_PICKER_ACTIVE.store(false, Ordering::Release);
-                Err(format!("Windows folder picker failed: {error}"))
-            }
-        }
+        .await
+        .map_err(|error| format!("Windows folder picker failed: {error}"))?
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = (window, prompt);
-        FOLDER_PICKER_ACTIVE.store(false, Ordering::Release);
+        let _ = (window, prompt, reset);
         Err("Native folder picker is unavailable on this platform".to_string())
     }
 }

@@ -379,15 +379,22 @@ static NSWindow *pi_n_resolve_host_window(NSWindow *preferred) {
     if (candidate != nil &&
         [candidate isKindOfClass:[NSWindow class]] &&
         candidate.isVisible &&
-        !candidate.isMiniaturized) {
+        !candidate.isMiniaturized &&
+        candidate.attachedSheet == nil) {
         return candidate;
     }
     candidate = [NSApp keyWindow];
-    if (candidate != nil && candidate.isVisible && !candidate.isMiniaturized) {
+    if (candidate != nil &&
+        candidate.isVisible &&
+        !candidate.isMiniaturized &&
+        candidate.attachedSheet == nil) {
         return candidate;
     }
     candidate = [NSApp mainWindow];
-    if (candidate != nil && candidate.isVisible && !candidate.isMiniaturized) {
+    if (candidate != nil &&
+        candidate.isVisible &&
+        !candidate.isMiniaturized &&
+        candidate.attachedSheet == nil) {
         return candidate;
     }
     return nil;
@@ -457,7 +464,12 @@ static void pi_n_patch_webview_open_panel_on_main(WKWebView *webView) {
     SEL sel = @selector(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:);
     Method method = class_getInstanceMethod(delegateClass, sel);
     if (method != NULL) {
-        method_setImplementation(method, (IMP)pi_n_run_open_panel_as_sheet);
+        class_replaceMethod(
+            delegateClass,
+            sel,
+            (IMP)pi_n_run_open_panel_as_sheet,
+            method_getTypeEncoding(method)
+        );
         [patchedClasses addObject:delegateClass];
     }
 }

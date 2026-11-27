@@ -350,8 +350,6 @@ export default function ComposerModelMenu({
     const onScroll = (event: Event) => {
       if (!containsTarget(event.target)) {
         onClose(false);
-      } else if (listRef.current && event.target === listRef.current) {
-        placeSubmenu();
       }
     };
     const onResize = () => onClose(false);

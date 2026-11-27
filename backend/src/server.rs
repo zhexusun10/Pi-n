@@ -8378,11 +8378,18 @@ fn handle_http_request_with_options(
                 })
                 .is_ok();
             if !acquired {
-                respond_closed(
+                respond_api_json(
                     request,
                     503,
-                    &[("Content-Type", "text/plain; charset=utf-8")],
-                    b"Too many concurrent planning streams",
+                    &serde_json::json!({
+                        "error": "Too many concurrent planning streams",
+                        "code": "busy",
+                        "retryable": true,
+                        "requestId": request_id,
+                    }),
+                    req_origin.as_deref(),
+                    &request_id,
+                    false,
                 );
                 return;
             }

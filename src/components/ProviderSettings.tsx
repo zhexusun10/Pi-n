@@ -18,7 +18,6 @@ import {
   X,
   Search,
   ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 import { CollapsibleCardBody } from "./CollapsibleCardBody";
 import { useDialogFocus } from "../hooks/useDialogFocus";

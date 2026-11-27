@@ -175,7 +175,7 @@ function Fixture() {
       selected={selected} setSelected={setSelected} selectedMergerId={selectedMergerId} setSelectedMergerId={setSelectedMergerId}
       effectiveMessages={[]} isPlanning={mode === "planner" && running}
       plannerStream={{ runId: "changes-run", items: mode === "planner" && cardsMode ? plannerCardItems : [] }}
-      onSendMessage={noop} onRequestConfirmation={noop} onControl={noop} onSave={noop}
+      onSendMessage={noop} onRequestConfirmation={noop} onControl={noop}
       onOpenEditor={noop} onOpenApproval={noop} repoInfo={null} config={config}
       onOpenFile={request => { openRequests.push(request); }}
       active={running} locked={false} pendingRequest={false} publishing={false} publicationFailed={false}

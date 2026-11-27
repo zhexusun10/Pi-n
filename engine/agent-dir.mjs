@@ -20,12 +20,17 @@ export const KNOWN_PROVIDER_ENV_VARS = {
   xai: ['XAI_API_KEY'],
 };
 
+export function resolveAgentDir(env = process.env) {
+  let directory = toHostInput(env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
+  if (directory === '~' || /^~[\\/]/.test(directory)) directory = homedir() + directory.slice(1);
+  return resolve(directory);
+}
+
 export function applyDisabledProviders(env = process.env) {
-  let dir = toHostInput(env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
-  if (dir === '~' || /^~[\\/]/.test(dir)) dir = homedir() + dir.slice(1);
+  const dir = resolveAgentDir(env);
   let disabled = [];
   try {
-    disabled = JSON.parse(readFileSync(join(resolve(dir), 'disabled-providers.json'), 'utf8'));
+    disabled = JSON.parse(readFileSync(join(dir, 'disabled-providers.json'), 'utf8'));
   } catch {}
   env.PYTHONDONTWRITEBYTECODE = '1';
   if (Array.isArray(disabled)) {
@@ -72,9 +77,7 @@ export function ensureDefaultModelsFile(directory) {
 // Provider/Auth, local login and native executions use the same dedicated
 // upstream-owned configuration directory.
 export function configureAgentDir() {
-  let directory = toHostInput(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi-n', 'pi-agent'));
-  if (directory === '~' || /^~[\\/]/.test(directory)) directory = homedir() + directory.slice(1);
-  directory = resolve(directory);
+  const directory = resolveAgentDir();
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   ensureDefaultModelsFile(directory);
   process.env.PI_CODING_AGENT_DIR = directory;

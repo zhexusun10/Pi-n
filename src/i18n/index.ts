@@ -209,6 +209,17 @@ function getCompiledErrorTemplates(): CompiledTemplate[] {
   return templates;
 }
 
+const MANUAL_NODE_ERRORS_ZH: Record<string, string> = {
+  "Manual nodes require an existing Graph run": "只能在已有的 Compile 运行中添加节点。",
+  "Wait for the published result to finish before adding a node": "请等待已发布结果的运行结束后再添加节点。",
+  "Wait for publication or the active follow-up to finish before adding a node": "请等待发布或正在进行的后续任务结束后再添加节点。",
+  "A feedback edge requires a target node": "反馈边需要选择目标节点。",
+  "Completed results changed or require confirmation; review the graph and confirm again": "已完成的结果发生变化或尚未确认，请检查拓扑图并重新确认。",
+  "Pause or wait for affected running nodes before adding this node": "请先暂停或等待受影响的运行中节点结束，再添加此节点。",
+  "Wait for the Planner to finish before adding a node": "请等待 Planner 完成后再添加节点。",
+  "Run changed while adding the node": "当前运行已切换，请重新打开对话后再添加节点。",
+};
+
 /** Localize application errors, never conversation content or tool/model output. */
 export function localizeError(error: unknown, language: Locale = locale): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -222,19 +233,9 @@ export function localizeError(error: unknown, language: Locale = locale): string
     return localizePlanWarning(message, language);
   }
   if (language === "zh-CN") {
-    const manualNodeErrors: Record<string, string> = {
-      "Manual nodes require an existing Graph run": "只能在已有的 Compile 运行中添加节点。",
-      "Wait for the published result to finish before adding a node": "请等待已发布结果的运行结束后再添加节点。",
-      "Wait for publication or the active follow-up to finish before adding a node": "请等待发布或正在进行的后续任务结束后再添加节点。",
-      "A feedback edge requires a target node": "反馈边需要选择目标节点。",
-      "Completed results changed or require confirmation; review the graph and confirm again": "已完成的结果发生变化或尚未确认，请检查拓扑图并重新确认。",
-      "Pause or wait for affected running nodes before adding this node": "请先暂停或等待受影响的运行中节点结束，再添加此节点。",
-      "Wait for the Planner to finish before adding a node": "请等待 Planner 完成后再添加节点。",
-      "Run changed while adding the node": "当前运行已切换，请重新打开对话后再添加节点。",
-    };
     const prefix = message.startsWith("Error: ") ? "Error: " : "";
     const detail = prefix ? message.slice(prefix.length) : message;
-    return annotateProviderError(prefix + (manualNodeErrors[detail] ?? detail), language);
+    return annotateProviderError(prefix + (MANUAL_NODE_ERRORS_ZH[detail] ?? detail), language);
   }
   if (!/\p{Script=Han}/u.test(message)) return annotateProviderError(message, language);
   const prefix = message.startsWith("Error: ") ? "Error: " : "";
@@ -244,9 +245,13 @@ export function localizeError(error: unknown, language: Locale = locale): string
     const match = text.match(regex);
     if (match) {
       const values: string[] = [];
-      indices.forEach((index, i) => { values[index] = localizeError(match[i + 1], language); });
+      indices.forEach((index, i) => {
+        const part = match[i + 1] ?? "";
+        values[index] = part.length < text.length ? localizeError(part, language) : part;
+      });
       return annotateProviderError(
-        prefix + english.replace(/\{(\d+)\}/g, (_, index: string) => values[Number(index)]),
+        prefix + english.replace(/\{(\d+)\}/g, (placeholder, index: string) =>
+          values[Number(index)] ?? placeholder),
         language
       );
     }

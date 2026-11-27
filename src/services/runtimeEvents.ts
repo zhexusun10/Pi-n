@@ -155,7 +155,7 @@ function openEventSource(url: string): void {
     es.addEventListener("snapshot_changed", (event: MessageEvent) => {
       try {
         const data = JSON.parse(String(event.data)) as SnapshotChangedEvent;
-        if (typeof data?.runId !== "string") return;
+        if (typeof data?.runId !== "string" || !data.runId || typeof data.version !== "string") return;
         dispatch(() => {
           for (const listener of snapshotListeners) listener(data);
         });
@@ -208,8 +208,11 @@ function openEventSource(url: string): void {
 }
 
 function ensureConnection(): void {
+  if (!enabled || !hasSubscribers() || typeof EventSource === "undefined") {
+    return;
+  }
   ensureVisibilityListener();
-  if (!enabled || source || connecting || !hasSubscribers() || typeof EventSource === "undefined") {
+  if (source || connecting) {
     return;
   }
   if (isDocumentHidden()) {

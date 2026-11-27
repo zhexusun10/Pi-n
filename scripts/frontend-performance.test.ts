@@ -517,26 +517,42 @@ test("SSE runtimeEvents ignores malformed output_available frames and detaches v
   }
   (globalThis as { document?: unknown }).document = fakeDoc;
   (globalThis as { EventSource?: unknown }).EventSource = FakeEventSource;
-  const received: Array<{ runId: string; executionId: string; totalBytes: number }> = [];
-  const unsub = subscribeExecutionOutput("run-1", "exec-1", event => received.push(event));
+  let unsub: (() => void) | null = null;
+  let unsubSnap: (() => void) | null = null;
   try {
+    // Enabling SSE with no subscribers must not attach an idle visibility listener.
     enableRuntimeEvents();
+    assert.equal(visibilityListeners, 0);
+
+    const received: Array<{ runId: string; executionId: string; totalBytes: number }> = [];
+    const snapshots: Array<{ runId: string; version: string }> = [];
+    unsub = subscribeExecutionOutput("run-1", "exec-1", event => received.push(event));
+    unsubSnap = subscribeSnapshotChanges(event => snapshots.push(event));
     assert.equal(visibilityListeners, 1);
-    const emit = (payload: unknown) => {
-      for (const fn of listeners.get("output_available") ?? []) {
+    const emit = (type: string, payload: unknown) => {
+      for (const fn of listeners.get(type) ?? []) {
         fn({ data: JSON.stringify(payload) } as MessageEvent);
       }
     };
-    emit({ runId: "run-1", executionId: "exec-1", totalBytes: -5 });
-    emit({ runId: "run-1", executionId: "exec-1", totalBytes: null });
-    emit({ runId: 123, executionId: "exec-1", totalBytes: 10 });
-    emit({ runId: "run-1", executionId: "exec-1", totalBytes: 42 });
+    emit("output_available", { runId: "run-1", executionId: "exec-1", totalBytes: -5 });
+    emit("output_available", { runId: "run-1", executionId: "exec-1", totalBytes: null });
+    emit("output_available", { runId: 123, executionId: "exec-1", totalBytes: 10 });
+    emit("output_available", { runId: "run-1", executionId: "exec-1", totalBytes: 42 });
+    emit("snapshot_changed", { runId: "", version: "v1" });
+    emit("snapshot_changed", { runId: "run-1", version: 123 });
+    emit("snapshot_changed", { runId: "run-1", version: "v2" });
     await Promise.resolve();
     assert.deepEqual(received, [{ runId: "run-1", executionId: "exec-1", totalBytes: 42 }]);
+    assert.deepEqual(snapshots, [{ runId: "run-1", version: "v2" }]);
     unsub();
+    unsub = null;
+    assert.equal(visibilityListeners, 1);
+    unsubSnap();
+    unsubSnap = null;
     assert.equal(visibilityListeners, 0, "detaches visibilitychange listener when last subscriber leaves");
   } finally {
-    unsub();
+    unsub?.();
+    unsubSnap?.();
     setRuntimeEventsConnectedForTest(false);
     if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
     else (globalThis as { document?: unknown }).document = originalDocument;

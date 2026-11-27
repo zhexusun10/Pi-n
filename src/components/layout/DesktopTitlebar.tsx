@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { isMacosTauriDesktop, isWindowsTauriDesktop } from "../../services/apiBase";
 

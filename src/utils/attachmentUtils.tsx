@@ -1,4 +1,3 @@
-import React from "react";
 import { FileCode, FileText, File } from "lucide-react";
 import type { FileAttachment, ImageAttachment } from "../types";
 import { findManagedAttachmentMentions, stripManagedAttachmentMentions } from "./attachmentPath";

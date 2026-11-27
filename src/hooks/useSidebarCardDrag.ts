@@ -255,6 +255,7 @@ export function useSidebarCardDrag({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerCancel);
+      window.removeEventListener("blur", onWindowBlur);
       window.removeEventListener("keydown", onKeyDown, true);
       if (cleanupRef.current === cancelCleanup) cleanupRef.current = null;
 
@@ -336,12 +337,17 @@ export function useSidebarCardDrag({
       finish(false);
     };
 
+    const onWindowBlur = () => {
+      finish(false);
+    };
+
     const cancelCleanup = () => finish(false);
     cleanupRef.current = cancelCleanup;
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("blur", onWindowBlur);
     window.addEventListener("keydown", onKeyDown, true);
   }, [armClickSuppression, cardSelector, listRef, reduceMotion, stableOnCommit, stableOnDragStart, viewSelector]);
 

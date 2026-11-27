@@ -5,6 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { resolveAgentDir } from './agent-dir.mjs';
 import { globalAgentDir } from './global-extensions.ts';
 import { samePath } from './path-identity.mjs';
 
@@ -31,7 +32,7 @@ class Worker {
   private closed = false;
   constructor(repository: string, event: (value: Event) => void) {
     this.child = spawn(process.execPath, ['--import', resolver, resolve(root, 'engine/extension-command-worker.ts')], {
-      cwd: repository || process.env.PI_CODING_AGENT_DIR || globalAgentDir(), windowsHide: true,
+      cwd: repository || (process.env.PI_CODING_AGENT_DIR ? resolveAgentDir() : globalAgentDir()), windowsHide: true,
       env: { ...process.env, PI_N_MODE: 'node', PI_N_EXECUTION_KIND: 'source', PI_N_COMMAND_PROJECT: repository ? '1' : '0' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -1,4 +1,4 @@
-import { getTauriInvoke, isTauriDesktop } from "./apiBase";
+import { getTauriInvoke } from "./apiBase";
 
 export type GitBootstrapPhase = "not_needed" | "downloading" | "ready" | "failed";
 

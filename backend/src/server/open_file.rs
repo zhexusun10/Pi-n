@@ -155,7 +155,12 @@ fn open_path_with_system(path: &Path) -> Result<(), String> {
         command.arg(path);
         command
     } else if cfg!(target_os = "macos") {
-        let mut command = std::process::Command::new("open");
+        let open_bin = if Path::new("/usr/bin/open").is_file() {
+            "/usr/bin/open"
+        } else {
+            "open"
+        };
+        let mut command = std::process::Command::new(open_bin);
         command.arg(path);
         command
     } else {

@@ -12,7 +12,7 @@ import {
 import { motion, AnimatePresence, useAnimationControls, useIsPresent, useReducedMotion } from "motion/react";
 import {
   Snapshot, PlanRouteType, PlanMode, WorkspaceDirectory, Config,
-  Graph, GraphNode, ManualNodeRequest, Execution, Status, PlanningSummary, TranscriptItem,
+  GraphNode, ManualNodeRequest, Execution, Status, PlanningSummary, TranscriptItem,
   ChatMessage, ImageAttachment, RuntimeActivity, OpenWorkspaceFileRequest, GraphEvent
 } from "../../types";
 import { graphCardIds, selectedMergerNode } from "../../lib/graphNodeIdentity";
@@ -172,7 +172,6 @@ interface GraphWorkbenchProps {
   followUpQueue?: Array<{ id: string; text: string; node?: string; timestamp: number }>;
   onCancelFollowUp?: (id: string) => void;
   onControl: (action: string, extra?: Record<string, unknown>) => boolean | void | Promise<boolean | void>;
-  onSave: (graph: Graph) => void;
   onAddManualNode: (runId: string, request: ManualNodeRequest) => Promise<boolean>;
   onUpdateUnstartedNodeTask: (runId: string, node: string, oldTask: string, task: string) => Promise<boolean>;
   onOpenEditor: () => void;
@@ -539,7 +538,6 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   followUpQueue,
   onCancelFollowUp,
   onControl,
-  onSave,
   onAddManualNode,
   onUpdateUnstartedNodeTask,
   onOpenEditor,
@@ -3451,7 +3449,6 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
               <div className="chat-messages-stream">
                 <NodeTaskCard
                   key={conversationViewKey}
-                  nodeName={selectedNode.id}
                   taskText={nodeTaskText}
                   historyReady={!foregroundExecutionId || foregroundExecutionReady ||
                     (showExecutionRecords && collapsedAttemptIds.has(foregroundExecutionId))}

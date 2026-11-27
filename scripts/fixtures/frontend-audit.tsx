@@ -97,7 +97,7 @@ function NodeTaskFixture() {
   audit.setTask = setTask;
   audit.saves = audit.saves ?? [];
   return <div style={{ maxWidth: 720 }}>
-    <NodeTaskCard nodeName="worker" taskText={task} editing={editing} draft={draft}
+    <NodeTaskCard taskText={task} editing={editing} draft={draft}
       onDraftChange={setDraft}
       onEdit={() => { setDraft(task); setEditing(true); }}
       onCancel={() => setEditing(false)}
@@ -324,7 +324,7 @@ function LatestScrollFixture() {
   return mounted ? <div style={{ height: 800, display: "flex" }}>
     <GraphWorkbench state={state} routeType={nodeView ? "graph" : "serial"} selected={nodeView ? "task" : ""} setSelected={noop} selectedMergerId="" setSelectedMergerId={noop}
       effectiveMessages={[]} isPlanning={false} plannerStream={{ items: [] }} onSendMessage={noop} onRequestConfirmation={noop}
-      onControl={noop} onSave={noop} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config}
+      onControl={noop} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config}
       active={streaming} locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
       nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />
   </div> : <p>Conversation closed</p>;
@@ -357,7 +357,7 @@ function PlannerRouteFixture() {
   return <div style={{ height: 800, display: "flex" }}>
     <GraphWorkbench state={state} routeType={route} selected="" setSelected={noop} selectedMergerId="" setSelectedMergerId={noop}
       effectiveMessages={messages} isPlanning plannerStream={{ runId: "planner-route", stage: "planning", items }}
-      onSendMessage={noop} onRequestConfirmation={noop} onControl={noop} onSave={noop} onOpenEditor={noop}
+      onSendMessage={noop} onRequestConfirmation={noop} onControl={noop} onOpenEditor={noop}
       onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config} active locked={false} pendingRequest={false}
       publishing={false} publicationFailed={false} nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />
   </div>;
@@ -391,7 +391,7 @@ function PlannerReviewFixture() {
         items: reviewMode === "foreground" && phase !== "initial" ? [{ id: "review-live", type: "text", role: "assistant",
           content: "LIVE_REVIEW_OUTPUT", status: "success" }] : [] }}
       onSendMessage={noop} onRequestConfirmation={noop}
-      onControl={noop} onSave={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
+      onControl={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
       repoInfo={null} config={{ ...config, repository: "/mock/review" }} active={false} locked={false} pendingRequest={false}
       publishing={false} publicationFailed={false} nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />
   </div>;
@@ -414,7 +414,7 @@ function PlannerHistoryOrderFixture() {
   return <div style={{ height: "calc(100vh - 64px)", display: "flex" }}>
     <GraphWorkbench state={state} routeType="graph" selected="" setSelected={noop} selectedMergerId="" setSelectedMergerId={noop}
       effectiveMessages={messages} isPlanning={false} plannerStream={{ items: [] }} onSendMessage={noop} onRequestConfirmation={noop}
-      onControl={noop} onSave={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
+      onControl={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
       repoInfo={null} config={config} active={false} locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
       nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />
   </div>;
@@ -440,7 +440,7 @@ function NodeEntryFixture() {
   return <div style={{ height: "calc(100vh - 64px)", display: "flex" }}>
     {(!serial || selected) && <GraphWorkbench state={state} routeType={serial ? "serial" : "graph"} selected={serial ? "" : selected} setSelected={setSelected} selectedMergerId="" setSelectedMergerId={noop}
       effectiveMessages={[]} isPlanning={false} plannerStream={{ items: [] }} onSendMessage={noop} onRequestConfirmation={noop}
-      onControl={noop} onSave={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
+      onControl={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
       repoInfo={null} config={config} active locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
       nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />}
   </div>;
@@ -459,7 +459,7 @@ function PlannerScrollRestoreFixture() {
   return <div style={{ height: "calc(100vh - 64px)", width, display: "flex" }}>
     <GraphWorkbench state={state} routeType="graph" selected={selected} setSelected={setSelected} selectedMergerId="" setSelectedMergerId={noop}
       effectiveMessages={[]} isPlanning={false} plannerStream={{ items: [] }} onSendMessage={noop} onRequestConfirmation={noop}
-      onControl={noop} onSave={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
+      onControl={noop} onAddManualNode={async () => true} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop}
       repoInfo={null} config={config} active={false} locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
       nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />
   </div>;
@@ -482,7 +482,7 @@ function UnrunNodeFixture() {
   return <div style={{ height: "calc(100vh - 64px)", display: "flex" }}>
     <GraphWorkbench state={state} routeType="graph" selected={selected} setSelected={setSelected} selectedMergerId="" setSelectedMergerId={noop}
       effectiveMessages={[]} isPlanning={false} plannerStream={{ items: [] }} onSendMessage={noop} onRequestConfirmation={noop}
-      onControl={noop} onSave={noop} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config}
+      onControl={noop} onOpenEditor={noop} onOpenApproval={noop} onOpenFile={noop} repoInfo={null} config={config}
       active={false} locked={false} pendingRequest={false} publishing={false} publicationFailed={false}
       nodes={[]} edges={[]} nodeTypes={{}} edgeTypes={{}} tokens={tokens} />
   </div>;
