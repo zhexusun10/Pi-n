@@ -20,6 +20,8 @@ pnpm-debug.log*
 
 # Local notes and generated release artifacts
 /release/
+
+# Local-only promotional video source, MotionHarness state, renders, and media
 /promo/
 
 # Local environment and credentials; only the placeholder is publishable

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a 90-second Chinese product film and its editable MotionHarness project in `promo/`, featuring Direct and Compile workflows.
+
 ### Fixed
 
 - Hide stale queued-message bubbles in stopped execution history, including after a conversation is reopened or the message is sent again. Delivered messages remain visible in the transcript.
