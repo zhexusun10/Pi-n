@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixeds
+### Fixed
 
+- Require confirmation that the previous execution's writers have exited before applying a conversation edit.
+- Map nested project aliases in `file://` arguments to the correct workspace directory and resolve bare Git Bash drive roots such as `/d` on Windows.
+- Preserve sidebar order when removing a duplicate conversation card from another workspace. Skip cached workspace index reconciliation when all conversation summaries are available.
 - Hide stale queued-message bubbles in stopped execution history, including after a conversation is reopened or the message is sent again. Delivered messages remain visible in the transcript.
 - Recheck the dev backend with Cargo after switching checkouts or clearing custom Rust flags or dev profile settings. Honor mixed-case build overrides on Windows.
 - Ignore stale sidebar pin actions after a conversation has been removed or archived.

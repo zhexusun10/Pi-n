@@ -58,10 +58,10 @@ test("legacy path keys merge without duplicate cards or default-workspace owners
 });
 
 test("a Run has exactly one workspace even when cached in multiple workspaces", () => {
-  const original = { "/a": ["a", "b"], "/b": ["a", "b"] };
+  const original = { "/a": ["newer", "a", "b"], "/b": ["a", "b"] };
   const repaired = bindRunToWorkspace(original, "a", "/a");
-  assert.deepEqual(repaired, { "/a": ["a", "b"], "/b": ["b"] });
-  assert.deepEqual(original, { "/a": ["a", "b"], "/b": ["a", "b"] }, "must not mutate React state");
+  assert.deepEqual(repaired, { "/a": ["newer", "a", "b"], "/b": ["b"] });
+  assert.deepEqual(original, { "/a": ["newer", "a", "b"], "/b": ["a", "b"] }, "must not mutate React state");
   assert.equal(bindRunToWorkspace(repaired, "a", "/a"), repaired, "repeated observations are stable");
 });
 

@@ -15,6 +15,7 @@ import {
   pathWithin,
   relativePreservingCase,
   samePath,
+  toHostInput,
 } from '../engine/path-identity.mjs';
 
 test('Windows visible paths use forward slashes for Bash and JSON spellings', () => {
@@ -141,6 +142,9 @@ test('Windows workspace mapping preserves native and slash paths without requiri
     assert.equal(pathWithin(join(root, 'outside', 'marker'), workspace), false);
     assert.equal(pathWithin(`${source[0]}:\\Windows`, `${source[0]}:\\`), true);
     assert.equal(samePath(pathToFileURL(source).href, source), true);
+    assert.equal(toHostInput('/d'), 'D:/');
+    assert.equal(toHostInput('/cygdrive/d'), 'D:/');
+    assert.equal(toHostInput('/data'), '/data');
     const msysSource = `/${source[0].toLowerCase()}${source.slice(2).replaceAll('\\', '/')}`;
     assert.equal(samePath(msysSource, source), true);
     if (process.platform === 'win32') {
@@ -377,6 +381,11 @@ test('pathStartsWith handles root/trailing-separator prefixes and view preserves
     const expectedUrl = pathToFileURL(join(nestedWorkspace, 'marker')).href;
     assert.equal(paths.command(`cat ${sourceUrl}`), `cat ${expectedUrl}`);
     assert.equal(paths.command(`cat ${expectedUrl}`), `cat ${expectedUrl}`);
+    const nestedAlias = join(source, 'alias with spaces');
+    const aliases = createWorkspacePaths(nestedWorkspace, source, nestedAlias);
+    const aliasUrl = pathToFileURL(join(nestedAlias, 'marker')).href;
+    assert.equal(aliases.command(`cat ${aliasUrl} ${sourceUrl} ${expectedUrl}`),
+      `cat ${expectedUrl} ${expectedUrl} ${expectedUrl}`);
 
     // view() preserves non-plain objects, handles cycles, avoids redundant clones, and works with Array.map.
     const date = new Date('2026-01-01T00:00:00Z');

@@ -135,7 +135,8 @@ pub(crate) fn stop_owner_and_drain(owner: &str, timeout: Duration) -> Result<(),
         .insert(owner.into());
     let prefix = format!("{owner}:");
     cancel_operations(|active| active == owner || active.starts_with(&prefix));
-    let trees = if let Ok(mut processes) = registry().lock() {
+    let trees = {
+        let mut processes = registry().lock().map_err(|error| error.to_string())?;
         let mut trees = Vec::new();
         processes.retain(|(active, weak)| {
             if let Some(tree) = weak.upgrade() {
@@ -148,21 +149,14 @@ pub(crate) fn stop_owner_and_drain(owner: &str, timeout: Duration) -> Result<(),
             }
         });
         trees
-    } else {
-        Vec::new()
     };
     for tree in &trees {
         tree.terminate();
     }
     let deadline = Instant::now() + timeout;
-    let mut poll = Duration::from_millis(5);
-    while trees.iter().any(ProcessTree::has_live_members) {
-        let now = Instant::now();
-        if now >= deadline {
-            break;
-        }
-        std::thread::sleep(poll.min(deadline.saturating_duration_since(now)));
-        poll = (poll * 2).min(Duration::from_millis(50));
+    for tree in trees {
+        tree.drain(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|error| format!("Cannot edit the session until its writers stop: {error}"))?;
     }
     Ok(())
 }
@@ -774,7 +768,7 @@ impl ProcessTree {
             }
             let now = std::time::Instant::now();
             if now >= deadline {
-                return Err("Managed background writers have not drained; refusing unsafe environment seal/handoff".into());
+                return Err("Managed background writers have not drained".into());
             }
             let remaining = deadline.saturating_duration_since(now);
             std::thread::sleep(poll_delay.min(remaining));
@@ -1474,6 +1468,25 @@ int main(void) { pthread_t thread; if (pthread_create(&thread, 0, writer, 0)) re
         with_owner("claimed-run", || assign_to_current_owner(&tree)).unwrap();
         terminate_owner("claimed-run");
         assert!(!child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn session_edit_requires_confirmed_owner_drain() {
+        let owner = "session-edit-drain-test";
+        let mut command = Command::new(crate::native::trusted_node().unwrap());
+        command.args(["-e", "setTimeout(()=>{}, 30000)"]);
+        configure_command(&mut command);
+        let mut child = command.spawn().unwrap();
+        let tree = with_owner(owner, || track(&child).unwrap());
+        // Model an accepted termination request whose writer is still live.
+        tree.0.terminated.store(true, Ordering::SeqCst);
+        let pending = stop_owner_and_drain(owner, Duration::ZERO);
+        tree.0.terminated.store(false, Ordering::SeqCst);
+        let drained = stop_owner_and_drain(owner, Duration::from_secs(2));
+        clear_owner_stop(owner);
+        child.wait().unwrap();
+        assert!(pending.unwrap_err().contains("writers have not drained"));
+        drained.unwrap();
     }
 
     #[test]

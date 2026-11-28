@@ -397,38 +397,33 @@ export function createWorkspacePaths(
     return undefined;
   }
 
+  // Match the longest original URL once. A nested alias or the workspace
+  // itself can share the source URL prefix.
+  const workspaceUrl = pathToFileURL(commandRoot).href;
+  const urlPrefix = path => pathToFileURL(path).href.replace(/\/$/, '');
+  const workspacePrefix = urlPrefix(commandRoot);
+  const sourcePrefixes = projectRoots.flatMap(project => unicodeVariants(hostPath(project)).map(urlPrefix));
+  const urlPrefixes = [...new Set([workspacePrefix, ...sourcePrefixes])].sort((a, b) => b.length - a.length);
+  const urlBoundary = '(?=$|[/\\\\?#"\'`\\s<>),;])';
+  const urlPattern = urlPrefixes.length > 1 && new RegExp(
+    `(?:${urlPrefixes.map(regexEscape).join('|')})${urlBoundary}`, sourceCaseInsensitive ? 'gi' : 'g',
+  );
+  const foldUrl = url => sourceCaseInsensitive ? url.toLowerCase() : url;
+  const foldedWorkspacePrefix = foldUrl(workspacePrefix);
   function mapFileUrls(text) {
-    for (const project of [...new Set([base, resolve(sourceAlias)].map(hostPath))]) {
-      for (const spelling of unicodeVariants(project)) {
-        let from;
-        try { from = pathToFileURL(spelling).href; } catch { continue; }
-        let to;
-        try { to = pathToFileURL(commandRoot).href; } catch { continue; }
-        if (from === to) continue;
-        // Do not turn file:///project-other into file:///workspace-other,
-        // and do not re-map a workspace URL nested inside the source root.
-        const boundary = '(?=$|[/\\\\?#"\'`\\s<>),;])';
-        const toFolded = sourceCaseInsensitive ? to.toLowerCase() : to;
-        text = text.replace(new RegExp(regexEscape(from) + boundary, sourceCaseInsensitive ? 'gi' : 'g'), (match, offset) => {
-          const slice = text.slice(offset, offset + to.length);
-          const sliceFolded = sourceCaseInsensitive ? slice.toLowerCase() : slice;
-          if (sliceFolded === toFolded) {
-            const next = text[offset + to.length];
-            if (next === undefined || /[/\\?#"'`\s<>),;]/.test(next)) return match;
-          }
-          return to;
-        });
-      }
-    }
-    return text;
+    if (!urlPattern) return text;
+    return text.replace(urlPattern, (match, offset) => {
+      if (foldUrl(match) === foldedWorkspacePrefix) return match;
+      return text[offset + match.length] === '/' ? workspacePrefix : workspaceUrl;
+    });
   }
+  const foldedPrefixes = commandPrefixes.map(prefix => foldPath(prefix, sourceCaseInsensitive));
   function mapCommand(text, mapUrls = false) {
     // A quoted sh -c argument is parsed again by the child shell. Translate at
     // that level first, then quote the entire script for the outer shell.
     if (mapUrls) text = mapFileUrls(text);
     const words = shellWords(text);
     const replacements = [];
-    const foldedPrefixes = commandPrefixes.map(prefix => foldPath(prefix, sourceCaseInsensitive));
     for (let i = 0; i < words.length; i++) {
       if (!words[i].literal || !/^(?:.*[\\/])?(?:sh|bash|zsh|dash)(?:\.exe)?$/.test(words[i].value)) continue;
       for (let j = i + 1; j < words.length && /^-[a-zA-Z]+$/.test(words[j].value); j++) {

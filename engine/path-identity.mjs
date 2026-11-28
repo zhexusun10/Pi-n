@@ -234,11 +234,7 @@ export function toHostInput(value) {
     try { text = fileURLToPath(text); } catch { return value; }
   }
   if (process.platform === 'win32') {
-    if (/^\/cygdrive\/[A-Za-z]\//.test(text)) {
-      text = `${text[10].toUpperCase()}:${text.slice(11)}`;
-    } else if (/^\/[A-Za-z]\//.test(text)) {
-      text = `${text[1].toUpperCase()}:${text.slice(2)}`;
-    }
+    text = text.replace(/^\/(?:cygdrive\/)?([A-Za-z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`);
   }
   return hostPath(text);
 }

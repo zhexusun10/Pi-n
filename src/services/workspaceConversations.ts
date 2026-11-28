@@ -132,19 +132,21 @@ export function bindRunToWorkspace(
 ): WorkspaceRuns {
   const owner = workspaceKey(repository);
   if (!runId || !owner) return index;
-  if (index[owner]?.includes(runId) &&
-    !Object.entries(index).some(([key, ids]) =>
-      (key !== owner && ids.includes(runId)) || (!!replacedId && ids.includes(replacedId)))) return index;
-
-  const next: WorkspaceRuns = {};
+  const existing = index[owner] ?? [];
+  let next = index;
   for (const [key, ids] of Object.entries(index)) {
+    if (key === owner || (!ids.includes(runId) && !(replacedId && ids.includes(replacedId)))) continue;
+    if (next === index) next = { ...index };
     next[key] = ids.filter(id => id !== runId && id !== replacedId);
   }
-  const existing = index[owner] ?? [];
-  // A provisional card keeps its position when its durable ID arrives.
-  next[owner] = replacedId && existing.includes(replacedId)
+  // Replacing a provisional ID keeps its slot. Repairing another workspace's
+  // copy of an existing card also preserves the owner's order.
+  const replace = replacedId && existing.includes(replacedId);
+  if (!replace && existing.includes(runId)) return next;
+  if (next === index) next = { ...index };
+  next[owner] = replace
     ? [...new Set(existing.map(id => id === replacedId ? runId : id))]
-    : insertAfterPinned(next[owner] ?? [], runId, pinnedRunIds);
+    : insertAfterPinned(existing, runId, pinnedRunIds);
   return next;
 }
 
@@ -232,12 +234,14 @@ export function workspaceRunsFromSummaries(
   }
   // A failed read is not evidence of deletion or new ownership. Only preserve
   // explicitly unavailable IDs; all other stale browser cards must disappear.
-  const unavailable = new Set(unavailableRunIds);
-  for (const [owner, ids] of Object.entries(normalizeWorkspaceRuns(cached))) {
-    for (const id of ids) {
-      if (!unavailable.has(id) || seen.has(id) || id.startsWith("pending-")) continue;
-      seen.add(id);
-      (result[owner] ??= []).push(id);
+  if (unavailableRunIds.length) {
+    const unavailable = new Set(unavailableRunIds);
+    for (const [owner, ids] of Object.entries(normalizeWorkspaceRuns(cached))) {
+      for (const id of ids) {
+        if (!unavailable.has(id) || seen.has(id) || id.startsWith("pending-")) continue;
+        seen.add(id);
+        (result[owner] ??= []).push(id);
+      }
     }
   }
   const normalizedOrder = customOrder ? normalizeWorkspaceRuns(customOrder) : {};
