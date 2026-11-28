@@ -186,11 +186,15 @@ that conversation's override, including nodes the Planner adds later. Other
 conversations keep their own creation or saved selection, so their running and
 never-started nodes are not retargeted. Conversations that never changed models
 continue with the settings composition used when they were created, while new
-conversations initially inherit the saved global defaults. Home-composer model commands
-belong to that unsent conversation draft, not `config.json`; discarding the draft
-restores the defaults. Settings opened outside a Run instead saves global defaults
-for new conversations. `config.json` remains the defaults document for new Runs;
-the Run projection carries `modelConfig` for its own conversation. Settings opened
+conversations initially inherit the saved global defaults. Home-composer model
+commands and the model picker update the unsent draft immediately and save the
+selection as a default for new conversations. Settings opened outside a Run also
+edits those defaults. Each window queues configuration saves in user order.
+Each home model change applies its role selection to the latest accepted
+settings. If the latest home save fails, the picker restores the most recent
+accepted selection. Restoring a workspace on startup changes browser selection.
+`config.json` remains the defaults document for new Runs.
+The Run projection carries `modelConfig` for its own conversation. Settings opened
 inside a Run always edits that Run's role profiles, regardless of the selected
 node; only node-composer commands create individual node overrides. Conversation
 model edits do not replace global defaults. Global model visibility is a separate
@@ -539,10 +543,15 @@ accepts either one `executionId`, an explicit `executionIds` scope (including an
 empty list), or no scope for the Run aggregate. The backend unions complete
 per-execution paths before paging by `offset` and `limit`, preserving totals
 and ranking the rows consistently across page sizes. Each response includes an
-opaque `orderVersion` for the ordered list of paths. The browser rebuilds the
-loaded prefix if the order changes between pages. Empty log results are cached
-by byte cursor and running/terminal state. Scoped requests do not warm unrelated
-executions. Freshness tokens are captured together
+opaque `orderVersion` for the ordered list of paths. Loading more requests the
+expanded prefix to refresh the fingerprints and counts of previously loaded
+rows. The backend caps each page at 500 rows. Larger prefixes are published
+only when the pages agree on the order version, totals and running state.
+Both polling and loading more invalidate cached diffs when the summary settles.
+Older backends without `orderVersion` can still serve a prefix up to their
+supported limit.
+Empty log results are cached by byte cursor and running/terminal state. Scoped
+requests do not warm unrelated executions. Freshness tokens are captured together
 with the Snapshot under the Run mutex, so a reader that captured an older state
 cannot later overwrite newer live output or a terminal settlement; the whole cold
 read is skipped when the cache cannot be sampled without waiting. The summary

@@ -163,10 +163,10 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
   }
 });
 
-for (const scenario of ["stable", "changed", "legacy"]) test(
+for (const scenario of ["stable", "changed", "updated", "same totals", "legacy", "short page", "multi-page", "settled on expansion"]) test(
   `remote file-change pagination with ${scenario} order metadata`,
   { timeout: 30_000 }, async () => {
-  const allFiles = Array.from({ length: 85 }, (_, i) => ({
+  const allFiles = Array.from({ length: scenario === "multi-page" ? 505 : 85 }, (_, i) => ({
     path: `src/page-${String(i).padStart(3, "0")}.ts`,
     status: "modified",
     additions: 1,
@@ -175,6 +175,9 @@ for (const scenario of ["stable", "changed", "legacy"]) test(
   }));
   const seenOffsets = [];
   let orderVersion = scenario === "legacy" ? undefined : "initial";
+  let shortPage = false;
+  let changeBetweenPages = scenario === "multi-page";
+  let summaryRunning = scenario === "settled on expansion";
 
   const { page, context, errors } = await openFixture("serial&settled=1", {
     getFileChanges: (body) => {
@@ -189,31 +192,77 @@ for (const scenario of ["stable", "changed", "legacy"]) test(
         limit,
         orderVersion,
         summary: {
-          files: allFiles.slice(offset, offset + limit),
+          files: shortPage && offset + limit > 60 ? [] : allFiles.slice(offset, offset + limit),
           totalFiles: allFiles.length,
           addedCount: 0,
           modifiedCount: allFiles.length,
           deletedCount: 0,
           renamedCount: 0,
-          totalAdditions: allFiles.length,
+          totalAdditions: allFiles.reduce((total, file) => total + file.additions, 0) + Number(offset > 0 && changeBetweenPages),
           totalDeletions: 0,
-          isRunning: false,
+          isRunning: summaryRunning,
         },
       };
     },
+    getFileDiff: body => ({
+      runId: body.runId, path: body.path, oldPath: null, binary: false, truncated: false, hiddenLines: 0,
+      lines: [{ kind: "added", text: allFiles[0].contentVersion === "updated" ||
+        (scenario === "settled on expansion" && !summaryRunning) ? "new content" : "old content" }],
+    }),
   });
 
   try {
     await page.getByTestId("workspace-changes-trigger").click();
     const rows = page.getByTestId("changed-file-item");
     await expect(rows).toHaveCount(60);
+    if (scenario === "multi-page") {
+      const more = page.getByTestId("workspace-changes-load-more");
+      for (let count = 120; count <= 480; count += 60) {
+        await more.click();
+        await expect(rows).toHaveCount(count);
+      }
+      const tail = page.waitForResponse(response => response.url().endsWith("/api/get_file_changes") &&
+        response.request().postDataJSON().offset === 500);
+      await more.click();
+      await tail;
+      await expect(more).toBeEnabled();
+      await expect(rows).toHaveCount(480);
+      changeBetweenPages = false;
+      await more.click();
+      await expect(rows).toHaveCount(505);
+      assert.deepEqual(seenOffsets.slice(-2), [{ offset: 0, limit: 500 }, { offset: 500, limit: 40 }]);
+      assert.deepEqual(errors, []);
+      return;
+    }
     await expect(page.getByTestId("workspace-changes-load-more")).toContainText("Load 25 more");
     if (scenario === "changed") {
       const removed = allFiles.shift();
       allFiles.push({ ...removed, path: "src/page-new.ts" });
       orderVersion = "updated";
+    } else if (scenario === "updated") {
+      // The first row stays first when its line count increases.
+      allFiles[0] = { ...allFiles[0], additions: 2, contentVersion: "updated" };
     }
-    await page.getByTestId("workspace-changes-load-more").click();
+    const firstRow = rows.filter({ hasText: "page-000.ts" });
+    const loadMore = page.getByTestId("workspace-changes-load-more");
+    const expectUpdatedDiff = scenario === "same totals" || scenario === "settled on expansion";
+    if (expectUpdatedDiff) {
+      await firstRow.locator(".changed-file-row").click();
+      await expect(firstRow.getByTestId("changed-file-diff")).toContainText("old content");
+      if (scenario === "same totals") allFiles[0] = { ...allFiles[0], contentVersion: "updated" };
+      summaryRunning = false;
+    }
+    shortPage = scenario === "short page";
+    const expansion = page.waitForResponse(response => response.url().endsWith("/api/get_file_changes") &&
+      (response.request().postDataJSON().offset > 0 || response.request().postDataJSON().limit > 60));
+    await loadMore.click();
+    await expansion;
+    if (scenario === "short page") {
+      await expect(loadMore).toBeEnabled();
+      await expect(rows).toHaveCount(60);
+      shortPage = false;
+      await loadMore.click();
+    }
     await expect(rows).toHaveCount(85);
     await expect(page.getByTestId("workspace-changes-truncated")).toHaveCount(0);
     if (scenario === "changed") {
@@ -221,12 +270,14 @@ for (const scenario of ["stable", "changed", "legacy"]) test(
       await expect(rows.filter({ hasText: "page-060.ts" })).toHaveCount(1);
       await expect(rows.filter({ hasText: "page-new.ts" })).toHaveCount(1);
     }
-    if (scenario !== "stable") {
-      assert.ok(seenOffsets.some(entry => entry.offset === 0 && entry.limit === 120));
+    if (scenario === "updated") {
+      await expect(rows.filter({ hasText: "page-000.ts" }).locator(".diff-stat-add")).toHaveText("+2");
     }
-    if (scenario !== "legacy") {
-      assert.ok(seenOffsets.some(entry => entry.offset === 60 && entry.limit === 60));
+    if (expectUpdatedDiff) {
+      await expect(firstRow.getByTestId("changed-file-diff")).toContainText("new content");
     }
+    assert.deepEqual(seenOffsets.filter(entry => entry.offset > 0 || entry.limit > 60),
+      Array.from({ length: scenario === "short page" ? 2 : 1 }, () => ({ offset: 0, limit: 120 })));
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

@@ -133,10 +133,6 @@ test("workspace selection survives reload without repository detection", { timeo
     { runId: "second-run", repository: second, title: "Second conversation", phase: "completed", hasActiveExecutions: false }] };
   let holdBootstrap = false, pendingBootstrap;
   const { context, page, errors, calls } = await app(async (route, command) => {
-    if (command === "save_config") {
-      await route.fulfill({ json: { result: response } });
-      return true;
-    }
     if (command === "bootstrap") {
       if (holdBootstrap) pendingBootstrap = route;
       else await route.fulfill({ json: { result: response } });
@@ -1805,6 +1801,85 @@ test("home slash model changes are reflected in Settings and persist as global d
     assert.equal(stored.model, "test/new");
     assert.equal(stored.roleModels?.planner?.model, "test/plain");
     assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const secondSaveFails of [false, true]) test(
+  secondSaveFails ? "a failed queued model save restores the last saved default" : "home model saves reach the backend in selection order",
+  { timeout: 30_000 }, async () => {
+  let firstSave;
+  let savedModel = config.model;
+  const { context, page } = await app(async (route, command, body) => {
+    if (command !== "save_config") return false;
+    if (body.config.model === "test/new") firstSave = { route, config: body.config };
+    else if (secondSaveFails) await route.fulfill({ status: 400, json: { error: "Unable to save model" } });
+    else {
+      savedModel = body.config.model;
+      await route.fulfill({ json: { result: { ...bootstrap, config: body.config } } });
+    }
+    return true;
+  });
+  try {
+    await page.locator('[data-run-id="fast"]').waitFor();
+    await page.evaluate(() => {
+      window.modelSaves = [];
+      const originalFetch = window.fetch;
+      window.fetch = (url, options) => {
+        if (String(url).endsWith("/api/save_config")) window.modelSaves.push(JSON.parse(options.body).config.model);
+        return originalFetch(url, options);
+      };
+    });
+    const select = async model => {
+      await page.getByTestId("composer-model-selector").click();
+      await page.getByTestId("composer-model-menu").locator(`[data-model-key="test/${model}"]`).click();
+    };
+    await select("new");
+    await until(() => !!firstSave);
+    await select("plain");
+    await openSettings(page);
+    assert.equal(await nodeModel(page).inputValue(), "test/plain");
+    assert.deepEqual(await page.evaluate(() => window.modelSaves), ["test/new"]);
+    savedModel = firstSave.config.model;
+    await firstSave.route.fulfill({ json: { result: { ...bootstrap, config: firstSave.config } } });
+    await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+    await page.getByTestId("composer-model-selector").getByText(secondSaveFails ? "new" : "plain", { exact: true }).waitFor();
+    const expected = secondSaveFails ? "test/new" : "test/plain";
+    await page.waitForFunction(model => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model === model, expected);
+    assert.deepEqual(await page.evaluate(() => window.modelSaves), ["test/new", "test/plain"]);
+    assert.equal(savedModel, expected);
+  } finally { await context.close(); }
+});
+
+test("a queued Planner selection does not persist a rejected Node default", { timeout: 30_000 }, async () => {
+  let nodeSave, plannerConfig;
+  const { context, page } = await app(async (route, command, body) => {
+    if (command !== "save_config") return false;
+    if (!body.config.roleModels?.planner) nodeSave = route;
+    else {
+      plannerConfig = body.config;
+      await route.fulfill({ json: { result: { ...bootstrap, config: plannerConfig } } });
+    }
+    return true;
+  });
+  try {
+    await page.locator('[data-run-id="fast"]').waitFor();
+    const select = async model => {
+      await page.getByTestId("composer-model-selector").click();
+      await page.getByTestId("composer-model-menu").locator(`[data-model-key="test/${model}"]`).click();
+    };
+    await select("new");
+    await until(() => !!nodeSave);
+    await page.getByRole("button", { name: "Compile", exact: true }).click();
+    await select("plain");
+    await openSettings(page);
+    const plannerModel = page.locator(".role-model-group").nth(1).locator("select").first();
+    await until(async () => await plannerModel.inputValue() === "test/plain");
+    await nodeSave.fulfill({ status: 400, json: { error: "Unable to save Node model" } });
+    await until(() => !!plannerConfig);
+    assert.equal(plannerConfig.model, "test/old");
+    assert.equal(plannerConfig.roleModels.planner.model, "test/plain");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).roleModels?.planner?.model === "test/plain");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("pi-n-format-1:/mock:pi_n_config")).model), "test/old");
   } finally { await context.close(); }
 });
 

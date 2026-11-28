@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Save rapid home model switches in selection order within the same window. Apply each role change to the last accepted defaults so a rejected switch cannot leak into a queued save.
+- Keep UI workspace restoration from overwriting configuration defaults during startup.
+- Refresh already loaded file-change rows when loading more, including same-line-count content edits. Keep the existing list if a page is incomplete or its totals disagree with another page. Invalidate cached diffs when either polling or loading more observes completion.
+- Preserve edited follow-ups and their local attachment metadata across older opening edits. Preserve edits after a fresh node restart and keep earlier descendant messages when they share an upstream edit anchor's timestamp.
+
+### Changed
+
+- Match local and saved conversation turns without allocating a reversed copy of the remaining messages for each saved turn.
+
 ## [2.0.3] - 2026-11-28
 
 ### Fixed

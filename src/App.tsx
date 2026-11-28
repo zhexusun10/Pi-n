@@ -1238,10 +1238,7 @@ export default function App() {
     // A retry may have overlapped an edit attempt that was rejected only
     // because settings were still loading. Do not leave that stale error up.
     setError(previous => previous === t("正在加载后端设置，请稍后重试；若加载失败，请在侧边栏重试。") ? "" : previous);
-    writeStorageJson(STORAGE_KEYS.config, applyModelConfig(nextConfigObj, data.config));
-    if (nextConfigObj.repository && workspaceKey(nextConfigObj.repository) !== workspaceKey(data.config.repository)) {
-      void runtimeService.saveConfig(applyModelConfig(nextConfigObj, data.config)).catch(() => { });
-    }
+    writeStorageJson(STORAGE_KEYS.config, nextConfigObj);
 
     if (!activeRepo && storedProjects === null) {
       // First launch used to discover the backend cwd during bootstrap. Keep

@@ -224,6 +224,23 @@ function matchesRecordedTurn(message: ChatMessage, event: GraphEvent, ordinal: n
   return message.steerOrdinal === undefined || message.steerOrdinal === ordinal;
 }
 
+/** Claim each local turn at most once. Search newest first without copying
+ * and reversing the remaining messages for every recorded event. */
+function claimRecordedTurns(localRemaining: ChatMessage[], events: readonly GraphEvent[]): Map<number, ChatMessage> {
+  const matched = new Map<number, ChatMessage>();
+  const ordinals = steerEventOrdinals(events);
+  for (let eventIndex = events.length - 1; eventIndex >= 0 && localRemaining.length > 0; eventIndex--) {
+    const event = events[eventIndex];
+    const ordinal = ordinals.get(event.sequence);
+    for (let index = localRemaining.length - 1; index >= 0; index--) {
+      if (!matchesRecordedTurn(localRemaining[index], event, ordinal)) continue;
+      matched.set(event.sequence, localRemaining.splice(index, 1)[0]);
+      break;
+    }
+  }
+  return matched;
+}
+
 /** Replay a short entrance on the node itself whenever `token` changes.
  *
  * Opening a Conversation paints the topology chrome immediately, and reopening
@@ -843,7 +860,6 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       ? localMessages
       : activeLocalNodeMessages(localMessages, state, conversationNode, false);
     const localRemaining = [...local];
-    const matchedLocals = new Map<number, ChatMessage>();
     const activeEvents = (mergerConversation ? state.events : activeNodeConversationEvents(state, conversationNode)).filter((event) => {
       if (mergerConversation) {
         return event.type === "steered" && event.node === conversationNode &&
@@ -858,19 +874,8 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         event.nodes?.includes(conversationNode) && conversationExecutionIds.has(event.from_execution_id ?? "");
       return false;
     });
-    const ordinals = steerEventOrdinals(activeEvents);
-    const recorded = activeEvents.reverse().filter((event) => {
-      // Match each optimistic turn to at most one durable event, from newest
-      // to oldest, so repeated identical messages do not disappear.
-      const ordinal = ordinals.get(event.sequence);
-      const reverseIndex = [...localRemaining].reverse().findIndex((msg) => matchesRecordedTurn(msg, event, ordinal));
-      if (reverseIndex < 0) return true;
-      const idx = localRemaining.length - 1 - reverseIndex;
-      matchedLocals.set(event.sequence, localRemaining.splice(idx, 1)[0]);
-      // Keep the durable replacement; excluding both turns would make an
-      // accepted steer or follow-up disappear from the conversation.
-      return true;
-    }).reverse().map((event): ChatMessage => {
+    const matchedLocals = claimRecordedTurns(localRemaining, activeEvents);
+    const recorded = activeEvents.map((event): ChatMessage => {
       const matchingLocal = matchedLocals.get(event.sequence);
       return {
         id: matchingLocal?.id ?? `event-${event.sequence}`, parentId: null, role: "user",
@@ -2451,23 +2456,12 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       messages = [{ ...messages[0], text: serialNode.task }, ...messages.slice(1)];
     }
     const localRemaining = messages.filter((msg) => msg.node === serialNode.id);
-    const replacedIds = new Set<string>();
-    const matchedLocals = new Map<number, ChatMessage>();
     const activeEvents = activeNodeConversationEvents(state, serialNode.id).filter((event) =>
       ((event.type === "node_messaged" || event.type === "steered") && event.node === serialNode.id) ||
       ((event.type === "invalidated" && event.human || (event.type === "conversation_edited" && !event.first_turn)) && event.target === serialNode.id && !!event.instruction)
     );
-    const ordinals = steerEventOrdinals(activeEvents);
-    const recorded = activeEvents.reverse().filter((event) => {
-      const ordinal = ordinals.get(event.sequence);
-      const reverseIndex = [...localRemaining].reverse().findIndex((msg) => matchesRecordedTurn(msg, event, ordinal));
-      if (reverseIndex >= 0) {
-        const local = localRemaining.splice(localRemaining.length - 1 - reverseIndex, 1)[0];
-        replacedIds.add(local.id);
-        matchedLocals.set(event.sequence, local);
-      }
-      return true;
-    }).reverse().map((event): ChatMessage => ({
+    const matchedLocals = claimRecordedTurns(localRemaining, activeEvents);
+    const recorded = activeEvents.map((event): ChatMessage => ({
       id: matchedLocals.get(event.sequence)?.id ?? `event-${event.sequence}`, parentId: null, role: "user",
       text: event.instruction || "", images: event.images, files: matchedLocals.get(event.sequence)?.files, node: serialNode.id, runId: state.runId,
       versions: event.type === "conversation_edited" ? versionsForEdit(state, event) : undefined,
@@ -2476,7 +2470,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
       pendingExecution: state.nodes[serialNode.id]?.pendingMessages?.some(message => message.sequence === event.sequence),
       delivery: event.type === "node_messaged" || event.type === "steered" ? event.type : undefined,
     }));
-    messages = messages.filter(message => !replacedIds.has(message.id));
+    if (matchedLocals.size > 0) {
+      const replacedIds = new Set(Array.from(matchedLocals.values(), message => message.id));
+      messages = messages.filter(message => !replacedIds.has(message.id));
+    }
     // A fresh browser session may have only a recorded follow-up, not the
     // original prompt in local state. Keep the initial task paired with its execution.
     if ((messages.length === 0 || messages[0]?.node === serialNode.id) && state.graph.originalGoal) {

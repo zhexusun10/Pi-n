@@ -1710,11 +1710,9 @@ pub fn merge_summaries(summaries: &[FileChangeSummary], is_running: bool) -> Fil
     FileChangeSummary::from_files(map.into_values().collect(), any_running, active_file_path)
 }
 
-/// How many rows the browser ever renders. A build-heavy Run can produce tens of
-/// thousands of paths (a Next.js `.next` tree alone is ~36k files); sending them
-/// all on every snapshot inflates the first-screen response from a few KiB to
-/// tens of MiB. Keep the true totals and only the most notable rows, matching
-/// the browser's added/deleted-first, lines-descending display order.
+/// Default file-change page size. Large Runs can have tens of thousands of
+/// paths, so the first response returns only the highest-ranked rows and keeps
+/// the full totals. The browser can request additional pages on demand.
 pub const MAX_DISPLAYED_FILE_CHANGES: usize = 60;
 
 /// Filter `.gitignore`-matched untracked build/dependency artifacts and

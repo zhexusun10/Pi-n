@@ -66,6 +66,20 @@ export function useConfigPersistence({
 }: UseConfigPersistenceOptions) {
   const settingsReadGeneration = useRef(0);
   const defaultSaveGeneration = useRef(0);
+  const configSaveQueue = useRef(Promise.resolve());
+  const lastSavedDefaults = useRef<Config | null>(null);
+
+  // save_config replaces a full profile. Wait for each request to settle
+  // before sending the next so acknowledged writes follow selection order.
+  const saveConfigInOrder = useCallback((buildConfig: (saved: Config | null) => Config, runId?: string) => {
+    const write = configSaveQueue.current.then(async () => {
+      const boot = await runtimeService.saveConfig(buildConfig(lastSavedDefaults.current), runId);
+      lastSavedDefaults.current = boot.config;
+      return boot;
+    });
+    configSaveQueue.current = write.then(() => undefined, () => undefined);
+    return write;
+  }, []);
 
   const handleOpenSettings = useCallback(() => {
     // Settings belongs to the currently validated conversation. Opening it
@@ -109,7 +123,7 @@ export function useConfigPersistence({
 
   const handleSaveConfig = useCallback(async (draftConfig: Config): Promise<boolean> => {
     settingsReadGeneration.current += 1;
-    defaultSaveGeneration.current += 1;
+    const saveGeneration = ++defaultSaveGeneration.current;
     const generation = foregroundGeneration.current;
     // Settings change models/defaults, not the selected workspace. Rediscovery
     // or Git status here can stall saving behind an unrelated large tree scan.
@@ -121,12 +135,12 @@ export function useConfigPersistence({
       maxFeedback: normalizeMaxFeedback(draftConfig.maxFeedback),
       maxParallel: normalizeMaxParallel(draftConfig.maxParallel),
     };
-    let persistedDefaults = defaultSettings;
+    let persistedDefaults: Config;
     try {
       // Settings always owns the Run profile, regardless of selected node.
       // Outside a Run it edits the global defaults for new conversations.
-      const boot = await runtimeService.saveConfig(nextConfig, stateRunId || undefined);
-      if (generation !== foregroundGeneration.current) return false;
+      const boot = await saveConfigInOrder(() => nextConfig, stateRunId || undefined);
+      if (generation !== foregroundGeneration.current || saveGeneration !== defaultSaveGeneration.current) return false;
       if (boot.snapshot?.runId === stateRunId && stateRunId) {
         if (snapshotBelongsToWorkspace(boot.snapshot, config.repository)) {
           setState(boot.snapshot);
@@ -161,9 +175,9 @@ export function useConfigPersistence({
   }, [
     acceptedSettingsRef,
     config.repository,
-    defaultSettings,
     foregroundGeneration,
     observeRunSnapshot,
+    saveConfigInOrder,
     setConfig,
     setDataPath,
     setDefaultSettings,
@@ -189,23 +203,25 @@ export function useConfigPersistence({
       // keep global defaults/localStorage synced even if the user navigates
       // into that conversation while persistence is in flight.
       const saveGeneration = ++defaultSaveGeneration.current;
-      const previousConfig = config;
-      const nextConfig = updateRoleModelConfig(config, scope.role, settings);
       setConfig((previous) => updateRoleModelConfig(previous, scope.role, settings));
       let boot: Awaited<ReturnType<typeof runtimeService.saveConfig>>;
       try {
-        boot = await runtimeService.saveConfig(nextConfig);
+        // Apply only this role's change to the last acknowledged defaults.
+        // The visible config can still contain a rejected optimistic choice.
+        boot = await saveConfigInOrder(saved => updateRoleModelConfig(
+          { ...(saved ?? defaultSettings), repository: config.repository }, scope.role, settings,
+        ));
       } catch (error) {
         if (
           generation === foregroundGeneration.current &&
           displayedRunIdRef.current === stateRunId &&
           saveGeneration === defaultSaveGeneration.current
         ) {
-          setConfig((previous) => applyModelConfig(previous, previousConfig));
+          const savedDefaults = lastSavedDefaults.current ?? defaultSettings;
+          setConfig((previous) => applyModelConfig(previous, savedDefaults));
         }
         throw error;
       }
-      if (saveGeneration !== defaultSaveGeneration.current) return;
       const persisted = {
         ...boot.config,
         maxFeedback: normalizeMaxFeedback(boot.config.maxFeedback),
@@ -216,9 +232,10 @@ export function useConfigPersistence({
       const storedConfig = readStorageJson(STORAGE_KEYS.config);
       writeStorageJson(
         STORAGE_KEYS.config,
-        applyModelConfig(storedConfig ? { ...nextConfig, ...storedConfig } : nextConfig, persisted),
+        applyModelConfig({ ...persisted, ...storedConfig, repository: storedConfig?.repository ?? config.repository }, persisted),
       );
       if (
+        saveGeneration === defaultSaveGeneration.current &&
         generation === foregroundGeneration.current &&
         displayedRunIdRef.current === stateRunId
       ) {
@@ -236,10 +253,12 @@ export function useConfigPersistence({
   }, [
     acceptedSettingsRef,
     config,
+    defaultSettings,
     displayedRunIdRef,
     foregroundGeneration,
     isBootstrapReady,
     observeRunSnapshot,
+    saveConfigInOrder,
     setComposerSnapshot,
     setConfig,
     setDefaultSettings,

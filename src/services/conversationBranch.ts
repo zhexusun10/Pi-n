@@ -5,21 +5,17 @@ export function stripNodePrefix(text: string): string {
   return text.replace(/^\[@[^\]]+\]\s*/, "").trim();
 }
 
-function isEventAbandonedByEdit(
-  event: GraphEvent,
-  edit: GraphEvent,
-  node: string,
-  events: readonly GraphEvent[],
-): boolean {
-  if (event.sequence >= edit.sequence) return false;
-  const belongs = event.node === node || event.target === node;
-  if (!belongs) return false;
-  if (edit.target === node) {
-    return event.sequence >= (edit.from_event_sequence ?? edit.sequence);
-  }
-  // Editing an upstream node invalidates the old descendant conversation.
-  return event.timestamp >= (events.find((e) => e.type === "started" &&
-    e.execution?.id === edit.from_execution_id)?.timestamp ?? edit.timestamp);
+function editBoundary(edit: GraphEvent, node: string | undefined, events: readonly GraphEvent[]): number {
+  if (!node || edit.target === node) return edit.from_event_sequence ?? edit.sequence;
+  // An upstream edit invalidates descendant turns after its anchor. Event
+  // sequences distinguish turns recorded in the same millisecond.
+  return events.find(event => event.type === "started" &&
+    event.execution?.id === edit.from_execution_id)?.sequence ?? edit.sequence;
+}
+
+function isEventAbandonedByEdit(event: GraphEvent, from: number, to: number, node?: string): boolean {
+  return event.sequence >= from && event.sequence < to &&
+    (!node || event.node === node || event.target === node);
 }
 
 function collectEventChainIdentities(
@@ -60,24 +56,29 @@ export function localMessagesAfterEdit(
   );
   const abandonedIds = new Set<string>();
   const abandonedRequests = new Set<string>();
+  const priorRequests = new Set<string>();
+  const laterIds = new Set<string>();
+  const from = editBoundary(edit, node, events);
   for (const event of events) {
-    const abandoned = node
-      ? isEventAbandonedByEdit(event, edit, node, events)
-      : (event.sequence < edit.sequence && event.sequence >= (edit.from_event_sequence ?? edit.sequence));
-    if (abandoned) collectEventChainIdentities(event, events, abandonedIds, abandonedRequests);
+    if (isEventAbandonedByEdit(event, from, edit.sequence, node)) {
+      collectEventChainIdentities(event, events, abandonedIds, abandonedRequests);
+    }
+    if (event.sequence < edit.sequence && event.request_id) priorRequests.add(event.request_id);
+    if (event.sequence > edit.sequence && (!node || event.node === node || event.target === node) &&
+      ["invalidated", "node_messaged", "steered", "conversation_edited"].includes(event.type)) {
+      laterIds.add(`event-${event.sequence}`);
+      if (event.request_id) laterIds.add(`msg-${event.request_id}`);
+    }
   }
-  const priorRequests = new Set(
-    events.filter(event => event.sequence < edit.sequence && event.request_id).map(event => event.request_id),
-  );
-  const isPostEditRequest = (message: ChatMessage) =>
-    Boolean(message.steerRequestId && !priorRequests.has(message.steerRequestId));
+  // A later edited copy can retain its display ID after it drops the request ID.
+  const isPostEditMessage = (message: ChatMessage) =>
+    laterIds.has(message.id) || Boolean(message.steerRequestId && !priorRequests.has(message.steerRequestId));
   const isActiveReplacement = (message: ChatMessage) =>
     edit.target === node &&
     Boolean(edit.instruction) &&
     stripNodePrefix(message.text) === stripNodePrefix(edit.instruction ?? "") &&
     (sourceIds.has(message.id) || Boolean(message.steerRequestId && sourceRequests.has(message.steerRequestId)));
   const matchesAbandonedEvent = (message: ChatMessage) =>
-    !isPostEditRequest(message) &&
     !isActiveReplacement(message) &&
     (abandonedIds.has(message.id) || Boolean(message.steerRequestId && abandonedRequests.has(message.steerRequestId)));
   // An edited copy keeps its display ID after retiring its transport identity.
@@ -92,7 +93,7 @@ export function localMessagesAfterEdit(
   // pre-edit text cannot put that request in the discarded local suffix.
   const filtered = messages.filter((message, index) => {
     if (keepOpening && index === 0) return true;
-    if (isPostEditRequest(message)) return true;
+    if (isPostEditMessage(message)) return true;
     if (isFirstTurnCut) return false;
     if (boundary >= 0 && index >= boundary + Number(keepOpening)) return false;
     if (matchesAbandonedEvent(message)) return false;
@@ -106,10 +107,12 @@ export function localMessagesAfterEdits(
   events: GraphEvent[],
   node: string,
   preserveOpeningSlot = false,
+  fromSequence = Number.NEGATIVE_INFINITY,
 ): ChatMessage[] {
   let retained = messages;
   for (const event of events) {
-    if (event.type !== "conversation_edited") continue;
+    if (retained.length === 0) break;
+    if (event.sequence < fromSequence || event.type !== "conversation_edited") continue;
     if (event.target !== node && !event.nodes?.includes(node)) continue;
     retained = localMessagesAfterEdit(
       retained,
@@ -159,9 +162,12 @@ export function activeLocalNodeMessages(
   node: string,
   preserveOpeningSlot = false,
 ): ChatMessage[] {
-  const afterEdits = localMessagesAfterEdits(messages, state.events, node, preserveOpeningSlot);
+  if (messages.length === 0) return messages;
   const { freshBoundary, retainedMessages } = nodeFreshRestartBoundary(state, node);
-  if (!Number.isFinite(freshBoundary)) return afterEdits;
+  if (!Number.isFinite(freshBoundary)) return localMessagesAfterEdits(messages, state.events, node, preserveOpeningSlot);
+  // Earlier edits identify stale local entries below, but their cuts do not
+  // apply to replacements in a different conversation after the restart.
+  const afterEdits = localMessagesAfterEdits(messages, state.events, node, preserveOpeningSlot, freshBoundary);
   const droppedIds = new Set<string>();
   const droppedRequests = new Set<string>();
   for (const event of state.events) {
@@ -247,7 +253,7 @@ export function sessionEntriesAfterNodeEdit(options: {
     const nodeEntries = entries.filter(entry =>
       entry.node === node && (!entry.runId || !snapshot.runId || entry.runId === snapshot.runId),
     );
-    perNodeRetained.set(node, new Set(localMessagesAfterEdits(nodeEntries, snapshot.events, node, false)));
+    perNodeRetained.set(node, new Set(activeLocalNodeMessages(nodeEntries, snapshot, node)));
   }
 
   const next: ChatMessage[] = [];
@@ -400,11 +406,13 @@ export function branchEditedMessageEntries(
 /** Only the chosen branch contributes turns to the active conversation. The
  * original durable events and executions remain available for history. */
 export function activeNodeConversationEvents(state: Snapshot, node: string): GraphEvent[] {
-  const edits = state.events.filter((event) => event.type === "conversation_edited" && event.nodes?.includes(node));
+  const edits = state.events
+    .filter(event => event.type === "conversation_edited" && event.nodes?.includes(node))
+    .map(edit => ({ from: editBoundary(edit, node, state.events), to: edit.sequence }));
   const { freshBoundary, retainedMessages } = nodeFreshRestartBoundary(state, node);
-  return state.events.filter((event) => !edits.some((edit) =>
-    isEventAbandonedByEdit(event, edit, node, state.events),
-  )).filter((event) => !isEventDroppedByFreshRestart(event, node, freshBoundary, retainedMessages));
+  return state.events.filter(event =>
+    !edits.some(({ from, to }) => isEventAbandonedByEdit(event, from, to, node)) &&
+    !isEventDroppedByFreshRestart(event, node, freshBoundary, retainedMessages));
 }
 
 export function executionIdForMessage(state: Snapshot, event: GraphEvent): string | undefined {

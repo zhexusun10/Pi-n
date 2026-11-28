@@ -45,18 +45,22 @@ function sameStringList(a?: string[], b?: string[]): boolean {
   return true;
 }
 
+function sameSummaryTotals(a: FileChangeSummary, b: FileChangeSummary): boolean {
+  return a.totalFiles === b.totalFiles &&
+    a.addedCount === b.addedCount &&
+    a.modifiedCount === b.modifiedCount &&
+    a.deletedCount === b.deletedCount &&
+    a.renamedCount === b.renamedCount &&
+    a.totalAdditions === b.totalAdditions &&
+    a.totalDeletions === b.totalDeletions;
+}
+
 /** Polling often returns identical summaries; field-wise comparison avoids
  * JSON serialization overhead and prevents re-rendering the workbench every 2s. */
 function sameSummary(a: FileChangeSummary, b: FileChangeSummary): boolean {
   if (a === b) return true;
   if (
-    a.totalFiles !== b.totalFiles ||
-    a.addedCount !== b.addedCount ||
-    a.modifiedCount !== b.modifiedCount ||
-    a.deletedCount !== b.deletedCount ||
-    a.renamedCount !== b.renamedCount ||
-    a.totalAdditions !== b.totalAdditions ||
-    a.totalDeletions !== b.totalDeletions ||
+    !sameSummaryTotals(a, b) ||
     Boolean(a.isRunning) !== Boolean(b.isRunning) ||
     a.activeFilePath !== b.activeFilePath ||
     a.files.length !== b.files.length
@@ -92,31 +96,36 @@ function hasRunningFile(summary: FileChangeSummary | undefined): boolean {
 type SummaryPage = Awaited<ReturnType<typeof runtimeService.getFileChanges>>;
 type LoadedSummary = Pick<SummaryPage, "summary" | "orderVersion">;
 
-function mergeSummaryPages(base: LoadedSummary, next: SummaryPage): LoadedSummary {
-  const files = [...base.summary.files, ...next.summary.files];
-  if (base.orderVersion !== next.orderVersion ||
-    base.summary.totalFiles !== next.summary.totalFiles ||
-    new Set(files.map(file => file.path)).size !== files.length) {
-    throw new Error("File changes moved during pagination");
-  }
-  return { orderVersion: next.orderVersion, summary: { ...next.summary, files } };
-}
-
 async function readSummaryPrefix(
   readPage: (offset: number, limit: number) => Promise<SummaryPage>,
   limit: number,
 ): Promise<LoadedSummary> {
-  const first = await readPage(0, Math.min(limit, MAX_BACKEND_PAGE_LIMIT));
-  let loaded: LoadedSummary = first;
-  if (first.summary.files.length < Math.min(MAX_BACKEND_PAGE_LIMIT, limit)) return loaded;
-  while (loaded.summary.files.length < Math.min(limit, loaded.summary.totalFiles)) {
-    const offset = loaded.summary.files.length;
+  const files: FileChangeSummary["files"] = [];
+  const paths = new Set<string>();
+  let first: SummaryPage | undefined;
+  while (true) {
+    const offset = files.length;
     const chunkLimit = Math.min(MAX_BACKEND_PAGE_LIMIT, limit - offset);
     const page = await readPage(offset, chunkLimit);
-    loaded = mergeSummaryPages(loaded, page);
-    if (page.summary.files.length < chunkLimit) break;
+    first ??= page;
+    const { orderVersion, summary } = page;
+    const expectedRows = Math.min(chunkLimit, Math.max(0, summary.totalFiles - offset));
+    if (orderVersion !== first.orderVersion || !sameSummaryTotals(first.summary, summary) ||
+      Boolean(first.summary.isRunning) !== Boolean(summary.isRunning) ||
+      first.summary.activeFilePath !== summary.activeFilePath ||
+      (page.offset !== undefined && page.offset !== offset) ||
+      (orderVersion !== undefined && summary.files.length !== expectedRows)) {
+      throw new Error("File changes moved during pagination");
+    }
+    for (const file of summary.files) {
+      if (paths.has(file.path)) throw new Error("Duplicate file in file-change pages");
+      paths.add(file.path);
+      files.push(file);
+    }
+    if (summary.files.length < chunkLimit || files.length >= Math.min(limit, summary.totalFiles)) {
+      return { orderVersion, summary: { ...summary, files } };
+    }
   }
-  return loaded;
 }
 
 /**
@@ -152,6 +161,18 @@ export function useWorkspaceChanges({
   const forceRefreshRef = useRef(false);
   const poller = useRef<PollingController | null>(null);
   const snapshotSequence = state.events.at(-1)?.sequence ?? 0;
+
+  const publishSummary = useCallback(({ summary, orderVersion }: LoadedSummary) => {
+    const nowRunning = hasRunningFile(summary);
+    if (wasRunningSummaryRef.current && !nowRunning) {
+      invalidateFileDiffCache(runId);
+      setRefreshVersion(version => version + 1);
+    }
+    wasRunningSummaryRef.current = nowRunning;
+    cacheFileChangeSummary(scopeKey, runId, summary);
+    setFetched(previous => previous?.key === scopeKey && previous.orderVersion === orderVersion &&
+      sameSummary(previous.summary, summary) ? previous : { key: scopeKey, summary, orderVersion });
+  }, [runId, scopeKey]);
 
   useEffect(() => {
     loadedLimitRef.current = FILE_CHANGES_PAGE_SIZE;
@@ -194,22 +215,14 @@ export function useWorkspaceChanges({
       forceRefreshRef.current = false;
       const startPageGeneration = pageGenerationRef.current;
       try {
-        const { summary, orderVersion } = await readSummaryPrefix(
+        const loaded = await readSummaryPrefix(
           (offset, limit) => runtimeService.getFileChanges(runId, scopedIds ?? undefined, abort.signal, { offset, limit }),
           loadedLimitRef.current,
         );
         if (abort.signal.aborted) return null;
         // A user-requested expansion supersedes any poll that read the old prefix.
         if (startPageGeneration !== pageGenerationRef.current) return REFRESH_INTERVAL_MS;
-        const nowRunning = hasRunningFile(summary);
-        if (wasRunningSummaryRef.current && !nowRunning) {
-          invalidateFileDiffCache(runId);
-          setRefreshVersion((version) => version + 1);
-        }
-        wasRunningSummaryRef.current = nowRunning;
-        cacheFileChangeSummary(scopeKey, runId, summary);
-        setFetched(previous => previous?.key === scopeKey && previous.orderVersion === orderVersion &&
-          sameSummary(previous.summary, summary) ? previous : { key: scopeKey, summary, orderVersion });
+        publishSummary(loaded);
         nextReadAt = Date.now() + REFRESH_INTERVAL_MS;
         return isWorking ? REFRESH_INTERVAL_MS : Infinity;
       } catch {
@@ -228,7 +241,7 @@ export function useWorkspaceChanges({
       if (poller.current === polling) poller.current = null;
     };
     // scopeKey contains the immutable execution-id list, not its array identity.
-  }, [runId, scopeKey, emptyScope, isWorking]);
+  }, [runId, scopeKey, emptyScope, isWorking, publishSummary]);
 
   useEffect(() => { poller.current?.wake(); }, [snapshotSequence]);
 
@@ -255,19 +268,15 @@ export function useWorkspaceChanges({
       const readPage = (pageOffset: number, limit: number) => runtimeService.getFileChanges(
         runId, scopedIds ?? undefined, abort.signal, { offset: pageOffset, limit },
       );
-      const page = current?.orderVersion ? await readPage(offset, FILE_CHANGES_PAGE_SIZE) : undefined;
-      if (abort.signal.aborted) return;
-      // Rebuild the prefix if the order changed or the backend cannot verify it.
-      const loaded = current && page && current.orderVersion === page.orderVersion
-        ? mergeSummaryPages(current, page)
-        : await readSummaryPrefix(readPage, offset + FILE_CHANGES_PAGE_SIZE);
+      // Read the prefix again to refresh fingerprints even when counts and
+      // ranking stay the same. Up to the backend page cap this is one request.
+      const loaded = await readSummaryPrefix(readPage, offset + FILE_CHANGES_PAGE_SIZE);
       if (abort.signal.aborted) return;
       const { summary, orderVersion } = loaded;
       setRemoteExhausted(orderVersion === undefined && summary.files.length <= offset &&
         summary.totalFiles > summary.files.length);
       loadedLimitRef.current = Math.max(loadedLimitRef.current, summary.files.length);
-      cacheFileChangeSummary(scopeKey, runId, summary);
-      setFetched({ key: scopeKey, summary, orderVersion });
+      publishSummary(loaded);
     } catch {
       // Keep current loaded rows; user can retry clicking Load More.
     } finally {
@@ -276,7 +285,7 @@ export function useWorkspaceChanges({
         setLoadingMore(false);
       }
     }
-  }, [emptyScope, fetched, remoteExhausted, runId, scopeKey, scopedIds]);
+  }, [emptyScope, fetched, publishSummary, remoteExhausted, runId, scopeKey, scopedIds]);
 
   return useMemo(() => {
     const cachedSummary = !emptyScope ? getCachedFileChangeSummary(scopeKey) : undefined;

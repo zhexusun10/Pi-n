@@ -26,6 +26,20 @@ test('editing a completed turn hides the abandoned node branch but preserves ear
   assert.equal(state.events.length, 5, 'old durable history remains intact');
 });
 
+test('upstream edits preserve descendant turns recorded before the anchor in the same millisecond', () => {
+  const earlier: GraphEvent = { sequence: 1, timestamp: 100, type: 'node_messaged', node: 'child', instruction: 'earlier' };
+  const later: GraphEvent = { ...earlier, sequence: 3, instruction: 'later' };
+  const state: Snapshot = { ...emptySnapshot, events: [
+    earlier,
+    { sequence: 2, timestamp: 100, type: 'started', execution: { id: 'anchor', node: 'parent' } as Snapshot['executions'][number] },
+    later,
+    { sequence: 4, timestamp: 100, type: 'conversation_edited', target: 'parent', nodes: ['parent', 'child'], from_execution_id: 'anchor' },
+  ] };
+  assert.deepEqual(activeNodeConversationEvents(state, 'child').filter(event => event.type === 'node_messaged'), [earlier]);
+  const messages = [earlier, later].map(event => ({ id: `event-${event.sequence}`, role: 'user' as const, text: event.instruction! }));
+  assert.deepEqual(activeLocalNodeMessages(messages, state, 'child'), [messages[0]]);
+});
+
 test('editing a later Steer preserves earlier Steers from the superseded execution in the same session', () => {
   const original = { id: 'original', node: 'task', revision: 1, attempt: 1, sessionId: 'same', worktree: '', before: '', after: '', status: 'paused', output: '', startedAt: 1, completedAt: 4 };
   const replacement = { ...original, id: 'replacement', attempt: 2, startedAt: 5, status: 'running', completedAt: null };
@@ -483,6 +497,22 @@ test('first_turn edit drops pre-edit follow-ups even when opening text already c
   );
 });
 
+test('editing a follow-up preserves its local copy through an older opening edit in the same conversation', () => {
+  const events: GraphEvent[] = [
+    { sequence: 1, timestamp: 1, type: 'conversation_edited', target: 'task', nodes: ['task'],
+      first_turn: true, old_instruction: 'old opening', instruction: 'new opening' },
+    { sequence: 2, timestamp: 2, type: 'node_messaged', node: 'task', instruction: 'follow-up', request_id: 'follow-up' },
+    { sequence: 3, timestamp: 3, type: 'conversation_edited', target: 'task', nodes: ['task'],
+      from_event_sequence: 2, old_instruction: 'follow-up', instruction: 'replacement' },
+  ];
+  // Editing consumes the receipt but the local copy retains the display ID and files.
+  const replacement: ChatMessage = { id: 'msg-follow-up', role: 'user', node: 'task', text: 'replacement',
+    files: [{ name: 'notes.txt', type: 'text/plain', size: 1 }] };
+  assert.deepEqual(localMessagesAfterEdits([replacement], events, 'task'), [replacement]);
+  const replayed = { ...replacement, id: 'event-2' };
+  assert.deepEqual(localMessagesAfterEdits([replayed], events, 'task'), [replayed]);
+});
+
 test('fresh restart drops pre-restart durable conversation_edited events and local session entries', () => {
   const attempt1 = { id: 'attempt-1', node: 'task', revision: 1, attempt: 1, sessionId: 'old', worktree: '', before: '', after: '', status: 'completed', output: '', startedAt: 1, completedAt: 2 };
   const attempt2 = { ...attempt1, id: 'attempt-2', revision: 2, attempt: 2, startedAt: 3, completedAt: 4 };
@@ -515,4 +545,22 @@ test('fresh restart drops pre-restart durable conversation_edited events and loc
     activeLocalNodeMessages([initial, staleFollowUp, staleEdited, claimedLocal, postRestart], state, 'task', true).map(m => m.id),
     ['msg-initial-goal', 'msg-claimed-req', 'msg-post'],
   );
+});
+
+test('an old opening edit cannot discard a local replacement in a fresh conversation', () => {
+  const fresh = { id: 'fresh', node: 'task' } as Snapshot['executions'][number];
+  const state: Snapshot = {
+    ...emptySnapshot,
+    executions: [fresh],
+    events: [
+      { sequence: 1, timestamp: 1, type: 'conversation_edited', target: 'task', nodes: ['task'], first_turn: true,
+        old_instruction: 'old opening', instruction: 'previous opening' },
+      { sequence: 2, timestamp: 2, type: 'started', execution: fresh, fresh_restart: true },
+      { sequence: 3, timestamp: 3, type: 'steered', node: 'task', instruction: 'follow-up', request_id: 'follow-up' },
+      { sequence: 4, timestamp: 4, type: 'conversation_edited', target: 'task', nodes: ['task'],
+        from_event_sequence: 3, from_execution_id: fresh.id, old_instruction: 'follow-up', instruction: 'replacement' },
+    ],
+  };
+  const replacement: ChatMessage = { id: 'msg-follow-up', role: 'user', node: 'task', text: 'replacement' };
+  assert.deepEqual(activeLocalNodeMessages([replacement], state, 'task'), [replacement]);
 });
