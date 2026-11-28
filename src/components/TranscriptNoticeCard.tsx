@@ -12,6 +12,7 @@ interface TranscriptNoticeCardProps {
   item: TranscriptItem;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean, card?: HTMLElement) => void;
+  animateAppear?: boolean;
   className?: string;
 }
 
@@ -122,11 +123,12 @@ function renderKindIcon(kind: TranscriptNoticeInfo["kind"]) {
 }
 
 export const TranscriptNoticeCard: React.FC<TranscriptNoticeCardProps> = memo(
-  ({ item, expanded, onExpandedChange, className = "" }) => {
+  ({ item, expanded, onExpandedChange, animateAppear: animateAppearProp, className = "" }) => {
     const [localExpanded, setLocalExpanded] = useState(false);
     const isExpanded = expanded ?? localExpanded;
     const cardRef = useRef<HTMLDivElement>(null);
-    const animateAppear = useCardAppear(item.id, false, item.timestamp, item.animateAppear);
+    const appear = useCardAppear(item.id, false, item.timestamp, animateAppearProp ?? item.animateAppear);
+    const animateAppear = appear && animateAppearProp !== false;
 
     const notice = item.notice;
     if (!notice) return null;

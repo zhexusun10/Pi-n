@@ -47,7 +47,7 @@ function rowHeightKind(id: string): string {
 /** Window document-flow rows using the *shared parent's* viewport, not a private scroll area.
  * The conversation remains responsible for following output and revealing expanded cards.
  */
-export function VirtualizedList<T extends { id: string }>({ items, renderRow, gap = 0, overscan = 16, transitionPhase = "idle", sourceStarts = [], rowHeights, restoreAnchor, onRestoreScroll }: {
+export function VirtualizedList<T extends { id: string; type?: string }>({ items, renderRow, gap = 0, overscan = 16, transitionPhase = "idle", sourceStarts = [], rowHeights, restoreAnchor, onRestoreScroll }: {
   items: T[]; renderRow: (item: T, index: number, allowTransition?: boolean) => React.ReactNode; gap?: number;
   overscan?: number;
   transitionPhase?: "idle" | "collapsing" | "expanding";
@@ -1222,7 +1222,9 @@ export function VirtualizedList<T extends { id: string }>({ items, renderRow, ga
     {sourceStarts.map(({ source, index }) => <span key={source} aria-hidden="true" data-transcript-source-start={source}
       style={{ position: "absolute", top: offsets[index] ?? totalHeight, height: 0, pointerEvents: "none" }} />)}
     {items.slice(range.start, range.end).map((item, index) => {
-      const allowTransition = transitionPhase === "idle" ? true : (transitionInitialIdsRef.current?.has(item.id) ?? false);
+      // Notices have no collapsed row to match. Their transition still uses the
+      // shared viewport height budget, just like the mounted summary rows.
+      const allowTransition = transitionPhase === "idle" || item.type === "notice" || (transitionInitialIdsRef.current?.has(item.id) ?? false);
       return <MeasuredListRow key={item.id} id={item.id} measureElement={measureElement} rowElements={rowElements}>{renderRow(item, range.start + index, allowTransition)}</MeasuredListRow>;
     })}
   </div>;

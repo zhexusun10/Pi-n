@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep the slash menu closed as you continue typing after pressing Esc or clicking Close. A fresh slash can still open suggestions.
 - Suggest `/pi-better-web-search login` when the web search extension is loaded.
 - Use thinner keyboard selection indicators and match command popover shadows to the composer.
+- Animate reasoning and cache notices along with the other transcript cards when expanding or collapsing all cards. Keep the Compacted billing badge with its card throughout the transition.
+- Terminate the full Windows ConPTY process tree when a workspace terminal closes, preventing child commands from surviving the terminal session.
 
 ## [2.0.4] - 2026-11-28
 

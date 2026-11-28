@@ -5,6 +5,11 @@
 //! explicit close or application exit.
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+#[cfg(windows)]
+use std::{
+    os::windows::process::CommandExt,
+    process::{Command, Stdio},
+};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 #[cfg(not(target_os = "windows"))]
@@ -156,6 +161,20 @@ impl TerminalSession {
                     }
                 }
             }
+            #[cfg(windows)]
+            if let Some(pid) = self.child_pid {
+                // portable-pty's Windows killer targets the shell process. Use
+                // taskkill's tree mode first so commands started from ConPTY
+                // cannot survive after the terminal is closed.
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .creation_flags(0x0800_0000)
+                    .status();
+            }
+
             #[cfg(not(unix))]
             let _ = self.child_pid;
 

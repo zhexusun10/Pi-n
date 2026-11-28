@@ -48,22 +48,31 @@ export function isCollapsibleTranscriptCard(item: TranscriptItem): boolean {
     Boolean(item.isError || item.status === "error");
 }
 
-function collapseTranscriptCards(rows: TranscriptItem[], starts: Map<string, number>, live = false, canPrepend = true) {
+function collapseTranscriptCards(rows: TranscriptItem[], starts: Map<string, number>, live = false, canPrepend = true, animateNotices = false) {
+  const isCard = (item: TranscriptItem) => isCollapsibleTranscriptCard(item) || (animateNotices && item.type === "notice");
   const boundaries = new Set(starts.values());
   const collapsed: TranscriptItem[] = [];
   const collapsedRanges: Array<{ start: number; end: number }> = [];
   for (let index = 0; index < rows.length;) {
-    if (!isCollapsibleTranscriptCard(rows[index])) {
+    if (!isCard(rows[index])) {
       collapsed.push(rows[index++]);
       continue;
     }
     let end = index + 1;
-    while (end < rows.length && !boundaries.has(end) && isCollapsibleTranscriptCard(rows[end])) end++;
+    while (end < rows.length && !boundaries.has(end) && isCard(rows[end])) end++;
     const group = rows.slice(index, end);
-    const first = group[0];
-    const last = group[group.length - 1];
-    const hasRunning = group.some(item => item.status === "running");
-    const hasError = group.some(item => Boolean(item.errorItems?.length || item.isError || item.status === "error"));
+    // Expand notices at their original position without splitting the summary
+    // that owns the surrounding cards. Notice-only runs have no summary header.
+    const summaryCards = animateNotices ? group.filter(item => item.type !== "notice") : group;
+    if (summaryCards.length === 0) {
+      for (const notice of group) collapsed.push(notice);
+      index = end;
+      continue;
+    }
+    const first = summaryCards[0];
+    const last = summaryCards[summaryCards.length - 1];
+    const hasRunning = summaryCards.some(item => item.status === "running");
+    const hasError = summaryCards.some(item => Boolean(item.errorItems?.length || item.isError || item.status === "error"));
     const summaryOpen = end === rows.length && (live || hasRunning);
     // Only a leading settled group that can still grow at the front when older
     // history pages prepend needs to anchor on its trailing item. Every other
@@ -225,9 +234,9 @@ export function stabilizeActivitySummaryIds(
 export function visibleTranscriptRows(
   rows: TranscriptItem[],
   starts = new Map<string, number>(),
-  options?: { collapseCards?: boolean; live?: boolean; canPrepend?: boolean; showNotices?: boolean },
+  options?: { collapseCards?: boolean; live?: boolean; canPrepend?: boolean; showNotices?: boolean; animateNotices?: boolean },
 ) {
-  const showNotices = options?.showNotices ?? !options?.collapseCards;
+  const showNotices = options?.animateNotices || (options?.showNotices ?? !options?.collapseCards);
   const hidden = (item: TranscriptItem) =>
     (item.type === "notice" && !showNotices) ||
     (item.type === "text" && item.role === "assistant" &&
@@ -273,7 +282,7 @@ export function visibleTranscriptRows(
           index - collapsedRanges.reduce((removed, range) => removed + (range.end <= index ? range.end - range.start - 1 : 0), 0)])),
       };
   return options?.collapseCards
-    ? collapseTranscriptCards(base.rows, base.starts, Boolean(options.live), options.canPrepend ?? true)
+    ? collapseTranscriptCards(base.rows, base.starts, Boolean(options.live), options.canPrepend ?? true, options.animateNotices)
     : base;
 }
 

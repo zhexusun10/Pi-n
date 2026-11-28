@@ -8,6 +8,7 @@ import { ActivitySummaryRow } from "../src/components/ActivitySummaryRow.tsx";
 import { TranscriptNoticeCard } from "../src/components/TranscriptNoticeCard.tsx";
 import { parseTranscriptChunkLines, type ParseTranscriptChunkState } from "../src/services/transcriptParser.ts";
 import { visibleTranscriptRows } from "../src/services/transcriptLayout.ts";
+import { translate } from "../src/i18n/index.ts";
 import { summarizeActivityGroup } from "../src/services/activitySummary.ts";
 import {
   applyPlannerAssistantMessageEnd,
@@ -565,14 +566,15 @@ test("collapsed-cards mode folds compaction cards into ActivitySummaryRow and re
   assert.deepEqual(collapsed.rows[0].summaryItems?.map(item => item.type), ["tool_call", "compaction", "tool_call"]);
 
   const zh = (key: string, ...values: unknown[]) => key.replace(/\{(\d+)\}/g, (_, i) => String(values[Number(i)] ?? ""));
+  const en = (key: string, ...values: unknown[]) => translate("en", key, ...values);
   const mixedSummary = summarizeActivityGroup(collapsed.rows[0].summaryItems ?? [], zh);
   assert.equal(mixedSummary.text, "已浏览 2 个文件 · 已压缩上下文");
-  assert.equal(summarizeActivityGroup(collapsed.rows[0].summaryItems ?? []).text, "Viewed 2 files · Compacted context");
+  assert.equal(summarizeActivityGroup(collapsed.rows[0].summaryItems ?? [], en).text, "Viewed 2 files · Compacted context");
 
   const soloSummary = summarizeActivityGroup([compactionItem], zh);
   assert.equal(soloSummary.icon, "compaction");
   assert.equal(soloSummary.text, "已压缩上下文");
-  assert.equal(summarizeActivityGroup([compactionItem]).text, "Compacted context");
+  assert.equal(summarizeActivityGroup([compactionItem], en).text, "Compacted context");
 
   const expandedHiddenCost = renderToStaticMarkup(createElement(ActivitySummaryRow, {
     item: collapsed.rows[0],

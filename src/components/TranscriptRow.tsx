@@ -3,9 +3,8 @@ import type { FileAttachment, ImageAttachment, TranscriptItem } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingCard } from "./ThinkingCard";
 import { CompactedCard } from "./CompactedCard";
-import { TranscriptNoticeCard } from "./TranscriptNoticeCard";
 import { TranscriptErrorCard } from "./TranscriptErrorCard";
-import { ActivitySummaryRow, type CardsTransitionPhase } from "./ActivitySummaryRow";
+import { ActivitySummaryRow, NoticeTransitionRow, type CardsTransitionPhase } from "./ActivitySummaryRow";
 import { EditableUserBubble, StreamingAssistantBubble } from "./views/ChatBubbles";
 import { AnimatedUserTurn } from "./AnimatedUserTurn";
 
@@ -33,10 +32,11 @@ export type EditTranscriptUser = (
   text: string, replacement: string, userTurnOffset?: number, images?: ImageAttachment[], piMessageTimestamp?: number,
 ) => boolean | void | Promise<unknown>;
 
-export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cardsTransition, showNotices = false, getChildExpanded, onExpandedChange, onChildResize, onChildExpandedChange, editing, draft,
+export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cardsTransition, animateNotices, showNotices = false, getChildExpanded, onExpandedChange, onChildResize, onChildExpandedChange, editing, draft,
   onDraftChange, onStartEdit, onCancelEdit, onEditUser, steerAttachments }: {
   item: TranscriptItem; expanded?: boolean;
   cardsTransition?: CardsTransitionPhase;
+  animateNotices?: boolean;
   showNotices?: boolean;
   getChildExpanded?: (id: string) => boolean | undefined;
   onExpandedChange: (id: string, expanded: boolean, card?: HTMLElement) => void;
@@ -55,7 +55,8 @@ export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cards
   if (item.type === "activity_summary") return <ActivitySummaryRow item={item} expanded={expanded} transitionPhase={cardsTransition} showNotices={showNotices} getChildExpanded={getChildExpanded} onExpandedChange={expand} onChildResize={onChildResize} onChildExpandedChange={onChildExpandedChange} />;
   if (item.type === "tool_call") return <ToolCallCard item={item} expanded={expanded} onExpandedChange={expand} />;
   if (item.type === "compaction") return <CompactedCard item={item} showCost={showNotices} expanded={expanded} onExpandedChange={expand} />;
-  if (item.type === "notice") return <TranscriptNoticeCard item={item} expanded={expanded} onExpandedChange={expand} />;
+  if (item.type === "notice") return <NoticeTransitionRow item={item} expanded={expanded} onExpandedChange={expand}
+    transitionPhase={animateNotices ? cardsTransition : "idle"} />;
   if (item.type === "thinking") return <ThinkingCard item={item} isStreaming={item.status === "running"}
     title="Chain of Thought"
     defaultExpanded={item.defaultExpanded ?? (item.status === "running")} autoExpandWhileStreaming={true} expanded={expanded} onExpandedChange={expand} />;

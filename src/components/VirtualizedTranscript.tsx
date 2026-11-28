@@ -302,7 +302,8 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
 }) => {
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [userDraft, setUserDraft] = useState("");
-  const effectiveShowNotices = showNotices ?? !cardsCollapsed;
+  const animateNotices = showNotices === undefined && cardsTransition !== "idle";
+  const effectiveShowNotices = showNotices ?? (!cardsCollapsed || animateNotices);
   const containerRef = useRef<HTMLDivElement>(null);
   const expandedRows = useRef(new Map<string, boolean>());
   const expandedSummaryMetaRef = useRef(new Map<string, ActivitySummaryAnchor>());
@@ -949,11 +950,13 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
     const canPrepend = segmentedRef.current
       ? (firstSegmentSource ? (segmentStatesRef.current.get(firstSegmentSource)?.startOffset ?? 0) > 0 : false)
       : startOffset > 0;
-    const raw = visibleTranscriptRows(rows, starts, { collapseCards: cardsCollapsed, live: !settled, canPrepend, showNotices: effectiveShowNotices });
+    const raw = visibleTranscriptRows(rows, starts, {
+      collapseCards: cardsCollapsed, live: !settled, canPrepend, showNotices: effectiveShowNotices, animateNotices,
+    });
     if (!cardsCollapsed || previousSummariesRef.current.length === 0) return raw;
     const stabilized = stabilizeActivitySummaryIds(raw.rows, previousSummariesRef.current);
     return stabilized === raw.rows ? raw : { ...raw, rows: stabilized };
-  }, [parsedItems, settled, sourceUserFallbacks, output, startOffset, cardsCollapsed, hydratedCards, hydratingKeys, effectiveShowNotices]);
+  }, [parsedItems, settled, sourceUserFallbacks, output, startOffset, cardsCollapsed, hydratedCards, hydratingKeys, effectiveShowNotices, animateNotices]);
   const hasRangeSupportRef = useRef(false);
   hasRangeSupportRef.current = parsedItems.some(
     item => Boolean(item.rawRange || item.rawArgsRange || item.rawResultRange),
@@ -1402,12 +1405,13 @@ export const VirtualizedTranscript: React.FC<VirtualizedTranscriptProps> = React
   const cancelEdit = useCallback(() => setEditingUser(null), []);
   const getChildExpanded = useCallback((id: string) => expandedRows.current.get(id), []);
   const renderRow = useCallback((item: TranscriptItem, _index?: number, allowTransition = true) => <TranscriptRow item={item}
-    expanded={expandedRows.current.get(item.id)} cardsTransition={allowTransition ? cardsTransition : "idle"} showNotices={effectiveShowNotices} getChildExpanded={getChildExpanded} onExpandedChange={handleExpandedChange} onChildResize={onUserResize}
+    expanded={expandedRows.current.get(item.id)} cardsTransition={allowTransition ? cardsTransition : "idle"} animateNotices={animateNotices}
+    showNotices={effectiveShowNotices} getChildExpanded={getChildExpanded} onExpandedChange={handleExpandedChange} onChildResize={onUserResize}
     onChildExpandedChange={handleChildExpandedChange}
     editing={editingUser === item.id} draft={editingUser === item.id ? userDraft : ""}
     onDraftChange={setUserDraft} onStartEdit={startEdit} onCancelEdit={cancelEdit} onEditUser={onEditUser}
     steerAttachments={steerRowAttachments.get(item.id)} />,
-    [cardsTransition, effectiveShowNotices, getChildExpanded, handleExpandedChange, handleChildExpandedChange, onUserResize, editingUser, userDraft, startEdit, cancelEdit, onEditUser, steerRowAttachments]);
+    [cardsTransition, animateNotices, effectiveShowNotices, getChildExpanded, handleExpandedChange, handleChildExpandedChange, onUserResize, editingUser, userDraft, startEdit, cancelEdit, onEditUser, steerRowAttachments]);
 
   const isEmptyTranscript = settled && items.length === 0;
 

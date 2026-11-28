@@ -198,6 +198,92 @@ test("expanding a folded ThinkingCard or hydrating a short settled thinking bloc
   }
 });
 
+test("reasoning notices, thinking, tools, compaction billing and errors share the footer card transition", { timeout: 15_000 }, async () => {
+  const reasoningDrop = (count, content = []) => ({
+    type: "message_end",
+    message: { role: "assistant", provider: "openai", content, diagnostics: [{
+      type: "openai_input_transformations",
+      details: { transformations: Array.from({ length: count }, () => ({ type: "reasoning", reason: "prefix_mismatch" })) },
+    }] },
+  });
+  const log = [
+    { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "echo ready" } },
+    { type: "tool_execution_end", toolCallId: "t1", toolName: "bash", result: { content: [{ type: "text", text: "ready" }] } },
+    reasoningDrop(1),
+    { type: "message_end", message: { role: "assistant", content: [{ type: "thinking", thinking: "Checked the result." }] } },
+    { type: "tool_execution_start", toolCallId: "t2", toolName: "bash", args: { command: "echo done" } },
+    { type: "tool_execution_end", toolCallId: "t2", toolName: "bash", result: { content: [{ type: "text", text: "done" }] } },
+    { type: "compaction_end", reason: "threshold", result: {
+      summary: "Compacted earlier history.", tokensBefore: 128_000, estimatedTokensAfter: 18_000,
+      usage: { input: 32_000, output: 300, cost: { total: 0.12 } },
+    } },
+    { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "Temporary failure.", content: [] } },
+    reasoningDrop(2, [{ type: "text", text: "Done." }]),
+  ].map(event => JSON.stringify(event)).join("\n") + "\n";
+  const totalBytes = Buffer.byteLength(log);
+  const context = await browser.newContext({ reducedMotion: "no-preference" });
+  await context.addInitScript(() => localStorage.setItem("pi_n_collapse_cards_v1", "1"));
+  try {
+    await context.route("**/api/*", route => {
+      const body = route.request().postDataJSON() ?? {};
+      const result = route.request().url().endsWith("/get_execution_output") ? {
+        runId: body.runId, executionId: body.executionId,
+        content: body.offset ? "" : log, startOffset: body.offset ?? 0, nextOffset: totalBytes,
+        totalBytes, complete: true, status: "completed",
+      } : {};
+      return route.fulfill({ json: { result } });
+    });
+    const page = await context.newPage();
+    await page.goto(`${origin}/__changes?mode=serial&settled=1&bytes=${totalBytes}`);
+    await page.locator(".initial-query-scroll.conversation-ready").waitFor();
+    const toggle = page.getByTestId("collapse-cards-trigger");
+    const notices = page.locator('[data-notice-kind="reasoning_drop"]');
+    const summary = page.getByTestId("activity-summary-row");
+    const billing = page.getByTestId("compacted-billing");
+    await summary.waitFor();
+    assert.equal(await notices.count(), 0);
+    assert.equal(await billing.count(), 0);
+
+    for (const expanding of [true, false]) {
+      await toggle.evaluate(button => {
+        const frames = window.cardFrames = [];
+        const start = performance.now();
+        function sample() {
+          const notice = [...document.querySelectorAll('[data-notice-kind="reasoning_drop"]')].at(-1);
+          const noticeHeight = notice?.closest("[data-transcript-id]")?.getBoundingClientRect().height;
+          const tracks = document.querySelectorAll(".activity-summary-body-track");
+          const track = tracks[0];
+          const trackHeight = track?.getBoundingClientRect().height;
+          if (noticeHeight > 0 && noticeHeight < notice.offsetHeight && trackHeight > 0 && trackHeight < track.firstElementChild.offsetHeight) {
+            frames.push({
+              groups: tracks.length,
+              order: [...track.querySelectorAll('[data-testid="tool-call-card"], [data-notice-kind], .thinking-card, .compacted-card, .transcript-error-card')]
+                .map(card => card.dataset.noticeKind ?? (card.dataset.testid || card.classList[0])),
+              billing: track.querySelector('[data-testid="compacted-billing"]')?.textContent ?? null,
+            });
+          }
+          if (performance.now() - start < 800) requestAnimationFrame(sample);
+        }
+        button.click();
+        requestAnimationFrame(sample);
+      });
+      if (expanding) await summary.waitFor({ state: "detached" });
+      else await notices.first().waitFor({ state: "detached" });
+      const frames = await page.evaluate(() => window.cardFrames);
+      assert.ok(frames.length > 0, `standalone notice must ${expanding ? "expand" : "collapse"} with the other cards`);
+      for (const frame of frames) {
+        assert.equal(frame.groups, 1);
+        assert.deepEqual(frame.order, ["tool-call-card", "reasoning_drop", "thinking-card", "tool-call-card", "compacted-card", "transcript-error-card"]);
+        assert.match(frame.billing ?? "", /\$0\.12/, "the billing badge must be present during the card animation");
+      }
+      assert.equal(await notices.count(), expanding ? 2 : 0);
+      assert.equal(await billing.count(), expanding ? 1 : 0);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 test("clicking bottom Expand cards while a live CoT card is streaming in summary mode reveals content cleanly without shimmer or blank flicker", { timeout: 30_000 }, async () => {
   const fullLog = [
     JSON.stringify({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "echo " + "x".repeat(300) } }),

@@ -13,8 +13,10 @@
 //! - Never modifies or deletes the legacy source store, and on any failure
 //!   cleans up only the temporary staging directory so both stores stay intact.
 use crate::runtime_lock;
+#[cfg(unix)]
+use std::fs::File;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, ErrorKind},
     path::{Component, Path, PathBuf},
 };

@@ -23,6 +23,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingCard } from "./ThinkingCard";
 import { CompactedCard } from "./CompactedCard";
 import { TranscriptErrorCard } from "./TranscriptErrorCard";
+import { TranscriptNoticeCard } from "./TranscriptNoticeCard";
 
 export type CardsTransitionPhase = "idle" | "collapsing" | "expanding";
 
@@ -67,8 +68,8 @@ function easeCardsTransition(t: number, softness = 0): number {
 }
 
 type PendingTransitionRow = {
-  headerTrack: HTMLDivElement;
-  headerInner: HTMLDivElement;
+  headerTrack?: HTMLDivElement;
+  headerInner?: HTMLDivElement;
   bodyTrack: HTMLDivElement;
   bodyInner: HTMLDivElement;
   collapsing: boolean;
@@ -77,8 +78,8 @@ type PendingTransitionRow = {
 };
 
 type ActiveTransitionRow = {
-  headerTrack: HTMLDivElement;
-  headerInner: HTMLDivElement;
+  headerTrack?: HTMLDivElement;
+  headerInner?: HTMLDivElement;
   bodyTrack: HTMLDivElement;
   bodyInner: HTMLDivElement;
   headerHeight: number;
@@ -118,12 +119,14 @@ let activeTransitionAnchor: CardsTransitionAnchor | null = null;
 function applyRowAt(row: ActiveTransitionRow, eased: number): boolean {
   let heightChanged = false;
   if (row.skipHeaderCollapse || row.snapCollapsed) {
-    if (row.headerHeight !== row.lastHeaderHeight) {
-      row.headerTrack.style.height = `${row.headerHeight}px`;
-      row.lastHeaderHeight = row.headerHeight;
-      heightChanged = true;
+    if (row.headerTrack) {
+      if (row.headerHeight !== row.lastHeaderHeight) {
+        row.headerTrack.style.height = `${row.headerHeight}px`;
+        row.lastHeaderHeight = row.headerHeight;
+        heightChanged = true;
+      }
+      row.headerTrack.style.opacity = "1";
     }
-    row.headerTrack.style.opacity = "1";
     if (!row.keepBodyOpen) {
       if (row.lastBodyHeight !== 0) {
         row.bodyTrack.style.height = "0px";
@@ -135,14 +138,16 @@ function applyRowAt(row: ActiveTransitionRow, eased: number): boolean {
     return heightChanged;
   }
 
-  const headerRatio = row.collapsing ? eased : 1 - eased;
-  const nextHeaderH = Math.round(row.headerHeight * headerRatio);
-  if (nextHeaderH !== row.lastHeaderHeight) {
-    row.headerTrack.style.height = `${nextHeaderH}px`;
-    row.lastHeaderHeight = nextHeaderH;
-    heightChanged = true;
+  if (row.headerTrack) {
+    const headerRatio = row.collapsing ? eased : 1 - eased;
+    const nextHeaderH = Math.round(row.headerHeight * headerRatio);
+    if (nextHeaderH !== row.lastHeaderHeight) {
+      row.headerTrack.style.height = `${nextHeaderH}px`;
+      row.lastHeaderHeight = nextHeaderH;
+      heightChanged = true;
+    }
+    row.headerTrack.style.opacity = `${headerRatio}`;
   }
-  row.headerTrack.style.opacity = `${headerRatio}`;
 
   if (!row.keepBodyOpen) {
     const bodyRatio = row.collapsing ? 1 - eased : eased;
@@ -213,15 +218,16 @@ function flushPendingTransitionRows(syncAnchor = true) {
   };
   const measured: MeasuredRow[] = [];
   for (const entry of batch) {
-    const headerHeight = Math.round(entry.headerInner.offsetHeight || entry.headerInner.getBoundingClientRect().height);
+    const headerHeight = entry.headerInner
+      ? Math.round(entry.headerInner.offsetHeight || entry.headerInner.getBoundingClientRect().height)
+      : 0;
     const fullBodyHeight = Math.round(entry.bodyInner.offsetHeight || entry.bodyInner.getBoundingClientRect().height);
-    const headerRect = entry.headerTrack.getBoundingClientRect();
     const bodyRect = entry.bodyTrack.getBoundingClientRect();
     measured.push({
       entry,
       headerHeight,
       fullBodyHeight,
-      rowTop: headerRect.top,
+      rowTop: entry.headerTrack?.getBoundingClientRect().top ?? bodyRect.top,
       rowBottom: bodyRect.bottom,
       maxBodyHeight: Infinity,
       bottomAlign: false,
@@ -558,7 +564,7 @@ function tickCardsTransition(now: number) {
       const liveBodyH = Math.round(row.bodyInner.offsetHeight || row.bodyInner.getBoundingClientRect().height);
       const boundedBodyH = row.maxBodyHeight === Infinity ? liveBodyH : Math.min(liveBodyH, row.maxBodyHeight);
       if (boundedBodyH > 0) row.bodyHeight = boundedBodyH;
-    } else if (row.collapsing) {
+    } else if (row.collapsing && row.headerInner) {
       const liveHeaderH = Math.round(row.headerInner.offsetHeight || row.headerInner.getBoundingClientRect().height);
       if (liveHeaderH > 0) row.headerHeight = liveHeaderH;
     }
@@ -609,6 +615,36 @@ function registerCardsTransitionRow(entry: PendingTransitionRow): () => void {
   };
 }
 
+// If no summary track reveals this notice, give it its own track on the same clock.
+export function NoticeTransitionRow({ transitionPhase = "idle", ...props }: React.ComponentProps<typeof TranscriptNoticeCard> & {
+  transitionPhase?: CardsTransitionPhase;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const transitioning = transitionPhase !== "idle";
+  useLayoutEffect(() => {
+    const bodyTrack = trackRef.current;
+    const bodyInner = innerRef.current;
+    if (!transitioning || !bodyTrack || !bodyInner) return;
+    const unregister = registerCardsTransitionRow({
+      bodyTrack, bodyInner, collapsing: transitionPhase === "collapsing", keepBodyOpen: false, active: null,
+    });
+    return () => {
+      unregister();
+      bodyTrack.style.height = "";
+      bodyTrack.style.opacity = "";
+      bodyTrack.style.display = "";
+      bodyTrack.style.flexDirection = "";
+      bodyTrack.style.justifyContent = "";
+    };
+  }, [transitionPhase, transitioning]);
+  return <div ref={trackRef} inert={transitioning} style={transitioning ? { overflow: "hidden" } : undefined}>
+    <div ref={innerRef} style={{ flexShrink: 0 }}>
+      <TranscriptNoticeCard {...props} animateAppear={transitioning ? false : props.animateAppear} />
+    </div>
+  </div>;
+}
+
 function renderSummaryIcon(icon: ActivitySummaryIcon, isRunning: boolean) {
   if (isRunning) return <Loader2 size={14} strokeWidth={1.9} className="activity-summary-icon spin" />;
   switch (icon) {
@@ -642,18 +678,25 @@ const SummaryChildCard = memo(function SummaryChildCard({
   expanded,
   defaultThinkingExpanded = false,
   showNotices = false,
+  revealNoticeSeparately = false,
   onExpandedChange,
 }: {
   item: TranscriptItem;
   expanded?: boolean;
   defaultThinkingExpanded?: boolean;
   showNotices?: boolean;
+  revealNoticeSeparately?: boolean;
   onExpandedChange: (id: string, expanded: boolean, card?: HTMLElement) => void;
 }) {
   const expand = useCallback(
     (value: boolean, card?: HTMLElement) => onExpandedChange(item.id, value, card),
     [item.id, onExpandedChange],
   );
+  if (item.type === "notice") {
+    return revealNoticeSeparately
+      ? <NoticeTransitionRow item={item} expanded={expanded} onExpandedChange={expand} transitionPhase="expanding" />
+      : <TranscriptNoticeCard item={item} expanded={expanded} onExpandedChange={expand} animateAppear={false} />;
+  }
   if (item.type === "tool_call") {
     return <ToolCallCard item={item} expanded={expanded} onExpandedChange={expand} animateAppear={false} />;
   }
@@ -799,13 +842,14 @@ export const ActivitySummaryRow: React.FC<ActivitySummaryRowProps> = memo(({
 
   const cardsList = (
     <div className="activity-summary-cards" data-testid="activity-summary-cards">
-      {items.map((child) => (
+      {items.map((child) => (child.type !== "notice" || isGlobalTransition) && (
         <SummaryChildCard
           key={child.id}
           item={child}
           expanded={childExpanded.get(child.id) ?? getChildExpanded?.(child.id)}
           defaultThinkingExpanded={defaultThinkingExpanded}
           showNotices={showNotices}
+          revealNoticeSeparately={child.type === "notice" && keepBodyExpanded}
           onExpandedChange={handleChildExpanded}
         />
       ))}
