@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Load the saved conversation order once at bootstrap. Remove the retired per-conversation bootstrap reconciliation and its tests.
+- Regenerate the English and Simplified Chinese README UI screenshots (`assets/readme-*.png`).
 
 ## [2.0.5] - 2026-11-28
 
