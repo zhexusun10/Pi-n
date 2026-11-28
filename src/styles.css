@@ -1999,10 +1999,8 @@ h3 {
   mask-image: radial-gradient(ellipse 50% 50% at center, white 0%, rgba(255, 255, 255, 0.72) 30%, rgba(255, 255, 255, 0.34) 65%, rgba(255, 255, 255, 0.24) 100%, transparent 145%);
 }
 
-/* Three-colour notebook grid in the icon palette, laid out from the exact
-   centre of its content region: a yellow vertical and a blue horizontal line
-   cross at the midpoint, and each direction cycles yellow/blue/coral outwards
-   from there. */
+/* Three-colour notebook grid in the icon palette. A yellow vertical and a
+   blue horizontal line cross at the centre of the content region. */
 .landing-page-grid,
 .settings-background-preview.settings-background-preview-grid {
   --grid-cell: 60px;
@@ -2014,10 +2012,12 @@ h3 {
   /* A tile positioned at 50% + period/2 starts exactly at the centre line. */
   --grid-origin-x: calc(50% + var(--grid-period) / 2);
   --grid-origin-y: calc(50% + var(--grid-period) / 2 + var(--grid-offset-y, 0px));
+  /* Split each vertical stroke across its tile seam so the viewport edges
+     show equal halves if a grid line falls exactly on both edges. */
   background-image:
-    linear-gradient(90deg, var(--grid-yellow) 0 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-blue) 0 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-coral) 0 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-yellow), transparent 1px calc(100% - 1px), var(--grid-yellow)),
+    linear-gradient(90deg, var(--grid-blue), transparent 1px calc(100% - 1px), var(--grid-blue)),
+    linear-gradient(90deg, var(--grid-coral), transparent 1px calc(100% - 1px), var(--grid-coral)),
     linear-gradient(180deg, var(--grid-blue) 0 1px, transparent 1px),
     linear-gradient(180deg, var(--grid-coral) 0 1px, transparent 1px),
     linear-gradient(180deg, var(--grid-yellow) 0 1px, transparent 1px);
