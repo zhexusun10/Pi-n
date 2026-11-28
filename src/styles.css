@@ -338,7 +338,7 @@ h3 {
 
 /* 侧边栏 (悬浮圆角卡片模式) */
 .sidebar {
-  --sidebar-width: clamp(260px, 19.4vw, 306px);
+  --sidebar-width: clamp(269px, calc(19.4vw + 9px), 315px);
   --sidebar-content-width: calc(var(--sidebar-width) - 30px);
   --sidebar-scrollbar-offset: var(--scrollbar-size, 10px);
   --sidebar-anim-ease: cubic-bezier(0.22, 1, 0.36, 1);

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-11-28
+
 ### Fixed
 
 - Keep the slash menu closed as you continue typing after pressing Esc or clicking Close. A fresh slash can still open suggestions.
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Increase the responsive sidebar width by 9px, from a 260–306px range to 269–315px.
 - Refresh the Pi^n token usage screenshot in both READMEs and match its dimensions to the Codex screenshot.
 
 ## [2.0.4] - 2026-11-28
@@ -1268,7 +1271,8 @@ Baseline release. The changelog is restarted from the current codebase at v1.1.0
   - **Configurable**: Can be toggled on/off in Settings (`postTaskReview`, enabled by default).
   - **Loop engineering**: When combined with Auto Approve, creates a robust, closed-loop engineering cycle that autonomously plans, executes, verifies, and iterates until the Planner concludes.
 
-[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.4...HEAD
+[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.5...HEAD
+[2.0.5]: https://github.com/zhexusun10/pi-n/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/zhexusun10/pi-n/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/zhexusun10/pi-n/compare/v2.0.1...v2.0.2
