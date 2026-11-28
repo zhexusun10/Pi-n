@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Animate reasoning and cache notices along with the other transcript cards when expanding or collapsing all cards. Keep the Compacted billing badge with its card throughout the transition.
 - Terminate the full Windows ConPTY process tree when a workspace terminal closes, preventing child commands from surviving the terminal session.
 
+### Changed
+
+- Refresh the Pi^n token usage screenshot in both READMEs and match its dimensions to the Codex screenshot.
+
 ## [2.0.4] - 2026-11-28
 
 ### Fixed
@@ -43,7 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enlarge the Windows titlebar icons for minimize, maximize, restore, and close to improve legibility on high-DPI displays.
 - Move owned file-change rows into summary unions to avoid a second copy of their paths, fingerprints, and provenance.
 - Match local and saved conversation turns without allocating a reversed copy of the remaining messages for each saved turn.
-- Refresh the Pi^n token usage screenshot in both READMEs and match its dimensions to the Codex screenshot.
 
 ## [2.0.3] - 2026-11-28
 
