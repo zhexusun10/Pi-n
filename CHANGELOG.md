@@ -7,30 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.4] - 2026-11-28
+## [2.0.3] - 2026-11-28
 
 ### Fixed
 
 - Select saved Planner turns by their Pi message timestamp when editing, so identical prompts can be edited independently. Preserve earlier turns and the replacement branch in partial history, and show an edited opening goal only once.
 - Keep file-change pages consistent when files are added, removed, or reordered between requests. The browser reloads the visible prefix when the backend reports a different order and supports older backends by requesting a larger prefix.
 
-### Changed
-
-- Avoid copying live execution transcripts while holding the Run lock for file-change queries. Reuse the ranked file list to select response rows without cloning each item.
-
-### Removed
-
-- Removed unused frontend methods and types left behind by the resident-process settings panel. Updated the filesystem isolation guide to describe in-place model switches and retained services.
-
-## [2.0.3] - 2026-11-28
-
-### Fixed
-
 - Pruned subsequent local `sessionEntries` when editing an older durable message (not present in the current browser session's local entries) across Serial, Graph node, version-switch, and upstream-invalidation edits, and updated render-time `localMessagesAfterEdits` to drop abandoned event identities across all `conversation_edited` boundaries so abandoned follow-up bubbles no longer linger below the edited turn (`src/services/conversationBranch.ts`, `src/App.tsx`, `src/components/views/GraphWorkbench.tsx`, `scripts/conversation-branch.test.ts`).
 - Recorded the edited Pi user turn's message timestamp (`from_message_timestamp`) and whole-tree occurrence (`from_occurrence`) on `planner_conversation_edited` events, and updated `activePlannerOutput` to locate the abandoned Planner turn by those identities before falling back to equal-text matching (`backend/src/session_branch.rs`, `backend/src/model.rs`, `backend/src/server.rs`, `src/lib/plannerOutput.ts`, `src/components/PlanningActivity.tsx`, `src/components/views/GraphWorkbench.tsx`).
 - Fixed four additional stale-message leaks across edits and fresh restarts: dropped pre-`fresh_restart` `conversation_edited` events and local `sessionEntries` (`src/services/conversationBranch.ts`, `src/components/views/GraphWorkbench.tsx`); dropped Planner steers from branches abandoned by `planner_conversation_edited` (`src/services/plannerSteers.ts`); pruned abandoned Planner turns in paged tail windows before the edited turn is paged in (`src/lib/plannerOutput.ts`, `src/components/PlanningActivity.tsx`); and included claimed `Started.message_sequences` (`NodeMessaged`) when computing `from_event_sequence` during node message edits (`backend/src/runtime.rs`).
 
 ### Changed
+
+- Avoid copying live execution transcripts while holding the Run lock for file-change queries. Reuse the ranked file list to select response rows without cloning each item.
 
 - Unified the conversation delete confirmation dialog title to "删除 Conversation" ("Delete Conversation") without branching by Direct/Compile mode (`src/App.tsx`, `src/i18n/en.ts`).
 
@@ -40,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Removed the "Resident processes & resources" (`ResidentProcessesSettings`) card from the Settings modal while keeping automatic backend LRU/TTL resident-agent reaping and API endpoints intact (`src/components/modals/SettingsModal.tsx`, `src/components/modals/ResidentProcessesSettings.tsx`, `src/i18n/en.ts`).
+- Removed the "Resident processes & resources" (`ResidentProcessesSettings`) card and its unused frontend methods and types while keeping automatic backend LRU/TTL resident-agent reaping and API endpoints intact. Updated the filesystem isolation guide to describe in-place model switches and retained services (`src/components/modals/SettingsModal.tsx`, `src/components/modals/ResidentProcessesSettings.tsx`, `src/i18n/en.ts`, `src/services/runtime.ts`, `src/types.ts`, `docs/architecture/filesystem-isolation.md`).
 
 ## [2.0.2] - 2026-11-28
 
@@ -1235,8 +1225,7 @@ Baseline release. The changelog is restarted from the current codebase at v1.1.0
   - **Configurable**: Can be toggled on/off in Settings (`postTaskReview`, enabled by default).
   - **Loop engineering**: When combined with Auto Approve, creates a robust, closed-loop engineering cycle that autonomously plans, executes, verifies, and iterates until the Planner concludes.
 
-[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.4...HEAD
-[2.0.4]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...v2.0.4
+[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...HEAD
 [2.0.3]: https://github.com/zhexusun10/pi-n/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/zhexusun10/pi-n/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/zhexusun10/pi-n/compare/v2.0.0...v2.0.1
