@@ -18,16 +18,22 @@ function devDebugDir(installationRoot, env = process.env) {
   return join(targetBase, 'debug');
 }
 
+function customDevBuild(env) {
+  return Boolean(env.RUSTFLAGS || env.CARGO_ENCODED_RUSTFLAGS ||
+    Object.keys(env).some(key => key.startsWith('CARGO_PROFILE_DEV_')));
+}
+
 export function recordDevBuildStamp(installationRoot, env = process.env) {
   try {
     const debugDir = devDebugDir(installationRoot, env);
     const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
     const stat = statSync(binary);
     if (!stat.isFile() || stat.size === 0) return;
-    writeFileSync(
-      join(debugDir, DEV_BUILD_STAMP),
-      `${JSON.stringify({ version: 1, size: stat.size, mtimeMs: Math.trunc(stat.mtimeMs) })}\n`,
-    );
+    // A custom build supersedes any previous stamp for this binary.
+    const stamp = customDevBuild(env) ? null : {
+      version: 2, checkout: resolve(installationRoot), size: stat.size, mtimeMs: Math.trunc(stat.mtimeMs),
+    };
+    writeFileSync(join(debugDir, DEV_BUILD_STAMP), `${JSON.stringify(stamp)}\n`);
   } catch {}
 }
 
@@ -57,12 +63,7 @@ export function devBackendExecutable(installationRoot, env = process.env) {
 }
 
 export function backendBuildUpToDate(installationRoot, env = process.env) {
-  if (env.PI_N_FORCE_BUILD === '1' || env.RUSTFLAGS || env.CARGO_ENCODED_RUSTFLAGS) {
-    return false;
-  }
-  if (Object.keys(env).some(key => key.startsWith('CARGO_PROFILE_DEV_'))) {
-    return false;
-  }
+  if (env.PI_N_FORCE_BUILD === '1' || customDevBuild(env)) return false;
   try {
     const debugDir = devDebugDir(installationRoot, env);
     const binary = join(debugDir, process.platform === 'win32' ? 'pi-n.exe' : 'pi-n');
@@ -73,7 +74,8 @@ export function backendBuildUpToDate(installationRoot, env = process.env) {
     // so a binary rebuilt with `--features fixture` (e.g. `test:concurrent`) is
     // never reused in dev mode.
     const stamp = JSON.parse(readFileSync(join(debugDir, DEV_BUILD_STAMP), 'utf8'));
-    if (stamp?.version !== 1 || stamp.size !== binStat.size || stamp.mtimeMs !== Math.trunc(binStat.mtimeMs)) {
+    if (stamp?.version !== 2 || stamp.checkout !== resolve(installationRoot) ||
+        stamp.size !== binStat.size || stamp.mtimeMs !== Math.trunc(binStat.mtimeMs)) {
       return false;
     }
     const binaryMtimeMs = binStat.mtimeMs;
@@ -137,13 +139,14 @@ export function backendBuildUpToDate(installationRoot, env = process.env) {
 export function loadDevEnvironment(installationRoot, base = process.env) {
   const env = Object.create(null);
   const keys = new Set();
-  const launcherKeys = new Set(['PI_N_PORT', 'PI_N_FRONTEND_PORT', 'CARGO_TARGET_DIR']);
+  const launcherKeys = new Set(['PI_N_PORT', 'PI_N_FRONTEND_PORT', 'PI_N_FORCE_BUILD', 'CARGO',
+    'CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS']);
   const setIfMissing = (name, value) => {
     // Windows inherits variables case-insensitively, but a plain JS object
     // does not. Normalize the keys the launcher reads directly.
     const key = process.platform === 'win32' ? name.toUpperCase() : name;
     if (!name || keys.has(key)) return;
-    env[launcherKeys.has(key) ? key : name] = value;
+    env[launcherKeys.has(key) || key.startsWith('CARGO_PROFILE_DEV_') ? key : name] = value;
     keys.add(key);
   };
   for (const [name, value] of Object.entries(base)) {

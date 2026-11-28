@@ -277,6 +277,22 @@ for (const mode of ["serial", "graph"]) {
     } finally { await context.close(); }
   });
 
+  test(`${mode}: stopped history renders only the delivered steers after a resend`, { timeout: 30_000 }, async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
+    await context.route("**/api/*", route => route.fulfill({ json: { result: {} } }));
+    const page = await fixturePage(context);
+    try {
+      await page.goto(`${origin}/__steer?mode=${mode}&stopped=true`);
+      await expect(page.getByText("REPLY TO RESENT STEER", { exact: true })).toBeVisible();
+      const resent = page.locator(".chat-bubble-user", { hasText: "RESENT STEER" });
+      await expect(resent).toHaveCount(1);
+      if (mode === "graph") await page.locator(".session-label-toggle", { has: page.locator(".status-badge.paused") }).click();
+      await expect(page.getByText("OUTPUT AFTER STEER", { exact: true })).toBeVisible();
+      await expect(page.locator(".chat-bubble-user", { hasText: "CONSUMED STEER" })).toHaveCount(1);
+      await expect(resent).toHaveCount(1);
+    } finally { await context.close(); }
+  });
+
   test(`${mode}: two identical queued steers hand off one at a time`, { timeout: 30_000 }, async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
     await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));

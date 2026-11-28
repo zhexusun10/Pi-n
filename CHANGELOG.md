@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Hide stale queued-message bubbles in stopped execution history, including after a conversation is reopened or the message is sent again. Delivered messages remain visible in the transcript.
+- Recheck the dev backend with Cargo after switching checkouts or clearing custom Rust flags or dev profile settings. Honor mixed-case build overrides on Windows.
+- Ignore stale sidebar pin actions after a conversation has been removed or archived.
+
+### Changed
+
+- Load the saved conversation order once at bootstrap. Remove the retired per-conversation bootstrap reconciliation and its tests.
+
 ## [2.0.5] - 2026-11-28
 
 ### Fixed

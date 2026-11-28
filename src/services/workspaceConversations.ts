@@ -148,6 +148,11 @@ export function bindRunToWorkspace(
   return next;
 }
 
+function indexedRunOwner(index: WorkspaceRuns, runId: string, repository: string): string | undefined {
+  const preferred = workspaceKey(repository);
+  return index[preferred]?.includes(runId) ? preferred : Object.keys(index).find(key => index[key].includes(runId));
+}
+
 /** Pin a conversation to the very top of its workspace list. */
 export function pinRunInWorkspace(
   index: WorkspaceRuns,
@@ -156,13 +161,9 @@ export function pinRunInWorkspace(
   pinnedRunIds: ReadonlySet<string>,
 ): WorkspaceRuns {
   if (!runId) return index;
-  let owner = repository ? workspaceKey(repository) : "";
-  if (!owner || !index[owner]?.includes(runId)) {
-    const found = Object.entries(index).find(([, ids]) => ids.includes(runId));
-    if (found) owner = found[0];
-  }
+  const owner = indexedRunOwner(index, runId, repository);
   if (!owner) return index;
-  const existing = index[owner] ?? [];
+  const existing = index[owner];
   const rest = existing.filter(id => id !== runId);
   const nextList = partitionRunsByPinned([runId, ...rest], pinnedRunIds);
   if (nextList.length === existing.length && nextList.every((id, idx) => id === existing[idx])) {
@@ -179,13 +180,9 @@ export function unpinRunInWorkspace(
   remainingPinnedRunIds: ReadonlySet<string>,
 ): WorkspaceRuns {
   if (!runId) return index;
-  let owner = repository ? workspaceKey(repository) : "";
-  if (!owner || !index[owner]?.includes(runId)) {
-    const found = Object.entries(index).find(([, ids]) => ids.includes(runId));
-    if (found) owner = found[0];
-  }
+  const owner = indexedRunOwner(index, runId, repository);
   if (!owner) return index;
-  const existing = index[owner] ?? [];
+  const existing = index[owner];
   const nextList = partitionRunsByPinned(existing, remainingPinnedRunIds);
   if (nextList.length === existing.length && nextList.every((id, idx) => id === existing[idx])) {
     return index;
@@ -214,36 +211,6 @@ export function reorderRunsInWorkspace(
     return index;
   }
   return { ...index, [owner]: reordered };
-}
-
-/**
- * Fold one progressive validation batch into the warm cached index without
- * replacing cards whose histories are still unresolved. `validated` must be the
- * batch built for this publish: reading live validation state here would let a
- * later batch remove cards that this batch never inspected, and re-appending
- * them would replay their entrance animation in a different order.
- */
-export function mergeValidatedWorkspaceRuns(
-  current: WorkspaceRuns,
-  validated: WorkspaceRuns,
-): WorkspaceRuns {
-  const merged: WorkspaceRuns = {};
-  for (const [owner, ids] of Object.entries(current)) merged[owner] = [...ids];
-  const validatedIds = new Set(Object.values(validated).flat());
-  // Validation is authoritative for ownership, so a cached card proven to
-  // belong to another workspace must leave its old list right away.
-  for (const id of validatedIds) {
-    for (const [owner, ids] of Object.entries(merged)) {
-      if (validated[owner]?.includes(id)) continue;
-      const index = ids.indexOf(id);
-      if (index !== -1) ids.splice(index, 1);
-    }
-  }
-  for (const [owner, ids] of Object.entries(validated)) {
-    const list = merged[owner] || (merged[owner] = []);
-    for (const id of ids) if (!list.includes(id)) list.push(id);
-  }
-  return merged;
 }
 
 /** Replace the browser hint with the authoritative, newest-first backend index,
@@ -292,52 +259,4 @@ export function workspaceRunsFromSummaries(
 export function snapshotBelongsToWorkspace(snapshot: Snapshot, repository: string): boolean {
   const owner = workspaceKey(snapshot.config?.repository ?? "");
   return !!owner && owner === workspaceKey(repository);
-}
-
-/**
- * Repair previously polluted indexes as well as discover unindexed Runs.
- * Cached cards keep their relative order; newly discovered Runs are inserted
- * ahead of them in snapshot order. Prepending one snapshot at a time would
- * reverse a cold cache and replay every card's entrance animation.
- */
-export function reconcileWorkspaceRuns(index: WorkspaceRuns, snapshots: Array<Snapshot | null>): WorkspaceRuns {
-  const cached = normalizeWorkspaceRuns(index);
-  for (const key of Object.keys(cached)) {
-    // Provisional IDs only exist in the originating browser session.
-    cached[key] = cached[key].filter(id => !id.startsWith("pending-"));
-  }
-
-  // The last snapshot wins if one ID is reported more than once.
-  const ownerByRun = new Map<string, string | null>();
-  const discovered: string[] = [];
-  for (const snapshot of snapshots) {
-    if (!snapshot?.runId) continue;
-    if (!ownerByRun.has(snapshot.runId)) discovered.push(snapshot.runId);
-    const repository = snapshot.config?.repository;
-    ownerByRun.set(snapshot.runId, repository ? workspaceKey(repository) : null);
-  }
-
-  const result: WorkspaceRuns = {};
-  for (const [owner, ids] of Object.entries(cached)) {
-    for (const id of ids) {
-      // An unbound Run must not inherit whichever workspace bootstrapped it.
-      if (ownerByRun.has(id) && ownerByRun.get(id) !== owner) continue;
-      (result[owner] ??= []).push(id);
-    }
-  }
-
-  const discoveredByOwner = new Map<string, string[]>();
-  for (const id of discovered) {
-    const owner = ownerByRun.get(id);
-    if (!owner) continue;
-    const ids = discoveredByOwner.get(owner) ?? [];
-    if (!discoveredByOwner.has(owner)) discoveredByOwner.set(owner, ids);
-    ids.push(id);
-  }
-  for (const [owner, ids] of discoveredByOwner) {
-    const existing = new Set(result[owner] ?? []);
-    const prefix = ids.filter(id => !existing.has(id));
-    if (prefix.length > 0) result[owner] = [...prefix, ...(result[owner] ?? [])];
-  }
-  return result;
 }

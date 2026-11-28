@@ -41,7 +41,7 @@ if (phase === 'setup' || phase === 'build') {
   const phases = [];
   const logs = [];
   const signals = new EventEmitter();
-  const env = { ...process.env, PI_N_PORT: String(await freePort()), PI_N_FRONTEND_PORT: String(await freePort()), BEHAVIOR: JSON.stringify(behavior) };
+  const env = { ...process.env, CARGO_TARGET_DIR: join(root, 'backend', 'target'), PI_N_PORT: String(await freePort()), PI_N_FRONTEND_PORT: String(await freePort()), BEHAVIOR: JSON.stringify(behavior) };
   const spawnProcess = (command, args, options) => {
     const phase = args[0] === 'build' || args[0] === 'run' || args[0] === 'setup' ? args[0] : 'frontend';
     phases.push(phase);
@@ -309,6 +309,18 @@ test('up-to-date backend binary skips cargo build until Rust inputs or HEAD chan
   assert.equal(backendBuildUpToDate(f.root, f.env), false);
   recordDevBuildStamp(f.root, f.env);
   assert.equal(backendBuildUpToDate(f.root, f.env), true);
+
+  const otherCheckout = join(f.root, 'worktree');
+  recordDevBuildStamp(otherCheckout, f.env);
+  assert.equal(backendBuildUpToDate(f.root, f.env), false, 'shared target was last built in another checkout');
+  for (const key of ['RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_PROFILE_DEV_OPT_LEVEL']) {
+    recordDevBuildStamp(f.root, f.env);
+    const custom = loadDevEnvironment(f.root, { ...f.env, [process.platform === 'win32' ? key.toLowerCase() : key]: '1' });
+    assert.equal(backendBuildUpToDate(f.root, custom), false, key);
+    recordDevBuildStamp(f.root, custom);
+    assert.equal(backendBuildUpToDate(f.root, f.env), false, `clearing ${key} requires a default build`);
+  }
+  recordDevBuildStamp(f.root, f.env);
 
   // Touching a Rust source or resource invalidates the fast path.
   utimesSync(join(f.root, 'backend/resources/planner.ts'), newerTime, newerTime);

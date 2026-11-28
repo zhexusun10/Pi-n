@@ -750,15 +750,19 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     }, replacement);
   }, []);
   const canEditInlineSteer = Boolean(onEditMessageSubmit) && !locked;
-  const steeredEventsByExecution = useMemo(() => {
-    const map = new Map<string, GraphEvent[]>();
+  const { steeredEventsByExecution, stoppedIds } = useMemo(() => {
+    const steeredEventsByExecution = new Map<string, GraphEvent[]>();
+    const stoppedIds = new Set<string>();
     for (const event of state.events) {
-      if (event.type !== "steered" || !event.execution_id) continue;
-      const list = map.get(event.execution_id);
-      if (list) list.push(event);
-      else map.set(event.execution_id, [event]);
+      if (event.type === "execution_stop_requested") {
+        for (const id of event.execution_ids ?? []) stoppedIds.add(id);
+      } else if (event.type === "steered" && event.execution_id) {
+        const list = steeredEventsByExecution.get(event.execution_id);
+        if (list) list.push(event);
+        else steeredEventsByExecution.set(event.execution_id, [event]);
+      }
     }
-    return map;
+    return { steeredEventsByExecution, stoppedIds };
   }, [state.events]);
   const executionSteers = (execution: ConversationExecution, messages: ChatMessage[]): ChatMessage[] =>
     execution.historyEndOffset === undefined ? messages.filter(message => message.executionId === execution.id) :
@@ -766,6 +770,16 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         id: `event-${event.sequence}`, role: "user", text: event.instruction ?? "", node: execution.node,
         executionId: execution.id, images: event.images, delivery: "steered", steerRequestId: event.request_id,
       })));
+  const fallbackSteersFor = (exec: ConversationExecution, steers: ChatMessage[], markers: LiveSteerMarker[], expanded: boolean) => {
+    if (exec.historyEndOffset !== undefined) return [];
+    const running = exec.status === "running";
+    if (!running && expanded && loadingExecutionIds.has(exec.id) && !inlineUserTurns[exec.id]) return [];
+    const stopped = !running && stoppedIds.has(exec.id);
+    return steers.map(steer => ({
+      steer, position: steerFallbackPosition(steer, inlineUserTurns, running, expanded,
+        markers.find(item => item.key === inlineSteerKey(steer)), stopped),
+    }));
+  };
   const renderSteerBubble = (steer: ChatMessage) => (
     <div key={steer.id} className="chat-message-row user planner-follow-up queued-steer-message">
       <EditableUserBubble
@@ -3566,12 +3580,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                             files: steer.files,
                           }))
                           .filter(steer => Boolean(steer.requestId || steer.text));
-                        const awaitInitialSettledWindow = exec.status !== "running" && isExpanded &&
-                          loadingExecutionIds.has(exec.id) && !inlineUserTurns[exec.id];
-                        const fallbackSteers = exec.historyEndOffset !== undefined ? [] : ownedSteers.map(steer => ({
-                          steer, position: awaitInitialSettledWindow ? null : steerFallbackPosition(steer, inlineUserTurns, exec.status === "running", isExpanded,
-                            executionLiveSteers.find(item => item.key === inlineSteerKey(steer))),
-                        }));
+                        const fallbackSteers = fallbackSteersFor(exec, ownedSteers, executionLiveSteers, isExpanded);
                         return (
                           <React.Fragment key={exec.id}>
                             <div
@@ -3813,12 +3822,7 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                                 files: steer.files,
                               }))
                               .filter(steer => Boolean(steer.requestId || steer.text));
-                            const awaitInitialSettledWindow = exec.status !== "running" &&
-                              loadingExecutionIds.has(exec.id) && !inlineUserTurns[exec.id];
-                            const fallbackSteers = exec.historyEndOffset !== undefined ? [] : ownedSteers.map(steer => ({
-                              steer, position: awaitInitialSettledWindow ? null : steerFallbackPosition(steer, inlineUserTurns, exec.status === "running", true,
-                                executionLiveSteers.find(item => item.key === inlineSteerKey(steer))),
-                            }));
+                            const fallbackSteers = fallbackSteersFor(exec, ownedSteers, executionLiveSteers, true);
                             return (
                               <React.Fragment key={exec.id}>
                                 {/* Pending steers share the conversation column so they keep the

@@ -269,7 +269,7 @@ export default function App() {
   const [pinnedRuns, setPinnedRuns] = useState<Record<string, PinDotColor>>(() => readStorageJson(STORAGE_KEYS.pinnedRuns) ?? {});
   const pinnedRunsRef = useRef(pinnedRuns);
   pinnedRunsRef.current = pinnedRuns;
-  const workspaceRunOrderRef = useRef<Record<string, string[]>>(readStorageJson(STORAGE_KEYS.workspaceRunOrder) ?? {});
+  const workspaceRunOrderRef = useRef<Record<string, string[]>>({});
   const [openedProjectSeq, setOpenedProjectSeq] = useState(0);
   // Current cache IDs only suppress re-entry motion after the index validates a
   // card; they never render a card or trigger a history read before bootstrap.
@@ -1140,14 +1140,8 @@ export default function App() {
     if (data.envOverrides) setEnvOverrides(data.envOverrides);
     if (data.hostPreflight !== undefined) setHostPreflight(data.hostPreflight ?? null);
 
-    const rawProjects = readStorageJson(STORAGE_KEYS.projects);
-    const storedProjects = Array.isArray(rawProjects)
-      ? rawProjects.map(project => ({
-          ...project, path: normalizeWorkspacePath(project.path), id: normalizeWorkspacePath(project.id || project.path),
-        }))
-      : null;
-
-    const storedWorkspaceRuns = readStorageJson(STORAGE_KEYS.workspaceRuns);
+    const storedProjects = readStorageJson(STORAGE_KEYS.projects);
+    const storedWorkspaceRuns = data.unavailableConversationIds?.length ? readStorageJson(STORAGE_KEYS.workspaceRuns) : null;
     const storedWorkspaceRunOrder = readStorageJson(STORAGE_KEYS.workspaceRunOrder) ?? {};
     workspaceRunOrderRef.current = storedWorkspaceRunOrder;
     const storedArchivedRuns = readStorageJson(STORAGE_KEYS.archivedRuns) ?? [];
@@ -1782,7 +1776,8 @@ export default function App() {
   };
 
   const handlePinRun = (runId: string, color: PinDotColor) => {
-    if (!runId || runId.startsWith("pending-")) return;
+    if (!runId || runId.startsWith("pending-") || deletedRunIdsRef.current.has(runId) ||
+        archivedRunIdSet.has(runId) || !runs.includes(runId)) return;
     const wasPinned = runId in pinnedRunsRef.current;
     const nextPinned: Record<string, PinDotColor> = { ...pinnedRunsRef.current, [runId]: color };
     pinnedRunsRef.current = nextPinned;

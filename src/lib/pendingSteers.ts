@@ -227,14 +227,19 @@ export function steerFallbackPosition(
   running: boolean,
   expanded = true,
   live?: LiveSteerMarker,
+  stopped = false,
 ): "before" | "after" | null {
-  if (!expanded) return "before";
   const window = message.executionId ? windows[message.executionId] : undefined;
-  if (message.steerRequestId && window) {
-    if (window.turns?.some(turn => turn.requestId === message.steerRequestId)) return null;
-    const consumedOffset = window.steerOffsets && Object.prototype.hasOwnProperty.call(window.steerOffsets, message.steerRequestId)
-      ? window.steerOffsets[message.steerRequestId]
-      : undefined;
+  const id = message.steerRequestId;
+  const consumedOffset = id && window?.steerOffsets && Object.hasOwn(window.steerOffsets, id)
+    ? window.steerOffsets[id] : undefined;
+  const inline = id && window?.turns?.some(turn => turn.requestId === id);
+  // After an explicit stop, the event alone proves acceptance, not delivery.
+  // Keep confirmed turns outside a partial window in their original position.
+  if (stopped && consumedOffset === undefined && !inline) return null;
+  if (!expanded) return "before";
+  if (id && window) {
+    if (inline) return null;
     if (consumedOffset !== undefined) {
       const start = window.start ?? 0;
       if (consumedOffset < start) return "before";

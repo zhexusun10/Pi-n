@@ -415,6 +415,10 @@ test("piNRequestId and authoritative steerOffsets place steers deterministically
     "unread steer on a >256KB partial tail stays at tail after re-entering");
   assert.equal(steerFallbackPosition(unreadImage, partial, true, true), "after",
     "unread image steer on a >256KB partial tail stays at tail after re-entering");
+  assert.equal(steerFallbackPosition(earlier, partial, false, true, undefined, true), "before");
+  assert.equal(steerFallbackPosition(inWindow, partial, false, true, undefined, true), null);
+  assert.equal(steerFallbackPosition(unread, partial, false, false, undefined, true), null,
+    "collapsing a stopped attempt cannot resurrect its undelivered card");
   assert.equal(isUncommittedSteer(earlier, partial), false);
   assert.equal(isUncommittedSteer(inWindow, partial), false);
   assert.equal(isUncommittedSteer(unread, partial), true);

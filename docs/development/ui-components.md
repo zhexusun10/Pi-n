@@ -110,8 +110,12 @@ the submission lock, and appear below queued message cards using the platform
 modifier label (`Option` on macOS, `Alt` elsewhere). Recalled text/images and an in-flight recall belong to the Run's draft
 store, so changing views neither drops the result nor enables a duplicate recall.
 An image-only recalled draft can be sent without requiring replacement text.
-Physical key codes preserve Option-key behavior on macOS. Queue ownership
-and interruption sequencing belong to the [runtime contract](../architecture/runtime.md#scheduling-and-concurrency).
+Physical key codes preserve Option-key behavior on macOS. After an explicit
+stop ends an execution, the backend reports its status as `paused`. Its history
+shows delivered steers from the transcript. A delivery offset outside the
+loaded page keeps the corresponding card visible, while the saved stop event
+suppresses undelivered cards on reopen. Queue ownership and interruption sequencing
+belong to the [runtime contract](../architecture/runtime.md#scheduling-and-concurrency).
 
 ## Workbench controls
 
