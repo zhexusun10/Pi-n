@@ -101,30 +101,26 @@ pub(super) fn get_file_changes(
             .chain(state.mergers.iter())
             .filter(|exec| ids.contains(&exec.id))
             .collect();
-        let parts: Vec<_> = selected
-            .iter()
-            .map(|exec| {
-                let cached = crate::file_changes::get_cached_execution_changes(&state.run_id, exec)
-                    .unwrap_or_default();
-                if exec.status == "running" && !exec.before.is_empty() && !exec.worktree.is_empty()
-                {
-                    if let Some(live_git) = crate::file_changes::compute_git_changes(
-                        std::path::Path::new(&exec.worktree),
-                        &exec.before,
-                        None,
-                        &exec.node,
-                        &exec.id,
-                    ) {
-                        return crate::file_changes::merge_summaries(&[cached, live_git], true);
-                    }
+        let parts = selected.iter().map(|exec| {
+            let cached = crate::file_changes::get_cached_execution_changes(&state.run_id, exec)
+                .unwrap_or_default();
+            if exec.status == "running" && !exec.before.is_empty() && !exec.worktree.is_empty() {
+                if let Some(live_git) = crate::file_changes::compute_git_changes(
+                    std::path::Path::new(&exec.worktree),
+                    &exec.before,
+                    None,
+                    &exec.node,
+                    &exec.id,
+                ) {
+                    return crate::file_changes::merge_summaries([cached, live_git], true);
                 }
-                cached
-            })
-            .collect();
+            }
+            cached
+        });
         // Union complete per-execution paths before paging the response. Adding
         // already-paged totals in the browser cannot deduplicate shared files.
         crate::file_changes::merge_summaries(
-            &parts,
+            parts,
             selected.iter().any(|exec| exec.status == "running"),
         )
     } else {

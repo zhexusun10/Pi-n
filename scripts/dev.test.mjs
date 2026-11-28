@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -179,6 +179,40 @@ test('the PATH key keeps the launcher casing and stays spawnable on Windows', as
       child.once('exit', code => code === 0 ? resolve() : reject(new Error(`spawned child exited ${code}`)));
     });
   }
+});
+
+test('Windows dev ports inherit case-insensitively and keep one environment entry', { skip: process.platform !== 'win32' }, t => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-dev-env-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, '.env'), 'PI_N_PORT=9876\nPi_N_Frontend_Port=4320\nPATH=C:\\other\n');
+  const env = loadDevEnvironment(root, { pi_n_port: '4321', Path: 'C:\\Git\\cmd' });
+  assert.equal(env.PI_N_PORT, '4321');
+  assert.equal(env.PI_N_FRONTEND_PORT, '4320');
+  assert.deepEqual(Object.keys(env).filter(key => /^pi_n_(frontend_)?port$/i.test(key)).sort(),
+    ['PI_N_FRONTEND_PORT', 'PI_N_PORT']);
+  assert.equal(env.Path.split(delimiter).at(-1), 'C:\\Git\\cmd');
+});
+
+test('desktop child can find a custom Cargo target after changing directories', t => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-n-target-中文 space-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cwd = join(root, 'src-tauri');
+  mkdirSync(cwd);
+  writeFileSync(join(root, '.env'), 'CARGO_TARGET_DIR=.cache/from-dotenv\n');
+  assert.equal(loadDevEnvironment(root, {}).CARGO_TARGET_DIR, join(root, '.cache', 'from-dotenv'));
+
+  const key = process.platform === 'win32' ? 'Cargo_Target_Dir' : 'CARGO_TARGET_DIR';
+  const inherited = { ...process.env };
+  for (const name of Object.keys(inherited)) {
+    if (name.toUpperCase() === 'CARGO_TARGET_DIR') delete inherited[name];
+  }
+  const env = loadDevEnvironment(root, { ...inherited, [key]: '.cache/custom cargo' });
+  const expected = join(root, '.cache', 'custom cargo');
+  assert.equal(env.CARGO_TARGET_DIR, expected);
+  const child = spawnSync(process.execPath, ['-p', 'require("node:path").resolve(process.env.CARGO_TARGET_DIR)'],
+    { cwd, env, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout.trim(), expected);
 });
 
 test('invalid and conflicting ports fail before installation', async t => {

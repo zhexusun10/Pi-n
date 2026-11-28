@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { before, after } from "node:test";
 import { expect } from "@playwright/test";
 import { connectOrLaunchBrowser } from "./fixtures/ui-browser.mjs";
+import { fixtureFileChangeSummary, fixtureFileChanges } from "./fixtures/current-api.mjs";
 import { createServer } from "vite";
 
 let server, browser, origin;
@@ -42,7 +43,10 @@ async function openFixture(mode, handlers) {
     const command = new URL(route.request().url()).pathname.slice(5);
     const body = route.request().postDataJSON();
     if (command === "get_file_changes" && handlers.getFileChanges) {
-      await route.fulfill({ json: { result: handlers.getFileChanges(body) } });
+      const result = handlers.getFileChanges(body);
+      await route.fulfill(result === null
+        ? { status: 503, json: { error: "temporary read failure" } }
+        : { json: { result } });
       return;
     }
     if (command === "get_file_diff" && handlers.getFileDiff) {
@@ -161,6 +165,47 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
   } finally {
     await context.close();
   }
+});
+
+test("failed file-change reads back off and reopening requests a fresh projection", { timeout: 30_000 }, async () => {
+  let failing = false, attempts = 0;
+  const { page, context } = await openFixture("serial&settled=1", {
+    getFileChanges(body) {
+      attempts++;
+      if (failing) return null;
+      const path = attempts === 1 ? "src/before.ts" : "src/after.ts";
+      return fixtureFileChanges(body, fixtureFileChangeSummary([{ path, status: "modified", additions: 1, deletions: 0 }]));
+    },
+  });
+  try {
+    const trigger = page.getByTestId("workspace-changes-trigger");
+    const rows = page.getByTestId("changed-file-item");
+    await expect(trigger).toBeEnabled();
+    const now = new Date();
+    await page.clock.install({ time: now });
+    await page.clock.pauseAt(new Date(+now + 100));
+    failing = true;
+    const waitForFailure = () => page.waitForResponse(response =>
+      response.url().endsWith("/api/get_file_changes") && response.status() === 503);
+    const openRead = waitForFailure();
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await page.clock.runFor(100);
+    await (await openRead).finished();
+    const retry = waitForFailure();
+    await page.clock.runFor(2_100);
+    await (await retry).finished();
+    await page.clock.runFor(2_100);
+    assert.equal(attempts, 3, "a second failure waits longer than the normal polling interval");
+    await expect(rows).toHaveText(/before\.ts/);
+    failing = false;
+    await trigger.click();
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await page.clock.runFor(100);
+    await expect(rows).toHaveText(/after\.ts/);
+    assert.equal(attempts, 4);
+  } finally { await context.close(); }
 });
 
 for (const scenario of ["stable", "changed", "updated", "same totals", "legacy", "short page", "multi-page", "settled on expansion"]) test(

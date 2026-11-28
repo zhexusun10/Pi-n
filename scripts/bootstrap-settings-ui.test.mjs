@@ -281,7 +281,7 @@ test("authoritative polling resolves a recovered route without a browser routed 
   try {
     await page.getByRole("region", { name: "Planning activity" }).getByText("Recovered Graph follow-up", { exact: true }).waitFor();
     assert.equal(await page.locator(".route-decision-pill.undecided").count(), 1,
-      "a genuinely pending Auto route still shows evaluation");
+      "a pending planning snapshot without a route still shows evaluation");
     current = { ...graph, approved: false, phase: "awaiting_approval", planning: { ...graph.planning, status: "success" } };
     await page.clock.runFor(2500);
     await until(async () => await page.locator(".graph-canvas .task-node").count() === 80);
@@ -979,6 +979,57 @@ test("a delayed Settings snapshot cannot overwrite newly saved role models", { t
     await page.locator(".settings-modal").waitFor({ state: "detached" });
     assert.equal(savedConfigs[1].model, "test/new", "saving again must not persist a rolled-back selection");
     assert.equal(savedConfigs[1].roleModels.planner.model, "test/plain");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const action of ["Settings save", "conversation reopen"]) test(`a delayed ${action} cannot roll back a newer Run snapshot`, { timeout: 30_000 }, async () => {
+  const saving = action === "Settings save";
+  const running = { ...fast, planType: "graph", phase: "running", approved: true,
+    graph: { ...fast.graph, nodes: [{ id: "task", task: "Work" }] },
+    nodes: { task: { status: "running", revision: 1 } },
+    events: [{ type: "routed", sequence: 1, plan_type: "graph" }] };
+  const completed = { ...running, phase: "completed", nodes: { task: { status: "completed", revision: 1 } },
+    events: [...running.events, { type: "completed", sequence: 2 }] };
+  let pending, holdReopen = false, current = running;
+  const { context, page, errors } = await app(async (route, command, body) => {
+    if (command === "save_config" || (holdReopen && command === "snapshot" && body.runId === "fast")) {
+      pending = route;
+      return true;
+    }
+    let result;
+    if (command === "bootstrap") result = { ...bootstrap, snapshot: current };
+    else if (["history", "snapshot", "load_run"].includes(command)) result = current;
+    else if (command === "snapshot_if_changed") {
+      result = { version: current.phase, snapshot: body.version === current.phase ? null : current };
+    } else return false;
+    await route.fulfill({ json: { result } });
+    return true;
+  });
+  try {
+    const card = page.locator('[data-run-id="fast"]');
+    await card.click();
+    const status = page.locator('.task-node[data-node-id="task"] .status');
+    await status.filter({ hasText: "Running" }).waitFor();
+    if (saving) {
+      await openSettings(page);
+      await page.locator(".save-config-btn").click();
+    } else {
+      await card.locator(".run-dot").waitFor();
+      await page.getByRole("button", { name: "New conversation", exact: true }).click();
+      holdReopen = true;
+      await card.click();
+    }
+    await until(() => !!pending);
+    current = completed;
+    await page.clock.runFor(3_000);
+    if (saving) await status.filter({ hasText: "Completed" }).waitFor();
+    else await card.locator(".run-dot").waitFor({ state: "detached" });
+    await pending.fulfill({ json: { result: saving ? { ...bootstrap, snapshot: running } : running } });
+    if (saving) await page.locator(".settings-modal").waitFor({ state: "detached" });
+    await status.waitFor();
+    assert.match(await status.textContent(), /Completed/);
+    assert.equal(await page.locator('[data-run-id="fast"] .run-dot').count(), 0);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

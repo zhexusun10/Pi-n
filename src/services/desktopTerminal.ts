@@ -129,13 +129,20 @@ export async function subscribeDesktopTerminalEvents(handlers: {
     return () => {};
   }
   let active = true;
-  let unlistenOutput: (() => void) | null = null;
-  let unlistenExit: (() => void) | null = null;
+  let unlistenOutput: (() => void) | undefined;
+  let unlistenExit: (() => void) | undefined;
+  const unsubscribe = () => {
+    if (!active) return;
+    active = false;
+    // Tauri's unlisten functions perform asynchronous IPC.
+    for (const unlisten of [unlistenOutput, unlistenExit]) {
+      if (unlisten) void Promise.resolve().then(unlisten).catch(() => {});
+    }
+  };
 
   try {
     const { listen } = await import("@tauri-apps/api/event");
-    if (!active) return () => {};
-    const stopOutput = await listen<TerminalOutputEvent>(
+    unlistenOutput = await listen<TerminalOutputEvent>(
       DESKTOP_TERMINAL_OUTPUT_EVENT,
       (event) => {
         if (!active) return;
@@ -145,13 +152,7 @@ export async function subscribeDesktopTerminalEvents(handlers: {
         }
       },
     );
-    if (!active) {
-      stopOutput();
-      return () => {};
-    }
-    unlistenOutput = stopOutput;
-
-    const stopExit = await listen<TerminalExitEvent>(
+    unlistenExit = await listen<TerminalExitEvent>(
       DESKTOP_TERMINAL_EXIT_EVENT,
       (event) => {
         if (!active) return;
@@ -164,22 +165,12 @@ export async function subscribeDesktopTerminalEvents(handlers: {
         }
       },
     );
-    if (!active) {
-      stopExit();
-      unlistenOutput?.();
-      unlistenOutput = null;
-      return () => {};
-    }
-    unlistenExit = stopExit;
   } catch (error) {
-    console.warn("Failed to subscribe to desktop terminal events:", error);
+    // Require both listeners before starting a PTY so a retry cannot leave
+    // behind a partially connected session.
+    unsubscribe();
+    throw error;
   }
 
-  return () => {
-    active = false;
-    unlistenOutput?.();
-    unlistenExit?.();
-    unlistenOutput = null;
-    unlistenExit = null;
-  };
+  return unsubscribe;
 }

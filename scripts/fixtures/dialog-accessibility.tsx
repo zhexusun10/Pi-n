@@ -5,13 +5,19 @@ import { ConfirmModal } from "../../src/components/modals/ConfirmModal";
 import { EditorModal } from "../../src/components/modals/EditorModal";
 import { ApprovalModal } from "../../src/components/modals/ApprovalModal";
 import { SettingsModal } from "../../src/components/modals/SettingsModal";
-import { defaultConfig, emptyGraph, emptySnapshot } from "../../src/types";
+import { EditableUserBubble } from "../../src/components/views/ChatBubbles";
+import { defaultConfig, emptyGraph, emptySnapshot, type ImageAttachment } from "../../src/types";
 import "../../src/styles.css";
 import "../../src/styles-workbench.css";
 import "../../src/styles-planning.css";
 
 const audit = ((window as any).dialogs = { confirms: 0, saves: 0, closedCallbacks: 0 });
 const config = { ...defaultConfig, repository: "/fixture" };
+const images: ImageAttachment[] = [{
+  type: "image",
+  mimeType: "image/png",
+  data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+}];
 
 function Fixture() {
   const [open, setOpen] = useState<string | null>(null);
@@ -24,6 +30,8 @@ function Fixture() {
     {["confirm", "editor", "approval", "settings"].map(kind =>
       <button key={kind} onClick={() => setOpen(kind)}>Open {kind}</button>)}
     <input aria-label="Background input" defaultValue="Retained draft" />
+    <EditableUserBubble text="Sent message" images={images} editing={false} draft=""
+      onDraftChange={() => {}} onEdit={() => {}} onCancel={() => {}} onSend={() => {}} />
     {/* Closed-but-mounted dialogs must not consume the page's Escape key. */}
     <ConfirmModal config={null} onClose={() => { audit.closedCallbacks += 1; }} />
     <AnimatePresence>

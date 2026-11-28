@@ -96,9 +96,12 @@ async function setupContext({
   saveConfigError = null,
   initialWindowShowFailures = 0,
   reducedMotion = "reduce",
+  viewport = { width: 1440, height: 960 },
+  deviceScaleFactor = 1,
 } = {}) {
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 960 },
+    viewport,
+    deviceScaleFactor,
     locale: "en-US",
     reducedMotion,
   });
@@ -821,8 +824,11 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     await mac.context.close();
   }
 
+  // 2560×1440 logical pixels at 150% scaling on a 4K display.
   const win = await setupContext({
     tauriMode: true,
+    viewport: { width: 2560, height: 1440 },
+    deviceScaleFactor: 1.5,
     platformOverride: {
       platform: "Win32",
       uaPlatform: "Windows",
@@ -837,7 +843,12 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
     await winTitlebar.waitFor({ state: "visible" });
     await win.page.locator(".desktop-titlebar-drag-region[data-tauri-drag-region]").waitFor({ state: "visible" });
     assert.equal(await win.page.locator(".app-shell.is-tauri-macos").count(), 0);
-    assert.equal(await win.page.locator(".desktop-window-control").count(), 3);
+    const icons = winTitlebar.locator(".desktop-window-control > svg");
+    const iconWidths = () => icons.evaluateAll(elements => elements.map(svg =>
+      svg.getBBox().width * svg.getBoundingClientRect().width / svg.viewBox.baseVal.width,
+    ));
+    assert.equal(await icons.count(), 3);
+    assert.ok((await iconWidths()).every(width => width >= 9.5), "caption glyphs should span about 10 logical pixels");
 
     const winLayout = await win.page.evaluate(() => {
       const bar = document.querySelector(".desktop-titlebar");
@@ -876,6 +887,8 @@ test("macOS Tauri renders a transparent overlay titlebar over full-bleed backgro
 
     await win.page.locator('[data-window-action="minimize"]').click();
     await win.page.locator('[data-window-action="toggle-maximize"]').click();
+    await winTitlebar.getByRole("button", { name: "Restore", exact: true }).waitFor();
+    assert.ok((await iconWidths())[1] >= 9.5, "restore glyph should use the same visual scale");
     await win.page.locator('[data-window-action="close"]').click();
     await win.page.waitForFunction(() => window.__TEST_WINDOW__.state.calls.length === 3);
     const calls = await win.page.evaluate(() => window.__TEST_WINDOW__.state.calls);

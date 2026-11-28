@@ -172,6 +172,41 @@ test("dragging across the sidebar does not select its text", { timeout: 30_000 }
   } finally { await context.close(); }
 });
 
+test("sidebar reorder waits one second and a short press with slight movement still opens the card", { timeout: 30_000 }, async () => {
+  const { context, page, calls } = await openApp(async () => false);
+  try {
+    const card = page.locator('.run-item[data-run-id="a"]');
+    const other = page.locator('.run-item[data-run-id="b"]');
+    const dragging = page.locator('.runs-list[data-dragging="true"]');
+    const now = new Date();
+    await page.clock.install({ time: now });
+    await page.clock.pauseAt(new Date(+now + 100));
+    await card.hover();
+    const { x, y, width, height } = await card.boundingBox();
+    await page.mouse.down();
+    await page.mouse.move(x + width / 2, y + height / 2 + 2);
+    await page.clock.runFor(200);
+    await page.mouse.up();
+    await page.locator('.run-item[data-run-id="a"].chosen:not(.is-loading)').waitFor();
+
+    await card.hover();
+    await page.mouse.down();
+    await other.hover();
+    await page.clock.runFor(1_000);
+    assert.equal(await dragging.count(), 0);
+    await page.mouse.up();
+
+    await card.hover();
+    await page.mouse.down();
+    await page.clock.runFor(999);
+    assert.equal(await dragging.count(), 0);
+    await page.clock.runFor(1);
+    assert.equal(await card.and(page.locator(".is-drag-source")).count(), 1);
+    await page.mouse.up();
+    assert.equal(calls.filter(call => call.command === "snapshot" && call.body.runId === "a").length, 1);
+  } finally { await context.close(); }
+});
+
 test("sidebar cards and menus support keyboard navigation without opening conversations", { timeout: 30_000 }, async () => {
   const { context, page, calls, errors } = await openApp(async () => false);
   try {
@@ -1421,6 +1456,7 @@ test("workspace and conversation cards can be reordered by dragging without acci
     assert.ok(src && dst, "source and target cards must have bounding boxes");
     await page.mouse.move(src.x + src.width / 2, src.y + src.height / 2);
     await page.mouse.down();
+    await sourceLocator.and(page.locator(".is-drag-source")).waitFor();
     await page.mouse.move(dst.x + dst.width / 2, dst.y + dst.height / 2 + extraY, { steps: 10 });
     await page.mouse.up();
   };
@@ -1493,6 +1529,7 @@ test("workspace and conversation cards can be reordered by dragging without acci
     const u2Box = await page.locator('.run-item[data-run-id="u2"]').boundingBox();
     await page.mouse.move(u1Box.x + u1Box.width / 2, u1Box.y + u1Box.height / 2);
     await page.mouse.down();
+    await page.locator('.run-item[data-run-id="u1"].is-drag-source').waitFor();
     await page.mouse.move(u2Box.x + u2Box.width / 2, u2Box.y + u2Box.height / 2 - 8, { steps: 6 });
     await page.keyboard.press("Escape");
     await page.mouse.up();

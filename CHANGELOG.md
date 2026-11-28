@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-11-28
+
 ### Fixed
 
+- Hide user message copy and edit buttons while a modal is open, even when the pointer stays over the message.
+- Require a one-second hold before dragging workspace or conversation cards in the sidebar to prevent accidental reordering.
+- Keep the latest Run status when reopening a conversation after a background poll has already observed completion.
+- Resolve relative `CARGO_TARGET_DIR` values from the checkout root before launching the desktop shell so it can find the debug backend after changing directories.
+- Keep sent-image thumbnails still on hover and show the full image at its original aspect ratio.
+- Keep browser terminal output responsive across workspaces when another session's read stalls. Cancel pending reads when a terminal closes.
+- Show a restart control when desktop terminal startup fails. Clean up partial event subscriptions on failure and start the shell only after both listeners are ready.
+- Load Pi source aliases only when a test imports a Pi package, so frontend-only checks run without the submodule.
+- Remove the full-card tint from running tool cards so their fill and edge highlight match streaming reasoning cards, with each keeping its own accent color.
+- Prevent delayed Settings and composer responses from rolling back a newer Run snapshot or overwriting a live Planner draft.
+- Honor inherited port settings and their precedence over `.env` regardless of variable name casing on Windows.
+- Back off repeated file-change read failures while keeping the last summary available. Reopening the pane still requests a fresh summary.
 - Save rapid home model switches in selection order within the same window. Apply each role change to the last accepted defaults so a rejected switch cannot leak into a queued save.
 - Keep UI workspace restoration from overwriting configuration defaults during startup.
 - Refresh already loaded file-change rows when loading more, including same-line-count content edits. Keep the existing list if a page is incomplete or its totals disagree with another page. Invalidate cached diffs when either polling or loading more observes completion.
@@ -16,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Remove the selection halo from the accent color and home background cards in Settings.
+- Compute execution log lengths for forward and tail pages with an indexed last-chunk lookup.
+- Enlarge the Windows titlebar icons for minimize, maximize, restore, and close to improve legibility on high-DPI displays.
+- Move owned file-change rows into summary unions to avoid a second copy of their paths, fingerprints, and provenance.
 - Match local and saved conversation turns without allocating a reversed copy of the remaining messages for each saved turn.
 
 ## [2.0.3] - 2026-11-28
@@ -1236,7 +1254,8 @@ Baseline release. The changelog is restarted from the current codebase at v1.1.0
   - **Configurable**: Can be toggled on/off in Settings (`postTaskReview`, enabled by default).
   - **Loop engineering**: When combined with Auto Approve, creates a robust, closed-loop engineering cycle that autonomously plans, executes, verifies, and iterates until the Planner concludes.
 
-[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.4...HEAD
+[2.0.4]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/zhexusun10/pi-n/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/zhexusun10/pi-n/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/zhexusun10/pi-n/compare/v2.0.0...v2.0.1

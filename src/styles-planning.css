@@ -283,12 +283,6 @@
   transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
 }
 
-.thinking-card.streaming {
-  border-color: rgba(240, 144, 130, 0.42);
-  background: var(--bg-canvas);
-  box-shadow: 0 0 14px rgba(240, 144, 130, 0.09), inset 0 1px 0 rgba(240, 144, 130, 0.11);
-}
-
 .thinking-card-header {
   display: flex;
   align-items: center;
@@ -1031,12 +1025,19 @@
   transition: border-color 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease;
 }
 
-/* Match the streaming COT card's border opacity and outer glow + top inset highlight
-   while keeping the active accent theme color (Blue / Black). */
+.thinking-card.streaming {
+  --active-card-rgb: 240 144 130;
+}
+
 .tool-call-card.running {
-  border-color: var(--running-card-border);
-  background: var(--running-card-bg);
-  box-shadow: var(--running-card-shadow);
+  --active-card-rgb: var(--running-card-rgb);
+}
+
+/* Keep the active highlight at the edges of both transcript cards. */
+.thinking-card.streaming,
+.tool-call-card.running {
+  border-color: rgb(var(--active-card-rgb) / 0.42);
+  box-shadow: 0 0 14px rgb(var(--active-card-rgb) / 0.09), inset 0 1px 0 rgb(var(--active-card-rgb) / 0.11);
 }
 
 .tool-call-card.error {

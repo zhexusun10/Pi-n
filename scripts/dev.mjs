@@ -135,7 +135,20 @@ export function backendBuildUpToDate(installationRoot, env = process.env) {
 }
 
 export function loadDevEnvironment(installationRoot, base = process.env) {
-  const env = { ...base };
+  const env = Object.create(null);
+  const keys = new Set();
+  const launcherKeys = new Set(['PI_N_PORT', 'PI_N_FRONTEND_PORT', 'CARGO_TARGET_DIR']);
+  const setIfMissing = (name, value) => {
+    // Windows inherits variables case-insensitively, but a plain JS object
+    // does not. Normalize the keys the launcher reads directly.
+    const key = process.platform === 'win32' ? name.toUpperCase() : name;
+    if (!name || keys.has(key)) return;
+    env[launcherKeys.has(key) ? key : name] = value;
+    keys.add(key);
+  };
+  for (const [name, value] of Object.entries(base)) {
+    if (value !== undefined) setIfMissing(name, value);
+  }
   // Match the backend's first-existing-file and inherited-environment precedence.
   // Pass the same values to Vite so .env-only PI_N_PORT cannot split the proxy.
   for (const path of ['.env', 'backend/.env']) {
@@ -146,10 +159,13 @@ export function loadDevEnvironment(installationRoot, base = process.env) {
       const separator = text.indexOf('=');
       if (text.startsWith('#') || separator < 0) continue;
       const key = text.slice(0, separator).trim();
-      if (key && env[key] === undefined) env[key] = text.slice(separator + 1).trim().replace(/^["']+|["']+$/g, '');
+      setIfMissing(key, text.slice(separator + 1).trim().replace(/^["']+|["']+$/g, ''));
     }
     break;
   }
+  // The build runs at the repository root. Tauri can change cwd before it
+  // resolves the sidecar, so hand both processes the same absolute path.
+  if (env.CARGO_TARGET_DIR) env.CARGO_TARGET_DIR = resolve(installationRoot, env.CARGO_TARGET_DIR);
   // Keep the launcher-delivered key casing ("Path" vs "PATH") so the child
   // environment never carries both names, which breaks spawn's executable
   // search on Windows.

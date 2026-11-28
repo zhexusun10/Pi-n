@@ -22,41 +22,49 @@ interface SourceAlias {
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const piRoot = resolve(repositoryRoot, "pi");
 const tsconfigPath = resolve(piRoot, "tsconfig.json");
-const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as TsConfig;
-const paths = tsconfig.compilerOptions?.paths;
-if (!paths) throw new Error(`Source runtime requires compilerOptions.paths in ${tsconfigPath}`);
+let piAliases: SourceAlias[] | undefined;
 
-const aliases: SourceAlias[] = Object.entries(paths)
-	.filter(([pattern]) => pattern.startsWith("@earendil-works/"))
-	.map(([pattern, replacements]) => {
-		const wildcard = pattern.indexOf("*");
-		if (wildcard !== -1 && pattern.indexOf("*", wildcard + 1) !== -1) {
-			throw new Error(`Source runtime does not support multiple wildcards in ${pattern}`);
-		}
-		return {
-			pattern,
-			prefix: wildcard === -1 ? pattern : pattern.slice(0, wildcard),
-			suffix: wildcard === -1 ? "" : pattern.slice(wildcard + 1),
-			replacements,
-		};
-	})
-	.sort((left, right) => right.pattern.length - left.pattern.length);
+function loadPiAliases(): SourceAlias[] {
+	if (piAliases) return piAliases;
+	const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as TsConfig;
+	const paths = tsconfig.compilerOptions?.paths;
+	if (!paths) throw new Error(`Source runtime requires compilerOptions.paths in ${tsconfigPath}`);
+
+	piAliases = Object.entries(paths)
+		.filter(([pattern]) => pattern.startsWith("@earendil-works/"))
+		.map(([pattern, replacements]) => {
+			const wildcard = pattern.indexOf("*");
+			if (wildcard !== -1 && pattern.indexOf("*", wildcard + 1) !== -1) {
+				throw new Error(`Source runtime does not support multiple wildcards in ${pattern}`);
+			}
+			return {
+				pattern,
+				prefix: wildcard === -1 ? pattern : pattern.slice(0, wildcard),
+				suffix: wildcard === -1 ? "" : pattern.slice(wildcard + 1),
+				replacements,
+			};
+		})
+		.sort((left, right) => right.pattern.length - left.pattern.length);
+	return piAliases;
+}
 
 registerHooks({
 	resolve(specifier, context, nextResolve) {
-		// Handle tsconfig path aliases (for pi packages)
-		let matchedPattern: string | undefined;
-		for (const alias of aliases) {
-			const wildcard = matchAlias(alias, specifier);
-			if (wildcard === undefined) continue;
-			matchedPattern ??= alias.pattern;
-			for (const replacement of alias.replacements) {
-				const resolved = resolveSourcePath(replacement.replace("*", wildcard), piRoot);
-				if (resolved) return { url: pathToFileURL(resolved).href, shortCircuit: true };
+		// Frontend-only tests can resolve local imports without a Pi source checkout.
+		if (specifier.startsWith("@earendil-works/")) {
+			let matchedPattern: string | undefined;
+			for (const alias of loadPiAliases()) {
+				const wildcard = matchAlias(alias, specifier);
+				if (wildcard === undefined) continue;
+				matchedPattern ??= alias.pattern;
+				for (const replacement of alias.replacements) {
+					const resolved = resolveSourcePath(replacement.replace("*", wildcard), piRoot);
+					if (resolved) return { url: pathToFileURL(resolved).href, shortCircuit: true };
+				}
 			}
-		}
-		if (matchedPattern) {
-			throw new Error(`Source runtime could not resolve ${specifier} through tsconfig path ${matchedPattern}`);
+			if (matchedPattern) {
+				throw new Error(`Source runtime could not resolve ${specifier} through tsconfig path ${matchedPattern}`);
+			}
 		}
 
 		// Handle relative imports with directory resolution

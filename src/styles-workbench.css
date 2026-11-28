@@ -637,6 +637,11 @@
   flex-shrink: 0;
 }
 
+/* A modal can leave the underlying card hovered until the pointer moves. */
+body:has([aria-modal="true"]) .chat-bubble-left-tools {
+  visibility: hidden;
+}
+
 .chat-bubble-actions {
   display: inline-flex;
   align-items: center;
@@ -813,38 +818,43 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-/* 用户气泡内图片附件预览 */
+/* Sent-image previews use the image's intrinsic ratio within a compact row. */
 .chat-user-images-preview {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: 8px;
+  max-width: 100%;
   margin-bottom: 8px;
 }
 
 .chat-user-image-thumb {
-  width: 80px;
-  height: 80px;
+  min-width: min(32px, 100%);
+  min-height: 32px;
+  max-width: 100%;
   padding: 0;
-  display: block;
+  display: grid;
+  place-items: center;
   appearance: none;
   border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.15));
   background: var(--bg-surface);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
-.chat-user-image-thumb:hover {
-  transform: scale(1.03);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+.chat-user-image-thumb:not(:disabled):hover {
+  /* Avoid resampling the image on hover, including at fractional DPI. */
+  filter: none;
+  border-color: var(--text-tertiary);
 }
 
 .chat-user-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
   display: block;
+  max-width: min(160px, 100%);
+  max-height: 96px;
 }
 
 .chat-bubble-edit-grid {
@@ -3061,7 +3071,7 @@ button.session-label-toggle:focus-visible {
   border: 1px solid var(--border-default);
   border-radius: 10px;
   cursor: pointer;
-  transition: border-color 0.16s, box-shadow 0.16s;
+  transition: border-color 0.16s;
 }
 
 .settings-background-option:hover,
@@ -3072,7 +3082,6 @@ button.session-label-toggle:focus-visible {
 .settings-background-option.is-selected,
 .settings-accent-option.is-selected {
   border-color: color-mix(in srgb, var(--brand-default) 55%, var(--border-default));
-  box-shadow: 0 0 0 2px var(--brand-ring);
 }
 
 .settings-background-options:disabled .settings-background-option,

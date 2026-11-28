@@ -310,17 +310,18 @@ export default function App() {
 
   const latestSnapshotsRef = useRef(new Map<string, Snapshot>());
   const rememberLatestSnapshot = useCallback((snapshot: Snapshot) => {
-    if (!snapshot.runId || snapshot.runId.startsWith("pending-")) return;
+    if (!snapshot.runId || snapshot.runId.startsWith("pending-")) return true;
     const existing = latestSnapshotsRef.current.get(snapshot.runId);
     if (existing) {
       const existingSeq = existing.events.at(-1)?.sequence ?? -1;
       const candidateSeq = snapshot.events.at(-1)?.sequence ?? -1;
-      if (candidateSeq < existingSeq) return;
+      if (candidateSeq < existingSeq) return false;
       if (candidateSeq === existingSeq && runHasLiveWork(snapshot.phase, snapshot) && !runHasLiveWork(existing.phase, existing)) {
-        return;
+        return false;
       }
     }
     latestSnapshotsRef.current.set(snapshot.runId, snapshot);
+    return true;
   }, []);
   useEffect(() => {
     rememberLatestSnapshot(state);
@@ -336,8 +337,7 @@ export default function App() {
     transferLocalWork,
   } = useRunIndicators(state);
   const observeRunSnapshot = useCallback((snapshot: Snapshot) => {
-    rememberLatestSnapshot(snapshot);
-    observeIndicatorSnapshot(snapshot);
+    if (rememberLatestSnapshot(snapshot)) observeIndicatorSnapshot(snapshot);
   }, [rememberLatestSnapshot, observeIndicatorSnapshot]);
   const syncRunLabelFromSnapshot = useCallback((snapshot: Snapshot) => {
     if (!snapshot.runId || snapshot.runId.startsWith("pending-")) return;
@@ -806,13 +806,15 @@ export default function App() {
     isBootstrapReady,
     activeWorkingRunIds);
 
-  // Composer metadata/queue mutations do not commit the Planner's live draft.
-  // Check the current stream at response time, not the submitting render.
+  // Settings and composer responses can arrive after a newer poll or another
+  // navigation. A live Planner stream also owns its uncommitted graph and plan.
   const setComposerSnapshot = (snapshot: Snapshot) => {
     const streaming = !!planningAbortControllerRef.current;
-    setState(previous => streaming && previous.runId === snapshot.runId
-      ? { ...snapshot, graph: previous.graph, plan: previous.plan }
-      : snapshot);
+    const sequence = snapshot.events.at(-1)?.sequence ?? 0;
+    setState(previous => {
+      if (previous.runId !== snapshot.runId || (previous.events.at(-1)?.sequence ?? 0) > sequence) return previous;
+      return streaming ? { ...snapshot, graph: previous.graph, plan: previous.plan } : snapshot;
+    });
   };
 
   const applyForegroundSnapshot = (snapshot: Snapshot, generation: number, composerMutation = false) => {
@@ -1945,7 +1947,6 @@ export default function App() {
     foregroundGeneration,
     navigationPending,
     detachForeground,
-    setState,
     setComposerSnapshot,
     observeRunSnapshot,
     snapshotModelConfig,
@@ -3590,6 +3591,13 @@ export default function App() {
         if (!snapshotBelongsToWorkspace(snapshot, config.repository)) {
           setError(t("此对话不属于当前工作区，请在对应工作区中打开。"));
           return;
+        }
+        // A background poll may observe completion after the navigation read
+        // was captured. Prefer the newer snapshot after validating ownership.
+        const latest = latestSnapshotsRef.current.get(id);
+        if (latest && snapshotBelongsToWorkspace(latest, config.repository) &&
+          (latest.events.at(-1)?.sequence ?? 0) > (snapshot.events.at(-1)?.sequence ?? 0)) {
+          snapshot = latest;
         }
         setState(snapshot);
         markSnapshotRead(snapshot);

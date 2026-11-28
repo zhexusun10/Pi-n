@@ -27,7 +27,6 @@ export interface UseConfigPersistenceOptions {
   foregroundGeneration: React.MutableRefObject<number>;
   navigationPending: boolean;
   detachForeground: (repository: string) => void;
-  setState: (snapshot: Snapshot) => void;
   setComposerSnapshot: (snapshot: Snapshot) => void;
   observeRunSnapshot: (snapshot: Snapshot) => void;
   snapshotModelConfig: (snapshot: Snapshot | null | undefined, repository: string) => ConversationModelConfig | null;
@@ -55,7 +54,6 @@ export function useConfigPersistence({
   foregroundGeneration,
   navigationPending,
   detachForeground,
-  setState,
   setComposerSnapshot,
   observeRunSnapshot,
   snapshotModelConfig,
@@ -143,7 +141,7 @@ export function useConfigPersistence({
       if (generation !== foregroundGeneration.current || saveGeneration !== defaultSaveGeneration.current) return false;
       if (boot.snapshot?.runId === stateRunId && stateRunId) {
         if (snapshotBelongsToWorkspace(boot.snapshot, config.repository)) {
-          setState(boot.snapshot);
+          setComposerSnapshot(boot.snapshot);
           observeRunSnapshot(boot.snapshot);
         }
       }
@@ -185,7 +183,7 @@ export function useConfigPersistence({
     setError,
     setIsBootstrapReady,
     setModal,
-    setState,
+    setComposerSnapshot,
     stateRunId,
   ]);
 

@@ -78,6 +78,31 @@ for (const reducedMotion of ["reduce", "no-preference"]) {
   });
 }
 
+test("user message hover actions hide while Settings or an image preview is open", { timeout: 30_000 }, async t => {
+  const page = await fixture(t);
+  const message = page.getByText("Sent message", { exact: true });
+  const copy = page.locator(".chat-message-copy-btn");
+  const edit = page.locator(".chat-message-edit-btn");
+  const settings = page.getByRole("button", { name: "Open settings", exact: true });
+  const thumbnail = page.getByRole("button", { name: "Preview image", exact: true });
+  for (const [opener, title] of [[settings, "Settings"], [thumbnail, "Image preview"]]) {
+    await message.hover();
+    await expect(copy).toHaveCSS("opacity", "1");
+    await expect(edit).toHaveCSS("opacity", "1");
+    // Open with the keyboard so the pointer stays on the message.
+    await opener.press("Enter");
+    const dialog = page.getByRole("dialog", { name: title, exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(copy).toBeHidden({ timeout: 1_000 });
+    await expect(edit).toBeHidden({ timeout: 1_000 });
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+  await message.hover();
+  await expect(copy).toHaveCSS("opacity", "1");
+  await expect(edit).toHaveCSS("opacity", "1");
+});
+
 test("editor keeps its draft and ignores Escape during IME composition", { timeout: 30_000 }, async t => {
   const page = await fixture(t);
   const opener = page.getByRole("button", { name: "Open editor", exact: true });

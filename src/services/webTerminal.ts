@@ -14,57 +14,68 @@ interface OutputPage {
   exitCode: number | null;
   more: boolean;
 }
-const sessions = new Map<string, { cursor: number }>();
+interface TerminalReader {
+  cursor: number;
+  timer?: ReturnType<typeof setTimeout>;
+  request?: AbortController;
+}
+const sessions = new Map<string, TerminalReader>();
 const subscribers = new Set<Handlers>();
-let timer: ReturnType<typeof setTimeout> | null = null;
-let polling = false;
 
-function schedule(delay = 80) {
-  if (timer !== null || polling || !sessions.size || !subscribers.size) return;
-  timer = setTimeout(() => { timer = null; void poll(); }, delay);
+function schedule(sessionId: string, session: TerminalReader, delay = 80) {
+  if (session.timer !== undefined || session.request || !subscribers.size || sessions.get(sessionId) !== session) return;
+  session.timer = setTimeout(() => {
+    session.timer = undefined;
+    void poll(sessionId, session);
+  }, delay);
+}
+
+function stopReading(session: TerminalReader) {
+  clearTimeout(session.timer);
+  session.timer = undefined;
+  session.request?.abort();
 }
 
 function output(sessionId: string, data: string) {
   for (const handler of subscribers) handler.onOutput({ sessionId, data });
 }
 
-async function poll() {
-  if (polling) return;
-  polling = true;
+async function poll(sessionId: string, session: TerminalReader) {
+  const request = new AbortController();
+  session.request = request;
   let delay = 80;
+  const isCurrent = () => !request.signal.aborted && sessions.get(sessionId) === session;
   try {
-    await Promise.all([...sessions].map(async ([sessionId, session]) => {
-      try {
-        const page = await jsonRequest<OutputPage>("terminal_read", { sessionId, cursor: session.cursor }, { timeoutMs: 4000 });
-        if (sessions.get(sessionId) !== session) return;
-        if (!Array.isArray(page.chunks) || !page.chunks.every(chunk => typeof chunk === "string") ||
-            !Number.isSafeInteger(page.cursor) || page.cursor < session.cursor) {
-          throw new Error("Invalid terminal output page");
-        }
-        if (page.truncated) output(sessionId, btoa("\r\n[Earlier terminal output was truncated]\r\n"));
-        for (const chunk of page.chunks) output(sessionId, chunk);
-        session.cursor = page.cursor;
-        if (page.more) delay = 0;
-        if (page.exited) {
-          sessions.delete(sessionId);
-          for (const handler of subscribers) handler.onExit({ sessionId, exitCode: page.exitCode });
-          void jsonRequest("terminal_kill", { sessionId }).catch(() => {});
-        }
-      } catch (error) {
-        if (sessions.get(sessionId) !== session) return;
-        // Reads are replayable. Keep the cursor through network failures; a
-        // backend restart explicitly retires the now-missing PTY instead.
-        delay = Math.max(delay, 1000);
-        if (error instanceof ApiRequestError && error.status === 404) {
-          sessions.delete(sessionId);
-          output(sessionId, btoa("\r\n[Terminal session is no longer available]\r\n"));
-          for (const handler of subscribers) handler.onExit({ sessionId, exitCode: null });
-        }
-      }
-    }));
+    const page = await jsonRequest<OutputPage>("terminal_read", { sessionId, cursor: session.cursor }, {
+      signal: request.signal, timeoutMs: 4000,
+    });
+    if (!isCurrent()) return;
+    if (!Array.isArray(page.chunks) || !page.chunks.every(chunk => typeof chunk === "string") ||
+        !Number.isSafeInteger(page.cursor) || page.cursor < session.cursor) {
+      throw new Error("Invalid terminal output page");
+    }
+    if (page.truncated) output(sessionId, btoa("\r\n[Earlier terminal output was truncated]\r\n"));
+    for (const chunk of page.chunks) output(sessionId, chunk);
+    session.cursor = page.cursor;
+    if (page.more) delay = 0;
+    if (page.exited) {
+      sessions.delete(sessionId);
+      for (const handler of subscribers) handler.onExit({ sessionId, exitCode: page.exitCode });
+      void jsonRequest("terminal_kill", { sessionId }).catch(() => {});
+    }
+  } catch (error) {
+    if (!isCurrent()) return;
+    // Keep this session's cursor across transient failures. Its retry delay
+    // never holds up other sessions' reads.
+    delay = 1000;
+    if (error instanceof ApiRequestError && error.status === 404) {
+      sessions.delete(sessionId);
+      output(sessionId, btoa("\r\n[Terminal session is no longer available]\r\n"));
+      for (const handler of subscribers) handler.onExit({ sessionId, exitCode: null });
+    }
   } finally {
-    polling = false;
-    schedule(delay);
+    session.request = undefined;
+    schedule(sessionId, session, delay);
   }
 }
 
@@ -82,13 +93,12 @@ function closeOnPageHide() {
 export function subscribeWebTerminalEvents(handlers: Handlers): () => void {
   if (subscribers.size === 0 && typeof window !== "undefined") window.addEventListener("pagehide", closeOnPageHide);
   subscribers.add(handlers);
-  schedule();
+  for (const [sessionId, session] of sessions) schedule(sessionId, session);
   return () => {
     subscribers.delete(handlers);
     if (!subscribers.size) {
       if (typeof window !== "undefined") window.removeEventListener("pagehide", closeOnPageHide);
-      if (timer !== null) clearTimeout(timer);
-      timer = null;
+      for (const session of sessions.values()) stopReading(session);
     }
   };
 }
@@ -96,14 +106,17 @@ export function subscribeWebTerminalEvents(handlers: Handlers): () => void {
 export async function createWebTerminal(workspacePath: string, cols?: number, rows?: number): Promise<TerminalSessionInfo> {
   const info = await jsonRequest<TerminalSessionInfo>("terminal_create", { workspacePath, cols, rows });
   if (!info?.sessionId || typeof info.sessionId !== "string") throw new Error("Invalid terminal session");
-  sessions.set(info.sessionId, { cursor: 0 });
+  const session: TerminalReader = { cursor: 0 };
+  sessions.set(info.sessionId, session);
   // A timer runs after create's caller has registered its session-to-view map.
-  schedule(0);
+  schedule(info.sessionId, session, 0);
   return info;
 }
 
 export async function killWebTerminal(sessionId: string): Promise<void> {
+  const session = sessions.get(sessionId);
   sessions.delete(sessionId);
+  if (session) stopReading(session);
   await jsonRequest("terminal_kill", { sessionId });
 }
 

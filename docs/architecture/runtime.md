@@ -606,8 +606,9 @@ caller's Run lifecycle lock, not deferred work that can outlive Run deletion;
 this optimization does not move completion, feedback or cleanup boundaries.
 
 The visible conversation revalidates during live work and on durable snapshot
-changes with bounded, non-overlapping reads; scope changes cancel old readers and
-failed reads retain the last display projection rather than implying no changes.
+changes with bounded, non-overlapping reads. Scope changes cancel old readers.
+Failed reads retain the last display projection and back off up to 32 seconds.
+Reopening the Changes panel bypasses the retry delay for the next read.
 The main view follows actual running executions/Mergers even when the Run phase
 stays `completed` for a standalone Merger or is `followup` for source-direct work;
 it suspends timer reads once those writers settle. The sidebar card uses the same

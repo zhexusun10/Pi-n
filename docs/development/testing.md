@@ -27,6 +27,8 @@ Pick only the row(s) matching your change — these are alternatives, not a chec
 
 Omit `--test-name-pattern` to run a single file. A filter matching zero cases is not validation. Rebuild the Rust test target after editing `launch-binding.mjs` or `path-identity.mjs` (embedded into [batch_workspace_tests.rs](../../backend/src/batch_workspace_tests.rs) via `include_str!`).
 
+Frontend-only TypeScript tests can run from a checkout without the Pi submodule. Tests that import Pi packages through `node-ts.mjs` still use the pinned submodule's source aliases.
+
 ## Test and script organization
 
 [package.json](../../package.json) exposes stable `test:*` scripts; [test-suites.mjs](../../scripts/test-suites.mjs) owns their explicit file lists and command order; [test.mjs](../../scripts/test.mjs) runs them without a shell (preserving caller env like `CARGO_TARGET_DIR`) and stops at the first failure. There is deliberately no default/all suite.

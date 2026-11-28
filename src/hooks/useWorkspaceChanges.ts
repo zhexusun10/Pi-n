@@ -33,6 +33,7 @@ export interface WorkspaceChangesViewModel {
 }
 
 const REFRESH_INTERVAL_MS = 2_000;
+const MAX_RETRY_INTERVAL_MS = 32_000;
 const FILE_CHANGES_PAGE_SIZE = 60;
 const MAX_BACKEND_PAGE_LIMIT = 500;
 
@@ -206,6 +207,7 @@ export function useWorkspaceChanges({
     if (emptyScope) return;
     const abort = new AbortController();
     let nextReadAt = 0;
+    let retryInterval = REFRESH_INTERVAL_MS;
     const load = async (): Promise<number | null> => {
       if (loadMoreAbortRef.current) return REFRESH_INTERVAL_MS;
       const forced = forceRefreshRef.current;
@@ -223,14 +225,17 @@ export function useWorkspaceChanges({
         // A user-requested expansion supersedes any poll that read the old prefix.
         if (startPageGeneration !== pageGenerationRef.current) return REFRESH_INTERVAL_MS;
         publishSummary(loaded);
+        retryInterval = REFRESH_INTERVAL_MS;
         nextReadAt = Date.now() + REFRESH_INTERVAL_MS;
         return isWorking ? REFRESH_INTERVAL_MS : Infinity;
       } catch {
         if (abort.signal.aborted) return null;
-        // A failed read is not an authoritative empty change list. Retain the
-        // last projection and retry, including after a terminal snapshot.
-        nextReadAt = Date.now() + REFRESH_INTERVAL_MS;
-        return REFRESH_INTERVAL_MS;
+        // Keep the last projection. Back off repeated failures while still
+        // retrying a failed initial load or the read after a Run settles.
+        const delay = retryInterval;
+        retryInterval = Math.min(delay * 2, MAX_RETRY_INTERVAL_MS);
+        nextReadAt = Date.now() + delay;
+        return delay;
       }
     };
     const polling = startVisibilityPolling(load);

@@ -10,6 +10,7 @@ Before building locally, install prerequisites for your host OS (Node.js 22.19+,
   ```sh
   npm run desktop:dev
   ```
+  Relative `CARGO_TARGET_DIR` values in the shell environment or `.env` resolve from the checkout root for both Cargo and the desktop shell.
 - **Regenerate Tauri desktop icons from `assets/icon-dots.svg`:**
   ```sh
   npm run desktop:icons

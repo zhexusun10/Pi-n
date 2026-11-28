@@ -346,7 +346,7 @@ for (const mode of ["serial", "graph"]) {
   });
 
   test(`${mode}: an image steer retains its preview, avoids disk upload and duplicate attachment cards, stays ordered on re-entry, and opens preview modal`, { timeout: 30_000 }, async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1.5, reducedMotion: "reduce" });
     await context.addInitScript(() => localStorage.setItem("pi_n_language_v1", "en"));
     let uploadedToDisk = 0;
     await context.route("**/api/*", route => {
@@ -360,7 +360,17 @@ for (const mode of ["serial", "graph"]) {
     try {
       await page.goto(`${origin}/__steer?mode=${mode}`);
       await page.getByText("OUTPUT BEFORE STEER", { exact: true }).waitFor();
-      await page.locator('input[type="file"]').first().setInputFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64") });
+      const [width, height] = mode === "serial" ? [640, 360] : [360, 640];
+      const png = await page.evaluate(([w, h]) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#376ec9";
+        ctx.fillRect(0, 0, w, h);
+        return canvas.toDataURL().split(",")[1];
+      }, [width, height]);
+      await page.locator('input[type="file"]').first().setInputFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
       const input = page.locator(".pane-bottom-chat textarea").first();
       await input.fill("inspect image");
       await input.press("Enter");
@@ -401,8 +411,19 @@ for (const mode of ["serial", "graph"]) {
       assert.equal(await bubble.locator(".. >> .chat-bubble-file-badge").count(), 0);
       assert.equal(await inOrder(), true, "re-entering must keep the image steer in chronological order");
 
-      // Clicking the image opens the preview dialog and Escape closes it.
-      await bubble.locator(".. >> button.chat-user-image-thumb").click();
+      // Scaled landscape and portrait images keep their proportions and stay still on hover.
+      const thumbnail = bubble.locator(".. >> button.chat-user-image-thumb");
+      const image = thumbnail.locator("img");
+      await image.evaluate(el => el.decode());
+      await thumbnail.scrollIntoViewIfNeeded();
+      const bounds = await image.boundingBox();
+      assert.ok(bounds && bounds.width <= 160 && bounds.height <= 96);
+      assert.ok(Math.abs(bounds.width / bounds.height - width / height) < 0.02);
+      await thumbnail.hover();
+      await thumbnail.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)));
+      assert.deepEqual(await image.boundingBox(), bounds);
+
+      await thumbnail.click();
       const dialog = page.locator('[role="dialog"][aria-label="Image preview"]');
       await dialog.waitFor();
       assert.equal(await dialog.locator("img.image-preview-full-img").count(), 1);

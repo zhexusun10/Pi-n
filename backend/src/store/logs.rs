@@ -135,19 +135,25 @@ pub(super) fn apply_output(state: &mut Snapshot, id: &str, text: &str, bytes: us
     metrics_changed
 }
 
+fn execution_log_end(db: &Connection, run: &str, id: &str) -> Result<usize, String> {
+    // Append-only chunks have increasing offsets. The primary key lets SQLite
+    // seek to the last chunk instead of scanning the log for MAX(offset+bytes).
+    let last = db.query_row(
+        "SELECT offset,bytes FROM execution_logs WHERE execution_id=?1 AND run_id=?2 ORDER BY offset DESC LIMIT 1",
+        params![id, run], |row| Ok((row.get::<_, usize>(0)?, row.get::<_, usize>(1)?)),
+    ).optional().map_err(|error| error.to_string())?;
+    let Some((offset, bytes)) = last else {
+        return Ok(0);
+    };
+    offset
+        .checked_add(bytes)
+        .filter(|end| i64::try_from(*end).is_ok())
+        .ok_or_else(|| "Corrupt execution log byte range".into())
+}
+
 impl Store {
     pub fn log_bytes(&self, run: &str, id: &str) -> Result<usize, String> {
-        let last = self.connection.query_row(
-            "SELECT offset,bytes FROM execution_logs WHERE execution_id=?1 AND run_id=?2 ORDER BY offset DESC LIMIT 1",
-            params![id, run], |row| Ok((row.get::<_, usize>(0)?, row.get::<_, usize>(1)?)),
-        ).optional().map_err(|error| error.to_string())?;
-        let Some((offset, bytes)) = last else {
-            return Ok(0);
-        };
-        offset
-            .checked_add(bytes)
-            .filter(|end| i64::try_from(*end).is_ok())
-            .ok_or_else(|| "Corrupt execution log byte range".into())
+        execution_log_end(&self.connection, run, id)
     }
 
     pub(super) fn all_log_bytes(&self, run: &str) -> Result<HashMap<String, usize>, String> {
@@ -248,13 +254,7 @@ impl Store {
             .connection
             .unchecked_transaction()
             .map_err(|e| e.to_string())?;
-        let total: usize = tx
-            .query_row(
-                "SELECT COALESCE(MAX(offset + bytes), 0) FROM execution_logs WHERE execution_id=?1 AND run_id=?2",
-                params![id, run],
-                |row| row.get::<_, usize>(0),
-            )
-            .map_err(|e| e.to_string())?;
+        let total = execution_log_end(&tx, run, id)?;
         if offset > total {
             return Err("Invalid output offset".into());
         }
@@ -336,13 +336,7 @@ impl Store {
             .connection
             .unchecked_transaction()
             .map_err(|e| e.to_string())?;
-        let total: usize = tx
-            .query_row(
-                "SELECT COALESCE(MAX(offset + bytes), 0) FROM execution_logs WHERE execution_id=?1 AND run_id=?2",
-                params![id, run],
-                |row| row.get::<_, usize>(0),
-            )
-            .map_err(|e| e.to_string())?;
+        let total = execution_log_end(&tx, run, id)?;
         let end = before.min(total);
         if end == 0 {
             return Ok(LogPage {

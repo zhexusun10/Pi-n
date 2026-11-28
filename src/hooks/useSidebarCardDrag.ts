@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { useStableCallback } from "./useStableCallback";
 
-const DRAG_THRESHOLD_PX = 5;
+const DRAG_HOLD_MS = 1_000;
+const HOLD_MOVE_TOLERANCE_PX = 5;
 const AUTO_SCROLL_EDGE_PX = 26;
 const AUTO_SCROLL_MAX_STEP_PX = 8;
 const DROP_SETTLE_MS = 140;
@@ -119,10 +120,13 @@ export function useSidebarCardDrag({
     cleanupRef.current = null;
 
     const pointerId = event.pointerId;
-    const startClientX = event.clientX;
-    const startClientY = event.clientY;
-    const startScrollTop = list.scrollTop;
-    let lastClientY = startClientY;
+    const originCard = event.currentTarget;
+    const pressClientX = event.clientX;
+    const pressClientY = event.clientY;
+    let startClientY = pressClientY;
+    let startScrollTop = list.scrollTop;
+    let lastClientY = pressClientY;
+    let holdTimer: number | undefined;
     let active = false;
     let cards: CardSnapshot[] = [];
     let targetIndex = originIndex;
@@ -208,9 +212,10 @@ export function useSidebarCardDrag({
     };
 
     const activate = () => {
-      const view = list.querySelector<HTMLElement>(viewSelector) ?? list;
+      if (listRef.current !== list || !list.contains(originCard) || originCard.disabled || originCard.closest("[inert]")) return false;
+      const view = originCard.closest<HTMLElement>(viewSelector) ?? list;
       const elements = Array.from(view.querySelectorAll<HTMLButtonElement>(cardSelector));
-      if (originIndex < 0 || originIndex >= elements.length) return false;
+      if (elements[originIndex] !== originCard) return false;
       if (bounds.maxIndex >= elements.length || bounds.minIndex < 0) return false;
 
       settleAnimRef.current?.cancel();
@@ -237,6 +242,8 @@ export function useSidebarCardDrag({
         return { ...item, pitch };
       });
 
+      startClientY = lastClientY;
+      startScrollTop = list.scrollTop;
       active = true;
       prevBodyCursor = document.body.style.cursor;
       document.body.style.cursor = "grabbing";
@@ -248,6 +255,7 @@ export function useSidebarCardDrag({
     };
 
     const finish = (commit: boolean) => {
+      window.clearTimeout(holdTimer);
       if (autoScrollRaf !== 0) {
         window.cancelAnimationFrame(autoScrollRaf);
         autoScrollRaf = 0;
@@ -255,7 +263,8 @@ export function useSidebarCardDrag({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerCancel);
-      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("blur", cancelCleanup);
+      window.removeEventListener("contextmenu", cancelCleanup, true);
       window.removeEventListener("keydown", onKeyDown, true);
       if (cleanupRef.current === cancelCleanup) cleanupRef.current = null;
 
@@ -303,12 +312,9 @@ export function useSidebarCardDrag({
       if (moveEvent.pointerId !== pointerId) return;
       lastClientY = moveEvent.clientY;
       if (!active) {
-        const dist = Math.hypot(moveEvent.clientX - startClientX, moveEvent.clientY - startClientY);
-        if (dist < DRAG_THRESHOLD_PX) return;
-        if (!activate()) {
-          finish(false);
-          return;
-        }
+        const distance = Math.hypot(moveEvent.clientX - pressClientX, moveEvent.clientY - pressClientY);
+        if (distance > HOLD_MOVE_TOLERANCE_PX) finish(false);
+        return;
       }
       moveEvent.preventDefault();
       applyPositions();
@@ -331,13 +337,10 @@ export function useSidebarCardDrag({
 
     const onKeyDown = (keyEvent: KeyboardEvent) => {
       if (keyEvent.key !== "Escape") return;
-      if (!active) return;
-      keyEvent.preventDefault();
-      keyEvent.stopPropagation();
-      finish(false);
-    };
-
-    const onWindowBlur = () => {
+      if (active) {
+        keyEvent.preventDefault();
+        keyEvent.stopPropagation();
+      }
       finish(false);
     };
 
@@ -347,8 +350,12 @@ export function useSidebarCardDrag({
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerCancel);
-    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("blur", cancelCleanup);
+    window.addEventListener("contextmenu", cancelCleanup, true);
     window.addEventListener("keydown", onKeyDown, true);
+    holdTimer = window.setTimeout(() => {
+      if (!activate()) finish(false);
+    }, DRAG_HOLD_MS);
   }, [armClickSuppression, cardSelector, listRef, reduceMotion, stableOnCommit, stableOnDragStart, viewSelector]);
 
   return {

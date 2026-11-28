@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resetApiBaseForTest } from '../src/services/apiBase.ts';
 import { resizeDesktopTerminal, writeDesktopTerminal } from '../src/services/desktopTerminal.ts';
+import { createWebTerminal, killWebTerminal, subscribeWebTerminalEvents } from '../src/services/webTerminal.ts';
 
-function stubTransport(mode: 'desktop' | 'browser', call: (command: string, args: Record<string, unknown>) => Promise<void>) {
+function stubTransport(mode: 'desktop' | 'browser', call: (command: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>) {
   const host = globalThis as typeof globalThis & { __TAURI_INTERNALS__?: { invoke: typeof invoke } };
   const originalTauri = host.__TAURI_INTERNALS__;
   const originalFetch = globalThis.fetch;
@@ -11,8 +12,8 @@ function stubTransport(mode: 'desktop' | 'browser', call: (command: string, args
   if (mode === 'desktop') host.__TAURI_INTERNALS__ = { invoke };
   else delete host.__TAURI_INTERNALS__;
   globalThis.fetch = async (input, init) => {
-    await call(String(input).split('/').at(-1)!, JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify({ result: null }));
+    const result = await call(String(input).split('/').at(-1)!, JSON.parse(String(init?.body)), init?.signal ?? undefined);
+    return new Response(JSON.stringify({ result: result ?? null }));
   };
   resetApiBaseForTest();
   return () => {
@@ -21,6 +22,41 @@ function stubTransport(mode: 'desktop' | 'browser', call: (command: string, args
     resetApiBaseForTest();
   };
 }
+
+test('a stalled browser terminal read does not delay another terminal, and close cancels it', async () => {
+  const firstRead = Promise.withResolvers<AbortSignal | undefined>();
+  const releaseRead = Promise.withResolvers<void>();
+  const secondOutput = Promise.withResolvers<string>();
+  const restore = stubTransport('browser', async (command, args, signal) => {
+    if (command === 'terminal_create') return { sessionId: args.workspacePath, shell: 'sh', cwd: args.workspacePath };
+    if (command !== 'terminal_read') return;
+    if (args.sessionId === 'stalled') {
+      firstRead.resolve(signal);
+      await releaseRead.promise;
+    }
+    return { chunks: [btoa('ready')], cursor: 1, exited: false, more: false };
+  });
+  const deadline = Promise.withResolvers<never>();
+  const timeout = setTimeout(() => deadline.reject(new Error('The terminals did not complete the expected reads')), 2_000);
+  const stop = subscribeWebTerminalEvents({
+    onOutput: event => { if (event.sessionId === 'responsive') secondOutput.resolve(atob(event.data)); },
+    onExit: () => {},
+  });
+  try {
+    await createWebTerminal('stalled');
+    const signal = await Promise.race([firstRead.promise, deadline.promise]);
+    await createWebTerminal('responsive');
+    assert.equal(await Promise.race([secondOutput.promise, deadline.promise]), 'ready');
+    await killWebTerminal('stalled');
+    assert.ok(signal?.aborted, 'closing the stalled terminal must abort its read');
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    releaseRead.resolve();
+    await Promise.all(['stalled', 'responsive'].map(killWebTerminal));
+    restore();
+  }
+});
 
 for (const mode of ['desktop', 'browser'] as const) {
   test(`${mode} terminal resizes finish in order without blocking another session`, async () => {

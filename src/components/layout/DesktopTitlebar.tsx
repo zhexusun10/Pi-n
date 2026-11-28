@@ -236,7 +236,7 @@ export function DesktopTitlebar({
             title={t("最小化")}
             onClick={onMinimize}
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
               <path d="M1 5h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
             </svg>
           </button>
@@ -249,12 +249,12 @@ export function DesktopTitlebar({
             onClick={onToggleMaximize}
           >
             {isMaximized ? (
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
                 <path d="M3 1.5h5.5V7" stroke="currentColor" strokeWidth="1" />
                 <rect x="1.5" y="3" width="5.5" height="5.5" stroke="currentColor" strokeWidth="1" />
               </svg>
             ) : (
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
                 <rect x="1.5" y="1.5" width="7" height="7" stroke="currentColor" strokeWidth="1" />
               </svg>
             )}
@@ -267,7 +267,7 @@ export function DesktopTitlebar({
             title={t("关闭窗口")}
             onClick={onClose}
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
               <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
             </svg>
           </button>

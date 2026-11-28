@@ -81,7 +81,7 @@ after(async () => {
   await server?.close();
 });
 
-async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedMotion = "reduce", earlyExit = false, createDelay = 0, earlyCursorQuery = false, ptyBackend } = {}) {
+async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedMotion = "reduce", earlyExit = false, createDelay = 0, earlyCursorQuery = false, failExitListener = false, ptyBackend } = {}) {
   const hostPtyBackend = ptyBackend ?? (platform === "windows" ? "conpty" : "unix");
   const context = await browser.newContext({
     viewport: { width: 1280, height: 840 },
@@ -93,7 +93,7 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
     ? { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", uaPlatform: "Windows", shell: "pwsh" }
     : { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)", uaPlatform: "macOS", shell: "zsh" };
 
-  await context.addInitScript(({ tauriMode, platformConfig, repoA, repoB, origin, earlyExit, createDelay, earlyCursorQuery, ptyBackend }) => {
+  await context.addInitScript(({ tauriMode, platformConfig, repoA, repoB, origin, earlyExit, createDelay, earlyCursorQuery, failExitListener, ptyBackend }) => {
     Object.defineProperty(navigator, "platform", { value: platformConfig.platform, configurable: true });
     Object.defineProperty(navigator, "userAgent", { value: platformConfig.userAgent, configurable: true });
     Object.defineProperty(navigator, "userAgentData", {
@@ -117,6 +117,7 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
 
     window.__terminalTest = {
       calls: terminalCalls,
+      listenerCount: eventName => eventListeners.get(eventName)?.length ?? 0,
       emit(eventName, payload) {
         const ids = eventListeners.get(eventName) || [];
         for (const id of ids) {
@@ -127,6 +128,7 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
     };
 
     window.isTauri = true;
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     window.__TAURI_INTERNALS__ = {
       metadata: {
         currentWindow: { label: "main" },
@@ -152,6 +154,10 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
         if (cmd === "plugin:window|is_maximized") return false;
         if (cmd === "plugin:window|show") return null;
         if (cmd === "plugin:event|listen") {
+          if (failExitListener && args.event === "pi-n://terminal-exit") {
+            failExitListener = false;
+            throw new Error("Terminal exit listener unavailable");
+          }
           const list = eventListeners.get(args.event) || [];
           list.push(args.handler);
           eventListeners.set(args.event, list);
@@ -199,7 +205,7 @@ async function setupDesktopPage({ platform = "macos", tauriMode = true, reducedM
         return null;
       },
     };
-  }, { tauriMode, platformConfig, repoA, repoB, origin, earlyExit, createDelay, earlyCursorQuery, ptyBackend: hostPtyBackend });
+  }, { tauriMode, platformConfig, repoA, repoB, origin, earlyExit, createDelay, earlyCursorQuery, failExitListener, ptyBackend: hostPtyBackend });
 
   let currentRepo = repoA;
   const snapshotsById = { [runA1.runId]: runA1, [runA2.runId]: runA2 };
@@ -350,6 +356,20 @@ test("browser terminal uses HTTP for creation, output, input, resize and close",
   } finally {
     await context.close();
   }
+});
+
+test("desktop terminal recovers when registering an exit listener fails", { timeout: 15_000 }, async () => {
+  const { context, page, pageErrors } = await setupDesktopPage({ platform: "windows", failExitListener: true });
+  try {
+    await page.getByTestId("composer-terminal-toggle").click();
+    await page.locator(".workspace-terminal-error").waitFor({ timeout: 3_000 });
+    await page.waitForFunction(() => window.__terminalTest.listenerCount("pi-n://terminal-output") === 0);
+    assert.equal(await page.evaluate(() => window.__terminalTest.calls.length), 0);
+    await page.getByRole("button", { name: "Restart terminal", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".workspace-terminal-xterm")?.textContent.includes("welcome:"));
+    assert.equal(await page.evaluate(() => window.__terminalTest.listenerCount("pi-n://terminal-output")), 1);
+    assert.deepEqual(pageErrors, []);
+  } finally { await context.close(); }
 });
 
 test("startup output and exit arriving before create reply remain visible", async () => {

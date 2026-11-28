@@ -358,7 +358,7 @@ const WorkspaceTerminalItem: React.FC<WorkspaceTerminalItemProps> = React.memo(
                       : t("已退出")}
                   </span>
                 )}
-                {entry.status === "exited" && (
+                {(entry.status === "exited" || entry.status === "error") && (
                   <button
                     type="button"
                     className="workspace-terminal-restart-btn"

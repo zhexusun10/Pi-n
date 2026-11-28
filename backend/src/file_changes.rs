@@ -1692,19 +1692,20 @@ fn compute_git_changes_inner(
     ))
 }
 
-pub fn merge_summaries(summaries: &[FileChangeSummary], is_running: bool) -> FileChangeSummary {
+pub(crate) fn merge_summaries(
+    summaries: impl IntoIterator<Item = FileChangeSummary>,
+    is_running: bool,
+) -> FileChangeSummary {
     let mut map: BTreeMap<String, FileChangeItem> = BTreeMap::new();
     let mut active_file_path = None;
     let mut any_running = is_running;
     for summary in summaries {
-        if summary.is_running {
-            any_running = true;
-        }
+        any_running |= summary.is_running;
         if summary.active_file_path.is_some() {
-            active_file_path = summary.active_file_path.clone();
+            active_file_path = summary.active_file_path;
         }
-        for item in &summary.files {
-            merge_file_item_into(&mut map, item.clone());
+        for item in summary.files {
+            merge_file_item_into(&mut map, item);
         }
     }
     FileChangeSummary::from_files(map.into_values().collect(), any_running, active_file_path)
@@ -1910,7 +1911,7 @@ pub fn update_from_log_text(
                 guard.live.insert(key.clone(), acc);
                 guard.log_changes.insert(key, summary);
             } else if let Some(existing) = guard.log_changes.get(&key).cloned() {
-                let merged = merge_summaries(&[existing, summary], is_running);
+                let merged = merge_summaries([existing, summary], is_running);
                 guard.log_changes.insert(key, merged);
             } else {
                 guard.log_changes.insert(key, summary);
@@ -2173,7 +2174,7 @@ pub fn get_cached_execution_changes(
     let is_running = execution.status == "running";
 
     let mut combined = match (log_part, git_part) {
-        (Some(l), Some(g)) => merge_summaries(&[l, g], is_running),
+        (Some(l), Some(g)) => merge_summaries([l, g], is_running),
         (Some(l), None) => l,
         (None, Some(g)) => g,
         (None, None) => return None,
@@ -2233,7 +2234,7 @@ pub fn get_cached_run_changes(state: &Snapshot) -> Option<FileChangeSummary> {
         .iter()
         .chain(state.mergers.iter())
         .any(|e| e.status == "running" && !state.superseded_execution_ids.contains(&e.id));
-    let merged = merge_summaries(&parts, any_running);
+    let merged = merge_summaries(parts, any_running);
     if !any_running {
         let mut settled = merged;
         settled.is_running = false;
@@ -2295,7 +2296,7 @@ fn merge_persisted_executions(
         // previous saved copy double-counts edits and retains removed paths.
         persisted
             .executions
-            .insert(execution_id, merge_summaries(&parts, false));
+            .insert(execution_id, merge_summaries(parts, false));
     }
     persisted
 }

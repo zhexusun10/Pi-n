@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -126,6 +126,31 @@ test('steps preserve arguments/environment/cwd and stop at the first failure', t
   assert.equal(code, 7);
   assert.deepEqual(JSON.parse(readFileSync(evidence, 'utf8')), { cwd, arg: argument, target: 'caller-owned target' });
   assert.equal(existsSync(sentinel), false);
+});
+
+test('the TypeScript runner needs Pi sources only for Pi imports', t => {
+  const cwd = fixture(t);
+  for (const file of ['node-ts.mjs', 'ts-resolver-enhanced.ts']) {
+    copyFileSync(join(root, 'scripts', file), join(cwd, 'scripts', file));
+  }
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ type: 'module' }));
+  writeFileSync(join(cwd, 'local.ts'), 'export const value: number = 42;');
+  const run = source => {
+    writeFileSync(join(cwd, 'entry.ts'), source);
+    return spawnSync(process.execPath, ['scripts/node-ts.mjs', 'entry.ts'], { cwd, encoding: 'utf8' });
+  };
+  const local = run('import { value } from "./local"; console.log(value);');
+  assert.equal(local.status, 0, local.stderr);
+  assert.equal(local.stdout.trim(), '42');
+
+  const piImport = 'import { value } from "@earendil-works/mock"; console.log(value);';
+  assert.notEqual(run(piImport).status, 0);
+  mkdirSync(join(cwd, 'pi'));
+  writeFileSync(join(cwd, 'pi', 'tsconfig.json'), JSON.stringify({ compilerOptions: { paths: { '@earendil-works/mock': ['./mock.ts'] } } }));
+  writeFileSync(join(cwd, 'pi', 'mock.ts'), 'export const value: number = 7;');
+  const resolved = run(piImport);
+  assert.equal(resolved.status, 0, resolved.stderr);
+  assert.equal(resolved.stdout.trim(), '7');
 });
 
 test('steps use the current Node without a shell and preserve spawn/signal failures', () => {
