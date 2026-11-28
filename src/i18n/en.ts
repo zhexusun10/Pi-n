@@ -117,6 +117,7 @@ export const en: Record<string, string> = {
   "正在读取扩展…": "Loading extensions…",
   "扩展指令加载失败，请重试。": "Could not load extension commands. Try again.",
   "刷新指令": "Refresh commands",
+  "配置网页搜索 API 密钥": "Configure a web search API key",
   "筛选选项": "Filter options",
   "没有匹配的选项": "No matching options",
   "已启用": "Enabled",

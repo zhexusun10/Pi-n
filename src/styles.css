@@ -2185,7 +2185,8 @@ h3 {
   width: 100%;
   background: var(--bg-canvas);
   border: 1px solid var(--border-default);
-  box-shadow: var(--shell-card-shadow);
+  --composer-shadow: var(--shell-card-shadow);
+  box-shadow: var(--composer-shadow);
   transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
@@ -2239,7 +2240,7 @@ h3 {
 .prompt-box-container:not(.disabled):not(.dragging-over):focus,
 .prompt-box-container:not(.disabled):not(.dragging-over):focus-within,
 .prompt-box-container:not(.disabled):not(.dragging-over):focus-visible {
-  box-shadow: 0 0 18px rgba(15, 23, 42, 0.06);
+  --composer-shadow: 0 0 18px rgba(15, 23, 42, 0.06);
 }
 
 .prompt-box-container button:focus:not(:focus-visible) {

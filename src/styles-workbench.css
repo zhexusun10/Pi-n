@@ -173,9 +173,9 @@
 .prompt-box-suggestion-item.active::before {
   content: "";
   position: absolute;
-  left: 4px;
+  left: 5px;
   top: 50%;
-  width: 3px;
+  width: 2px;
   height: 16px;
   border-radius: 999px;
   background: var(--composer-accent);

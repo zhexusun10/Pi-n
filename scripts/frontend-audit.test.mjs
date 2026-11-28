@@ -3813,10 +3813,12 @@ test("late workspace completions cannot replace current files/skills; controlled
     assert.ok(!(await page.locator(".prompt-box-suggestions-list").innerText()).includes("alpha"));
     await input.press("Escape");
     await waitFor(async () => (await page.locator(".prompt-box-suggestions-popover").count()) === 0);
+    await input.fill("");
     await input.fill("/nonexistent");
     await page.locator(".prompt-box-suggestions-empty").waitFor();
     await input.press("Escape");
     await waitFor(async () => (await page.locator(".prompt-box-suggestions-popover").count()) === 0);
+    await input.fill("");
     await input.fill("/");
     await page.locator(".suggestion-item-title-row", { hasText: "/skill:beta" }).waitFor();
     await page.locator(".suggestions-header-close-btn").click();

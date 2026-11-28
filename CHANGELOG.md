@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the slash menu closed as you continue typing after pressing Esc or clicking Close. A fresh slash can still open suggestions.
+- Suggest `/pi-better-web-search login` when the web search extension is loaded.
+- Use thinner keyboard selection indicators and match command popover shadows to the composer.
+
 ## [2.0.4] - 2026-11-28
 
 ### Fixed

@@ -29,6 +29,7 @@ const isCommandCatalog = (value: PiCommandCatalog | null | undefined): value is 
     typeof command?.name === 'string' && (command.description === undefined || typeof command.description === 'string'));
 const isDialog = (request: ExtensionUIRequest) => ["select", "confirm", "input", "editor"].includes(request.method ?? "");
 const AUTO_DISMISS_NOTICE_MS = 4000;
+const WEB_SEARCH_COMMAND = "pi-better-web-search";
 
 async function cancelDialogs(session: CommandSession, requests: ExtensionUIRequest[]) {
   if (session.standalone) {
@@ -84,6 +85,10 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
   const settingsIdentity = useRef(settingsKey);
   settingsIdentity.current = settingsKey;
   const argument = text.match(/^\/(model|thinking)\s+([^\n]*)$/);
+  const loginQuery = text.match(/^\/pi-better-web-search[^\S\n]+([^\n]*)$/)?.[1].trim();
+  const hasWebSearch = commands?.commands.some(command => command.name === WEB_SEARCH_COMMAND && command.source === "extension");
+  const completeWebSearchLogin = Boolean(hasWebSearch && loginQuery !== undefined
+    && loginQuery !== "login" && "login".startsWith(loginQuery.toLowerCase()));
   const model = catalog?.models.find(item => `${item.provider}/${item.id}` === settings.model);
   const levels = model?.thinkingLevels ?? [];
 
@@ -132,7 +137,7 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
     catalogRequest.current = { key, task };
     return task;
   }, [catalogKey, refreshRevision, runId, node, commandRepository]);
-  const commandTrigger = /^\/[^\s/]*$/.test(text) || /^\/(model|thinking)\s/.test(text);
+  const commandTrigger = /^\/[^\s/]*$/.test(text) || /^\/(model|thinking)\s/.test(text) || loginQuery !== undefined;
   useEffect(() => {
     if (!commandTrigger) return;
     void providerAuth.catalog().catch(() => {});
@@ -171,19 +176,24 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
       rankedModels.sort((a, b) => b.score - a.score);
       return rankedModels.map(({ model, full, score }) => ({ title: full, subtitle: model.name, value: `/model ${full}`, score }));
     }
+    const loginName = `${WEB_SEARCH_COMMAND} login`;
+    const loginSuggestion = (score: number) => ({
+      title: `/${loginName}`, subtitle: t("配置网页搜索 API 密钥"), value: `/${loginName}`, score,
+    });
+    if (completeWebSearchLogin) return [loginSuggestion(1)];
+
     const query = text.match(/^\/([^\s/]*)$/)?.[1].toLowerCase();
     if (query === undefined) return [];
     const matched = mergeCommands(commands?.commands ?? [])
       .filter(command => !modelNode || command.name !== "name")
-      .map(command => ({ command, score: scoreMatch(command.name, query) }))
-      .filter(item => item.score > 0);
-    if (query) {
-      matched.sort((a, b) => b.score - a.score || a.command.name.length - b.command.name.length);
-    }
-    return matched.map(({ command, score }) => ({
-      title: `/${command.name}`, subtitle: t(command.description ?? "Pi command"), value: `/${command.name} `, score,
-    }));
-  }, [text, catalog, commands, settings.model, settings.thinkingLevel, modelNode]);
+      .map(command => ({
+        title: `/${command.name}`, subtitle: t(command.description ?? "Pi command"),
+        value: `/${command.name} `, score: scoreMatch(command.name, query),
+      }));
+    if (hasWebSearch) matched.push(loginSuggestion(scoreMatch(loginName, query)));
+    if (query) matched.sort((a, b) => b.score - a.score || a.title.length - b.title.length);
+    return matched.filter(item => item.score > 0);
+  }, [text, catalog, commands, settings.model, settings.thinkingLevel, modelNode, hasWebSearch, completeWebSearchLogin]);
 
   const respond = async (id: string, response: Record<string, unknown>) => {
     const session = active.current;
@@ -382,7 +392,7 @@ export function useComposerCommands({ text, repository, runId, node, planMode, c
       if (active.current === session) { active.current = null; setUI([]); }
     }
   };
-  return { suggestions, argumentMode: !!argument, execute, ui: ui[0], respond, notice,
+  return { suggestions, argumentMode: !!argument || completeWebSearchLogin, execute, ui: ui[0], respond, notice,
     commandsLoading: commandCatalog.key === catalogKey && commandCatalog.loading,
     commandsError: commandCatalog.key === catalogKey ? commandCatalog.error : '',
     refreshCommands: () => setRefreshRevision(value => value + 1),

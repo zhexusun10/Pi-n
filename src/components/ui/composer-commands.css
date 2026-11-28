@@ -18,7 +18,8 @@
   position: absolute; bottom: calc(100% + 10px); left: 0; right: 0; z-index: 60;
   margin: 0; padding: 10px 12px 10px 14px; max-height: min(280px, 45vh);
   border: 1px solid var(--border-default, #e2e8f0); border-radius: 12px;
-  background: var(--bg-canvas, #fff); box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+  background: var(--bg-canvas, #fff); box-shadow: var(--composer-shadow);
+  transition: box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .prompt-command-popover-stack > .prompt-command-popover {
   position: static;
@@ -46,8 +47,8 @@
   filter: none;
 }
 .prompt-command-ui button:focus-visible {
-  outline: 2px solid var(--text-primary);
-  outline-offset: 1px;
+  outline: 1px solid var(--text-primary);
+  outline-offset: 0;
   position: relative;
   z-index: 1;
 }
@@ -62,7 +63,7 @@
   color: inherit;
 }
 .prompt-command-ui textarea:focus-visible, .prompt-command-ui input:focus-visible {
-  outline: 2px solid var(--text-primary);
+  outline: 1px solid var(--text-primary);
   outline-offset: 0;
 }
 .prompt-command-ui textarea { min-height: 64px; }

@@ -438,6 +438,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const mountedRef = useRef(true);
     const [attachmentError, setAttachmentError] = useState("");
     const [commandError, setCommandError] = useState("");
+    const [dismissedTrigger, setDismissedTrigger] = useState<{ mode: "@" | "/"; start: number; query?: string } | null>(null);
     useEffect(() => {
       mountedRef.current = true;
       return () => {
@@ -454,6 +455,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       setIsWithdrawing(false);
       setAttachmentError("");
       setCommandError("");
+      setDismissedTrigger(null);
       setIsPreparing(false);
       setIsSubmitting(false);
       setIsContinuing(false);
@@ -485,7 +487,6 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     const [workspaceSkills, setWorkspaceSkills] = useState<SkillItem[]>([]);
     const [cursorPos, setCursorPos] = useState<number>(0);
     const [activeIndex, setActiveIndex] = useState<number>(0);
-    const [dismissedTrigger, setDismissedTrigger] = useState<{ mode: "@" | "/"; start: number; query: string } | null>(null);
     const activeItemRef = useRef<HTMLDivElement | null>(null);
     const suggestionsListRef = useRef<HTMLDivElement | null>(null);
     // Arrow keys move the selection past the visible rows, so only they may
@@ -549,7 +550,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
     // Clear the visible input as soon as submission begins, without discarding
     // its rollback draft (or notifying the draft owner of acceptance) early.
     // Rejection reveals the exact draft again; identity changes invalidate it.
-    const currentText = isAwaitingAcceptance ? "" : (value !== undefined && onChange ? value : internalValue);
+    const draftText = value !== undefined && onChange ? value : internalValue;
+    const currentText = isAwaitingAcceptance ? "" : draftText;
     const hasText = currentText.trim().length > 0;
     const setCommandText = (text: string) => {
       setInternalValue(text);
@@ -593,18 +595,21 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       dismissedTrigger !== null &&
       dismissedTrigger.mode === triggerMode &&
       dismissedTrigger.start === triggerStart &&
-      dismissedTrigger.query === triggerQuery;
+      (dismissedTrigger.query === undefined || dismissedTrigger.query === triggerQuery);
     const showSuggestions = triggerMode !== null && !isDismissed && !disabled && !isBusy && !commandError && !commands.notice && !commands.ui;
 
-    // 当触发词模式、位置变动或查询内容变化时，重置 dismissedTrigger
+    const dismissSuggestions = () => {
+      if (triggerMode) setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerMode === "@" ? triggerQuery : undefined });
+    };
     useEffect(() => {
-      if (
-        dismissedTrigger !== null &&
-        (triggerMode !== dismissedTrigger.mode || triggerStart !== dismissedTrigger.start || triggerQuery !== dismissedTrigger.query)
-      ) {
-        setDismissedTrigger(null);
-      }
-    }, [triggerMode, triggerStart, triggerQuery, dismissedTrigger]);
+      if (!dismissedTrigger) return;
+      // Esc or the close button suppresses this slash even as its query changes.
+      // Blur and accepting a suggestion still dismiss only the exact query.
+      const keepDismissed = dismissedTrigger.query === undefined
+        ? draftText[dismissedTrigger.start] === "/"
+        : isDismissed;
+      if (!keepDismissed) setDismissedTrigger(null);
+    }, [draftText, dismissedTrigger, isDismissed]);
 
     // Failed metadata is retryable, not an empty completion catalog. Keep the
     // retry bounded and stop it when the menu closes or the scope changes.
@@ -772,12 +777,13 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       (item: SuggestionCandidate) => {
         if (!item || triggerStart === -1) return;
         const before = currentText.slice(0, triggerStart);
-        const after = currentText.slice(cursorPos);
+        const after = commands.argumentMode ? "" : currentText.slice(cursorPos);
         const nextText = `${before}${item.value}${after}`;
         const newCursor = before.length + item.value.length;
 
         animateSendArrowRef.current = true;
         setInternalValue(nextText);
+        setCursorPos(newCursor);
         if (onChange) {
           onChange({ target: { value: nextText } } as any);
         }
@@ -790,7 +796,6 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
           if (textarea) {
             textarea.focus();
             textarea.setSelectionRange(newCursor, newCursor);
-            setCursorPos(newCursor);
           }
         });
       },
@@ -1139,26 +1144,6 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
       animateSendArrowRef.current = true;
       setInternalValue(nextVal);
       setCursorPos(nextPos);
-      const textBefore = nextVal.slice(0, nextPos);
-      const nextAt = textBefore.match(/(?:^|\s)@([^\s@]*)$/);
-      const nextSlash = textBefore.match(/(?:^|\s)\/([^\s@/]*)$/);
-      const nextTriggerMode: "@" | "/" | null = nextAt && nextAt.index !== undefined
-        ? "@"
-        : nextSlash && nextSlash.index !== undefined
-        ? "/"
-        : null;
-      const nextTriggerStart = nextAt && nextAt.index !== undefined
-        ? nextAt.index + (nextAt[0].startsWith("@") ? 0 : 1)
-        : nextSlash && nextSlash.index !== undefined
-        ? nextSlash.index + (nextSlash[0].startsWith("/") ? 0 : 1)
-        : -1;
-      const nextTriggerQuery = nextAt ? nextAt[1] : nextSlash ? nextSlash[1] : "";
-      if (
-        dismissedTrigger !== null &&
-        (nextTriggerMode !== dismissedTrigger.mode || nextTriggerStart !== dismissedTrigger.start || nextTriggerQuery !== dismissedTrigger.query)
-      ) {
-        setDismissedTrigger(null);
-      }
       if (onChange) {
         onChange(e);
       }
@@ -1681,7 +1666,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
-          if (triggerMode) setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerQuery });
+          dismissSuggestions();
           return;
         }
         if (suggestions.length > 0) {
@@ -1823,7 +1808,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (triggerMode) setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerQuery });
+                      dismissSuggestions();
                     }}
                     aria-label={t("关闭 (Esc)")}
                   >
@@ -2046,7 +2031,7 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
             }}
             onBlur={(e) => {
               followInputEndRef.current = false;
-              if (triggerMode !== null) {
+              if (triggerMode !== null && !isDismissed) {
                 setDismissedTrigger({ mode: triggerMode, start: triggerStart, query: triggerQuery });
               }
               restProps.onBlur?.(e);

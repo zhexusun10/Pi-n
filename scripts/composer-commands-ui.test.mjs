@@ -272,6 +272,70 @@ test("composer model scope, slash completion, blocking and extension dialogs", a
   }
 });
 
+test("Esc keeps slash suggestions closed while typing until a fresh slash", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route("**/api/*", route => {
+      const command = route.request().url().split("/").at(-1);
+      const result = command === "list_files" ? { files: [] } : command === "list_skills" ? { skills: [] }
+        : command === "provider_auth" ? { providers: [], models: [] } : { instance: "host", commands: [] };
+      return route.fulfill({ json: { result } });
+    });
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__commands`);
+    const composer = page.locator("textarea").first();
+    const menu = page.locator(".prompt-box-suggestions-popover");
+    await composer.press("/");
+    await expect(menu).toBeVisible();
+    await composer.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await page.keyboard.type("project");
+    await expect(menu).toHaveCount(0);
+    await expect(composer).toHaveValue("/project");
+    await composer.press("Enter");
+    await expect(page.locator("output")).toContainText('"prompt":"/project"');
+    await expect(composer).toHaveValue("");
+    await composer.press("/");
+    await expect(menu).toBeVisible();
+    await composer.press("Escape");
+    await composer.press("Backspace");
+    await composer.press("/");
+    await expect(menu).toBeVisible();
+  } finally { await page.close(); }
+});
+
+test("web search login completes from a slash query or partial extension argument", async () => {
+  const page = await browser.newPage();
+  try {
+    const executed = [];
+    await page.route("**/api/*", route => {
+      const command = route.request().url().split("/").at(-1);
+      const body = route.request().postDataJSON();
+      let result = command === "list_files" ? { files: [] } : command === "list_skills" ? { skills: [] }
+        : command === "provider_auth" ? { providers: [], models: [] } : {};
+      if (command === "extension_command") {
+        if (body.operation === "catalog") result = { instance: "host", commands: [{ name: "pi-better-web-search", source: "extension" }] };
+        else if (body.operation === "execute") executed.push(body.text);
+        else if (body.operation === "poll") result = { status: "complete", events: [] };
+      }
+      return route.fulfill({ json: { result } });
+    });
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__commands`);
+    const composer = page.locator("textarea").first();
+    const login = "/pi-better-web-search login";
+    for (const query of ["/login", "/pi-better-web-search l"]) {
+      await composer.fill(query);
+      await expect(page.getByText(login, { exact: true })).toBeVisible();
+      await composer.press("Tab");
+      await expect(composer).toHaveValue(login);
+      await expect(page.locator(".prompt-box-suggestions-popover")).toHaveCount(0);
+      await composer.press("Enter");
+      await expect(composer).toHaveValue("");
+    }
+    assert.deepEqual(executed, [login, login]);
+    await expect(page.locator("output")).toContainText('"calls":[]');
+  } finally { await page.close(); }
+});
+
 test("standalone extension commands work before a conversation and follow the selected project", { timeout: 30_000 }, async () => {
   for (const suffix of ["", "?run=1"]) {
     const page = await browser.newPage();
@@ -393,6 +457,7 @@ test("extension catalogs show loading and retry, refresh selections and reject s
     await reads[1].fulfill({ json: { result: { instance: 'host', commands: [{ name: 'totally-custom-extension', description: 'User installed command', source: 'extension' }] } } });
     await expect(page.getByText('/totally-custom-extension', { exact: true })).toBeVisible();
     assert.equal(await page.getByText('/pi-better-web-search', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('/pi-better-web-search login', { exact: true }).count(), 0);
     assert.equal(await page.getByText('/mcp', { exact: true }).count(), 0, 'unloaded extensions get no synthetic entries');
     await page.getByRole('button', { name: '刷新指令', exact: true }).click();
     await expect.poll(() => reads.length).toBe(3);
