@@ -5706,6 +5706,7 @@ fn edit_planner(
     old_text: String,
     instruction: String,
     selected_version: Option<usize>,
+    message_timestamp: Option<u64>,
     service: &Arc<Service>,
 ) -> Result<Snapshot, String> {
     if service.planning.load(Ordering::SeqCst) {
@@ -5774,9 +5775,13 @@ fn edit_planner(
                 &session_id,
                 std::path::Path::new(&cwd),
                 old_text.trim(),
+                message_timestamp,
             )?)
         }
         None => {
+            if message_timestamp.is_some() {
+                return Err("The selected Planner user turn has no persisted Pi session".into());
+            }
             // A persisted conversation under an unexpected filename must
             // fail loudly rather than be silently replaced by a fresh one.
             let has_sessions = fs::read_dir(&session_dir).ok().is_some_and(|entries| {
@@ -5791,10 +5796,10 @@ fn edit_planner(
             None
         }
     };
-    let mut first_turn = old_text.trim() == state.graph.original_goal.trim();
-    if selected_version == Some(0) {
-        first_turn = true;
-    }
+    let first_turn = branch.as_ref().map_or_else(
+        || old_text.trim() == state.graph.original_goal.trim() || selected_version == Some(0),
+        |branch| branch.first_user_turn,
+    );
     if let Err(error) = runtime.emit(EventKind::PlannerConversationEdited {
         old_instruction: old_text.trim().into(),
         instruction: instruction.trim().into(),
@@ -6940,6 +6945,7 @@ pub fn dispatch(
                 argument(&body, "oldText")?,
                 argument(&body, "instruction")?,
                 argument(&body, "versionIndex").ok(),
+                argument(&body, "messageTimestamp")?,
                 service,
             )?),
             "edit_node" => Some(edit_node(
@@ -7179,6 +7185,7 @@ pub fn dispatch(
             argument(&body, "oldText")?,
             argument(&body, "instruction")?,
             argument(&body, "versionIndex").ok(),
+            argument(&body, "messageTimestamp")?,
             service,
         )?),
         "edit_node" => to_value(edit_node(

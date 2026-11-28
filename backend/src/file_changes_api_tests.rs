@@ -1172,7 +1172,7 @@ fn bash_only_run_lists_verified_changes_that_open_to_content_and_survive_a_commi
         let value = read_changes(|| {
             get_file_changes(&serde_json::json!({ "runId": run }), &service)
         });
-        value["summary"]["files"]
+        let mut rows = value["summary"]["files"]
             .as_array()
             .unwrap()
             .iter()
@@ -1184,7 +1184,9 @@ fn bash_only_run_lists_verified_changes_that_open_to_content_and_survive_a_commi
                     file["deletions"].as_u64().unwrap(),
                 )
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        rows.sort_unstable();
+        rows
     };
     let expected = vec![
         ("notes.md".to_string(), "added".to_string(), 1, 0),
@@ -1681,7 +1683,7 @@ fn file_changes_api_paginates_all_files_deterministically() {
                 "type": "tool_execution_start",
                 "toolCallId": format!("call-{i}"),
                 "toolName": "write",
-                "args": { "path": format!("src/file-{i:03}.ts"), "content": format!("line {i}\n") }
+                "args": { "path": format!("src/file-{i:03}.ts"), "content": "line\n".repeat(1 + i % 3) }
             }),
             serde_json::json!({
                 "type": "tool_execution_end",
@@ -1719,23 +1721,29 @@ fn file_changes_api_paginates_all_files_deterministically() {
             &service,
         )
     });
+    let full = read_changes(|| {
+        get_file_changes(&serde_json::json!({ "runId": run, "limit": 85 }), &service)
+    });
     assert_eq!(page1["summary"]["totalFiles"], 85);
     assert_eq!(page2["summary"]["totalFiles"], 85);
-    let p1: Vec<String> = page1["summary"]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["path"].as_str().unwrap().to_string())
-        .collect();
-    let p2: Vec<String> = page2["summary"]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["path"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(p1.len(), 60);
-    assert_eq!(p2.len(), 25);
-    let union: std::collections::BTreeSet<_> = p1.into_iter().chain(p2).collect();
-    assert_eq!(union.len(), 85);
+    assert_eq!(page1["orderVersion"], full["orderVersion"]);
+    assert_eq!(page2["orderVersion"], full["orderVersion"]);
+    let rows = full["summary"]["files"].as_array().unwrap();
+    assert_eq!(page1["summary"]["files"].as_array().unwrap(), &rows[..60]);
+    assert_eq!(page2["summary"]["files"].as_array().unwrap(), &rows[60..]);
+
+    crate::file_changes::update_from_log_text(
+        &run,
+        "exec-1",
+        "worker",
+        &source.to_string_lossy(),
+        &source.to_string_lossy(),
+        &log.replace("file-084.ts", "file-085.ts"),
+        false,
+        true,
+    );
+    let updated = read_changes(|| get_file_changes(&serde_json::json!({ "runId": run }), &service));
+    assert_eq!(updated["summary"]["totalFiles"], full["summary"]["totalFiles"]);
+    assert_ne!(updated["orderVersion"], full["orderVersion"]);
     crate::file_changes::invalidate_run(&run);
 }

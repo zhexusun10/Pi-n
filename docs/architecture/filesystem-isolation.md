@@ -173,11 +173,12 @@ A successful **Serial** turn stays resident. It **parks** its whole lifecycle
 boundary — the Pi process, its stdin/stdout channels and the tracked
 `ProcessTree` — in a backend-owned pool and re-keys it from the execution owner
 to `linger:<repository>:<session>`, instead of terminating it. The next turn of
-the same conversation **claims** a parked boundary with matching model and
-thinking settings and runs on the same process, so the conversation and any
-service it started (for example a dev server) stay alive. A dead or mismatched
-entry is retired and that turn cold-launches the persisted session instead;
-retirement stops the shell and any services it owns.
+the same conversation **claims** a healthy parked boundary from the current
+runtime resource generation. If the model or thinking selection changed, Pi^n
+switches it in place over RPC. The conversation and any service it started (for
+example a dev server) stay alive on successful reuse. A dead entry or a failed
+model switch falls back to cold-launching the persisted session. When retiring
+an agent, Pi^n transfers any surviving tracked services to the Run.
 
 A **Planner worker is never parked**: its launch binding is per planning attempt
 (`PI_N_GRAPH_PATH` is `graph-{planningId}.json`), so reusing a Planner could

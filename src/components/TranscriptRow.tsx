@@ -29,6 +29,10 @@ function mergeImageMetadata(
   return changed ? merged : primary;
 }
 
+export type EditTranscriptUser = (
+  text: string, replacement: string, userTurnOffset?: number, images?: ImageAttachment[], piMessageTimestamp?: number,
+) => boolean | void | Promise<unknown>;
+
 export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cardsTransition, showNotices = false, getChildExpanded, onExpandedChange, onChildResize, onChildExpandedChange, editing, draft,
   onDraftChange, onStartEdit, onCancelEdit, onEditUser, steerAttachments }: {
   item: TranscriptItem; expanded?: boolean;
@@ -40,7 +44,7 @@ export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cards
   onChildExpandedChange?: (child: TranscriptItem, expanded: boolean, card?: HTMLElement) => void;
   editing: boolean; draft: string; onDraftChange: (text: string) => void;
   onStartEdit: (id: string, text: string) => void; onCancelEdit: () => void;
-  onEditUser?: (text: string, replacement: string, userTurnOffset?: number, images?: ImageAttachment[]) => boolean | void | Promise<unknown>;
+  onEditUser?: EditTranscriptUser;
   steerAttachments?: { text?: string; images?: ImageAttachment[]; files?: FileAttachment[] };
 }) {
   const expand = useCallback((value: boolean, card?: HTMLElement) => onExpandedChange(item.id, value, card), [item.id, onExpandedChange]);
@@ -69,7 +73,7 @@ export const TranscriptRow = memo(function TranscriptRow({ item, expanded, cards
     editing={editing} draft={draft} onDraftChange={onDraftChange}
     onEdit={onEditUser ? () => onStartEdit(item.id, displayedText) : undefined}
     onCancel={onCancelEdit} onSend={onEditUser ? text => {
-      return Promise.resolve(onEditUser(item.content || "", text, item.userTurnOffset, resolvedImages)).then(accepted => {
+      return Promise.resolve(onEditUser(item.content || "", text, item.userTurnOffset, resolvedImages, item.piMessageTimestamp)).then(accepted => {
         if (accepted !== false) onCancelEdit();
         return accepted === false ? false : true;
       });

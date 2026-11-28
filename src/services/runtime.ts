@@ -378,6 +378,7 @@ export const runtimeService = {
       executionIds: string[] | null;
       offset?: number;
       limit?: number;
+      orderVersion?: string;
       summary: FileChangeSummary;
     }>(
       "get_file_changes", {
@@ -390,7 +391,8 @@ export const runtimeService = {
     const optionalStrings = (value: unknown) => value === undefined ||
       (Array.isArray(value) && value.every(item => typeof item === "string"));
     if (!result || result.runId !== runId || result.executionId !== expectedId ||
-      (!Array.isArray(execution) && result.executionIds !== null) || !result.summary ||
+      (!Array.isArray(execution) && result.executionIds !== null) ||
+      (result.orderVersion !== undefined && typeof result.orderVersion !== "string") || !result.summary ||
       !Array.isArray(result.summary.files) || result.summary.files.some(file =>
         !file || typeof file.path !== "string" || !["added", "modified", "deleted", "renamed"].includes(file.status) ||
         (file.oldPath !== undefined && typeof file.oldPath !== "string") ||
@@ -478,7 +480,7 @@ export const runtimeService = {
       signal,
     ),
   control: (action: string, extra?: Record<string, unknown>) => request<Snapshot>("control", { action, ...extra }),
-  editPlanner: (input: { runId: string; oldText: string; instruction: string; versionIndex?: number }) =>
+  editPlanner: (input: { runId: string; oldText: string; instruction: string; versionIndex?: number; messageTimestamp?: number }) =>
     request<Snapshot>("edit_planner", input),
   editNode: (input: { runId: string; node: string; executionId: string; oldText: string; instruction: string; images?: import("../types").ImageAttachment[]; versionIndex?: number; userTurnOffset?: number }) =>
     request<Snapshot>("edit_node", input),
@@ -643,18 +645,4 @@ export const runtimeService = {
       node: context?.node || undefined,
     });
   },
-  getResidentProcesses: (signal?: AbortSignal) =>
-    request<import("../types").ResidentProcessStatus>("get_resident_processes", {}, signal),
-  releaseResidentProcesses: (
-    options?: { runId?: string; scope?: import("../types").ResidentReleaseScope },
-    signal?: AbortSignal,
-  ) =>
-    request<import("../types").ResidentReleaseResult>(
-      "release_resident_processes",
-      {
-        ...(options?.runId ? { runId: options.runId } : {}),
-        ...(options?.scope ? { scope: options.scope } : {}),
-      },
-      signal,
-    ),
 };

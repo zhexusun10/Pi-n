@@ -368,7 +368,13 @@ pub fn branch_before_planner_user(
     session_id: &str,
     cwd: &Path,
     old_text: &str,
+    message_timestamp: Option<u64>,
 ) -> Result<PreparedBranch, String> {
+    let selector = message_timestamp.map(|timestamp| OutputUserTurn {
+        occurrence: None,
+        timestamp: Some(timestamp),
+        entry_id: None,
+    });
     prepare_user_branch(
         session_dir,
         session_id,
@@ -377,16 +383,15 @@ pub fn branch_before_planner_user(
         0,
         u64::MAX,
         true,
-        None,
+        selector.as_ref(),
     )?
     .commit()
 }
 
-/// The absolute execution-log cursor identifies a row even when its text is
-/// repeated or only a tail of the transcript is mounted in the browser.
+/// Identifies a durable user row independently of equal-text turns. Only an
+/// execution log with a known cursor can supply occurrence counts.
 pub struct OutputUserTurn {
-    occurrence: usize,
-    total_occurrences: usize,
+    occurrence: Option<(usize, usize)>,
     timestamp: Option<u64>,
     entry_id: Option<String>,
 }
@@ -466,8 +471,7 @@ pub fn output_user_turn(
         .enumerate()
         .find(|(_, (at, _, _))| *at == offset)
         .map(|(occurrence, (_, timestamp, entry_id))| OutputUserTurn {
-            occurrence,
-            total_occurrences,
+            occurrence: Some((occurrence, total_occurrences)),
             timestamp,
             entry_id,
         })
@@ -682,9 +686,12 @@ fn prepare_user_branch(
             candidate
         } else if by_time.len() == 1 {
             by_time[0]
-        } else if active.len() == selector.total_occurrences {
+        } else if let Some((index, _)) = selector
+            .occurrence
+            .filter(|(_, count)| active.len() == *count)
+        {
             *active
-                .get(selector.occurrence)
+                .get(index)
                 .ok_or("The selected user turn is no longer in the active Pi branch")?
         } else {
             return Err(
@@ -913,7 +920,7 @@ mod tests {
         assert!(rebind_session_cwd_by_header(&directory, &run, temp.path())
             .unwrap_err()
             .contains("another Run"));
-        assert!(branch_before_planner_user(&directory, &run, temp.path(), "goal")
+        assert!(branch_before_planner_user(&directory, &run, temp.path(), "goal", None)
             .err()
             .expect("foreign run header must be rejected")
             .contains("another Run"));
@@ -940,7 +947,8 @@ mod tests {
                 .collect::<String>(),
         )
         .unwrap();
-        let branch = branch_before_planner_user(temp.path(), &id, temp.path(), "inspect").unwrap();
+        let branch =
+            branch_before_planner_user(temp.path(), &id, temp.path(), "inspect", None).unwrap();
         assert!(!branch.first_user_turn);
         let marker: Value =
             serde_json::from_str(fs::read_to_string(path).unwrap().lines().last().unwrap())
@@ -1301,7 +1309,7 @@ mod tests {
             json!({"type":"message", "id":"next", "parentId":"root",
                 "message":{"role":"user", "content":"Current graph node status:\n- task: completed\n\nlater", "timestamp":2}}),
         ].iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
-        let branch = branch_before_planner_user(dir.path(), &id, dir.path(), "later").unwrap();
+        let branch = branch_before_planner_user(dir.path(), &id, dir.path(), "later", None).unwrap();
         let value: Value =
             serde_json::from_str(fs::read_to_string(&path).unwrap().lines().last().unwrap())
                 .unwrap();
@@ -1325,10 +1333,22 @@ mod tests {
             json!({"type":"message", "id":"active", "parentId":"edit",
                 "message":{"role":"user", "content":"go", "timestamp":9}}),
         ].iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
-        let branch = branch_before_planner_user(dir.path(), &id, dir.path(), "go").unwrap();
-        // The active equal-text turn is identified, not the abandoned one before it.
+        let branch = branch_before_planner_user(dir.path(), &id, dir.path(), "go", None).unwrap();
+        // The active equal-text turn is identified, and the abandoned one precedes it in the tree.
         assert_eq!(branch.selected_timestamp, Some(9));
         assert_eq!(branch.selected_occurrence, 1);
+        branch.rollback().unwrap();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{}", json!({"type":"message", "id":"again", "parentId":"active",
+            "message":{"role":"user", "content":"go", "timestamp":12}})).unwrap();
+        drop(file);
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(branch_before_planner_user(dir.path(), &id, dir.path(), "go", Some(5)).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        let branch = branch_before_planner_user(dir.path(), &id, dir.path(), "go", Some(12)).unwrap();
+        assert!(!branch.first_user_turn);
+        assert_eq!(branch.selected_timestamp, Some(12));
+        assert_eq!(branch.selected_occurrence, 2);
         branch.rollback().unwrap();
     }
 

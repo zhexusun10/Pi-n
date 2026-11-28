@@ -45,8 +45,7 @@ import { SessionTokenUsage } from "../SessionTokenUsage";
 import { formatTokenCount, formatCacheHitRate, consumedTokenCount, attemptSessionContext, sessionContext, sessionTokenUsage } from "../../utils/tokenUsage";
 import { ExecutionTranscript, ExecutionTranscriptPlaceholder } from "../ExecutionTranscript";
 import { settleInterruptedItems } from "../../services/transcriptSettle";
-import { activePlannerOutput } from "../PlanningActivity";
-import { plannerConversationEdits, plannerHistoryIds, reviewPlanningIds } from "../../lib/plannerOutput";
+import { activePlannerOutput, plannerConversationEdits, plannerHistoryIds, plannerOutputStartsAtActiveGoal, reviewPlanningIds } from "../../lib/plannerOutput";
 import { cachedPlanningOutput } from "../../services/transcriptCache";
 import { HISTORY_PREPEND_EVENT, TRANSCRIPT_CONTENT_GROWTH_EVENT, TRANSCRIPT_FINAL_OUTPUT_EVENT, TRANSCRIPT_SCROLL_ADJUSTED_EVENT, isNestedScrollGesture, notifyTranscriptContentGrowth } from "../../services/transcriptScroll";
 import { shouldDeferOlderExecutions, TRANSCRIPT_REVEAL_FALLBACK_MS } from "../../services/transcriptPaging";
@@ -1205,12 +1204,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   // A partial window that starts at a steer keeps the header out of history, so
   // skipping its first row would drop the user's message instead of a duplicate.
   const firstPersistedUserIsSteer = useMemo(() => firstPlannerUserIsSteer(activeSavedPlannerOutput), [activeSavedPlannerOutput]);
-  const historyStartsAtBeginning = useMemo(() => {
-    try {
-      const marker = JSON.parse(activeSavedPlannerOutput.split("\n", 1)[0]);
-      return marker.type === "pi_n_planning_source" && marker.planningId === savedPlannerIds[0] && marker.startOffset === 0;
-    } catch { return false; }
-  }, [activeSavedPlannerOutput, savedPlannerIds]);
+  const historyStartsAtBeginning = useMemo(
+    () => plannerOutputStartsAtActiveGoal(activeSavedPlannerOutput, savedPlannerIds[0], plannerEdits),
+    [activeSavedPlannerOutput, savedPlannerIds, plannerEdits],
+  );
   const skipFirstPersistedTurn = historyStartsAtBeginning && !firstPersistedUserIsSteer &&
     skipsFirstPersistedTurn(persistedTurnHistory, plannerMessages[0]?.text);
   const persistedUserTurns = useMemo(() => skipFirstPersistedTurn
@@ -3990,10 +3987,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
                           cardsCollapsed={effectiveCardsCollapsed}
                           cardsTransition={cardsTransition}
                           edits={plannerEdits}
-                          onEditUser={onEditMessageSubmit ? (text, replacement) =>
+                          onEditUser={onEditMessageSubmit ? (text, replacement, _offset, images, piMessageTimestamp) =>
                             onEditMessageSubmit({
-                              id: `planner-history-${text}`, role: "user", parentId: null,
-                              text, runId: state.runId
+                              id: `planner-history-${piMessageTimestamp ?? text}`, role: "user", parentId: null,
+                              text, images, piMessageTimestamp, runId: state.runId
                             }, replacement) : undefined}
                         />
                       </div>

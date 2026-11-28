@@ -330,6 +330,8 @@ export interface ChatMessage {
   executionId?: string;
   /** Absolute cursor in executionId's durable log, never a text-match index. */
   userTurnOffset?: number;
+  /** Identity of a user turn selected from the durable Planner transcript. */
+  piMessageTimestamp?: number;
   /** A durable turn that has not yet been claimed by an execution. */
   pendingExecution?: boolean;
   delivery?: "node_messaged" | "steered";
@@ -409,6 +411,7 @@ export interface TranscriptItem {
   compaction?: CompactionItemInfo;
   notice?: TranscriptNoticeInfo;
   userTurnOffset?: number;
+  piMessageTimestamp?: number;
   steerRequestId?: string;
   images?: ImageAttachment[];
   files?: FileAttachment[];
@@ -463,33 +466,5 @@ export interface TranscriptItem {
   thinkingCharCount?: number;
   /** Transient UI state while this card is hydrating its omitted body. */
   hydrating?: boolean;
-}
-
-export interface ParkedAgentStatus {
-  runId: string;
-  sessionId: string;
-  repository: string;
-  idleSecs: number;
-}
-
-export interface BackgroundServiceStatus {
-  runId: string;
-  count: number;
-}
-
-export interface ResidentProcessStatus {
-  resourceGeneration: number;
-  maxParkedAgents: number;
-  idleTtlSecs: number;
-  parkedAgents: ParkedAgentStatus[];
-  backgroundServices: BackgroundServiceStatus[];
-}
-
-export type ResidentReleaseScope = "agents" | "services" | "all";
-
-export interface ResidentReleaseResult {
-  releasedAgents: number;
-  releasedServices: number;
-  status: ResidentProcessStatus;
 }
 

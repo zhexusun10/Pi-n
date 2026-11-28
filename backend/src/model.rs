@@ -675,6 +675,29 @@ pub struct Execution {
 }
 
 impl Execution {
+    pub(crate) fn clone_without_output(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            node: self.node.clone(),
+            revision: self.revision,
+            attempt: self.attempt,
+            session_id: self.session_id.clone(),
+            worktree: self.worktree.clone(),
+            before: self.before.clone(),
+            workspace_lineage: self.workspace_lineage.clone(),
+            after: self.after.clone(),
+            input: self.input.clone(),
+            result: self.result.clone(),
+            status: self.status.clone(),
+            output: String::new(),
+            output_bytes: self.output_bytes.max(self.output.len()),
+            pid: self.pid,
+            started_at: self.started_at,
+            completed_at: self.completed_at,
+            metrics: self.metrics.clone(),
+        }
+    }
+
     fn settle_terminal(
         &mut self,
         status: &str,

@@ -163,7 +163,9 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
   }
 });
 
-test("remote backend pagination loads additional pages on demand", { timeout: 30_000 }, async () => {
+for (const scenario of ["stable", "changed", "legacy"]) test(
+  `remote file-change pagination with ${scenario} order metadata`,
+  { timeout: 30_000 }, async () => {
   const allFiles = Array.from({ length: 85 }, (_, i) => ({
     path: `src/page-${String(i).padStart(3, "0")}.ts`,
     status: "modified",
@@ -172,6 +174,7 @@ test("remote backend pagination loads additional pages on demand", { timeout: 30
     contentVersion: `v:${i}`,
   }));
   const seenOffsets = [];
+  let orderVersion = scenario === "legacy" ? undefined : "initial";
 
   const { page, context, errors } = await openFixture("serial&settled=1", {
     getFileChanges: (body) => {
@@ -184,6 +187,7 @@ test("remote backend pagination loads additional pages on demand", { timeout: 30
         executionIds: null,
         offset,
         limit,
+        orderVersion,
         summary: {
           files: allFiles.slice(offset, offset + limit),
           totalFiles: allFiles.length,
@@ -201,12 +205,28 @@ test("remote backend pagination loads additional pages on demand", { timeout: 30
 
   try {
     await page.getByTestId("workspace-changes-trigger").click();
-    await expect(page.getByTestId("changed-file-item")).toHaveCount(60);
+    const rows = page.getByTestId("changed-file-item");
+    await expect(rows).toHaveCount(60);
     await expect(page.getByTestId("workspace-changes-load-more")).toContainText("Load 25 more");
+    if (scenario === "changed") {
+      const removed = allFiles.shift();
+      allFiles.push({ ...removed, path: "src/page-new.ts" });
+      orderVersion = "updated";
+    }
     await page.getByTestId("workspace-changes-load-more").click();
-    await expect(page.getByTestId("changed-file-item")).toHaveCount(85);
+    await expect(rows).toHaveCount(85);
     await expect(page.getByTestId("workspace-changes-truncated")).toHaveCount(0);
-    assert.ok(seenOffsets.some(entry => entry.offset === 60 && entry.limit === 60));
+    if (scenario === "changed") {
+      await expect(rows.filter({ hasText: "page-000.ts" })).toHaveCount(0);
+      await expect(rows.filter({ hasText: "page-060.ts" })).toHaveCount(1);
+      await expect(rows.filter({ hasText: "page-new.ts" })).toHaveCount(1);
+    }
+    if (scenario !== "stable") {
+      assert.ok(seenOffsets.some(entry => entry.offset === 0 && entry.limit === 120));
+    }
+    if (scenario !== "legacy") {
+      assert.ok(seenOffsets.some(entry => entry.offset === 60 && entry.limit === 60));
+    }
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

@@ -20,14 +20,6 @@ export const PLANNER_TURN_EVENTS: ReadonlySet<string> = new Set([
   "created", "graph_revised", "planner_review_started", "planner_turn_aborted",
 ]);
 
-/**
- * Planning attempts whose durable output belongs to the Run conversation, in
- * conversation order. Committed turns arrive as `created`/`graph_revised`,
- * background reviews as `planner_review_started`, and aborted revision turns
- * (failed, stopped or interrupted before committing a graph) as
- * `planner_turn_aborted`. Recovery records an interrupted turn when the backend
- * restarts, after later turns, so order falls back to the attempt start time.
- */
 /** Post-task review attempts, in event order. A review continues the Planner
  * conversation but is a new section of it, so the saved transcript separates
  * its durable output from the turns that produced the published graph.
@@ -42,6 +34,8 @@ export function reviewPlanningIds(events: ReadonlyArray<PlannerEvent>): Set<stri
   return ids;
 }
 
+/** Recovery can record an interrupted attempt after later turns. Sort by its
+ * start time so history is replayed in conversation order. */
 export function plannerTurnIds(events: ReadonlyArray<PlannerEvent>): string[] {
   const turns: Array<{ id: string; createdAt: number; index: number }> = [];
   const seen = new Set<string>();
@@ -133,7 +127,7 @@ export function plannerConversationEdits(events: ReadonlyArray<PlannerEvent>): P
       item.type === "graph_revised" || item.type === "planner_workspace_selected"
       || item.type === "planner_review_started" || item.type === "planner_turn_aborted");
     let abandonedPlanningIds: string[] | undefined;
-    if (!event.first_turn && event.old_instruction) {
+    if (!event.first_turn && event.from_message_timestamp === undefined && event.old_instruction) {
       const target = event.old_instruction.trim();
       let startIndex = -1;
       for (let i = index - 1; i >= 0; i -= 1) {
@@ -209,12 +203,24 @@ function plannerUserRows(lines: readonly string[]): PlannerUserRow[] {
 
 /** Occurrence counts cover the whole log, so they only apply when the output
  * demonstrably starts at the conversation's first revision. */
-function startsAtConversationBeginning(lines: readonly string[], firstPlanningId?: string): boolean {
+function startsAtConversationBeginning(firstLine: string, firstPlanningId?: string): boolean {
   if (!firstPlanningId) return false;
   try {
-    const marker = JSON.parse(lines[0]);
+    const marker = JSON.parse(firstLine);
     return marker.type === "pi_n_planning_source" && marker.planningId === firstPlanningId && marker.startOffset === 0;
   } catch { return false; }
+}
+
+/** Only the active opening revision can supply the user row that duplicates
+ * the conversation header. A tail of that revision can start at a steer. */
+export function plannerOutputStartsAtActiveGoal(
+  output: string, firstPlanningId: string | undefined, edits: readonly PlannerEdit[],
+): boolean {
+  let activeId = firstPlanningId;
+  for (const edit of edits) {
+    if (edit.firstTurn) activeId = edit.nextPlanningId;
+  }
+  return startsAtConversationBeginning(output.split("\n", 1)[0], activeId);
 }
 
 export function activePlannerOutput(
@@ -227,72 +233,62 @@ export function activePlannerOutput(
   const removed = new Array<boolean>(lines.length).fill(false);
   const segments = plannerSourceSegments(lines);
   const rows = plannerUserRows(lines);
-  const complete = startsAtConversationBeginning(lines, options.firstPlanningId ?? options.planningIds?.[0]);
+  const complete = startsAtConversationBeginning(lines[0], options.firstPlanningId ?? options.planningIds?.[0]);
+  const positions = new Map(options.planningIds?.map((id, index) => [id, index]));
+  const end = lines.length - Number(lines.at(-1) === "");
   for (const edit of edits) {
     if (!edit.old_instruction && !edit.firstTurn) continue;
-    const old = edit.old_instruction ?? "";
-    const matches = (row: PlannerUserRow) => Boolean(old) && (row.text === old || row.text.endsWith(`\n${old}`));
-    const textual = rows.filter(matches);
-    // Identity first: the durable turn timestamp, then its tree position. Only
-    // when neither resolves (legacy events, or rows without a timestamp) does it
-    // fall back to the first equal-text active row.
-    const row = (edit.fromMessageTimestamp !== undefined
-        ? rows.find(item => item.timestamp === edit.fromMessageTimestamp) : undefined)
-      ?? (edit.fromOccurrence !== undefined && complete ? textual[edit.fromOccurrence] : undefined)
-      ?? textual.find(item => !removed[item.line]);
-    if (row) {
-      if (removed[row.line]) continue;
-      const resume = edit.nextPlanningId ? lines.findIndex((line, index) => index > row.line &&
-        line.includes(`"type":"pi_n_planning_source"`) && line.includes(`"planningId":"${edit.nextPlanningId}"`)) : -1;
-      for (let index = row.line; index < (resume >= 0 ? resume : lines.length); index++) removed[index] = true;
-      continue;
-    }
-    // In a paged tail window the edited turn may not be loaded yet, while later
-    // abandoned turns before `nextPlanningId` already are. Prune them without
-    // touching segments that started after the replacement revision.
-    const resume = edit.nextPlanningId
-      ? segments.find(segment => segment.planningId === edit.nextPlanningId)?.line ?? -1
-      : -1;
-    let beforeResumeEnd = -1;
-    if (resume >= 0) {
-      beforeResumeEnd = resume;
-    } else if (!edit.nextPlanningId) {
-      beforeResumeEnd = lines.length;
-    } else if (options.planningIds && segments.length > 0) {
-      const nextPos = options.planningIds.indexOf(edit.nextPlanningId);
-      const firstPos = options.planningIds.indexOf(segments[0].planningId);
-      if (nextPos >= 0 && firstPos >= 0 && firstPos < nextPos) {
-        beforeResumeEnd = lines.length;
-      }
-    }
-    if (beforeResumeEnd <= 0) continue;
+    const replacementPosition = edit.nextPlanningId ? positions.get(edit.nextPlanningId) : undefined;
+    // The replacement can be outside the loaded window. Its place in history
+    // still protects any loaded revision that follows it.
+    const resume = segments.find(segment => {
+      const position = positions.get(segment.planningId);
+      return segment.planningId === edit.nextPlanningId ||
+        (position !== undefined && replacementPosition !== undefined && position >= replacementPosition);
+    })?.line ?? end;
+    if (resume === 0) continue;
     if (edit.firstTurn) {
-      for (let index = 0; index < beforeResumeEnd; index++) removed[index] = true;
+      removed.fill(true, 0, resume);
       continue;
     }
-    let cutStart = beforeResumeEnd;
-    if (edit.fromMessageTimestamp !== undefined) {
-      const laterRow = rows.find(item =>
-        item.line < beforeResumeEnd && !removed[item.line] &&
-        item.timestamp !== undefined && item.timestamp > edit.fromMessageTimestamp!,
-      );
+    const old = edit.old_instruction ?? "";
+    const candidates = rows.filter(row => row.line < resume);
+    const textual = candidates.filter(row => row.text === old || row.text.endsWith(`\n${old}`));
+    const timestamp = edit.fromMessageTimestamp;
+    // An equal-text row with a different timestamp is a different turn. Use
+    // text alone for older log rows that do not carry the recorded identity.
+    const occurrence = edit.fromOccurrence !== undefined && complete ? textual[edit.fromOccurrence] : undefined;
+    const timed = timestamp === undefined ? [] : candidates.filter(item => item.timestamp === timestamp);
+    const timedMatch = timed.length === 1 ? timed[0] : textual.find(item => timed.includes(item));
+    const lacksConflictingTimestamp = (item: PlannerUserRow) => timestamp === undefined || item.timestamp === undefined;
+    const row = timedMatch
+      ?? (occurrence && lacksConflictingTimestamp(occurrence) ? occurrence : undefined)
+      ?? textual.find(item => !removed[item.line] && lacksConflictingTimestamp(item));
+    if (row) {
+      if (!removed[row.line]) removed.fill(true, row.line, resume);
+      continue;
+    }
+    // A paged window can contain only the later abandoned turns. Cut from the
+    // earliest one we can identify by timestamp or durable planning ID.
+    let cutStart = resume;
+    if (timestamp !== undefined) {
+      const laterRow = candidates.find(item => !removed[item.line] &&
+        item.timestamp !== undefined && item.timestamp > timestamp);
       if (laterRow) {
-        const hasEarlierRowInSegment = rows.some(item =>
+        const hasEarlierRowInSegment = candidates.some(item =>
           item.segmentStart === laterRow.segmentStart && item.line < laterRow.line,
         );
-        cutStart = Math.min(cutStart, hasEarlierRowInSegment ? laterRow.line : laterRow.segmentStart);
+        cutStart = hasEarlierRowInSegment ? laterRow.line : laterRow.segmentStart;
       }
     }
     if (edit.abandonedPlanningIds?.length) {
       const abandonedSet = new Set(edit.abandonedPlanningIds);
       const abandonedSegment = segments.find(segment =>
-        segment.line < beforeResumeEnd && !removed[segment.line] && abandonedSet.has(segment.planningId),
+        segment.line < resume && !removed[segment.line] && abandonedSet.has(segment.planningId),
       );
-      if (abandonedSegment) {
-        cutStart = Math.min(cutStart, abandonedSegment.line);
-      }
+      if (abandonedSegment) cutStart = Math.min(cutStart, abandonedSegment.line);
     }
-    for (let index = cutStart; index < beforeResumeEnd; index++) removed[index] = true;
+    removed.fill(true, cutStart, resume);
   }
   return lines.filter((_, index) => !removed[index]).join("\n");
 }

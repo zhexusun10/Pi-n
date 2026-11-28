@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
@@ -1761,37 +1762,39 @@ pub fn filter_display_ignored(
     FileChangeSummary::from_files(files, summary.is_running, active_file_path)
 }
 
-pub fn page_summary_files(
+/// Return a page of the ranked file list and an opaque version of its path
+/// order. Independent reads with different versions cannot be joined by offset.
+pub(crate) fn page_summary_files(
     mut summary: FileChangeSummary,
     offset: usize,
     limit: usize,
-) -> FileChangeSummary {
-    let total = summary.files.len();
-    if offset == 0 && total <= limit {
-        return summary;
-    }
-    let mut indices: Vec<usize> = (0..total).collect();
-    indices.sort_by(|a, b| {
+) -> (FileChangeSummary, String) {
+    summary.files.sort_unstable_by(|first, second| {
         let lead = |item: &FileChangeItem| matches!(item.status.as_str(), "added" | "deleted");
         let changed = |item: &FileChangeItem| item.additions + item.deletions;
-        let (first, second) = (&summary.files[*a], &summary.files[*b]);
         lead(second)
             .cmp(&lead(first))
             .then_with(|| changed(second).cmp(&changed(first)))
             .then_with(|| first.path.cmp(&second.path))
     });
-    let start = offset.min(total);
-    let end = start.saturating_add(limit).min(total);
-    let files = indices[start..end]
-        .iter()
-        .map(|index| summary.files[*index].clone())
-        .collect();
-    summary.files = files;
-    summary
+    let mut order = DefaultHasher::new();
+    for item in &summary.files {
+        item.path.hash(&mut order);
+    }
+    let version = format!("{:016x}", order.finish());
+    let start = offset.min(summary.files.len());
+    summary.files.truncate(start.saturating_add(limit));
+    if start != 0 {
+        summary.files.drain(..start);
+    }
+    (summary, version)
 }
 
 pub fn cap_summary_files(summary: FileChangeSummary, limit: usize) -> FileChangeSummary {
-    page_summary_files(summary, 0, limit)
+    if summary.files.len() <= limit {
+        return summary;
+    }
+    page_summary_files(summary, 0, limit).0
 }
 
 fn is_safe_relative_path(path: &str) -> bool {

@@ -805,6 +805,7 @@ fn graph_planner_images_persist_under_run_attachments_and_support_session_branch
         &session_id,
         &cwd,
         "Refine spacing",
+        None,
     )
     .unwrap();
     assert!(!followup_branch.first_user_turn);
@@ -815,6 +816,7 @@ fn graph_planner_images_persist_under_run_attachments_and_support_session_branch
         &session_id,
         &cwd,
         "Implement this layout",
+        None,
     )
     .unwrap();
     assert!(initial_branch.first_user_turn);

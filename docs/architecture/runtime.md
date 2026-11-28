@@ -537,9 +537,12 @@ respects explicitly empty saved workspace lists. See the
 File-change rows are read separately from metadata snapshots. `get_file_changes`
 accepts either one `executionId`, an explicit `executionIds` scope (including an
 empty list), or no scope for the Run aggregate. The backend unions complete
-per-execution paths before capping response rows, preserving authoritative totals.
-Empty log results are cached by byte cursor and running/terminal state; scoped
-requests do not warm unrelated executions. Freshness tokens are captured together
+per-execution paths before paging by `offset` and `limit`, preserving totals
+and ranking the rows consistently across page sizes. Each response includes an
+opaque `orderVersion` for the ordered list of paths. The browser rebuilds the
+loaded prefix if the order changes between pages. Empty log results are cached
+by byte cursor and running/terminal state. Scoped requests do not warm unrelated
+executions. Freshness tokens are captured together
 with the Snapshot under the Run mutex, so a reader that captured an older state
 cannot later overwrite newer live output or a terminal settlement; the whole cold
 read is skipped when the cache cannot be sampled without waiting. The summary

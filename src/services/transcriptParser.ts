@@ -397,6 +397,7 @@ export function parseTranscriptChunkLines(
         if (display.trim() || matchedById) currentItems.push({
           id: piNRequestId ? `steer_${piNRequestId}` : steerId ? `msg-${steerId}` : messageId ? `user_${messageId}` : rowId("user"),
           type: "text", role: "user", content: display, userTurnOffset: effectiveOffset, steerRequestId: piNRequestId,
+          piMessageTimestamp: typeof event.message.timestamp === "number" ? event.message.timestamp : undefined,
           images: imageContent(content), timestamp: Date.now(),
         });
         continue;

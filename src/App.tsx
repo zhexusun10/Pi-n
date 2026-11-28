@@ -2687,7 +2687,7 @@ export default function App() {
     const backendGoal = prependAttachmentPrefix(attachmentPrefix, cleanText);
 
     const isPlannerHistoryInitial = routeType === "graph" && !targetMsg.node &&
-      targetMsg.id.startsWith("planner-history-") &&
+      targetMsg.piMessageTimestamp === undefined && targetMsg.id.startsWith("planner-history-") &&
       stripNodePrefix(targetMsg.text) === state.graph.originalGoal.trim();
     const isInitialGoal = targetMsg.id === "msg-initial-goal" || isPlannerHistoryInitial || (!targetMsg.node && (
       (sessionEntries.length > 0 && sessionEntries[0].id === targetMsg.id) ||
@@ -2860,18 +2860,26 @@ export default function App() {
       const updatedPlannerMessage: ChatMessage = withoutPlannerSteerIdentity({
         ...current, id: current.id || targetMsg.id, parentId: previousEntry?.id ?? null,
         text: backendGoal, files: parsedExisting.attachments, images: targetMsg.images, runId: state.runId,
+        piMessageTimestamp: undefined,
         timestamp: Date.now(), versions, currentVersionIndex: versions.length - 1,
       });
       try {
         if (!await requireEditRepository()) return false;
         const snap = await runtimeService.editPlanner({
           runId: state.runId, oldText: oldBackendText, instruction: backendGoal,
+          messageTimestamp: targetMsg.piMessageTimestamp,
         });
         if (!applyForegroundSnapshot(snap, generation)) return false;
-        // Planner history is rendered from the durable Pi transcript. Keep only
-        // the local prefix here; inserting a historical follow-up as the first
-        // effective message would place it above the route decision card.
-        setSessionEntries(previous);
+        const edit = snap.events.slice().reverse().find(event => event.type === "planner_conversation_edited");
+        const opening = targetMsg.piMessageTimestamp !== undefined && edit?.first_turn &&
+          edit.from_message_timestamp === targetMsg.piMessageTimestamp;
+        if (opening) {
+          updatedPlannerMessage.id = "msg-initial-goal";
+          updatedPlannerMessage.parentId = null;
+          setGoal(cleanText);
+        }
+        // For a follow-up, durable replay owns the replacement row.
+        setSessionEntries(opening ? [updatedPlannerMessage] : previous);
         await handlePlanGoal(backendGoal, { displayText: backendGoal, files: parsedExisting.attachments, images: targetMsg.images }, "graph", state.runId, false, updatedPlannerMessage);
         return true;
       } catch (error) { return reportEditError(error); }

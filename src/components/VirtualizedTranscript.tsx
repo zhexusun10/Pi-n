@@ -13,7 +13,7 @@ import { settleInterruptedItems } from "../services/transcriptSettle";
 import { Terminal } from "lucide-react";
 import { shareJson } from "../services/structuralSharing";
 import { VirtualizedList } from "./VirtualizedList";
-import { TranscriptRow } from "./TranscriptRow";
+import { TranscriptRow, type EditTranscriptUser } from "./TranscriptRow";
 import type { CardsTransitionPhase } from "./ActivitySummaryRow";
 import { markCardsPresented } from "../services/cardAnimations";
 import { TRANSCRIPT_VIEWPORT_BUFFER } from "../services/transcriptPaging";
@@ -70,7 +70,7 @@ interface VirtualizedTranscriptProps {
   rowHeights?: Map<string, number>;
   restoreAnchor?: TranscriptRestoreAnchor;
   onRestoreScroll?: (scrollTop: number | null) => void;
-  onEditUser?: (text: string, replacement: string, userTurnOffset?: number, images?: ImageAttachment[]) => boolean | void | Promise<unknown>;
+  onEditUser?: EditTranscriptUser;
   /** Called when the user reaches the top of a shared history scroller. */
   onReachTop?: () => void;
   /** Reports whether the parsed stream sits inside a compaction (a

@@ -43,14 +43,7 @@ pub(super) fn get_file_changes(
     let (in_memory_state, root) = {
         let runtime = service.runtime.lock().map_err(|e| e.to_string())?;
         let state = if requested_run_id.is_empty() || runtime.state.run_id == requested_run_id {
-            // Clone only the lightweight metadata fields needed by file_changes
-            // instead of cloning events (base64 images), graphs, or live outputs.
-            let strip_exec = |exec: &Execution| {
-                let mut cloned = exec.clone();
-                cloned.output_bytes = exec.output_bytes.max(exec.output.len());
-                cloned.output = String::new();
-                cloned
-            };
+            // Capture metadata without copying the in-memory transcript under the Run lock.
             let lightweight = Snapshot {
                 run_id: runtime.state.run_id.clone(),
                 config: runtime.state.config.clone(),
@@ -60,8 +53,18 @@ pub(super) fn get_file_changes(
                 latest_source_base: runtime.state.latest_source_base.clone(),
                 publication: runtime.state.publication.clone(),
                 superseded_execution_ids: runtime.state.superseded_execution_ids.clone(),
-                executions: runtime.state.executions.iter().map(strip_exec).collect(),
-                mergers: runtime.state.mergers.iter().map(strip_exec).collect(),
+                executions: runtime
+                    .state
+                    .executions
+                    .iter()
+                    .map(Execution::clone_without_output)
+                    .collect(),
+                mergers: runtime
+                    .state
+                    .mergers
+                    .iter()
+                    .map(Execution::clone_without_output)
+                    .collect(),
                 ..Snapshot::default()
             };
             let fence = crate::file_changes::capture_warm_fence(&lightweight, scope.as_deref())?;
@@ -134,7 +137,7 @@ pub(super) fn get_file_changes(
     let summary = crate::file_changes::filter_display_ignored(summary, &state);
     // Page the transferred rows while keeping true totals so large runs stay
     // fast on first open and still allow complete review via offset/limit.
-    let mut summary = crate::file_changes::page_summary_files(summary, offset, limit);
+    let (mut summary, order_version) = crate::file_changes::page_summary_files(summary, offset, limit);
     crate::file_changes::refresh_live_content_versions(&mut summary, &state);
 
     Ok(serde_json::json!({
@@ -143,6 +146,7 @@ pub(super) fn get_file_changes(
         "executionIds": execution_ids,
         "offset": offset,
         "limit": limit,
+        "orderVersion": order_version,
         "summary": summary,
     }))
 }

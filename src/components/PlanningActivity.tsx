@@ -10,9 +10,10 @@ import { liveOutputDelay, startVisibilityPolling } from "../services/visibilityP
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useTranscriptReader } from "../hooks/useTranscriptReader";
 import { useAutoTranscriptHistory } from "../hooks/useAutoTranscriptHistory";
+import type { EditTranscriptUser } from "./TranscriptRow";
 import { VirtualizedTranscript } from "./VirtualizedTranscript";
 import { cacheTranscriptWindow, composePlanningOutput, planningTranscriptCache, planningTranscriptKey, transcriptFromCache } from "../services/transcriptCache";
-import { activePlannerOutput, type PlannerEdit } from "../lib/plannerOutput";
+import { activePlannerOutput, plannerOutputStartsAtActiveGoal, type PlannerEdit } from "../lib/plannerOutput";
 import { appendTranscriptPage, normalizeTranscriptProjection, prependTranscriptPage, validateTranscriptPrepend, windowFromPage, type TranscriptProjectionMode, type TranscriptWindow } from "../services/transcriptWindow";
 import { markTranscriptPrepend, markTranscriptPrependIfReading, olderPageFits, onTranscriptScroll, transcriptScrollParent } from "../services/transcriptScroll";
 import { INITIAL_TRANSCRIPT_BYTES, OLDER_TRANSCRIPT_BYTES, SUMMARY_INITIAL_TRANSCRIPT_BYTES, SUMMARY_OLDER_TRANSCRIPT_BYTES, transcriptAutoFillBudget, TRANSCRIPT_REVEAL_FALLBACK_MS } from "../services/transcriptPaging";
@@ -21,7 +22,6 @@ import { TranscriptHistoryStatus } from "./TranscriptHistoryStatus";
 import { registerLiveExpandPreparer, type CardsTransitionPhase } from "./ActivitySummaryRow";
 import { collectHydrationRanges, extractHydratedCardPatches, hydrationKeyForItem, isItemHydrated, type HydratedCardPatch } from "../services/cardHydration";
 export { planningTranscriptCache } from "../services/transcriptCache";
-export { activePlannerOutput } from "../lib/plannerOutput";
 
 type Props = {
   runId?: string;
@@ -32,7 +32,7 @@ type Props = {
   showUserTurns?: boolean;
   skipFirstUser?: boolean;
   onUserResize?: (expanded?: boolean, card?: HTMLElement) => void;
-  onEditUser?: (text: string, replacement: string) => boolean | void | Promise<unknown>;
+  onEditUser?: EditTranscriptUser;
   edits?: PlannerEdit[];
   running?: boolean;
   /** The only composed revision that is still live; older turns stay settled. */
@@ -159,15 +159,13 @@ function PlanningHistory({ runId = "", planningIds, onReady, onOutputChange, onL
   const notifyReady = useStableCallback(() => onReady?.());
   const notifyOutput = useStableCallback((text: string) => onOutputChange?.(text));
   const notifyLoading = useStableCallback((loading: boolean) => onLoadingChange?.(loading));
-  const editUser = useStableCallback((text: string, replacement: string) => onEditUser?.(text, replacement));
+  const editUser = useStableCallback((...args: Parameters<EditTranscriptUser>) => onEditUser?.(...args));
   const editKey = JSON.stringify(edits);
   const activeOutput = useMemo(
     () => activePlannerOutput(output, edits, { firstPlanningId: planningIds[0], planningIds }),
     [output, editKey, key],
   );
-  // A missing older revision must not make the first loaded user look like the goal.
-  const historyStartsAtBeginning = planningIds.length > 0 && segments.current.get(planningIds[0])?.start === 0;
-  const skipInitialUser = skipFirstUser && historyStartsAtBeginning;
+  const skipInitialUser = skipFirstUser && plannerOutputStartsAtActiveGoal(activeOutput, planningIds[0], edits);
   const hasOlder = ready && olderTarget(planningIds, segments.current) !== null;
 
   const publish = useStableCallback((planningId: string, window: TranscriptWindow) => {

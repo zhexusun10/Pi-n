@@ -184,6 +184,9 @@ test('Planner edit identifies a repeated turn by its timestamp or tree position,
   const kept = (output: string) => ['reply one', 'reply two', 'reply three'].filter(reply => output.includes(reply));
   // Editing the middle turn keeps the earlier equal-text turn and the later one.
   assert.deepEqual(kept(activePlannerOutput(build(true), [{ ...edit, fromMessageTimestamp: 20 }])), ['reply one', 'reply three']);
+  const sameTimestamp = [src('a'), turn('different turn', 20), 'reply one',
+    src('b'), turn('go', 20), 'reply two', src('c'), turn('replacement', 30), 'reply three'].join('\n');
+  assert.deepEqual(kept(activePlannerOutput(sameTimestamp, [{ ...edit, fromMessageTimestamp: 20 }])), ['reply one', 'reply three']);
   assert.deepEqual(kept(activePlannerOutput(build(false), [{ ...edit, fromOccurrence: 1 }], { firstPlanningId: 'a' })),
     ['reply one', 'reply three']);
   // A partial window cannot trust a whole-tree position, so it uses the legacy first match.
@@ -195,6 +198,23 @@ test('Planner edit identifies a repeated turn by its timestamp or tree position,
     ['reply three']);
   assert.deepEqual(plannerConversationEdits([{ type: 'planner_conversation_edited', old_instruction: 'go', from_message_timestamp: 20, from_occurrence: 1 },
     { type: 'graph_revised', planning_id: 'c' }]), [{ old_instruction: 'go', nextPlanningId: 'c', fromMessageTimestamp: 20, fromOccurrence: 1 }]);
+});
+
+test('Planner tail replay preserves equal-text replacement turns when the edited turn is unloaded', () => {
+  const turn = (timestamp: number) => JSON.stringify({ type: 'message_start',
+    message: { role: 'user', content: 'repeat', timestamp } });
+  const edit = { old_instruction: 'repeat', fromMessageTimestamp: 20, nextPlanningId: 'replacement' };
+  const planningIds = ['earlier', 'edited', 'abandoned', 'replacement', 'later'];
+  const earlier = [source('earlier'), turn(10), 'earlier reply'];
+  const abandoned = [source('abandoned'), turn(30), 'abandoned reply'];
+  const replacement = [source('replacement'), turn(40), 'replacement reply'];
+  const later = [source('later'), turn(50), 'later reply'];
+  const log = (...segments: string[][]) => segments.flat().join('\n') + '\n';
+
+  assert.equal(activePlannerOutput(log(earlier, abandoned, replacement, later), [edit], { planningIds }),
+    log(earlier, replacement, later));
+  assert.equal(activePlannerOutput(log(later), [edit], { planningIds }), log(later));
+  assert.equal(activePlannerOutput(log(earlier, abandoned), [edit], { planningIds }), log(earlier));
 });
 
 test('paged activePlannerOutput prunes abandoned turns even before the edited turn is paged in', () => {

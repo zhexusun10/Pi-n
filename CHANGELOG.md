@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-11-28
+
+### Fixed
+
+- Select saved Planner turns by their Pi message timestamp when editing, so identical prompts can be edited independently. Preserve earlier turns and the replacement branch in partial history, and show an edited opening goal only once.
+- Keep file-change pages consistent when files are added, removed, or reordered between requests. The browser reloads the visible prefix when the backend reports a different order and supports older backends by requesting a larger prefix.
+
+### Changed
+
+- Avoid copying live execution transcripts while holding the Run lock for file-change queries. Reuse the ranked file list to select response rows without cloning each item.
+
+### Removed
+
+- Removed unused frontend methods and types left behind by the resident-process settings panel. Updated the filesystem isolation guide to describe in-place model switches and retained services.
+
 ## [2.0.3] - 2026-11-28
 
 ### Fixed
@@ -1220,7 +1235,8 @@ Baseline release. The changelog is restarted from the current codebase at v1.1.0
   - **Configurable**: Can be toggled on/off in Settings (`postTaskReview`, enabled by default).
   - **Loop engineering**: When combined with Auto Approve, creates a robust, closed-loop engineering cycle that autonomously plans, executes, verifies, and iterates until the Planner concludes.
 
-[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.4...HEAD
+[2.0.4]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/zhexusun10/pi-n/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/zhexusun10/pi-n/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/zhexusun10/pi-n/compare/v2.0.0...v2.0.1

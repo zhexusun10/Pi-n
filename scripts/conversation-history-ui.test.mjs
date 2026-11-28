@@ -1922,16 +1922,20 @@ test("actual App reopening Planner history does not move cached follow-ups past 
   } finally { onPlanStream = undefined; releasePrevious?.(); await context.close(); }
 });
 
-test("actual App renders a Planner goal once even when the saved replay contains it", { timeout: 45_000 }, async () => {
-  // A conversation stopped before any follow-up still has its goal in the
-  // durable planner.jsonl. The saved replay must skip that turn (it is already
-  // the conversation header) instead of rendering a second identical bubble.
+test("actual App renders an edited Planner goal once even when replay contains it", { timeout: 45_000 }, async () => {
+  // An opening edit moves the goal row to the replacement revision. Its full
+  // saved replay must still skip the goal already shown in the header.
   const config = { repository: "/mock/goal-dup", model: "test/model", thinkingLevel: "medium", maxParallel: 2, maxFeedback: 3, autoApprove: true };
   const empty = { runId: "", config: null, graph: { originalGoal: "", nodes: [], edges: [] }, nodes: {},
     plan: null, executions: [], events: [], approved: false, paused: false, phase: "draft", base: "", feedbackCounts: {} };
   const saved = { ...empty, runId: "goal-dup-run", config, planType: "graph", phase: "awaiting_approval", planningId: "goal-plan",
     graph: { originalGoal: "Only goal", nodes: [], edges: [] },
-    events: [{ type: "created", sequence: 1, planning_id: "goal-plan", timestamp: 1 }] };
+    events: [
+      { type: "created", sequence: 1, planning_id: "old-goal", timestamp: 1 },
+      { type: "planner_conversation_edited", sequence: 2, timestamp: 2, first_turn: true,
+        old_instruction: "Old goal", instruction: "Only goal", from_message_timestamp: 1 },
+      { type: "graph_revised", sequence: 3, planning_id: "goal-plan", timestamp: 3 },
+    ] };
   const output = line({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "Only goal" }] } })
     + line({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "Only goal" }] } })
     + assistant("Only answer");
@@ -1949,8 +1953,12 @@ test("actual App renders a Planner goal once even when the saved replay contains
       case "list_files": result = { files: [] }; break;
       case "list_skills": result = { skills: [] }; break;
       case "provider_auth": result = { providers: [{ id: "test", name: "Test", configured: true, methods: [] }], models: [], warning: null }; break;
-      case "get_planning_output": { const bytes = Buffer.byteLength(output); result = { planningId: body.planningId, role: "planner", content: body.offset ? "" : output,
-        startOffset: body.offset ?? 0, nextOffset: bytes, totalBytes: bytes, complete: true, running: false }; break; }
+      case "get_planning_output": {
+        const text = body.planningId === "old-goal" ? assistant("Old answer") : output;
+        const bytes = Buffer.byteLength(text);
+        result = { planningId: body.planningId, role: "planner", content: body.offset ? "" : text,
+          startOffset: body.offset ?? 0, nextOffset: bytes, totalBytes: bytes, complete: true, running: false }; break;
+      }
       default: result = {};
     }
     return route.fulfill({ json: { result } });
@@ -1960,6 +1968,7 @@ test("actual App renders a Planner goal once even when the saved replay contains
     await page.locator('[data-run-id="goal-dup-run"]').click();
     await page.getByText("Only answer", { exact: true }).first().waitFor();
     await page.waitForTimeout(500);
+    assert.equal(await page.getByText("Old answer", { exact: true }).count(), 0);
     assert.equal(await page.locator('.chat-bubble-user', { hasText: "Only goal" }).count(), 1,
       "the goal renders once as the conversation header, not again in the saved replay");
     assert.deepEqual(errors, []);
@@ -4197,10 +4206,11 @@ test("an edited Planner follow-up keeps its turn and the failure notice", { time
   // `edit-plan` is empty on purpose: the failed turn never reached the writer.
   const outputs = {
     "old-plan": assistant("OLD TURN ANSWER"),
-    "follow-plan": line({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "FIRST FOLLOW UP" }] } }) + assistant("FOLLOW ANSWER"),
+    "follow-plan": line({ type: "message_end", message: { role: "user", timestamp: 200, content: [{ type: "text", text: "FIRST FOLLOW UP" }] } }) + assistant("FOLLOW ANSWER"),
     "edit-plan": "",
   };
   let edited = null;
+  let editTarget;
   onPlanStream = (body, res) => {
     edited = body;
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -4226,7 +4236,7 @@ test("an edited Planner follow-up keeps its turn and the failure notice", { time
       case "list_files": result = { files: [] }; break;
       case "list_skills": result = { skills: [] }; break;
       case "provider_auth": result = { providers: [{ id: "test", name: "Test", configured: true, methods: [] }], models: [], warning: null }; break;
-      case "edit_planner": result = current; break;
+      case "edit_planner": editTarget = body; result = current; break;
       case "get_planning_output": {
         const content = outputs[body.planningId] ?? "";
         result = { planningId: body.planningId, role: "planner", content: body.offset ? "" : content,
@@ -4255,6 +4265,7 @@ test("an edited Planner follow-up keeps its turn and the failure notice", { time
     await liveFailure.getByText(failure.error, { exact: true }).waitFor();
     await page.waitForTimeout(1200);
     assert.equal(await liveFailure.count(), 1, "the live failure is retained once, not replaced by a banner or duplicated");
+    assert.equal(editTarget?.messageTimestamp, 200, "the edit selects the durable Pi user turn");
     assert.equal(edited?.goal, "EDITED FOLLOW UP", "the edit starts a replacement Planner turn");
     const view = await page.evaluate(expectedError => {
       const scroll = document.querySelector(".initial-query-scroll");
