@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enlarge the Windows titlebar icons for minimize, maximize, restore, and close to improve legibility on high-DPI displays.
 - Move owned file-change rows into summary unions to avoid a second copy of their paths, fingerprints, and provenance.
 - Match local and saved conversation turns without allocating a reversed copy of the remaining messages for each saved turn.
+- Refresh the Pi^n token usage screenshot in both READMEs and match its dimensions to the Codex screenshot.
 
 ## [2.0.3] - 2026-11-28
 
