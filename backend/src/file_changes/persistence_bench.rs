@@ -64,7 +64,7 @@ fn sample(root: &Path, run: &str, optimized: bool) -> (Timing, Vec<u8>) {
     let writer = optimized.then(|| persistence::write_lock(root, run).unwrap());
     let _writer = writer.as_ref().map(|lock| lock.lock().unwrap());
     let path = persisted_path(root, run).unwrap();
-    let mut persisted = read_persisted(&path);
+    let mut persisted = read_persisted(&path).unwrap().unwrap();
     persisted.version = PERSISTED_CHANGES_VERSION;
     let mut guard_time = Duration::ZERO;
     let mut capture_time = Duration::ZERO;

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use thinner keyboard selection indicators and match command popover shadows to the composer.
 - Animate reasoning and cache notices along with the other transcript cards when expanding or collapsing all cards. Keep the Compacted billing badge with its card throughout the transition.
 - Terminate the full Windows ConPTY process tree when a workspace terminal closes, preventing child commands from surviving the terminal session.
+- Restore direct mouse and pen dragging for sidebar workspace and conversation cards. Slight pointer movement still counts as a click.
+- Preserve saved file-change history when the sidecar is temporarily unreadable, and refresh a cached diff when its owning nodes change.
 
 ### Changed
 

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { useStableCallback } from "./useStableCallback";
 
-const DRAG_HOLD_MS = 1_000;
-const HOLD_MOVE_TOLERANCE_PX = 5;
+const TOUCH_HOLD_MS = 1_000;
+const DRAG_THRESHOLD_PX = 5;
 const AUTO_SCROLL_EDGE_PX = 26;
 const AUTO_SCROLL_MAX_STEP_PX = 8;
 const DROP_SETTLE_MS = 140;
@@ -120,6 +120,7 @@ export function useSidebarCardDrag({
     cleanupRef.current = null;
 
     const pointerId = event.pointerId;
+    const isTouch = event.pointerType === "touch";
     const originCard = event.currentTarget;
     const pressClientX = event.clientX;
     const pressClientY = event.clientY;
@@ -242,7 +243,6 @@ export function useSidebarCardDrag({
         return { ...item, pitch };
       });
 
-      startClientY = lastClientY;
       startScrollTop = list.scrollTop;
       active = true;
       prevBodyCursor = document.body.style.cursor;
@@ -312,9 +312,17 @@ export function useSidebarCardDrag({
       if (moveEvent.pointerId !== pointerId) return;
       lastClientY = moveEvent.clientY;
       if (!active) {
-        const distance = Math.hypot(moveEvent.clientX - pressClientX, moveEvent.clientY - pressClientY);
-        if (distance > HOLD_MOVE_TOLERANCE_PX) finish(false);
-        return;
+        const dx = Math.abs(moveEvent.clientX - pressClientX);
+        const dy = Math.abs(lastClientY - pressClientY);
+        if (isTouch) {
+          if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) finish(false);
+          return;
+        }
+        if (dy < DRAG_THRESHOLD_PX || dy < dx) return;
+        if (!activate()) {
+          finish(false);
+          return;
+        }
       }
       moveEvent.preventDefault();
       applyPositions();
@@ -353,9 +361,12 @@ export function useSidebarCardDrag({
     window.addEventListener("blur", cancelCleanup);
     window.addEventListener("contextmenu", cancelCleanup, true);
     window.addEventListener("keydown", onKeyDown, true);
-    holdTimer = window.setTimeout(() => {
-      if (!activate()) finish(false);
-    }, DRAG_HOLD_MS);
+    if (isTouch) {
+      holdTimer = window.setTimeout(() => {
+        startClientY = lastClientY;
+        if (!activate()) finish(false);
+      }, TOUCH_HOLD_MS);
+    }
   }, [armClickSuppression, cardSelector, listRef, reduceMotion, stableOnCommit, stableOnDragStart, viewSelector]);
 
   return {

@@ -120,7 +120,11 @@ fn persist_with(root: &Path, run: &str, after_capture: impl FnOnce()) -> Result<
     // Never acquire this gate while holding the global cache mutex.
     let lock = write_lock(root, run)?;
     let _writer = lock.lock().map_err(|e| e.to_string())?;
-    let previous = read_persisted(&path);
+    // Only a missing or obsolete sidecar can be rebuilt from the current cache.
+    // A read error could hide saved executions that are no longer in memory.
+    let previous = read_persisted(&path)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
     let previous_had_entries = !previous.executions.is_empty()
         || !previous.planning.is_empty()
         || previous.publication.is_some();

@@ -2265,12 +2265,15 @@ struct PersistedRunChanges {
 /// keep stale rows authoritative.
 const PERSISTED_CHANGES_VERSION: u32 = 6;
 
-fn read_persisted(path: &Path) -> PersistedRunChanges {
-    fs::read_to_string(path)
+fn read_persisted(path: &Path) -> std::io::Result<Option<PersistedRunChanges>> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(serde_json::from_slice::<PersistedRunChanges>(&bytes)
         .ok()
-        .and_then(|text| serde_json::from_str::<PersistedRunChanges>(&text).ok())
-        .filter(|saved| saved.version == PERSISTED_CHANGES_VERSION)
-        .unwrap_or_default()
+        .filter(|saved| saved.version == PERSISTED_CHANGES_VERSION))
 }
 
 fn safe_run_id(run_id: &str) -> bool {
@@ -2325,15 +2328,9 @@ pub fn hydrate_run(root: &Path, run_id: &str) {
     }) else {
         return;
     };
-    let Ok(text) = fs::read_to_string(&path) else {
+    let Ok(Some(saved)) = read_persisted(&path) else {
         return;
     };
-    let Ok(saved) = serde_json::from_str::<PersistedRunChanges>(&text) else {
-        return;
-    };
-    if saved.version != PERSISTED_CHANGES_VERSION {
-        return;
-    }
     let Ok(mut guard) = cache().lock() else {
         return;
     };

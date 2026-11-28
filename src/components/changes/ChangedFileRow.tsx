@@ -180,7 +180,10 @@ export const ChangedFileRow = React.memo(function ChangedFileRow({
     ? t("重命名自 {0}", item.oldPath)
     : `${meta.label()}: ${item.path}`;
 
-  const cacheKey = `${scopeKey}:${item.path}:${item.oldPath ?? ""}:${item.status}:${item.additions}:${item.deletions}:${item.isRunning ? 1 : 0}:${item.source ?? ""}:${item.contentVersion ?? ""}:${refreshVersion}`;
+  const cacheKey = JSON.stringify([
+    scopeKey, item.path, item.oldPath, item.status, item.additions, item.deletions,
+    Boolean(item.isRunning), item.source, item.contentVersion, item.nodes ?? [], refreshVersion,
+  ]);
   const [diffState, setDiffState] = useState<{
     status: "idle" | "loading" | "loaded" | "error";
     viewScopeKey: string;

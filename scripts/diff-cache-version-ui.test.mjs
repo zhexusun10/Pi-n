@@ -84,13 +84,14 @@ async function openFixture(mode, handlers) {
   return { page, context, errors };
 }
 
-test("same-line-count diff updates invalidate cache on contentVersion and completion", { timeout: 30_000 }, async () => {
+test("same-line-count diffs refresh when content, owning nodes or completion changes", { timeout: 30_000 }, async () => {
   let stage = {
     contentVersion: "git:base..v1",
     isRunning: false,
     line: "first",
   };
   let diffRequests = 0;
+  let owner = "worker";
 
   const { page, context, errors } = await openFixture("serial", {
     getFileChanges: (body) => ({
@@ -106,7 +107,7 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
           isRunning: stage.isRunning,
           source: "git",
           ...(stage.contentVersion !== undefined ? { contentVersion: stage.contentVersion } : {}),
-          nodes: ["worker"],
+          nodes: [owner],
         }],
         totalFiles: 1,
         addedCount: 0,
@@ -130,7 +131,7 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
         lines: [
           { kind: "hunk", text: "@@ -1,1 +1,1 @@" },
           { kind: "removed", text: "base" },
-          { kind: "added", text: stage.line },
+          { kind: "added", text: `${body.nodes[0]}: ${stage.line}` },
         ],
       };
     },
@@ -140,14 +141,19 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
     await page.getByTestId("workspace-changes-trigger").click();
     await page.getByTestId("changed-file-item").locator(".changed-file-row").click();
     const diff = page.getByTestId("changed-file-diff");
-    await expect(diff).toContainText("first");
+    await expect(diff).toContainText("worker: first");
     assert.equal(diffRequests, 1);
 
     // Same line counts (+1 -1), not running, but new contentVersion -> must re-fetch.
     stage = { contentVersion: "git:base..v2", isRunning: false, line: "second" };
     await page.evaluate(() => window.changesAudit.update());
-    await expect(diff).toContainText("second");
+    await expect(diff).toContainText("worker: second");
     assert.equal(diffRequests, 2);
+
+    owner = "reviewer";
+    await page.evaluate(() => window.changesAudit.update());
+    await expect(diff).toContainText("reviewer: second");
+    assert.equal(diffRequests, 3);
 
     // Transition into running with same content.
     stage = { contentVersion: "git:base..v2", isRunning: true, line: "second" };
@@ -159,7 +165,7 @@ test("same-line-count diff updates invalidate cache on contentVersion and comple
     // invalidate the cache and show "third" instead of resurrecting "first".
     stage = { contentVersion: undefined, isRunning: false, line: "third" };
     await page.evaluate(() => window.changesAudit.settle());
-    await expect(diff).toContainText("third");
+    await expect(diff).toContainText("reviewer: third");
     assert.ok(diffRequests > runningRequests, "completion must re-fetch updated diff");
     assert.deepEqual(errors, []);
   } finally {

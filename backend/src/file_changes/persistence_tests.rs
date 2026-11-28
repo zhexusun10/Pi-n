@@ -89,7 +89,7 @@ fn persistence_snapshot_keeps_history_and_git_precedence_without_the_cache_lock(
         );
     })
     .unwrap();
-    let saved = read_persisted(&path);
+    let saved = read_persisted(&path).unwrap().unwrap();
     assert_eq!(saved.executions["history"].total_additions, 7);
     assert_eq!(
         saved.executions["current"].total_additions, 3,
@@ -99,7 +99,7 @@ fn persistence_snapshot_keeps_history_and_git_precedence_without_the_cache_lock(
     assert_eq!(saved.publication.unwrap().total_additions, 4);
     persist(temp.path(), &run).unwrap();
     assert_eq!(
-        read_persisted(&path).executions["current"].total_additions,
+        read_persisted(&path).unwrap().unwrap().executions["current"].total_additions,
         8
     );
     invalidate_run(&run);
@@ -157,7 +157,7 @@ fn same_run_saves_serialize_read_modify_write_even_through_root_aliases() {
         serialized,
         "save must retain its per-file gate through publication"
     );
-    let saved = read_persisted(&path);
+    let saved = read_persisted(&path).unwrap().unwrap();
     assert_eq!(saved.executions.len(), 2);
     assert_eq!(saved.executions["first"].files[0].path, "first.txt");
     assert_eq!(saved.executions["second"].files[0].path, "second.txt");
@@ -180,7 +180,7 @@ fn repeated_saves_replace_current_execution_counts_without_losing_unloaded_histo
         persist(temp.path(), &run).unwrap();
     }
     let path = persisted_path(temp.path(), &run).unwrap();
-    let saved = read_persisted(&path);
+    let saved = read_persisted(&path).unwrap().unwrap();
     assert_eq!(saved.executions["current"].total_additions, 3);
     assert_eq!(saved.executions["current"].total_deletions, 1);
     assert_eq!(saved.executions["history"].total_additions, 7);
@@ -189,7 +189,7 @@ fn repeated_saves_replace_current_execution_counts_without_losing_unloaded_histo
         summary("replacement.txt", "edit", 2),
     );
     persist(temp.path(), &run).unwrap();
-    let saved = read_persisted(&path);
+    let saved = read_persisted(&path).unwrap().unwrap();
     assert_eq!(saved.executions["current"].files.len(), 1);
     assert_eq!(saved.executions["current"].files[0].path, "replacement.txt");
     assert_eq!(saved.executions["history"].total_additions, 7);
@@ -207,7 +207,9 @@ fn saving_a_pending_overlay_keeps_confirmed_edits_to_the_same_file() {
     );
     update_from_log_chunk(&run, "current", "worker", "/repo", "/repo", text, true);
     persist(temp.path(), &run).unwrap();
-    let saved = read_persisted(&persisted_path(temp.path(), &run).unwrap());
+    let saved = read_persisted(&persisted_path(temp.path(), &run).unwrap())
+        .unwrap()
+        .unwrap();
     let summary = &saved.executions["current"];
     assert_eq!(summary.total_files, 1);
     assert_eq!(summary.total_additions, 1);
@@ -238,7 +240,9 @@ fn failed_or_unfinished_tools_disappear_from_persisted_and_rehydrated_summaries(
             update(start);
             // A sibling's completion may save this still-running attempt too.
             persist(temp.path(), &run).unwrap();
-            let saved = read_persisted(&persisted_path(temp.path(), &run).unwrap());
+            let saved = read_persisted(&persisted_path(temp.path(), &run).unwrap())
+                .unwrap()
+                .unwrap();
             let saved = if planner {
                 &saved.planning["current"]
             } else {
@@ -278,6 +282,37 @@ fn failed_or_unfinished_tools_disappear_from_persisted_and_rehydrated_summaries(
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn unreadable_sidecar_preserves_unloaded_history_for_retry() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let run = uuid::Uuid::new_v4().to_string();
+    put(&run, "old", "old.txt", 7);
+    persist(temp.path(), &run).unwrap();
+    invalidate_run(&run);
+    put(&run, "new", "new.txt", 3);
+    let path = persisted_path(temp.path(), &run).unwrap();
+    let before = fs::read(&path).unwrap();
+    // Deny reads while permitting writes and deletes, including replacement.
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x2 | 0x4)
+        .open(&path)
+        .unwrap();
+    assert!(fs::read(&path).is_err());
+    let save = persist(temp.path(), &run);
+    drop(held);
+    assert!(save.is_err());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    persist(temp.path(), &run).unwrap();
+    let saved = read_persisted(&path).unwrap().unwrap();
+    assert_eq!(saved.executions["old"].total_additions, 7);
+    assert_eq!(saved.executions["new"].total_additions, 3);
+    invalidate_run(&run);
+}
+
 #[test]
 fn failed_save_keeps_prior_sidecar_and_releases_the_writer_for_retry() {
     let temp = tempfile::tempdir().unwrap();
@@ -293,7 +328,7 @@ fn failed_save_keeps_prior_sidecar_and_releases_the_writer_for_retry() {
     assert_eq!(fs::read(&path).unwrap(), before);
     fs::remove_dir(&blocked).unwrap();
     persist(temp.path(), &run).unwrap();
-    assert_eq!(read_persisted(&path).executions.len(), 2);
+    assert_eq!(read_persisted(&path).unwrap().unwrap().executions.len(), 2);
     invalidate_run(&run);
 }
 
