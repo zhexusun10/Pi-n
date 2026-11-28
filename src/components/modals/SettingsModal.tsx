@@ -11,7 +11,6 @@ import { RoleModelSettings } from "../RoleModelSettings";
 import { ExtensionSettings } from "../ExtensionSettings";
 import { AutostartSettings } from "../AutostartSettings";
 import { UpdateSettings } from "../UpdateSettings";
-import { ResidentProcessesSettings } from "./ResidentProcessesSettings";
 import { normalizeWorkspacePath } from "../../services/workspaceConversations";
 import { autoExpandCotEnabled, setAutoExpandCot, executionOverviewEnabled, setExecutionOverview, currentLandingBackground, setLandingBackground, currentAccentColor, setAccentColor, completionNotificationsEnabled, setCompletionNotifications, completionNotificationSoundEnabled, setCompletionNotificationSound } from "../../services/displayPreferences";
 import {
@@ -589,8 +588,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
             <AutostartSettings disabled={saving} active={isOpen} />
 
             <UpdateSettings disabled={saving} />
-
-            <ResidentProcessesSettings disabled={saving} />
 
             {/* 存储与重置 */}
             <section className="settings-card" aria-labelledby="storage-settings-title">

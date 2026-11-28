@@ -988,6 +988,7 @@ test("accent color stages with Settings, updates cards/composer/pulse together a
         chosenBg: chosen ? getComputedStyle(chosen).backgroundColor : null,
         latestBg: latest ? getComputedStyle(latest).backgroundColor : null,
         runningToolBorder: runningTool ? getComputedStyle(runningTool).borderTopColor : null,
+        runningToolShadow: runningTool ? getComputedStyle(runningTool).boxShadow : null,
         runningStatusColor: runningStatus ? getComputedStyle(runningStatus).color : null,
       };
     });
@@ -995,6 +996,7 @@ test("accent color stages with Settings, updates cards/composer/pulse together a
     assert.equal(blackConv.chosenBg, "rgba(15, 23, 42, 0.055)");
     assert.equal(blackConv.latestBg, "rgb(24, 24, 27)");
     assert.equal(blackConv.runningToolBorder, "rgba(24, 24, 27, 0.42)");
+    assert.equal(blackConv.runningToolShadow, "rgba(24, 24, 27, 0.09) 0px 0px 14px 0px, rgba(24, 24, 27, 0.11) 0px 1px 0px 0px inset");
     assert.equal(blackConv.runningStatusColor, "rgb(24, 24, 27)");
 
     // Reload preserves Black, and switching back to Blue restores light-blue cards + blue controls/outlines.
@@ -1029,6 +1031,7 @@ test("accent color stages with Settings, updates cards/composer/pulse together a
         chosenBorder: chosen ? getComputedStyle(chosen).borderTopColor : null,
         latestBg: latest ? getComputedStyle(latest).backgroundColor : null,
         runningToolBorder: runningTool ? getComputedStyle(runningTool).borderTopColor : null,
+        runningToolShadow: runningTool ? getComputedStyle(runningTool).boxShadow : null,
         runningStatusColor: runningStatus ? getComputedStyle(runningStatus).color : null,
       };
     });
@@ -1038,7 +1041,8 @@ test("accent color stages with Settings, updates cards/composer/pulse together a
     assert.equal(blueConv.chosenBg, "rgb(239, 246, 255)");
     assert.equal(blueConv.chosenBorder, "rgb(191, 219, 254)");
     assert.equal(blueConv.latestBg, "rgb(37, 99, 235)");
-    assert.equal(blueConv.runningToolBorder, "rgba(59, 130, 246, 0.65)");
+    assert.equal(blueConv.runningToolBorder, "rgba(59, 130, 246, 0.42)");
+    assert.equal(blueConv.runningToolShadow, "rgba(59, 130, 246, 0.09) 0px 0px 14px 0px, rgba(59, 130, 246, 0.11) 0px 1px 0px 0px inset");
     assert.equal(blueConv.runningStatusColor, "rgb(59, 130, 246)");
     assert.deepEqual(errors, []);
   } finally {

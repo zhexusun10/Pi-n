@@ -38,12 +38,13 @@ import { ComposerModels } from "./services/composerCommands";
 import { applyModelConfig, modelRoles, planningModelRoles, providerIdForModel, roleModelConfig } from "./modelConfig";
 import { useRepositoryStatus } from "./hooks/useRepositoryStatus";
 import { useConfigPersistence } from "./hooks/useConfigPersistence";
-import { deduceRouteType, resolveRunRouteType } from "./services/executionRoute";
+import { deduceRouteType } from "./services/executionRoute";
 import { loadWorkbench, preloadWorkbench } from "./services/workbenchLoader";
 import { createPlanningRecovery, hasCurrentPlanningRun, planningRecoveryDelay, recoveredPlanningForDisplay, runningPlanningFromSnapshot } from "./services/planningRecovery";
 import {
   applySelectedVersionToEntries, branchEditedMessageEntries, executionIdForMessage,
-  executionIdForVersion, findBranchTargetIndex, nodeConversationExecutions, stripNodePrefix,
+  executionIdForVersion, findBranchTargetIndex, nodeConversationExecutions,
+  sessionEntriesAfterNodeEdit, stripNodePrefix,
 } from "./services/conversationBranch";
 import { closeThinkingItems, splitThinkingTagDelta } from "./services/thinkingTranscript";
 import { plannerContentSteerId } from "./services/plannerText";
@@ -1902,41 +1903,12 @@ export default function App() {
       setError(t("对话正在创建，请稍后再删除。"));
       return;
     }
-    const targetRouteType = resolveRunRouteType({
-      runId,
-      activeRunId: state.runId,
-      activeRouteType: routeType,
-      cachedSnapshot: latestSnapshotsRef.current.get(runId),
-      runMode: runModes[runId],
-    });
     const shortId = runId.slice(0, 8);
-    if (targetRouteType === "serial") {
-      setConfirmModal({
-        title: t("删除 Direct 对话"),
-        message: t("确定删除 Direct 对话「Direct {0}」吗？", shortId),
-        detail: t("对话 ID: {0}\n删除后该对话的消息历史与事件记录将被彻底清除，不会删除源项目代码文件。", runId),
-        confirmText: t("删除对话"),
-        danger: true,
-        onConfirm: () => handleDeleteRun(runId),
-      });
-      return;
-    }
-    if (targetRouteType === "graph") {
-      setConfirmModal({
-        title: t("删除 Compile 对话"),
-        message: t("确定删除 Compile 对话「Compile {0}」吗？", shortId),
-        detail: t("对话 ID: {0}\n删除后该次运行的执行拓扑图、节点记录与事件日志将被彻底清除；如果这是该项目最后一条 Compile 对话，对应的外置影子仓库也会一并清理。", runId),
-        confirmText: t("删除对话"),
-        danger: true,
-        onConfirm: () => handleDeleteRun(runId),
-      });
-      return;
-    }
     setConfirmModal({
-      title: t("删除运行历史"),
-      message: t("确定删除历史对话「{0}」吗？", shortId),
-      detail: t("对话 ID: {0}\n删除后该对话的记录与事件日志将被彻底清除；如果不再被其他对话引用，对应的外置影子仓库也会一并清理。", runId),
-      confirmText: t("删除历史"),
+      title: t("删除 Conversation"),
+      message: t("确定删除对话「{0}」吗？", shortId),
+      detail: t("对话 ID: {0}\n删除后该对话的记录与事件日志将被彻底清除，不会删除源项目代码文件；如果不再被其他对话引用，对应的外置影子仓库也会一并清理。", runId),
+      confirmText: t("删除对话"),
       danger: true,
       onConfirm: () => handleDeleteRun(runId),
     });
@@ -2827,6 +2799,8 @@ export default function App() {
             !["completed", "failed", "paused", "running"].includes(selectedExecution.status)) {
           throw new Error(t("无法定位这条消息对应的 Pi 会话。请重新加载对话后重试。"));
         }
+        const previousEventSequence = state.events.at(-1)?.sequence ?? Number.NEGATIVE_INFINITY;
+        const preEditIds = new Set(sessionEntries.map(entry => entry.id));
         const snap = await runtimeService.editNode({
           runId: state.runId, node: selectedNodeName, executionId: selectedExecution.id,
           oldText: selectedText, instruction: selectedText, images: selectedVersionData.images,
@@ -2834,9 +2808,18 @@ export default function App() {
         });
         if (!await acceptNodeEdit(snap)) return false;
         if (isInitialGoal) setGoal(selectedText);
-        setSessionEntries(prev => applySelectedVersionToEntries(
-          prev, targetMsg, cleanExisting, selectedMessage, selectedVersionData.subsequentEntries, false
-        ));
+        setSessionEntries(prev => sessionEntriesAfterNodeEdit({
+          entries: prev,
+          snapshot: snap,
+          targetNode: selectedNodeName,
+          targetMsg,
+          updatedMsg: selectedMessage,
+          fallbackEntries: applySelectedVersionToEntries(
+            prev, targetMsg, cleanExisting, selectedMessage, selectedVersionData.subsequentEntries, false
+          ),
+          previousEventSequence,
+          preEditIds,
+        }));
         setEditingMessage(null);
         setEditPrefillText("");
         return true;
@@ -3030,7 +3013,7 @@ export default function App() {
       });
     }
 
-    const { updatedMsg, rolledBackEntries } = branchEditedMessageEntries(
+    const { updatedMsg, rolledBackEntries, previousEntries } = branchEditedMessageEntries(
       sessionEntries,
       targetMsg,
       cleanExisting,
@@ -3057,7 +3040,7 @@ export default function App() {
         const snap = await runtimeService.editPlanner({ runId: state.runId,
           oldText: oldBackendText, instruction: backendGoal });
         if (!applyForegroundSnapshot(snap, generation)) return false;
-        setSessionEntries(rolledBackEntries);
+        setSessionEntries([...previousEntries, updatedMsg]);
         await handlePlanGoal(backendGoal, { displayText: backendGoal, files: parsedExisting.attachments, images: targetMsg.images }, "graph", state.runId, false, updatedMsg);
         return true;
       } catch (error) { return reportEditError(error); }
@@ -3079,6 +3062,9 @@ export default function App() {
         setError(t("无法定位这条消息对应的 Pi 会话。请重新加载对话后重试。"));
         return false;
       }
+      const previousEventSequence = state.events.at(-1)?.sequence ?? Number.NEGATIVE_INFINITY;
+      const preEditIds = new Set(sessionEntries.map(entry => entry.id));
+      const dropTargetNodeEntries = targetMsg.userTurnOffset !== undefined || targetMsg.id === `task-${targetNodeName}`;
       return run(async () => {
         if (!await requireEditRepository()) return false;
         const snap = await runtimeService.editNode({
@@ -3089,11 +3075,17 @@ export default function App() {
         if (!await acceptNodeEdit(snap)) return false;
         // Cursor edits are projected from durable events and retained log
         // prefixes, never from a text-matched optimistic version of that row.
-        if (targetMsg.userTurnOffset !== undefined || targetMsg.id === `task-${targetNodeName}`) {
-          // The task card is the opening prompt, not an optimistic chat turn.
-          // Its replacement and the discarded suffix come from the snapshot.
-          setSessionEntries(prev => prev.filter(entry => entry.node !== targetNodeName));
-        } else setSessionEntries(rolledBackEntries);
+        setSessionEntries(prev => sessionEntriesAfterNodeEdit({
+          entries: prev,
+          snapshot: snap,
+          targetNode: targetNodeName,
+          targetMsg,
+          updatedMsg,
+          fallbackEntries: rolledBackEntries,
+          previousEventSequence,
+          preEditIds,
+          dropTargetNodeEntries,
+        }));
         setEditingMessage(null);
         setEditPrefillText("");
         return true;

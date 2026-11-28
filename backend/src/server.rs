@@ -5800,6 +5800,8 @@ fn edit_planner(
         instruction: instruction.trim().into(),
         first_turn,
         selected_version,
+        from_message_timestamp: branch.as_ref().and_then(|branch| branch.selected_timestamp),
+        from_occurrence: branch.as_ref().map(|branch| branch.selected_occurrence),
     }) {
         return Err(match branch {
             Some(branch) => match branch.rollback() {

@@ -333,7 +333,7 @@ h3 {
 
 /* 侧边栏 (悬浮圆角卡片模式) */
 .sidebar {
-  --sidebar-width: clamp(260px, 19vw, 300px);
+  --sidebar-width: clamp(260px, 19.4vw, 306px);
   --sidebar-content-width: calc(var(--sidebar-width) - 30px);
   --sidebar-scrollbar-offset: var(--scrollbar-size, 10px);
   --sidebar-anim-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -2996,7 +2996,6 @@ h3 {
 :root.window-inactive .run-dot.running-pulse,
 :root.window-inactive .run-dot.run-pin-dot.is-working,
 :root.window-inactive .thinking-icon-box.pulse,
-:root.window-inactive .tool-call-card.running::before,
 :root.window-inactive .activity-summary-icon.spin,
 :root.window-inactive .react-flow__edge.animated path,
 :root.window-inactive .sidebar-skeleton-item::after,

@@ -1324,6 +1324,15 @@ pub enum EventKind {
         first_turn: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         selected_version: Option<usize>,
+        /// Pi message timestamp of the abandoned user turn. The replayed
+        /// transcript row carries the same value, so it identifies the turn
+        /// even when its text repeats.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_message_timestamp: Option<u64>,
+        /// Chronological position of the abandoned turn among equal-text user
+        /// turns of the whole session tree; a fallback when no timestamp exists.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_occurrence: Option<usize>,
     },
     FeedbackQueued {
         feedback: PendingFeedback,

@@ -3788,6 +3788,13 @@ impl Runtime {
                     )
             })
             .ok_or("Missing execution start")?;
+        let claimed_opening_sequence = match &self.state.events[start].kind {
+            EventKind::Started {
+                message_sequences: Some(seqs),
+                ..
+            } => seqs.iter().copied().min(),
+            _ => None,
+        };
         let opening_event_sequence = self.state.events[..start]
             .iter()
             .rev()
@@ -3880,13 +3887,19 @@ impl Runtime {
             .events
             .iter()
             .position(|event| event.sequence == opening_event_sequence);
-        let bound_opening = opening_event.is_some_and(|index| {
+        let bound_directive = opening_event.is_some_and(|index| {
             index < start
                 && !self.state.events[index + 1..start].iter().any(|event| {
                     matches!(&event.kind,
                 EventKind::Started { execution, .. } if execution.node == node)
                 })
         });
+        let opening_event_sequence = match (bound_directive, claimed_opening_sequence) {
+            (true, Some(claimed)) => opening_event_sequence.min(claimed),
+            (false, Some(claimed)) => claimed,
+            _ => opening_event_sequence,
+        };
+        let bound_opening = bound_directive || claimed_opening_sequence.is_some();
         let edits_opening = first_turn
             || (bound_opening && pending.as_ref().is_some_and(|turn| turn.first_in_execution));
         let from_event_sequence = if edits_opening {

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-11-28
+
+### Fixed
+
+- Pruned subsequent local `sessionEntries` when editing an older durable message (not present in the current browser session's local entries) across Serial, Graph node, version-switch, and upstream-invalidation edits, and updated render-time `localMessagesAfterEdits` to drop abandoned event identities across all `conversation_edited` boundaries so abandoned follow-up bubbles no longer linger below the edited turn (`src/services/conversationBranch.ts`, `src/App.tsx`, `src/components/views/GraphWorkbench.tsx`, `scripts/conversation-branch.test.ts`).
+- Recorded the edited Pi user turn's message timestamp (`from_message_timestamp`) and whole-tree occurrence (`from_occurrence`) on `planner_conversation_edited` events, and updated `activePlannerOutput` to locate the abandoned Planner turn by those identities before falling back to equal-text matching (`backend/src/session_branch.rs`, `backend/src/model.rs`, `backend/src/server.rs`, `src/lib/plannerOutput.ts`, `src/components/PlanningActivity.tsx`, `src/components/views/GraphWorkbench.tsx`).
+- Fixed four additional stale-message leaks across edits and fresh restarts: dropped pre-`fresh_restart` `conversation_edited` events and local `sessionEntries` (`src/services/conversationBranch.ts`, `src/components/views/GraphWorkbench.tsx`); dropped Planner steers from branches abandoned by `planner_conversation_edited` (`src/services/plannerSteers.ts`); pruned abandoned Planner turns in paged tail windows before the edited turn is paged in (`src/lib/plannerOutput.ts`, `src/components/PlanningActivity.tsx`); and included claimed `Started.message_sequences` (`NodeMessaged`) when computing `from_event_sequence` during node message edits (`backend/src/runtime.rs`).
+
+### Changed
+
+- Unified the conversation delete confirmation dialog title to "删除 Conversation" ("Delete Conversation") without branching by Direct/Compile mode (`src/App.tsx`, `src/i18n/en.ts`).
+
+- Widened the expanded sidebar fluidly on wide viewports via `--sidebar-width: clamp(260px, 19.4vw, 306px)` and derived `--sidebar-content-width` from it, keeping `260px` at `<= 1340px` while giving workspace paths and conversation titles more room on wider MacBook and desktop displays (`src/styles.css`, `scripts/ui-polish.test.mjs`).
+
+- Aligned running tool card (`.tool-call-card.running`) border opacity (`0.42`) and glow (`0 0 14px rgba(..., 0.09), inset 0 1px 0 rgba(..., 0.11)`) with the streaming Chain of Thought card (`.thinking-card.streaming`) in both Blue and Black accent themes, replacing the pulsing inner-glow pseudo-element (`src/tokens.css`, `src/styles-planning.css`, `src/styles.css`, `scripts/background-settings-ui.test.mjs`).
+
+### Removed
+
+- Removed the "Resident processes & resources" (`ResidentProcessesSettings`) card from the Settings modal while keeping automatic backend LRU/TTL resident-agent reaping and API endpoints intact (`src/components/modals/SettingsModal.tsx`, `src/components/modals/ResidentProcessesSettings.tsx`, `src/i18n/en.ts`).
+
 ## [2.0.2] - 2026-11-28
 
 ### Fixed
@@ -1200,7 +1220,10 @@ Baseline release. The changelog is restarted from the current codebase at v1.1.0
   - **Configurable**: Can be toggled on/off in Settings (`postTaskReview`, enabled by default).
   - **Loop engineering**: When combined with Auto Approve, creates a robust, closed-loop engineering cycle that autonomously plans, executes, verifies, and iterates until the Planner concludes.
 
-[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/zhexusun10/pi-n/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/zhexusun10/pi-n/compare/v2.0.2...v2.0.3
+[2.0.2]: https://github.com/zhexusun10/pi-n/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/zhexusun10/pi-n/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/zhexusun10/pi-n/compare/v1.9.99...v2.0.0
 [1.9.99]: https://github.com/zhexusun10/pi-n/compare/v1.9.18...v1.9.99
 [1.9.18]: https://github.com/zhexusun10/pi-n/compare/v1.9.17...v1.9.18

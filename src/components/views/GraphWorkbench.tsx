@@ -30,7 +30,7 @@ import { runtimeService } from "../../services/runtime";
 import { getDesktopTitlebarInset, isMacosPlatform } from "../../services/apiBase";
 import { copyTextToClipboard } from "../../services/externalLink";
 import { deduceRouteType, shouldShowRouteBadge } from "../../services/executionRoute";
-import { activeNodeConversationEvents, buildConversationTurns, localMessagesAfterEdit, nodeConversationExecutions, executionIdForMessage, versionIndexForEdit, versionsForEdit, type ConversationExecution } from "../../services/conversationBranch";
+import { activeLocalNodeMessages, activeNodeConversationEvents, buildConversationTurns, nodeConversationExecutions, executionIdForMessage, versionIndexForEdit, versionsForEdit, type ConversationExecution } from "../../services/conversationBranch";
 import { captureViewScrollState, resolveViewScroll, calculateExpandedCardScrollDelta, CONVERSATION_BOTTOM_THRESHOLD, type ViewScrollState } from "../../services/conversationScroll";
 import { isNodeWorking, nodeDependenciesCompleted } from "../../lib/nodeWorking";
 import { resolveGraphPhase } from "../../lib/graphPhase";
@@ -840,11 +840,9 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
     const localMessages = effectiveMessages.filter((msg) => msg.role === "user" && msg.node === conversationNode &&
       msg.runId === state.runId &&
       (mergerConversation ? msg.conversationKind === "merger" : msg.conversationKind !== "merger"));
-    const latestEdit = mergerConversation ? undefined : [...state.events].reverse().find((event) =>
-      event.type === "conversation_edited" && event.target === conversationNode && event.nodes?.includes(conversationNode));
-    const local = latestEdit?.old_instruction
-      ? localMessagesAfterEdit(localMessages, latestEdit, state.events)
-      : localMessages;
+    const local = mergerConversation
+      ? localMessages
+      : activeLocalNodeMessages(localMessages, state, conversationNode, false);
     const localRemaining = [...local];
     const matchedLocals = new Map<number, ChatMessage>();
     const activeEvents = (mergerConversation ? state.events : activeNodeConversationEvents(state, conversationNode)).filter((event) => {
@@ -1198,7 +1196,10 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
   // rendered as the conversation header. A header-only conversation still has
   // one persisted turn, so this must not short-circuit to an empty list or the
   // replay renders the goal a second time.
-  const activeSavedPlannerOutput = useMemo(() => activePlannerOutput(savedPlannerOutput, plannerEdits), [savedPlannerOutput, plannerEdits]);
+  const activeSavedPlannerOutput = useMemo(
+    () => activePlannerOutput(savedPlannerOutput, plannerEdits, { firstPlanningId: savedPlannerIds[0], planningIds: savedPlannerIds }),
+    [savedPlannerOutput, plannerEdits, savedPlannerIds],
+  );
   const persistedTurnHistory = useMemo(() => plannerUserTurns(activeSavedPlannerOutput), [activeSavedPlannerOutput]);
   // Only hide an optimistic turn when the transcript really replays that turn.
   // A partial window that starts at a steer keeps the header out of history, so
@@ -2446,14 +2447,11 @@ export const GraphWorkbench: React.FC<GraphWorkbenchProps> = React.memo(({
         id: userMessage.id, userMessage, isInitial: index === 0, executions: [] as ConversationExecution[], steerMessages: [] as ChatMessage[],
       }));
     }
-    const latestEdit = [...state.events].reverse().find((event) =>
-      event.type === "conversation_edited" && event.target === serialNode.id && event.nodes?.includes(serialNode.id));
-    if (latestEdit?.old_instruction) {
-      const retained = localMessagesAfterEdit(messages, latestEdit, state.events, !!latestEdit.first_turn);
-      if (retained !== messages && latestEdit.first_turn && retained[0]) {
-        retained[0] = { ...retained[0], text: serialNode.task };
-      }
-      messages = retained;
+    messages = activeLocalNodeMessages(messages, state, serialNode.id, true);
+    const hasFirstTurnEdit = state.events.some((event) =>
+      event.type === "conversation_edited" && event.target === serialNode.id && event.first_turn);
+    if (hasFirstTurnEdit && messages[0] && !messages[0].node && messages[0].text !== serialNode.task) {
+      messages = [{ ...messages[0], text: serialNode.task }, ...messages.slice(1)];
     }
     const localRemaining = messages.filter((msg) => msg.node === serialNode.id);
     const replacedIds = new Set<string>();

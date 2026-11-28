@@ -5,34 +5,295 @@ export function stripNodePrefix(text: string): string {
   return text.replace(/^\[@[^\]]+\]\s*/, "").trim();
 }
 
-export function localMessagesAfterEdit(messages: ChatMessage[], edit: GraphEvent, events: GraphEvent[], keepOpening = false): ChatMessage[] {
+function isEventAbandonedByEdit(
+  event: GraphEvent,
+  edit: GraphEvent,
+  node: string,
+  events: readonly GraphEvent[],
+): boolean {
+  if (event.sequence >= edit.sequence) return false;
+  const belongs = event.node === node || event.target === node;
+  if (!belongs) return false;
+  if (edit.target === node) {
+    return event.sequence >= (edit.from_event_sequence ?? edit.sequence);
+  }
+  // Editing an upstream node invalidates the old descendant conversation.
+  return event.timestamp >= (events.find((e) => e.type === "started" &&
+    e.execution?.id === edit.from_execution_id)?.timestamp ?? edit.timestamp);
+}
+
+function collectEventChainIdentities(
+  start: GraphEvent | undefined,
+  events: readonly GraphEvent[],
+  ids: Set<string>,
+  requests: Set<string>,
+): void {
+  const visited = new Set<number>();
+  let cursor = start;
+  while (cursor && !visited.has(cursor.sequence) &&
+      ["invalidated", "node_messaged", "steered", "conversation_edited"].includes(cursor.type)) {
+    visited.add(cursor.sequence);
+    ids.add(`event-${cursor.sequence}`);
+    if (cursor.request_id) {
+      requests.add(cursor.request_id);
+      ids.add(`msg-${cursor.request_id}`);
+    }
+    cursor = cursor.type === "conversation_edited"
+      ? events.find(event => event.sequence === cursor?.from_event_sequence) : undefined;
+  }
+}
+
+export function localMessagesAfterEdit(
+  messages: ChatMessage[],
+  edit: GraphEvent,
+  events: GraphEvent[],
+  keepOpening = false,
+  node = edit.target,
+): ChatMessage[] {
   const sourceIds = new Set<string>();
   const sourceRequests = new Set<string>();
-  const visited = new Set<number>();
-  let source = events.find(event => event.sequence === edit.from_event_sequence);
-  while (source && !visited.has(source.sequence) &&
-      ["invalidated", "node_messaged", "steered", "conversation_edited"].includes(source.type)) {
-    visited.add(source.sequence);
-    sourceIds.add(`event-${source.sequence}`);
-    if (source.request_id) {
-      sourceRequests.add(source.request_id);
-      sourceIds.add(`msg-${source.request_id}`);
-    }
-    source = source.type === "conversation_edited"
-      ? events.find(event => event.sequence === source?.from_event_sequence) : undefined;
+  collectEventChainIdentities(
+    events.find(event => event.sequence === edit.from_event_sequence),
+    events,
+    sourceIds,
+    sourceRequests,
+  );
+  const abandonedIds = new Set<string>();
+  const abandonedRequests = new Set<string>();
+  for (const event of events) {
+    const abandoned = node
+      ? isEventAbandonedByEdit(event, edit, node, events)
+      : (event.sequence < edit.sequence && event.sequence >= (edit.from_event_sequence ?? edit.sequence));
+    if (abandoned) collectEventChainIdentities(event, events, abandonedIds, abandonedRequests);
   }
+  const priorRequests = new Set(
+    events.filter(event => event.sequence < edit.sequence && event.request_id).map(event => event.request_id),
+  );
+  const isPostEditRequest = (message: ChatMessage) =>
+    Boolean(message.steerRequestId && !priorRequests.has(message.steerRequestId));
+  const isActiveReplacement = (message: ChatMessage) =>
+    edit.target === node &&
+    Boolean(edit.instruction) &&
+    stripNodePrefix(message.text) === stripNodePrefix(edit.instruction ?? "") &&
+    (sourceIds.has(message.id) || Boolean(message.steerRequestId && sourceRequests.has(message.steerRequestId)));
+  const matchesAbandonedEvent = (message: ChatMessage) =>
+    !isPostEditRequest(message) &&
+    !isActiveReplacement(message) &&
+    (abandonedIds.has(message.id) || Boolean(message.steerRequestId && abandonedRequests.has(message.steerRequestId)));
   // An edited copy keeps its display ID after retiring its transport identity.
   // Follow the durable edit chain to distinguish equal text in different turns.
-  const boundary = messages.findIndex(message => stripNodePrefix(message.text) === edit.old_instruction &&
-    (!sourceIds.size || sourceIds.has(message.id) ||
-      (message.steerRequestId && sourceRequests.has(message.steerRequestId))));
-  if (boundary < 0) return messages;
-  const priorRequests = new Set(events.filter(event => event.sequence < edit.sequence && event.request_id)
-    .map(event => event.request_id));
+  const boundary = edit.target === node && edit.old_instruction
+    ? messages.findIndex(message => stripNodePrefix(message.text) === edit.old_instruction &&
+      (!sourceIds.size || sourceIds.has(message.id) ||
+        (message.steerRequestId && sourceRequests.has(message.steerRequestId))))
+    : -1;
+  const isFirstTurnCut = Boolean(edit.first_turn && edit.target === node);
   // A later receipt or an unacknowledged request is new input. Repeating the
   // pre-edit text cannot put that request in the discarded local suffix.
-  return messages.filter((message, index) => index < boundary + Number(keepOpening) ||
-    (message.steerRequestId && !priorRequests.has(message.steerRequestId)));
+  const filtered = messages.filter((message, index) => {
+    if (keepOpening && index === 0) return true;
+    if (isPostEditRequest(message)) return true;
+    if (isFirstTurnCut) return false;
+    if (boundary >= 0 && index >= boundary + Number(keepOpening)) return false;
+    if (matchesAbandonedEvent(message)) return false;
+    return true;
+  });
+  return boundary >= 0 || filtered.length !== messages.length ? filtered : messages;
+}
+
+export function localMessagesAfterEdits(
+  messages: ChatMessage[],
+  events: GraphEvent[],
+  node: string,
+  preserveOpeningSlot = false,
+): ChatMessage[] {
+  let retained = messages;
+  for (const event of events) {
+    if (event.type !== "conversation_edited") continue;
+    if (event.target !== node && !event.nodes?.includes(node)) continue;
+    retained = localMessagesAfterEdit(
+      retained,
+      event,
+      events,
+      Boolean(preserveOpeningSlot && event.first_turn),
+      node,
+    );
+  }
+  return retained;
+}
+
+function nodeFreshRestartBoundary(state: Snapshot, node: string): {
+  freshBoundary: number;
+  retainedMessages: Set<number>;
+} {
+  const superseded = new Set(state.supersededExecutionIds ?? []);
+  const lineage = nodeConversationLineage(state, node);
+  const starts = state.events.filter((event) => event.type === "started" && event.execution?.node === node
+    && (!superseded.has(event.execution.id) || lineage.has(event.execution.id)));
+  const freshBoundary = starts.reduce((oldest, event) => Math.min(oldest, event.sequence), Number.POSITIVE_INFINITY);
+  // A first dispatch claims input accepted before Started. Keep those turns
+  // (and still-pending input), but never revive claims from an abandoned branch.
+  const retainedMessages = new Set([
+    ...starts.flatMap(event => event.message_sequences ?? []),
+    ...(state.nodes[node]?.pendingMessages ?? []).map(message => message.sequence),
+  ]);
+  return { freshBoundary, retainedMessages };
+}
+
+function isEventDroppedByFreshRestart(
+  event: GraphEvent,
+  node: string,
+  freshBoundary: number,
+  retainedMessages: ReadonlySet<number>,
+): boolean {
+  if (!Number.isFinite(freshBoundary) || event.sequence >= freshBoundary) return false;
+  const belongs = event.node === node || event.target === node;
+  if (belongs && retainedMessages.has(event.sequence)) return false;
+  if (event.type === "conversation_edited") return belongs;
+  return event.type === "invalidated" || event.type === "node_messaged" || event.type === "steered";
+}
+
+export function activeLocalNodeMessages(
+  messages: ChatMessage[],
+  state: Snapshot,
+  node: string,
+  preserveOpeningSlot = false,
+): ChatMessage[] {
+  const afterEdits = localMessagesAfterEdits(messages, state.events, node, preserveOpeningSlot);
+  const { freshBoundary, retainedMessages } = nodeFreshRestartBoundary(state, node);
+  if (!Number.isFinite(freshBoundary)) return afterEdits;
+  const droppedIds = new Set<string>();
+  const droppedRequests = new Set<string>();
+  for (const event of state.events) {
+    const belongs = event.node === node || event.target === node;
+    if (belongs && isEventDroppedByFreshRestart(event, node, freshBoundary, retainedMessages)) {
+      collectEventChainIdentities(event, state.events, droppedIds, droppedRequests);
+    }
+  }
+  if (!droppedIds.size && !droppedRequests.size) return afterEdits;
+  const priorRequests = new Set(
+    state.events.filter(event => event.sequence < freshBoundary && event.request_id).map(event => event.request_id),
+  );
+  const filtered = afterEdits.filter((message, index) => {
+    if (preserveOpeningSlot && index === 0 && !message.node) return true;
+    if (message.steerRequestId && !priorRequests.has(message.steerRequestId)) return true;
+    if (droppedIds.has(message.id)) return false;
+    if (message.steerRequestId && droppedRequests.has(message.steerRequestId)) return false;
+    return true;
+  });
+  return filtered.length === afterEdits.length ? afterEdits : filtered;
+}
+
+export function sessionEntriesAfterNodeEdit(options: {
+  entries: readonly ChatMessage[];
+  snapshot: Snapshot;
+  targetNode: string;
+  targetMsg: ChatMessage;
+  updatedMsg?: ChatMessage;
+  fallbackEntries?: readonly ChatMessage[];
+  previousEventSequence?: number;
+  preEditIds?: ReadonlySet<string>;
+  dropTargetNodeEntries?: boolean;
+}): ChatMessage[] {
+  const {
+    entries,
+    snapshot,
+    targetNode,
+    targetMsg,
+    updatedMsg,
+    fallbackEntries,
+    previousEventSequence = Number.NEGATIVE_INFINITY,
+    preEditIds,
+    dropTargetNodeEntries = false,
+  } = options;
+  const latestEdit = [...snapshot.events].reverse().find(event =>
+    event.type === "conversation_edited" &&
+    event.target === targetNode &&
+    event.sequence > previousEventSequence,
+  );
+  if (!latestEdit) {
+    if (dropTargetNodeEntries) {
+      return entries.filter(entry => entry.node !== targetNode);
+    }
+    if (fallbackEntries) return [...fallbackEntries];
+    return updatedMsg ? [...entries, updatedMsg] : [...entries];
+  }
+
+  const affectedNodes = new Set(latestEdit.nodes?.length ? latestEdit.nodes : [targetNode]);
+  const targetIndex = findBranchTargetIndex(entries, targetMsg);
+  const preEditActiveIds = new Set<string>();
+  const preEditActiveRequests = new Set<string>();
+  if (targetIndex < 0) {
+    for (const node of affectedNodes) {
+      for (const event of activeNodeConversationEvents(snapshot, node)) {
+        if (event.sequence < latestEdit.sequence) {
+          collectEventChainIdentities(event, snapshot.events, preEditActiveIds, preEditActiveRequests);
+        }
+      }
+    }
+  }
+
+  const priorRequests = new Set(
+    snapshot.events
+      .filter(event => event.sequence < latestEdit.sequence && event.request_id)
+      .map(event => event.request_id),
+  );
+  const isPostEditEntry = (entry: ChatMessage) =>
+    (preEditIds !== undefined && !preEditIds.has(entry.id)) ||
+    Boolean(entry.steerRequestId && !priorRequests.has(entry.steerRequestId));
+
+  const perNodeRetained = new Map<string, Set<ChatMessage>>();
+  for (const node of affectedNodes) {
+    const nodeEntries = entries.filter(entry =>
+      entry.node === node && (!entry.runId || !snapshot.runId || entry.runId === snapshot.runId),
+    );
+    perNodeRetained.set(node, new Set(localMessagesAfterEdits(nodeEntries, snapshot.events, node, false)));
+  }
+
+  const next: ChatMessage[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.runId && snapshot.runId && entry.runId !== snapshot.runId) {
+      next.push(entry);
+      continue;
+    }
+    if (!entry.node) {
+      if (latestEdit.first_turn && latestEdit.instruction && index === 0) {
+        next.push({ ...entry, text: latestEdit.instruction });
+      } else {
+        next.push(entry);
+      }
+      continue;
+    }
+    if (!affectedNodes.has(entry.node)) {
+      next.push(entry);
+      continue;
+    }
+    if (isPostEditEntry(entry)) {
+      next.push(entry);
+      continue;
+    }
+    if (dropTargetNodeEntries || latestEdit.first_turn) continue;
+    if (entry.node === targetNode && targetIndex >= 0 && index >= targetIndex) continue;
+    if (!perNodeRetained.get(entry.node)?.has(entry)) continue;
+    if (targetIndex < 0) {
+      const matchesPreEditActive =
+        preEditActiveIds.has(entry.id) ||
+        Boolean(entry.steerRequestId && preEditActiveRequests.has(entry.steerRequestId));
+      if (!matchesPreEditActive) continue;
+    }
+    next.push(entry);
+  }
+
+  if (updatedMsg && !dropTargetNodeEntries && !latestEdit.first_turn) {
+    next.push({
+      ...updatedMsg,
+      node: targetNode,
+      runId: snapshot.runId || updatedMsg.runId,
+      steerRequestId: undefined,
+    });
+  }
+  return next;
 }
 
 export function findBranchTargetIndex(
@@ -140,35 +401,10 @@ export function branchEditedMessageEntries(
  * original durable events and executions remain available for history. */
 export function activeNodeConversationEvents(state: Snapshot, node: string): GraphEvent[] {
   const edits = state.events.filter((event) => event.type === "conversation_edited" && event.nodes?.includes(node));
-  const superseded = new Set(state.supersededExecutionIds ?? []);
-  const lineage = nodeConversationLineage(state, node);
-  const starts = state.events.filter((event) => event.type === "started" && event.execution?.node === node
-    && (!superseded.has(event.execution.id) || lineage.has(event.execution.id)));
-  const freshBoundary = starts.reduce((oldest, event) => Math.min(oldest, event.sequence), Number.POSITIVE_INFINITY);
-  // A first dispatch claims input accepted before Started. Keep those turns
-  // (and still-pending input), but never revive claims from an abandoned branch.
-  const retainedMessages = new Set([
-    ...starts.flatMap(event => event.message_sequences ?? []),
-    ...(state.nodes[node]?.pendingMessages ?? []).map(message => message.sequence),
-  ]);
-  const belongs = (event: GraphEvent) => event.node === node || event.target === node;
-  return state.events.filter((event) => !edits.some((edit) => {
-    if (event.sequence >= edit.sequence) return false;
-    if (edit.target === node) {
-      return event.sequence >= (edit.from_event_sequence ?? edit.sequence) && belongs(event);
-    }
-    // Editing an upstream node invalidates the old descendant conversation.
-    return event.timestamp >= (state.events.find((e) => e.type === "started" &&
-      e.execution?.id === edit.from_execution_id)?.timestamp ?? edit.timestamp) &&
-      belongs(event);
-  })).filter((event) => {
-    if (Number.isFinite(freshBoundary) && event.sequence < freshBoundary
-      && !(belongs(event) && retainedMessages.has(event.sequence))
-      && (event.type === "invalidated" || event.type === "node_messaged" || event.type === "steered")) {
-      return false;
-    }
-    return true;
-  });
+  const { freshBoundary, retainedMessages } = nodeFreshRestartBoundary(state, node);
+  return state.events.filter((event) => !edits.some((edit) =>
+    isEventAbandonedByEdit(event, edit, node, state.events),
+  )).filter((event) => !isEventDroppedByFreshRestart(event, node, freshBoundary, retainedMessages));
 }
 
 export function executionIdForMessage(state: Snapshot, event: GraphEvent): string | undefined {

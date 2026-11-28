@@ -2063,6 +2063,78 @@ fn editing_a_node_turn_retires_the_runs_parked_serial_shell() {
 }
 
 #[test]
+fn editing_an_execution_opened_by_queued_node_messaged_replaces_that_claimed_event() {
+    let (_temp, _source, mut runtime) = setup(
+        true,
+        Graph {
+            original_goal: "queued opening".into(),
+            nodes: vec![
+                Node {
+                    id: "upstream".into(),
+                    task: "u".into(),
+                },
+                Node {
+                    id: "worker".into(),
+                    task: "w".into(),
+                },
+            ],
+            edges: vec![Edge {
+                from: "upstream".into(),
+                to: "worker".into(),
+                feedback: false,
+            }],
+        },
+    );
+    runtime.approve().unwrap();
+    let mut u1 = runtime.jobs().unwrap().remove(0);
+    assert_eq!(u1.execution.node, "upstream");
+    prepare_edit_job(&mut runtime, &mut u1);
+    // Queue a NodeMessaged turn on `worker` while it waits on `upstream`.
+    assert!(runtime
+        .queue_waiting_node_message("worker", "queued follow-up", None, None)
+        .unwrap());
+    let queued_seq = runtime.state.events.last().unwrap().sequence;
+    runtime
+        .finish(&u1.execution, Ok((u1.execution.before.clone(), "u1".into())))
+        .unwrap();
+    let w1 = runtime.jobs().unwrap().remove(0);
+    assert_eq!(w1.execution.node, "worker");
+    let session_dir = runtime.root.join("sessions").join(&w1.execution.id);
+    fs::create_dir_all(&session_dir).unwrap();
+    let file = session_dir.join(format!("test_{}.jsonl", w1.execution.session_id));
+    let history = [
+        serde_json::json!({"type":"session", "version":3, "piNFormat":1, "piNRunId":runtime.state.run_id, "id":w1.execution.session_id, "cwd":w1.execution.worktree}),
+        serde_json::json!({"type":"message", "id":"m1", "parentId":null, "message":{"role":"user", "content":"w\n\nqueued follow-up", "timestamp":w1.execution.started_at}}),
+        serde_json::json!({"type":"message", "id":"a1", "parentId":"m1", "message":{"role":"assistant", "content":[]}}),
+    ]
+    .iter()
+    .map(|entry| format!("{entry}\n"))
+    .collect::<String>();
+    fs::write(&file, &history).unwrap();
+    // Edit the active (running) execution so it branches directly rather than
+    // entering post-publication source-direct follow-up mode.
+    runtime
+        .edit_node_message(
+            "worker",
+            &w1.execution.id,
+            "w\n\nqueued follow-up",
+            "edited queued",
+            None,
+        )
+        .unwrap();
+    assert!(
+        matches!(
+            &runtime.state.events.last().unwrap().kind,
+            EventKind::ConversationEdited {
+                from_event_sequence,
+                ..
+            } if *from_event_sequence == queued_seq
+        ),
+        "editing a turn opened by a claimed NodeMessaged must replace that queued sequence"
+    );
+}
+
+#[test]
 fn editing_a_running_node_stops_its_execution_and_branches_from_the_start() {
     let (_temp, source, mut runtime) = setup(true, single());
     runtime.set_route("serial").unwrap();

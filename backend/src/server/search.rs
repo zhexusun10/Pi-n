@@ -2746,6 +2746,8 @@ mod tests {
                     instruction: "编辑后的规划目标".into(),
                     first_turn: true,
                     selected_version: None,
+                    from_message_timestamp: None,
+                    from_occurrence: None,
                 },
             )
             .unwrap();
@@ -3051,6 +3053,8 @@ mod tests {
                     instruction: "新的第二轮追问".into(),
                     first_turn: false,
                     selected_version: None,
+                    from_message_timestamp: None,
+                    from_occurrence: None,
                 },
             )
             .unwrap();

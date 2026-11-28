@@ -13,6 +13,12 @@ pub struct PreparedBranch {
     path: PathBuf,
     old_len: u64,
     pub first_user_turn: bool,
+    /// Pi message timestamp of the edited user turn: a durable identity the
+    /// replayed transcript row carries too, so equal text cannot alias it.
+    pub selected_timestamp: Option<u64>,
+    /// Chronological position of the edited turn among every user turn in the
+    /// session tree whose text matched, abandoned branches included.
+    pub selected_occurrence: usize,
 }
 
 impl PreparedBranch {
@@ -475,6 +481,8 @@ pub struct UserBranch {
     validated_len: usize,
     validated_hash: git2::Oid,
     selected_id: String,
+    selected_timestamp: Option<u64>,
+    selected_occurrence: usize,
     parent: Option<String>,
     pub first_user_turn: bool,
     pub first_in_execution: bool,
@@ -739,12 +747,21 @@ fn prepare_user_branch(
                 && time <= completed_at
         })
         .is_some_and(|entry| entry["id"].as_str() == Some(candidate.0));
+    let selected_timestamp = entries
+        .get(candidate.0)
+        .and_then(|entry| entry["message"]["timestamp"].as_u64());
+    let selected_occurrence = matches
+        .iter()
+        .position(|(id, _, _)| *id == candidate.0)
+        .unwrap_or(0);
     Ok(UserBranch {
         path,
         validated_len: contents.len(),
         validated_hash: git2::Oid::hash_object(git2::ObjectType::Blob, contents.as_bytes())
             .map_err(|error| error.to_string())?,
         selected_id: candidate.0.into(),
+        selected_timestamp,
+        selected_occurrence,
         parent,
         first_user_turn,
         first_in_execution,
@@ -808,6 +825,8 @@ impl UserBranch {
             path: self.path,
             old_len,
             first_user_turn: self.first_user_turn,
+            selected_timestamp: self.selected_timestamp,
+            selected_occurrence: self.selected_occurrence,
         };
         if let Err(error) = file
             .write_all(format!("{marker}\n").as_bytes())
@@ -1289,6 +1308,28 @@ mod tests {
         assert_eq!(value["parentId"], "root");
         branch.rollback().unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 3);
+    }
+
+    #[test]
+    fn planner_edit_records_the_timestamp_and_tree_position_of_an_equal_text_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = Uuid::new_v4().to_string();
+        let path = dir.path().join(format!("test_{id}.jsonl"));
+        fs::write(&path, [
+            json!({"type":"session", "id":id, "cwd":dir.path()}),
+            json!({"type":"message", "id":"root", "parentId":null,
+                "message":{"role":"system", "content":"system"}}),
+            json!({"type":"message", "id":"abandoned", "parentId":"root",
+                "message":{"role":"user", "content":"go", "timestamp":5}}),
+            json!({"type":"custom", "id":"edit", "parentId":"root", "customType":"pi-n-edit"}),
+            json!({"type":"message", "id":"active", "parentId":"edit",
+                "message":{"role":"user", "content":"go", "timestamp":9}}),
+        ].iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+        let branch = branch_before_planner_user(dir.path(), &id, dir.path(), "go").unwrap();
+        // The active equal-text turn is identified, not the abandoned one before it.
+        assert_eq!(branch.selected_timestamp, Some(9));
+        assert_eq!(branch.selected_occurrence, 1);
+        branch.rollback().unwrap();
     }
 
     #[test]

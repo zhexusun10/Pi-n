@@ -840,19 +840,22 @@ fn edit_planner_api_branches_the_same_run_and_keeps_the_previous_turn() {
     assert_eq!(result["graph"]["originalGoal"], "replacement");
     assert!(fs::read_to_string(&path).unwrap().contains("pi-n-edit"));
     assert!(fs::read_to_string(&path).unwrap().contains("User query:"));
-    assert_eq!(
-        result["events"].as_array().unwrap().last().unwrap()["type"],
-        "planner_conversation_edited"
-    );
+    let edited_event = result["events"].as_array().unwrap().last().unwrap();
+    assert_eq!(edited_event["type"], "planner_conversation_edited");
+    assert_eq!(edited_event["from_message_timestamp"], 1);
+    assert_eq!(edited_event["from_occurrence"], 0);
     drop(service);
     let restored = Runtime::open(&root).unwrap();
     assert_eq!(restored.state.run_id, run_id);
     assert_eq!(restored.state.graph.original_goal, "replacement");
-    assert!(restored
-        .state
-        .events
-        .iter()
-        .any(|event| matches!(event.kind, EventKind::PlannerConversationEdited { .. })));
+    assert!(restored.state.events.iter().any(|event| matches!(
+        event.kind,
+        EventKind::PlannerConversationEdited {
+            from_message_timestamp: Some(1),
+            from_occurrence: Some(0),
+            ..
+        }
+    )));
 }
 
 #[cfg(feature = "fixture")]

@@ -172,3 +172,82 @@ test('a newer live Planner turn retires the recovered snapshot instead of keepin
   assert.equal(recoveredPlanningForDisplay(continuation, staleReview, false, false)?.planningId, 'continue');
   assert.equal(recoveredPlanningForDisplay(continuation, staleReview, true, false), null);
 });
+
+test('Planner edit identifies a repeated turn by its timestamp or tree position, not first equal text', () => {
+  const src = (id: string) => JSON.stringify({ type: 'pi_n_planning_source', planningId: id, startOffset: 0 });
+  const turn = (text: string, timestamp?: number) => JSON.stringify({ type: 'message_start',
+    message: { role: 'user', content: [{ type: 'text', text }], ...(timestamp ? { timestamp } : {}) } });
+  const build = (timestamps: boolean) => [src('a'), turn('go', timestamps ? 10 : undefined), 'reply one',
+    src('b'), turn('go', timestamps ? 20 : undefined), 'reply two',
+    src('c'), turn('go', timestamps ? 30 : undefined), 'reply three'].join('\n') + '\n';
+  const edit = { old_instruction: 'go', nextPlanningId: 'c' };
+  const kept = (output: string) => ['reply one', 'reply two', 'reply three'].filter(reply => output.includes(reply));
+  // Editing the middle turn keeps the earlier equal-text turn and the later one.
+  assert.deepEqual(kept(activePlannerOutput(build(true), [{ ...edit, fromMessageTimestamp: 20 }])), ['reply one', 'reply three']);
+  assert.deepEqual(kept(activePlannerOutput(build(false), [{ ...edit, fromOccurrence: 1 }], { firstPlanningId: 'a' })),
+    ['reply one', 'reply three']);
+  // A partial window cannot trust a whole-tree position, so it uses the legacy first match.
+  assert.deepEqual(kept(activePlannerOutput(build(false), [{ ...edit, fromOccurrence: 1 }], { firstPlanningId: 'x' })), ['reply three']);
+  // Events recorded before identities existed keep the legacy behavior.
+  assert.deepEqual(kept(activePlannerOutput(build(true), [edit])), ['reply three']);
+  // Sequential edits each resolve their own turn.
+  assert.deepEqual(kept(activePlannerOutput(build(true), [{ ...edit, fromMessageTimestamp: 20 }, { old_instruction: 'go', fromMessageTimestamp: 10, nextPlanningId: 'b' }])),
+    ['reply three']);
+  assert.deepEqual(plannerConversationEdits([{ type: 'planner_conversation_edited', old_instruction: 'go', from_message_timestamp: 20, from_occurrence: 1 },
+    { type: 'graph_revised', planning_id: 'c' }]), [{ old_instruction: 'go', nextPlanningId: 'c', fromMessageTimestamp: 20, fromOccurrence: 1 }]);
+});
+
+test('paged activePlannerOutput prunes abandoned turns even before the edited turn is paged in', () => {
+  const src = (id: string) => JSON.stringify({ type: 'pi_n_planning_source', planningId: id, startOffset: 0 });
+  const turn = (text: string, timestamp?: number) => JSON.stringify({ type: 'message_start',
+    message: { role: 'user', content: [{ type: 'text', text }], ...(timestamp !== undefined ? { timestamp } : {}) } });
+  const planningIds = ['p1', 'p2', 'p3', 'p4', 'p5'];
+  // Tail window contains abandoned p3 & p4 plus replacement p5, while edited p1/p2 is not loaded yet.
+  const tailWindow = [
+    src('p3'), turn('abandoned 3', 30), 'reply 3',
+    src('p4'), turn('abandoned 4', 40), 'reply 4',
+    src('p5'), turn('replacement', 50), 'reply 5',
+  ].join('\n') + '\n';
+
+  // first_turn edit drops everything before replacement p5 in the tail window.
+  const firstTurnOut = activePlannerOutput(tailWindow, [{ old_instruction: 'goal', nextPlanningId: 'p5', firstTurn: true }], { planningIds });
+  assert.match(firstTurnOut, /reply 5/);
+  assert.doesNotMatch(firstTurnOut, /reply 3|reply 4/);
+
+  // Timestamp-identified non-first_turn edit drops p3/p4 (> 20) before p5 while preserving earlier p1 (< 20).
+  const mixedWindow = [
+    src('p1'), turn('goal', 10), 'reply 1',
+    src('p3'), turn('abandoned 3', 30), 'reply 3',
+    src('p5'), turn('replacement', 50), 'reply 5',
+  ].join('\n') + '\n';
+  const tsOut = activePlannerOutput(mixedWindow, [{ old_instruction: 'turn 2', nextPlanningId: 'p5', fromMessageTimestamp: 20 }], { planningIds });
+  assert.match(tsOut, /reply 1/);
+  assert.match(tsOut, /reply 5/);
+  assert.doesNotMatch(tsOut, /reply 3/);
+
+  // Goal-derived abandonedPlanningIds prunes abandoned tail turns even without timestamps.
+  const events = [
+    { type: 'created', planning_id: 'p1', planning: { planningId: 'p1', createdAt: 1, goal: 'goal' } },
+    { type: 'graph_revised', planning_id: 'p2', planning: { planningId: 'p2', createdAt: 2, goal: 'turn 2' } },
+    { type: 'graph_revised', planning_id: 'p3', planning: { planningId: 'p3', createdAt: 3, goal: 'abandoned 3' } },
+    { type: 'graph_revised', planning_id: 'p4', planning: { planningId: 'p4', createdAt: 4, goal: 'abandoned 4' } },
+    { type: 'planner_conversation_edited', old_instruction: 'turn 2' },
+    { type: 'graph_revised', planning_id: 'p5', planning: { planningId: 'p5', createdAt: 5, goal: 'replacement' } },
+  ];
+  const edits = plannerConversationEdits(events);
+  const noTsTail = [
+    src('p3'), turn('abandoned 3'), 'reply 3',
+    src('p4'), turn('abandoned 4'), 'reply 4',
+    src('p5'), turn('replacement'), 'reply 5',
+  ].join('\n') + '\n';
+  const legacyOut = activePlannerOutput(noTsTail, edits, { planningIds });
+  assert.match(legacyOut, /reply 5/);
+  assert.doesNotMatch(legacyOut, /reply 3|reply 4/);
+
+  // A tail window strictly after the replacement revision is left untouched.
+  const laterOnly = [src('p6'), turn('follow-up after edit', 60), 'reply 6'].join('\n') + '\n';
+  assert.equal(
+    activePlannerOutput(laterOnly, [{ old_instruction: 'goal', nextPlanningId: 'p5', firstTurn: true }], { planningIds: [...planningIds, 'p6'] }),
+    laterOnly,
+  );
+});

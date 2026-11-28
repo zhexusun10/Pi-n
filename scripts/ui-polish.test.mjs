@@ -99,7 +99,7 @@ for (const language of ["en", "zh-CN"]) {
         await page.setViewportSize({ width, height });
         await expectHomeLayout(page);
         if (width > 720) {
-          const expectedSidebarWidth = Math.round(Math.min(300, Math.max(260, width * 0.19)));
+          const expectedSidebarWidth = Math.round(Math.min(306, Math.max(260, width * 0.194)));
           // Wait for the sidebar width transition across viewport changes (e.g. 1920 -> 1440, 320 -> 900).
           await expect.poll(() => page.locator(".sidebar").evaluate(el => Math.round(el.getBoundingClientRect().width)), {
             message: `expanded sidebar resolves to ${expectedSidebarWidth}px at ${width}x${height}`,

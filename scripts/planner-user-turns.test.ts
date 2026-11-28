@@ -291,3 +291,39 @@ test("a Planner steer send has exactly one owner", () => {
   assert.equal(plannerSteerOwner({ recorded: false, status: "unknown" }), "composer",
     "a submission the durable record never showed is still the user's draft");
 });
+
+test("plannerSteerRows drops steers from branches abandoned by planner_conversation_edited", () => {
+  const s1 = "11111111-1111-4111-8111-111111111111";
+  const s2 = "22222222-2222-4222-8222-222222222222";
+  const s3 = "33333333-3333-4333-8333-333333333333";
+  const events = [
+    { type: "created", sequence: 1, timestamp: 1, planning_id: "p1", planning: { planningId: "p1", goal: "initial", createdAt: 1 } as never },
+    { type: "planner_steer_submitted", sequence: 2, timestamp: 2, planning_id: "p1", request_id: s1, instruction: "keep steer on p1" },
+    { type: "planner_steer_status", sequence: 3, timestamp: 3, planning_id: "p1", request_id: s1, status: "failed", error: "err" },
+    { type: "planner_steer_submitted", sequence: 4, timestamp: 4, planning_id: "p2", request_id: s2, instruction: "abandoned steer on p2" },
+    { type: "planner_steer_status", sequence: 5, timestamp: 5, planning_id: "p2", request_id: s2, status: "unknown" },
+    { type: "graph_revised", sequence: 6, timestamp: 6, planning_id: "p2", planning: { planningId: "p2", goal: "turn 2", createdAt: 4 } as never },
+    { type: "planner_conversation_edited", sequence: 7, timestamp: 7, old_instruction: "turn 2", instruction: "turn 2 revised", first_turn: false },
+    { type: "planner_steer_submitted", sequence: 8, timestamp: 8, planning_id: "p3", request_id: s3, instruction: "new steer on p3" },
+    { type: "planner_steer_status", sequence: 9, timestamp: 9, planning_id: "p3", request_id: s3, status: "queued" },
+  ];
+  const local = [
+    { id: `msg-${s2}`, role: "user" as const, text: "abandoned steer on p2", plannerSteerId: s2 },
+    { id: `msg-${s3}`, role: "user" as const, text: "new steer on p3", plannerSteerId: s3 },
+  ];
+  const options = { planning: true, activePlanningId: "p3", visibleIds: new Set<string>() };
+  assert.deepEqual(
+    plannerSteerRows(events, local, options).map(row => row.id),
+    [s1, s3],
+    "editing turn 2 drops steers submitted on turn 2 while keeping earlier turn 1 and post-edit steers",
+  );
+  const firstTurnEdited = [
+    ...events,
+    { type: "planner_conversation_edited", sequence: 10, timestamp: 10, old_instruction: "initial", instruction: "new initial", first_turn: true },
+  ];
+  assert.deepEqual(
+    plannerSteerRows(firstTurnEdited, local, { planning: false, visibleIds: new Set<string>() }),
+    [],
+    "a first_turn edit drops all prior Planner steers including stale local copies",
+  );
+});

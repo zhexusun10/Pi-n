@@ -12,7 +12,7 @@ import { useTranscriptReader } from "../hooks/useTranscriptReader";
 import { useAutoTranscriptHistory } from "../hooks/useAutoTranscriptHistory";
 import { VirtualizedTranscript } from "./VirtualizedTranscript";
 import { cacheTranscriptWindow, composePlanningOutput, planningTranscriptCache, planningTranscriptKey, transcriptFromCache } from "../services/transcriptCache";
-import { activePlannerOutput } from "../lib/plannerOutput";
+import { activePlannerOutput, type PlannerEdit } from "../lib/plannerOutput";
 import { appendTranscriptPage, normalizeTranscriptProjection, prependTranscriptPage, validateTranscriptPrepend, windowFromPage, type TranscriptProjectionMode, type TranscriptWindow } from "../services/transcriptWindow";
 import { markTranscriptPrepend, markTranscriptPrependIfReading, olderPageFits, onTranscriptScroll, transcriptScrollParent } from "../services/transcriptScroll";
 import { INITIAL_TRANSCRIPT_BYTES, OLDER_TRANSCRIPT_BYTES, SUMMARY_INITIAL_TRANSCRIPT_BYTES, SUMMARY_OLDER_TRANSCRIPT_BYTES, transcriptAutoFillBudget, TRANSCRIPT_REVEAL_FALLBACK_MS } from "../services/transcriptPaging";
@@ -33,7 +33,7 @@ type Props = {
   skipFirstUser?: boolean;
   onUserResize?: (expanded?: boolean, card?: HTMLElement) => void;
   onEditUser?: (text: string, replacement: string) => boolean | void | Promise<unknown>;
-  edits?: Array<{ old_instruction?: string; nextPlanningId?: string }>;
+  edits?: PlannerEdit[];
   running?: boolean;
   /** The only composed revision that is still live; older turns stay settled. */
   livePlanningId?: string;
@@ -161,7 +161,10 @@ function PlanningHistory({ runId = "", planningIds, onReady, onOutputChange, onL
   const notifyLoading = useStableCallback((loading: boolean) => onLoadingChange?.(loading));
   const editUser = useStableCallback((text: string, replacement: string) => onEditUser?.(text, replacement));
   const editKey = JSON.stringify(edits);
-  const activeOutput = useMemo(() => activePlannerOutput(output, edits), [output, editKey]);
+  const activeOutput = useMemo(
+    () => activePlannerOutput(output, edits, { firstPlanningId: planningIds[0], planningIds }),
+    [output, editKey, key],
+  );
   // A missing older revision must not make the first loaded user look like the goal.
   const historyStartsAtBeginning = planningIds.length > 0 && segments.current.get(planningIds[0])?.start === 0;
   const skipInitialUser = skipFirstUser && historyStartsAtBeginning;

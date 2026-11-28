@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { activeNodeConversationEvents, activeNodeExecutions, applySelectedVersionToEntries, branchEditedMessageEntries, buildConversationTurns, findBranchTargetIndex, localMessagesAfterEdit, nodeConversationExecutions, nodeConversationLineage, executionIdForMessage, executionIdForVersion, executionIdForEdit, versionsForEdit } from '../src/services/conversationBranch.ts';
+import { activeLocalNodeMessages, activeNodeConversationEvents, activeNodeExecutions, applySelectedVersionToEntries, branchEditedMessageEntries, buildConversationTurns, findBranchTargetIndex, localMessagesAfterEdit, localMessagesAfterEdits, nodeConversationExecutions, nodeConversationLineage, executionIdForMessage, executionIdForVersion, executionIdForEdit, sessionEntriesAfterNodeEdit, versionsForEdit } from '../src/services/conversationBranch.ts';
 import { emptySnapshot, type ChatMessage, type GraphEvent, type Snapshot } from '../src/types.ts';
 
 test('editing a completed turn hides the abandoned node branch but preserves earlier turns', () => {
@@ -360,4 +360,159 @@ test('buildConversationTurns preserves initial-turn retries and merger steer con
   assert.deepEqual(turns[0].executions.map(e => e.id), ['m1-failed', 'm2-retried']);
   assert.deepEqual(turns[1].executions.map(e => e.id), ['m3-continued']);
   assert.deepEqual((turns[1].steerMessages ?? []).map(m => m.id), ['steer-2']);
+});
+
+test('editing an older durable message not in local session entries prunes all later local messages', () => {
+  const initial: ChatMessage = { id: 'msg-initial-goal', role: 'user', text: 'initial goal', runId: 'run-1' };
+  const keptEarlier: ChatMessage = { id: 'msg-early', role: 'user', text: 'before edit', node: 'task', runId: 'run-1', steerRequestId: 'early' };
+  const later1: ChatMessage = { id: 'msg-u1', role: 'user', text: 'later 1', node: 'task', runId: 'run-1', steerRequestId: 'u1' };
+  const later2: ChatMessage = { id: 'msg-u2', role: 'user', text: 'later 2', node: 'task', runId: 'run-1', steerRequestId: 'u2' };
+  const later3: ChatMessage = { id: 'msg-u3', role: 'user', text: 'later 3', node: 'task', runId: 'run-1', steerRequestId: 'u3' };
+  const postEdit: ChatMessage = { id: 'msg-u4', role: 'user', text: 'after edit', node: 'task', runId: 'run-1', steerRequestId: 'u4' };
+  const events: GraphEvent[] = [
+    { sequence: 1, timestamp: 1, type: 'started', execution: { id: 'e1', node: 'task' } as never },
+    { sequence: 2, timestamp: 2, type: 'invalidated', target: 'task', instruction: 'before edit', request_id: 'early', human: true },
+    { sequence: 3, timestamp: 3, type: 'started', execution: { id: 'e2', node: 'task' } as never, message_sequences: [2] },
+    // Old durable message from a previous browser session (not present in local sessionEntries).
+    { sequence: 4, timestamp: 4, type: 'invalidated', target: 'task', instruction: 'old message', human: true },
+    { sequence: 5, timestamp: 5, type: 'started', execution: { id: 'e3', node: 'task' } as never, message_sequences: [4] },
+    { sequence: 6, timestamp: 6, type: 'invalidated', target: 'task', instruction: 'later 1', request_id: 'u1', human: true },
+    { sequence: 7, timestamp: 7, type: 'started', execution: { id: 'e4', node: 'task' } as never, message_sequences: [6] },
+    { sequence: 8, timestamp: 8, type: 'invalidated', target: 'task', instruction: 'later 2', request_id: 'u2', human: true },
+    { sequence: 9, timestamp: 9, type: 'started', execution: { id: 'e5', node: 'task' } as never, message_sequences: [8] },
+    { sequence: 10, timestamp: 10, type: 'invalidated', target: 'task', instruction: 'later 3', request_id: 'u3', human: true },
+    { sequence: 11, timestamp: 11, type: 'started', execution: { id: 'e6', node: 'task' } as never, message_sequences: [10] },
+    {
+      sequence: 12, timestamp: 12, type: 'conversation_edited', target: 'task', nodes: ['task'],
+      from_event_sequence: 4, from_execution_id: 'e3', old_instruction: 'old message', instruction: 'edited old message', first_turn: false,
+    },
+  ];
+  const snapshot: Snapshot = {
+    ...emptySnapshot,
+    runId: 'run-1',
+    supersededExecutionIds: ['e3', 'e4', 'e5', 'e6'],
+    events,
+  };
+
+  // Render-time pruning drops later1/later2/later3 even when the edited target is absent from local messages.
+  assert.deepEqual(
+    localMessagesAfterEdits([initial, keptEarlier, later1, later2, later3, postEdit], events, 'task', true).map(m => m.id),
+    ['msg-initial-goal', 'msg-early', 'msg-u4'],
+  );
+
+  // Submit-time sessionEntries update drops later1/later2/later3 (including untracked legacy entries),
+  // preserves earlier active turns and post-edit input, and attaches the edited replacement cleanly.
+  const legacy: ChatMessage = { id: 'legacy-local', role: 'user', text: 'untracked local', node: 'task', runId: 'run-1' };
+  const targetMsg: ChatMessage = { id: 'event-4', role: 'user', text: 'old message', node: 'task', runId: 'run-1' };
+  const updatedMsg: ChatMessage = { ...targetMsg, text: 'edited old message' };
+  const nextEntries = sessionEntriesAfterNodeEdit({
+    entries: [initial, keptEarlier, later1, later2, later3, legacy, postEdit],
+    snapshot,
+    targetNode: 'task',
+    targetMsg,
+    updatedMsg,
+    previousEventSequence: 11,
+    preEditIds: new Set(['msg-initial-goal', 'msg-early', 'msg-u1', 'msg-u2', 'msg-u3', 'legacy-local']),
+  });
+  assert.deepEqual(nextEntries.map(m => [m.id, m.text]), [
+    ['msg-initial-goal', 'initial goal'],
+    ['msg-early', 'before edit'],
+    ['msg-u4', 'after edit'],
+    ['event-4', 'edited old message'],
+  ]);
+  // The active replacement survives localMessagesAfterEdits so it can match the durable conversation_edited event.
+  assert.deepEqual(
+    localMessagesAfterEdits(nextEntries, events, 'task', true).map(m => m.id),
+    ['msg-initial-goal', 'msg-early', 'msg-u4', 'event-4'],
+  );
+});
+
+test('earlier edit after a previous edit drops the previously edited copy and downstream invalidated nodes', () => {
+  const initial: ChatMessage = { id: 'msg-initial-goal', role: 'user', text: 'goal', runId: 'run-1' };
+  const otherNodeMsg: ChatMessage = { id: 'msg-other', role: 'user', text: 'unrelated', node: 'other', runId: 'run-1', steerRequestId: 'other' };
+  const downstreamMsg: ChatMessage = { id: 'msg-down', role: 'user', text: 'downstream', node: 'b', runId: 'run-1', steerRequestId: 'down' };
+  const prevEdited: ChatMessage = { id: 'event-6', role: 'user', text: 'previously edited', node: 'a', runId: 'run-1' };
+  const events: GraphEvent[] = [
+    { sequence: 1, timestamp: 1, type: 'started', execution: { id: 'a1', node: 'a' } as never },
+    { sequence: 2, timestamp: 2, type: 'invalidated', target: 'a', instruction: 'turn 1', human: true },
+    { sequence: 3, timestamp: 3, type: 'started', execution: { id: 'a2', node: 'a' } as never, message_sequences: [2] },
+    { sequence: 6, timestamp: 6, type: 'invalidated', target: 'a', instruction: 'turn 2', human: true },
+    { sequence: 7, timestamp: 7, type: 'conversation_edited', target: 'a', nodes: ['a'], from_event_sequence: 6, from_execution_id: 'a3', old_instruction: 'turn 2', instruction: 'previously edited', first_turn: false },
+    { sequence: 8, timestamp: 8, type: 'invalidated', target: 'b', instruction: 'downstream', request_id: 'down', human: true },
+    { sequence: 9, timestamp: 9, type: 'conversation_edited', target: 'a', nodes: ['a', 'b'], from_event_sequence: 2, from_execution_id: 'a2', old_instruction: 'turn 1', instruction: 'turn 1 revised', first_turn: false },
+  ];
+  const snapshot: Snapshot = { ...emptySnapshot, runId: 'run-1', events };
+  assert.deepEqual(
+    localMessagesAfterEdits([prevEdited], events, 'a', false),
+    [],
+    'an earlier edit drops a later previously-edited local copy',
+  );
+  assert.deepEqual(
+    localMessagesAfterEdits([downstreamMsg], events, 'b', false),
+    [],
+    'an upstream edit drops invalidated downstream local messages',
+  );
+  const next = sessionEntriesAfterNodeEdit({
+    entries: [initial, otherNodeMsg, downstreamMsg, prevEdited],
+    snapshot,
+    targetNode: 'a',
+    targetMsg: { id: 'event-2', role: 'user', text: 'turn 1', node: 'a', runId: 'run-1' },
+    updatedMsg: { id: 'event-2', role: 'user', text: 'turn 1 revised', node: 'a', runId: 'run-1' },
+    previousEventSequence: 8,
+    preEditIds: new Set(['msg-initial-goal', 'msg-other', 'msg-down', 'event-6']),
+  });
+  assert.deepEqual(next.map(m => [m.id, m.node]), [
+    ['msg-initial-goal', undefined],
+    ['msg-other', 'other'],
+    ['event-2', 'a'],
+  ]);
+});
+
+test('first_turn edit drops pre-edit follow-ups even when opening text already changed', () => {
+  const initial: ChatMessage = { id: 'msg-initial-goal', role: 'user', text: 'already updated', runId: 'run-1' };
+  const oldFollowUp: ChatMessage = { id: 'msg-old', role: 'user', text: 'old follow-up', node: 'task', runId: 'run-1', steerRequestId: 'old' };
+  const newFollowUp: ChatMessage = { id: 'msg-new', role: 'user', text: 'new follow-up', node: 'task', runId: 'run-1', steerRequestId: 'new' };
+  const events: GraphEvent[] = [
+    { sequence: 1, timestamp: 1, type: 'started', execution: { id: 'e1', node: 'task' } as never },
+    { sequence: 2, timestamp: 2, type: 'invalidated', target: 'task', instruction: 'old follow-up', request_id: 'old', human: true },
+    { sequence: 3, timestamp: 3, type: 'conversation_edited', target: 'task', nodes: ['task'], from_event_sequence: 1, from_execution_id: 'e1', old_instruction: 'original goal', instruction: 'already updated', first_turn: true },
+  ];
+  assert.deepEqual(
+    localMessagesAfterEdits([initial, oldFollowUp, newFollowUp], events, 'task', true).map(m => m.id),
+    ['msg-initial-goal', 'msg-new'],
+  );
+});
+
+test('fresh restart drops pre-restart durable conversation_edited events and local session entries', () => {
+  const attempt1 = { id: 'attempt-1', node: 'task', revision: 1, attempt: 1, sessionId: 'old', worktree: '', before: '', after: '', status: 'completed', output: '', startedAt: 1, completedAt: 2 };
+  const attempt2 = { ...attempt1, id: 'attempt-2', revision: 2, attempt: 2, startedAt: 3, completedAt: 4 };
+  const fresh = { ...attempt1, id: 'attempt-3', revision: 3, attempt: 3, sessionId: 'new', status: 'running', startedAt: 10, completedAt: null };
+  const state: Snapshot = {
+    ...emptySnapshot,
+    runId: 'run-1',
+    supersededExecutionIds: ['attempt-1', 'attempt-2'],
+    executions: [attempt1, attempt2, fresh],
+    events: [
+      { sequence: 1, timestamp: 1, type: 'started', execution: attempt1 },
+      { sequence: 2, timestamp: 2, type: 'invalidated', target: 'task', instruction: 'old follow-up', request_id: 'old-req', human: true },
+      { sequence: 3, timestamp: 3, type: 'conversation_edited', target: 'task', nodes: ['task'], from_event_sequence: 2, from_execution_id: 'attempt-1', old_instruction: 'old follow-up', instruction: 'edited before restart', first_turn: false },
+      { sequence: 4, timestamp: 4, type: 'started', execution: attempt2 },
+      { sequence: 8, timestamp: 8, type: 'node_messaged', node: 'task', instruction: 'queued for fresh', request_id: 'claimed-req', queued: true },
+      { sequence: 10, timestamp: 10, type: 'started', execution: fresh, fresh_restart: true, message_sequences: [8] },
+    ],
+  };
+  assert.deepEqual(
+    activeNodeConversationEvents(state, 'task').filter(event => !!event.instruction).map(event => event.instruction),
+    ['queued for fresh'],
+    'a fresh restart drops pre-restart conversation_edited turns while keeping claimed input',
+  );
+  const initial: ChatMessage = { id: 'msg-initial-goal', role: 'user', text: 'goal', runId: 'run-1' };
+  const staleEdited: ChatMessage = { id: 'event-2', role: 'user', text: 'edited before restart', node: 'task', runId: 'run-1' };
+  const staleFollowUp: ChatMessage = { id: 'msg-old-req', role: 'user', text: 'old follow-up', node: 'task', runId: 'run-1', steerRequestId: 'old-req' };
+  const claimedLocal: ChatMessage = { id: 'msg-claimed-req', role: 'user', text: 'queued for fresh', node: 'task', runId: 'run-1', steerRequestId: 'claimed-req' };
+  const postRestart: ChatMessage = { id: 'msg-post', role: 'user', text: 'after restart', node: 'task', runId: 'run-1', steerRequestId: 'post-req' };
+  assert.deepEqual(
+    activeLocalNodeMessages([initial, staleFollowUp, staleEdited, claimedLocal, postRestart], state, 'task', true).map(m => m.id),
+    ['msg-initial-goal', 'msg-claimed-req', 'msg-post'],
+  );
 });

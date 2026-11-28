@@ -30,6 +30,52 @@ export function plannerSteerOwner(send: { recorded: boolean; status?: string }):
   return send.status === "failed" ? "composer" : "pending";
 }
 
+const PLANNER_TURN_EVENTS = new Set([
+  "created", "graph_revised", "planner_workspace_selected",
+  "planner_review_started", "planner_turn_aborted",
+]);
+
+function abandonedPlannerSteerIds(events: readonly GraphEvent[]): Set<string> {
+  const abandoned = new Set<string>();
+  for (let editIndex = 0; editIndex < events.length; editIndex += 1) {
+    const edit = events[editIndex];
+    if (edit.type !== "planner_conversation_edited") continue;
+    if (edit.first_turn) {
+      for (let i = 0; i < editIndex; i += 1) {
+        if (events[i].type === "planner_steer_submitted" && events[i].request_id) {
+          abandoned.add(events[i].request_id!);
+        }
+      }
+      continue;
+    }
+    const target = edit.old_instruction?.trim();
+    if (!target) continue;
+    let startIndex = -1;
+    let matchedPlanningId: string | undefined;
+    for (let i = editIndex - 1; i >= 0; i -= 1) {
+      const item = events[i];
+      if (item.type === "planner_steer_submitted" && item.instruction?.trim() === target) {
+        startIndex = i;
+        break;
+      }
+      if (item.type && PLANNER_TURN_EVENTS.has(item.type) && item.planning?.goal?.trim() === target) {
+        startIndex = i;
+        matchedPlanningId = item.planning_id || item.planning?.planningId;
+        break;
+      }
+    }
+    if (startIndex < 0) continue;
+    for (let i = 0; i < editIndex; i += 1) {
+      const item = events[i];
+      if (item.type !== "planner_steer_submitted" || !item.request_id) continue;
+      if (i >= startIndex || (matchedPlanningId && item.planning_id === matchedPlanningId)) {
+        abandoned.add(item.request_id);
+      }
+    }
+  }
+  return abandoned;
+}
+
 /** Fold durable status evidence by request ID, never by instruction text. */
 export function plannerSteerRows(events: readonly GraphEvent[], messages: readonly ChatMessage[], options: {
   planning: boolean; activePlanningId?: string; visibleIds: ReadonlySet<string>;
@@ -38,11 +84,12 @@ export function plannerSteerRows(events: readonly GraphEvent[], messages: readon
    * not render a second copy of it. */
   revertedIds?: ReadonlySet<string>;
 }): PlannerSteerRow[] {
+  const abandoned = abandonedPlannerSteerIds(events);
   const rows = new Map<string, PlannerSteerRow>();
   const local = new Map(messages.filter(message => message.plannerSteerId).map(message => [message.plannerSteerId!, message]));
   for (const event of events) {
     const id = event.request_id;
-    if (!id) continue;
+    if (!id || abandoned.has(id)) continue;
     if (event.type === "planner_steer_submitted") {
       const message = local.get(id) ?? { id: `msg-${id}`, role: "user" as const, text: event.instruction || "",
         images: event.images, timestamp: event.timestamp, plannerSteerId: id };
@@ -56,7 +103,9 @@ export function plannerSteerRows(events: readonly GraphEvent[], messages: readon
     }
   }
   for (const [id, message] of local) {
-    if (!rows.has(id)) rows.set(id, { id, message, status: message.plannerSteerStatus ?? "submitting", error: message.plannerSteerError });
+    if (!abandoned.has(id) && !rows.has(id)) {
+      rows.set(id, { id, message, status: message.plannerSteerStatus ?? "submitting", error: message.plannerSteerError });
+    }
   }
   return [...rows.values()].flatMap(row => {
     if (row.status === "withdrawn" || options.visibleIds.has(row.id)) return [];

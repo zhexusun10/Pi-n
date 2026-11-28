@@ -346,6 +346,8 @@ fn sidebar_title_edits_use_the_canonical_reducer() {
                 old_instruction: "Original".into(),
                 first_turn: true,
                 selected_version: None,
+                from_message_timestamp: None,
+                from_occurrence: None,
             },
         )
         .unwrap();
